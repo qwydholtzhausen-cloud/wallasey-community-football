@@ -29,11 +29,14 @@ interface Profile {
   role: Role;
 }
 
+type Team = "white" | "red";
+
 interface BookingRow {
   id: string;
   player_id: string;
   status: PayStatus;
   waiting: boolean;
+  team: Team | null;
   created_at: string;
   player: Profile;
 }
@@ -58,14 +61,6 @@ interface ClipRow {
   submitter: Profile | null;
 }
 
-interface PostRow {
-  id: string;
-  text: string;
-  created_at: string;
-  author_id: string;
-  author: Profile;
-  post_likes: { user_id: string }[];
-}
 
 interface GoalRow {
   id: string;
@@ -103,9 +98,9 @@ const Icon = {
       <path d="M12 3l2.6 5.6 6 .7-4.4 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.4 9.3l6-.7z" strokeLinejoin="round" />
     </svg>
   ),
-  chat: (
+  shirt: (
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M4 5.5h16v11H9l-4 3.5v-3.5H4z" strokeLinejoin="round" />
+      <path d="M8 3.5L12 5l4-1.5 4 4-3 3V20H7V10.5l-3-3z" strokeLinejoin="round" />
     </svg>
   ),
   history: (
@@ -226,16 +221,14 @@ function App({ session }: { session: Session }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [games, setGames] = useState<GameRow[]>([]);
   const [clips, setClips] = useState<ClipRow[]>([]);
-  const [posts, setPosts] = useState<PostRow[]>([]);
   const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
 
-  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "feed" | "account" | "past">("fixtures");
+  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "lineup" | "account" | "past">("fixtures");
   const [tableView, setTableView] = useState<"attendance" | "goals">("attendance");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
   const [clipTitle, setClipTitle] = useState("");
   const [clipUrl, setClipUrl] = useState("");
 
@@ -255,7 +248,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, bookings(id, player_id, status, waiting, created_at, player:profiles(id, display_name, role))"
+        "id, date, kickoff, venue, pitch, price, max_players, bookings(id, player_id, status, waiting, team, created_at, player:profiles(id, display_name, role))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -269,14 +262,6 @@ function App({ session }: { session: Session }) {
     if (data) setClips(data as unknown as ClipRow[]);
   }, []);
 
-  const loadPosts = useCallback(async () => {
-    const { data } = await supabase
-      .from("posts")
-      .select("id, text, created_at, author_id, author:profiles(id, display_name, role), post_likes(user_id)")
-      .order("created_at", { ascending: false });
-    if (data) setPosts(data as unknown as PostRow[]);
-  }, []);
-
   const loadGoals = useCallback(async () => {
     const { data } = await supabase
       .from("game_stats")
@@ -288,10 +273,10 @@ function App({ session }: { session: Session }) {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadPosts(), loadGoals()]);
+      await Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadGoals()]);
       setLoading(false);
     })();
-  }, [loadProfile, loadProfiles, loadGames, loadClips, loadPosts, loadGoals]);
+  }, [loadProfile, loadProfiles, loadGames, loadClips, loadGoals]);
 
   useEffect(() => {
     const channel = supabase
@@ -379,21 +364,8 @@ function App({ session }: { session: Session }) {
     await loadClips();
   }
 
-  async function addPost() {
-    if (!draft.trim()) return;
-    await supabase.from("posts").insert({ text: draft.trim(), author_id: myId });
-    setDraft("");
-    await loadPosts();
-  }
-  async function deletePost(id: string) {
-    await supabase.from("posts").delete().eq("id", id);
-    await loadPosts();
-  }
-  async function toggleLike(post: PostRow) {
-    const already = post.post_likes.some((l) => l.user_id === myId);
-    if (already) await supabase.from("post_likes").delete().eq("post_id", post.id).eq("user_id", myId);
-    else await supabase.from("post_likes").insert({ post_id: post.id, user_id: myId });
-    await loadPosts();
+  async function setTeam(bookingId: string, team: Team | null) {
+    await supabase.from("bookings").update({ team }).eq("id", bookingId);
   }
 
   async function renameSelf(name: string) {
@@ -438,12 +410,17 @@ function App({ session }: { session: Session }) {
   const today = new Date().toISOString().slice(0, 10);
   const upcomingGames = useMemo(() => games.filter((g) => g.date >= today).sort((a, b) => a.date.localeCompare(b.date)), [games, today]);
   const pastGames = useMemo(() => games.filter((g) => g.date < today).sort((a, b) => b.date.localeCompare(a.date)), [games, today]);
+  const nextGame = upcomingGames[0];
+  const nextConfirmed = useMemo(
+    () => (nextGame ? nextGame.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)) : []),
+    [nextGame]
+  );
 
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
     { k: "clips", label: "Clips", icon: Icon.play },
     { k: "table", label: "Table", icon: Icon.star },
-    { k: "feed", label: "Feed", icon: Icon.chat },
+    { k: "lineup", label: "Line-up", icon: Icon.shirt },
     ...(isAdmin ? [{ k: "past", label: "Past", icon: Icon.history } as const] : []),
   ] as const;
 
@@ -451,7 +428,7 @@ function App({ session }: { session: Session }) {
     fixtures: "Upcoming fixtures",
     clips: "Match clips",
     table: tableView === "attendance" ? "Attendance table" : "Goalscorers",
-    feed: "Team feed",
+    lineup: "Next game line-up",
     account: "Your account",
     past: "Past fixtures",
   }[tab];
@@ -611,37 +588,43 @@ function App({ session }: { session: Session }) {
           </div>
         )}
 
-        {tab === "feed" && (
+        {tab === "lineup" && (
           <>
-            <div className="wcf-compose">
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addPost()}
-                placeholder="Say something to the group…"
-              />
-              <button onClick={addPost} disabled={!draft.trim()}>
-                Post
-              </button>
-            </div>
-            {posts.map((p) => {
-              const liked = p.post_likes.some((l) => l.user_id === myId);
-              return (
-                <article key={p.id} className="wcf-post">
-                  <div className="wcf-post-head">
-                    <span className="wcf-avatar">{p.author.display_name[0]}</span>
-                    <span className="wcf-post-by">{p.author.display_name}</span>
-                    {(p.author_id === myId || isAdmin) && (
-                      <button className="wcf-post-del" onClick={() => deletePost(p.id)} aria-label="Delete post">×</button>
+            {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
+            {nextGame && (
+              <>
+                <div className="wcf-lineup-head">
+                  <div className="wcf-venue">{nextGame.venue}</div>
+                  <div className="wcf-pitch">{fmtDate(nextGame.date)} · {nextGame.kickoff}</div>
+                </div>
+                {nextConfirmed.length === 0 && <p className="wcf-empty">No one&apos;s booked in yet.</p>}
+                {nextConfirmed.map((b) => (
+                  <div key={b.id} className="wcf-lineup-row">
+                    <span className="wcf-lineup-name">{b.player.display_name}</span>
+                    {isAdmin ? (
+                      <div className="wcf-lineup-picks">
+                        <button
+                          className={"wcf-lineup-pick white " + (b.team === "white" ? "active" : "")}
+                          onClick={() => setTeam(b.id, b.team === "white" ? null : "white")}
+                        >
+                          Whites
+                        </button>
+                        <button
+                          className={"wcf-lineup-pick red " + (b.team === "red" ? "active" : "")}
+                          onClick={() => setTeam(b.id, b.team === "red" ? null : "red")}
+                        >
+                          Reds
+                        </button>
+                      </div>
+                    ) : (
+                      <span className={"wcf-lineup-badge " + (b.team ?? "none")}>
+                        {b.team === "white" ? "Whites" : b.team === "red" ? "Reds" : "Unassigned"}
+                      </span>
                     )}
                   </div>
-                  <p className="wcf-post-text">{p.text}</p>
-                  <button className={"wcf-like " + (liked ? "liked" : "")} onClick={() => toggleLike(p)}>
-                    ♥ {p.post_likes.length}
-                  </button>
-                </article>
-              );
-            })}
+                ))}
+              </>
+            )}
           </>
         )}
 
@@ -1104,20 +1087,19 @@ const css = `
 .wcf-board-name{flex:1;font-weight:800;font-size:14px}
 .wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue)}
 
-.wcf-compose{display:flex;gap:8px;margin-bottom:16px}
-.wcf-compose input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
-.wcf-compose button{background:var(--red);color:#fff;border:none;padding:0 16px;border-radius:10px;font-weight:800;cursor:pointer}
-.wcf-compose button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
-.wcf-post{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:11px}
-.wcf-post-head{display:flex;align-items:center;gap:9px;margin-bottom:7px}
 .wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
-.wcf-post-by{font-weight:800;font-size:13px;flex:1}
-.wcf-post-del{background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;line-height:1}
-.wcf-post-del:hover{color:var(--red-hi)}
-.wcf-post-text{font-size:14px;line-height:1.45;margin:0 0 9px;color:#dbe5f4}
-.wcf-like{background:transparent;border:1px solid var(--line);color:var(--dim);padding:5px 11px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--mono)}
-.wcf-like:hover,.wcf-like.liked{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
+
+.wcf-lineup-head{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
+.wcf-lineup-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px}
+.wcf-lineup-name{font-weight:700;font-size:14px}
+.wcf-lineup-picks{display:flex;gap:6px}
+.wcf-lineup-pick{background:transparent;border:1px solid var(--line);color:var(--dim);padding:7px 11px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
+.wcf-lineup-pick.white.active{background:#EEF4FC;color:#0A1A34;border-color:#EEF4FC}
+.wcf-lineup-pick.red.active{background:var(--red);color:#fff;border-color:var(--red)}
+.wcf-lineup-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
+.wcf-lineup-badge.white{background:#EEF4FC;color:#0A1A34}
+.wcf-lineup-badge.red{background:var(--red);color:#fff}
 
 .wcf-account{display:flex;flex-direction:column;gap:16px}
 .wcf-account-card{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}

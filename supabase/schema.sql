@@ -231,6 +231,32 @@ create trigger bookings_after_delete_promote_waiting
   for each row execute function public.bookings_promote_waiting();
 
 -- ─────────────────────────────────────────────────────────────────
+-- Line-up — admin-assigned team (white/red) per booking. Naturally
+-- scoped to one game and reset for the next, since it's just a
+-- column on the game-specific booking row.
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.bookings add column team text check (team in ('white', 'red'));
+
+create function public.prevent_non_admin_team_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.team is distinct from old.team and auth.uid() is not null and not public.is_admin() then
+    raise exception 'Only admins can set line-up teams';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger enforce_team_change
+  before update on public.bookings
+  for each row execute function public.prevent_non_admin_team_change();
+
+-- ─────────────────────────────────────────────────────────────────
 -- Realtime — so the team sheet updates live as people book/cancel
 -- ─────────────────────────────────────────────────────────────────
 
