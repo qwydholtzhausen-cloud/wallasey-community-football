@@ -127,21 +127,29 @@ export default function WirralCommunityFootball() {
 
 function SignIn() {
   const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
   const [sending, setSending] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function sendLink(e: React.FormEvent) {
+  async function sendCode(e: React.FormEvent) {
     e.preventDefault();
     setSending(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: { emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined },
-    });
+    const { error } = await supabase.auth.signInWithOtp({ email: email.trim() });
     setSending(false);
     if (error) setError(error.message);
     else setSent(true);
+  }
+
+  async function verifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    setVerifying(true);
+    setError(null);
+    const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: "email" });
+    setVerifying(false);
+    if (error) setError(error.message);
   }
 
   return (
@@ -153,11 +161,29 @@ function SignIn() {
       <div className="wcf-wordmark-sub">COMMUNITY FOOTBALL</div>
 
       {sent ? (
-        <p className="wcf-signin-sent">
-          Check <strong>{email}</strong> for a sign-in link.
-        </p>
+        <form className="wcf-signin-form" onSubmit={verifyCode}>
+          <p className="wcf-signin-sent">
+            Enter the code emailed to <strong>{email}</strong>
+          </p>
+          <input
+            type="text"
+            inputMode="numeric"
+            autoFocus
+            required
+            placeholder="123456"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+          <button type="submit" disabled={verifying || !code.trim()}>
+            {verifying ? "Checking…" : "Verify code"}
+          </button>
+          {error && <p className="wcf-signin-error">{error}</p>}
+          <button type="button" className="wcf-signin-back" onClick={() => { setSent(false); setCode(""); setError(null); }}>
+            Use a different email
+          </button>
+        </form>
       ) : (
-        <form className="wcf-signin-form" onSubmit={sendLink}>
+        <form className="wcf-signin-form" onSubmit={sendCode}>
           <input
             type="email"
             required
@@ -166,7 +192,7 @@ function SignIn() {
             onChange={(e) => setEmail(e.target.value)}
           />
           <button type="submit" disabled={sending || !email.trim()}>
-            {sending ? "Sending…" : "Send sign-in link"}
+            {sending ? "Sending…" : "Send sign-in code"}
           </button>
           {error && <p className="wcf-signin-error">{error}</p>}
         </form>
@@ -831,7 +857,9 @@ const css = `
 .wcf-signin-form button{background:var(--red);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:800;cursor:pointer}
 .wcf-signin-form button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-signin-error{color:var(--red-hi);font-size:12px;margin:0}
-.wcf-signin-sent{color:var(--dim);font-size:14px;max-width:280px;margin-top:24px;line-height:1.5}
+.wcf-signin-sent{color:var(--dim);font-size:14px;max-width:280px;margin:0 0 4px;line-height:1.5}
+.wcf-signin-form input[inputmode="numeric"]{letter-spacing:4px;text-align:center;font-family:var(--mono);font-size:18px}
+.wcf-signin-back{background:none!important;border:none!important;color:var(--dim)!important;font-weight:600!important;font-size:12px!important;padding:4px!important;cursor:pointer;text-decoration:underline}
 
 .wcf-top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
   padding:14px 16px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
