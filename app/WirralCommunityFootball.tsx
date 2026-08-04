@@ -1,96 +1,76 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabase/client";
 
-interface Player {
+// TODO: swap in the real Revolut handle/link before going live with payments.
+const REVOLUT_HANDLE = "@your-revolut-handle";
+const MAX_SPOTS = 16;
+
+type Role = "player" | "admin";
+type PayStatus = "unpaid" | "pending" | "confirmed";
+
+interface Profile {
   id: string;
-  name: string;
+  display_name: string;
+  role: Role;
 }
 
-interface Game {
+interface BookingRow {
+  id: string;
+  player_id: string;
+  status: PayStatus;
+  waiting: boolean;
+  created_at: string;
+  player: Profile;
+}
+
+interface GameRow {
   id: string;
   date: string;
   kickoff: string;
   venue: string;
   pitch: string;
   price: number;
-  maxPlayers: number;
-  players: Player[];
+  max_players: number;
+  bookings: BookingRow[];
 }
 
-interface Clip {
+interface ClipRow {
   id: string;
   title: string;
-  game: string;
-  by: string;
+  video_url: string | null;
+  created_at: string;
+  submitted_by: string | null;
+  submitter: Profile | null;
 }
 
-interface Post {
+interface PostRow {
   id: string;
-  by: string;
   text: string;
-  likes: number;
+  created_at: string;
+  author_id: string;
+  author: Profile;
+  post_likes: { user_id: string }[];
 }
 
-interface GameCardProps {
-  game: Game;
-  booked: boolean;
-  isAdmin: boolean;
-  editing: boolean;
-  onToggle: () => void;
-  onEdit: () => void;
-  onSave: (patch: Partial<Game>) => void;
-  onDelete: () => void;
+interface GoalRow {
+  id: string;
+  game_id: string;
+  player_id: string;
+  goals: number;
+  player: Profile;
 }
-
-const CURRENT_USER: Player = { id: "u_you", name: "You" };
-const MAX_SPOTS = 16;
-
-const seedGames: Game[] = [
-  {
-    id: "g1",
-    date: "2026-08-06",
-    kickoff: "19:30",
-    venue: "Leasowe Rec",
-    pitch: "8-a-side · Astro",
-    price: 6,
-    maxPlayers: 16,
-    players: ["Marcus", "Deniz", "Sam", "Theo", "Jay", "Leon", "Ollie", "Craig", "Ste", "Danny"].map((n) => ({ id: "u_" + n.toLowerCase(), name: n })),
-  },
-  {
-    id: "g2",
-    date: "2026-08-10",
-    kickoff: "11:00",
-    venue: "Wallasey Leisure Centre",
-    pitch: "7-a-side · Grass",
-    price: 5,
-    maxPlayers: 16,
-    players: ["Marcus", "Deniz", "Nadia", "Sam", "Craig"].map((n) => ({ id: "u_" + n.toLowerCase(), name: n })),
-  },
-  {
-    id: "g3",
-    date: "2026-08-13",
-    kickoff: "20:00",
-    venue: "Bidston Astro",
-    pitch: "6-a-side · Pitch 1",
-    price: 6,
-    maxPlayers: 16,
-    players: [],
-  },
-];
-
-const seedClips: Clip[] = [
-  { id: "c1", title: "Sam's worldie vs the Tuesday lot", game: "Leasowe · 30 Jul", by: "Marcus" },
-  { id: "c2", title: "Nadia nutmeg + finish", game: "Wallasey LC · 27 Jul", by: "Deniz" },
-];
-
-const seedPosts: Post[] = [
-  { id: "p1", by: "Marcus", text: "Cracking game last night. Whoever left the bibs — they're in my car.", likes: 4 },
-  { id: "p2", by: "Deniz", text: "Need two more for Sunday 7s, who's about?", likes: 2 },
-];
 
 function fmtDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+function defaultNewGameDate() {
+  const d = new Date();
+  d.setDate(d.getDate() + 7);
+  return d.toISOString().slice(0, 10);
 }
 
 const Icon = {
@@ -119,57 +99,271 @@ const Icon = {
 };
 
 export default function WirralCommunityFootball() {
-  const [games, setGames] = useState<Game[]>(seedGames);
-  const [clips, setClips] = useState<Clip[]>(seedClips);
-  const [posts, setPosts] = useState<Post[]>(seedPosts);
-  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "feed">("fixtures");
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => setSession(sess));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  return (
+    <div className="wcf-root">
+      <style>{css}</style>
+      {session === undefined ? (
+        <div className="wcf-splash">
+          <span className="wcf-logo big">
+            <img src="/logo.png" alt="Wirral Community Football crest" />
+          </span>
+        </div>
+      ) : session ? (
+        <App session={session} />
+      ) : (
+        <SignIn />
+      )}
+    </div>
+  );
+}
+
+function SignIn() {
+  const [email, setEmail] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function sendLink(e: React.FormEvent) {
+    e.preventDefault();
+    setSending(true);
+    setError(null);
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: { emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined },
+    });
+    setSending(false);
+    if (error) setError(error.message);
+    else setSent(true);
+  }
+
+  return (
+    <div className="wcf-signin">
+      <span className="wcf-logo big">
+        <img src="/logo.png" alt="Wirral Community Football crest" />
+      </span>
+      <div className="wcf-wordmark">WIRRAL</div>
+      <div className="wcf-wordmark-sub">COMMUNITY FOOTBALL</div>
+
+      {sent ? (
+        <p className="wcf-signin-sent">
+          Check <strong>{email}</strong> for a sign-in link.
+        </p>
+      ) : (
+        <form className="wcf-signin-form" onSubmit={sendLink}>
+          <input
+            type="email"
+            required
+            placeholder="you@email.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <button type="submit" disabled={sending || !email.trim()}>
+            {sending ? "Sending…" : "Send sign-in link"}
+          </button>
+          {error && <p className="wcf-signin-error">{error}</p>}
+        </form>
+      )}
+    </div>
+  );
+}
+
+function App({ session }: { session: Session }) {
+  const myId = session.user.id;
+  const [myProfile, setMyProfile] = useState<Profile | null>(null);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [games, setGames] = useState<GameRow[]>([]);
+  const [clips, setClips] = useState<ClipRow[]>([]);
+  const [posts, setPosts] = useState<PostRow[]>([]);
+  const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "feed" | "account">("fixtures");
+  const [tableView, setTableView] = useState<"attendance" | "goals">("attendance");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [clipTitle, setClipTitle] = useState("");
+  const [clipUrl, setClipUrl] = useState("");
 
-  const isBooked = (g: Game) => g.players.some((p) => p.id === CURRENT_USER.id);
+  const isAdmin = myProfile?.role === "admin";
 
-  function toggleBooking(gameId: string) {
-    setGames((prev) =>
-      prev.map((g) => {
-        if (g.id !== gameId) return g;
-        const already = g.players.some((p) => p.id === CURRENT_USER.id);
-        if (already) return { ...g, players: g.players.filter((p) => p.id !== CURRENT_USER.id) };
-        if (g.players.length >= g.maxPlayers) return g;
-        return { ...g, players: [...g.players, CURRENT_USER] };
+  const loadProfile = useCallback(async () => {
+    const { data } = await supabase.from("profiles").select("id, display_name, role").eq("id", myId).single();
+    if (data) setMyProfile(data as Profile);
+  }, [myId]);
+
+  const loadProfiles = useCallback(async () => {
+    const { data } = await supabase.from("profiles").select("id, display_name, role").order("display_name");
+    if (data) setProfiles(data as Profile[]);
+  }, []);
+
+  const loadGames = useCallback(async () => {
+    const { data } = await supabase
+      .from("games")
+      .select(
+        "id, date, kickoff, venue, pitch, price, max_players, bookings(id, player_id, status, waiting, created_at, player:profiles(id, display_name, role))"
+      )
+      .order("date", { ascending: true });
+    if (data) setGames(data as unknown as GameRow[]);
+  }, []);
+
+  const loadClips = useCallback(async () => {
+    const { data } = await supabase
+      .from("clips")
+      .select("id, title, video_url, created_at, submitted_by, submitter:profiles(id, display_name, role)")
+      .order("created_at", { ascending: false });
+    if (data) setClips(data as unknown as ClipRow[]);
+  }, []);
+
+  const loadPosts = useCallback(async () => {
+    const { data } = await supabase
+      .from("posts")
+      .select("id, text, created_at, author_id, author:profiles(id, display_name, role), post_likes(user_id)")
+      .order("created_at", { ascending: false });
+    if (data) setPosts(data as unknown as PostRow[]);
+  }, []);
+
+  const loadGoals = useCallback(async () => {
+    const { data } = await supabase
+      .from("game_stats")
+      .select("id, game_id, player_id, goals, player:profiles(id, display_name, role)")
+      .order("goals", { ascending: false });
+    if (data) setGoalRows(data as unknown as GoalRow[]);
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      await Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadPosts(), loadGoals()]);
+      setLoading(false);
+    })();
+  }, [loadProfile, loadProfiles, loadGames, loadClips, loadPosts, loadGoals]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("bookings-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, () => {
+        loadGames();
       })
-    );
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadGames]);
+
+  async function book(gameId: string) {
+    await supabase.from("bookings").insert({ game_id: gameId, player_id: myId });
+  }
+  async function cancel(bookingId: string) {
+    await supabase.from("bookings").delete().eq("id", bookingId);
+  }
+  async function markPaid(bookingId: string) {
+    await supabase.from("bookings").update({ status: "pending" }).eq("id", bookingId);
+  }
+  async function confirmPayment(bookingId: string) {
+    await supabase.from("bookings").update({ status: "confirmed" }).eq("id", bookingId);
   }
 
-  const updateGame = (id: string, patch: Partial<Game>) => setGames((p) => p.map((g) => (g.id === id ? { ...g, ...patch } : g)));
-  const deleteGame = (id: string) => setGames((p) => p.filter((g) => g.id !== id));
-
-  function addGame() {
-    const id = `g_${Date.now()}`;
-    setGames((p) => [...p, { id, date: "2026-08-20", kickoff: "19:00", venue: "New venue", pitch: "8-a-side", price: 6, maxPlayers: MAX_SPOTS, players: [] }]);
-    setEditingId(id);
+  async function addGame() {
+    const { data } = await supabase
+      .from("games")
+      .insert({ date: defaultNewGameDate(), kickoff: "19:00", venue: "New venue", pitch: "8-a-side", price: 6, max_players: MAX_SPOTS })
+      .select()
+      .single();
+    await loadGames();
+    if (data) setEditingId(data.id);
+  }
+  async function saveGame(id: string, patch: Partial<GameRow>) {
+    const { bookings: _bookings, ...rest } = patch as GameRow;
+    await supabase.from("games").update(rest).eq("id", id);
+    await loadGames();
+    setEditingId(null);
+  }
+  async function deleteGame(id: string) {
+    await supabase.from("games").delete().eq("id", id);
+    await loadGames();
+  }
+  async function saveGoals(gameId: string, entries: Record<string, number>) {
+    const rows = Object.entries(entries).map(([player_id, goals]) => ({ game_id: gameId, player_id, goals }));
+    if (rows.length) await supabase.from("game_stats").upsert(rows, { onConflict: "game_id,player_id" });
+    await loadGoals();
   }
 
-  function addPost() {
+  async function addClip(e: React.FormEvent) {
+    e.preventDefault();
+    if (!clipTitle.trim()) return;
+    await supabase.from("clips").insert({ title: clipTitle.trim(), video_url: clipUrl.trim() || null, submitted_by: myId });
+    setClipTitle("");
+    setClipUrl("");
+    await loadClips();
+  }
+  async function deleteClip(id: string) {
+    await supabase.from("clips").delete().eq("id", id);
+    await loadClips();
+  }
+
+  async function addPost() {
     if (!draft.trim()) return;
-    setPosts((p) => [{ id: `p${Date.now()}`, by: CURRENT_USER.name, text: draft.trim(), likes: 0 }, ...p]);
+    await supabase.from("posts").insert({ text: draft.trim(), author_id: myId });
     setDraft("");
+    await loadPosts();
+  }
+  async function deletePost(id: string) {
+    await supabase.from("posts").delete().eq("id", id);
+    await loadPosts();
+  }
+  async function toggleLike(post: PostRow) {
+    const already = post.post_likes.some((l) => l.user_id === myId);
+    if (already) await supabase.from("post_likes").delete().eq("post_id", post.id).eq("user_id", myId);
+    else await supabase.from("post_likes").insert({ post_id: post.id, user_id: myId });
+    await loadPosts();
   }
 
-  const likePost = (id: string) => setPosts((p) => p.map((x) => (x.id === id ? { ...x, likes: x.likes + 1 } : x)));
+  async function renameSelf(name: string) {
+    if (!name.trim()) return;
+    await supabase.from("profiles").update({ display_name: name.trim() }).eq("id", myId);
+    await Promise.all([loadProfile(), loadProfiles()]);
+  }
+  async function setRole(id: string, role: Role) {
+    await supabase.from("profiles").update({ role }).eq("id", id);
+    await loadProfiles();
+  }
+  async function signOut() {
+    await supabase.auth.signOut();
+  }
 
-  const leaderboard = useMemo(
-    () => {
-      const tally: Record<string, number> = {};
-      games.forEach((g) => g.players.forEach((p) => {
-        tally[p.name] = (tally[p.name] || 0) + 1;
-      }));
-      return Object.entries(tally)
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count);
-    },
-    [games]
-  );
+  const attendanceLeaderboard = useMemo(() => {
+    const tally: Record<string, { name: string; count: number }> = {};
+    games.forEach((g) =>
+      g.bookings
+        .filter((b) => !b.waiting)
+        .forEach((b) => {
+          const cur = tally[b.player_id] ?? { name: b.player.display_name, count: 0 };
+          cur.count += 1;
+          tally[b.player_id] = cur;
+        })
+    );
+    return Object.values(tally).sort((a, b) => b.count - a.count);
+  }, [games]);
+
+  const goalsLeaderboard = useMemo(() => {
+    const tally: Record<string, { name: string; count: number }> = {};
+    goalRows.forEach((r) => {
+      const cur = tally[r.player_id] ?? { name: r.player.display_name, count: 0 };
+      cur.count += r.goals;
+      tally[r.player_id] = cur;
+    });
+    return Object.values(tally)
+      .filter((r) => r.count > 0)
+      .sort((a, b) => b.count - a.count);
+  }, [goalRows]);
 
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
@@ -178,12 +372,26 @@ export default function WirralCommunityFootball() {
     { k: "feed", label: "Feed", icon: Icon.chat },
   ] as const;
 
-  const heading = { fixtures: "Upcoming fixtures", clips: "Match clips", table: "Attendance table", feed: "Team feed" }[tab];
+  const heading = {
+    fixtures: "Upcoming fixtures",
+    clips: "Match clips",
+    table: tableView === "attendance" ? "Attendance table" : "Goalscorers",
+    feed: "Team feed",
+    account: "Your account",
+  }[tab];
+
+  if (loading || !myProfile) {
+    return (
+      <div className="wcf-splash">
+        <span className="wcf-logo big">
+          <img src="/logo.png" alt="Wirral Community Football crest" />
+        </span>
+      </div>
+    );
+  }
 
   return (
-    <div className="wcf-root">
-      <style>{css}</style>
-
+    <>
       <header className="wcf-top">
         <div className="wcf-brand">
           <span className="wcf-logo">
@@ -195,14 +403,11 @@ export default function WirralCommunityFootball() {
           </div>
         </div>
         <button
-          className={"wcf-role " + (isAdmin ? "on" : "")}
-          onClick={() => {
-            setIsAdmin((v) => !v);
-            setEditingId(null);
-          }}
-          title="In the real app this comes from your account's role in the database"
+          className={"wcf-role " + (isAdmin ? "admin" : "") + (tab === "account" ? " on" : "")}
+          onClick={() => setTab(tab === "account" ? "fixtures" : "account")}
         >
-          <span className="dot" />{isAdmin ? "Admin" : "Player"}
+          <span className="dot" />
+          {myProfile.display_name}
         </button>
       </header>
 
@@ -219,16 +424,18 @@ export default function WirralCommunityFootball() {
               <GameCard
                 key={g.id}
                 game={g}
-                booked={isBooked(g)}
+                myId={myId}
                 isAdmin={isAdmin}
                 editing={editingId === g.id}
-                onToggle={() => toggleBooking(g.id)}
+                goals={goalRows.filter((r) => r.game_id === g.id)}
+                onBook={() => book(g.id)}
+                onCancel={(bookingId) => cancel(bookingId)}
+                onMarkPaid={(bookingId) => markPaid(bookingId)}
+                onConfirmPayment={(bookingId) => confirmPayment(bookingId)}
                 onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
-                onSave={(patch) => {
-                  updateGame(g.id, patch);
-                  setEditingId(null);
-                }}
+                onSave={(patch) => saveGame(g.id, patch)}
                 onDelete={() => deleteGame(g.id)}
+                onSaveGoals={(entries) => saveGoals(g.id, entries)}
               />
             ))}
           </>
@@ -236,43 +443,67 @@ export default function WirralCommunityFootball() {
 
         {tab === "clips" && (
           <>
-            {isAdmin && (
-              <button
-                className="wcf-add"
-                onClick={() =>
-                  setClips((c) => [
-                    { id: `c${Date.now()}`, title: "New clip", game: "Paste a YouTube link", by: CURRENT_USER.name },
-                    ...c,
-                  ])
-                }
-              >
-                + Add clip
-              </button>
-            )}
+            <form className="wcf-clip-form" onSubmit={addClip}>
+              <input placeholder="Clip title" value={clipTitle} onChange={(e) => setClipTitle(e.target.value)} />
+              <input placeholder="YouTube link (optional)" value={clipUrl} onChange={(e) => setClipUrl(e.target.value)} />
+              <button type="submit" disabled={!clipTitle.trim()}>Share clip</button>
+            </form>
+            {clips.length === 0 && <p className="wcf-empty">No clips yet.</p>}
             {clips.map((c) => (
               <article key={c.id} className="wcf-clip">
-                <div className="wcf-clip-thumb">
-                  <span>▶</span>
-                </div>
-                <div>
+                {c.video_url ? (
+                  <a className="wcf-clip-thumb" href={c.video_url} target="_blank" rel="noreferrer">
+                    <span>▶</span>
+                  </a>
+                ) : (
+                  <div className="wcf-clip-thumb">
+                    <span>▶</span>
+                  </div>
+                )}
+                <div className="wcf-clip-body">
                   <div className="wcf-clip-title">{c.title}</div>
-                  <div className="wcf-clip-sub">{c.game} · shared by {c.by}</div>
+                  <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"}</div>
                 </div>
+                {(c.submitted_by === myId || isAdmin) && (
+                  <button className="wcf-clip-del" onClick={() => deleteClip(c.id)} aria-label="Delete clip">×</button>
+                )}
               </article>
             ))}
           </>
         )}
 
         {tab === "table" && (
-          <div className="wcf-board">
-            <p className="wcf-board-note">Games played across upcoming fixtures. Top attendees get first dibs on spots.</p>
-            {leaderboard.map((row, i) => (
-              <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}> 
-                <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
-                <span className="wcf-board-name">{row.name}</span>
-                <span className="wcf-board-count">{row.count}</span>
-              </div>
-            ))}
+          <div>
+            <div className="wcf-subtabs">
+              <button className={tableView === "attendance" ? "active" : ""} onClick={() => setTableView("attendance")}>Attendance</button>
+              <button className={tableView === "goals" ? "active" : ""} onClick={() => setTableView("goals")}>Goalscorers</button>
+            </div>
+            <div className="wcf-board">
+              {tableView === "attendance" ? (
+                <>
+                  <p className="wcf-board-note">Confirmed spots across upcoming fixtures. Top attendees get first dibs.</p>
+                  {attendanceLeaderboard.map((row, i) => (
+                    <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
+                      <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
+                      <span className="wcf-board-name">{row.name}</span>
+                      <span className="wcf-board-count">{row.count}</span>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <>
+                  <p className="wcf-board-note">Goals logged by admins after each game.</p>
+                  {goalsLeaderboard.length === 0 && <p className="wcf-empty">No goals logged yet.</p>}
+                  {goalsLeaderboard.map((row, i) => (
+                    <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
+                      <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
+                      <span className="wcf-board-name">{row.name}</span>
+                      <span className="wcf-board-count">{row.count}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -289,19 +520,37 @@ export default function WirralCommunityFootball() {
                 Post
               </button>
             </div>
-            {posts.map((p) => (
-              <article key={p.id} className="wcf-post">
-                <div className="wcf-post-head">
-                  <span className="wcf-avatar">{p.by[0]}</span>
-                  <span className="wcf-post-by">{p.by}</span>
-                </div>
-                <p className="wcf-post-text">{p.text}</p>
-                <button className="wcf-like" onClick={() => likePost(p.id)}>
-                  ♥ {p.likes}
-                </button>
-              </article>
-            ))}
+            {posts.map((p) => {
+              const liked = p.post_likes.some((l) => l.user_id === myId);
+              return (
+                <article key={p.id} className="wcf-post">
+                  <div className="wcf-post-head">
+                    <span className="wcf-avatar">{p.author.display_name[0]}</span>
+                    <span className="wcf-post-by">{p.author.display_name}</span>
+                    {(p.author_id === myId || isAdmin) && (
+                      <button className="wcf-post-del" onClick={() => deletePost(p.id)} aria-label="Delete post">×</button>
+                    )}
+                  </div>
+                  <p className="wcf-post-text">{p.text}</p>
+                  <button className={"wcf-like " + (liked ? "liked" : "")} onClick={() => toggleLike(p)}>
+                    ♥ {p.post_likes.length}
+                  </button>
+                </article>
+              );
+            })}
           </>
+        )}
+
+        {tab === "account" && (
+          <AccountPanel
+            profile={myProfile}
+            email={session.user.email ?? ""}
+            isAdmin={isAdmin}
+            profiles={profiles}
+            onRename={renameSelf}
+            onSetRole={setRole}
+            onSignOut={signOut}
+          />
         )}
       </main>
 
@@ -313,21 +562,118 @@ export default function WirralCommunityFootball() {
           </button>
         ))}
       </nav>
+    </>
+  );
+}
+
+function AccountPanel({
+  profile,
+  email,
+  isAdmin,
+  profiles,
+  onRename,
+  onSetRole,
+  onSignOut,
+}: {
+  profile: Profile;
+  email: string;
+  isAdmin: boolean;
+  profiles: Profile[];
+  onRename: (name: string) => void;
+  onSetRole: (id: string, role: Role) => void;
+  onSignOut: () => void;
+}) {
+  const [name, setName] = useState(profile.display_name);
+
+  useEffect(() => setName(profile.display_name), [profile.display_name]);
+
+  return (
+    <div className="wcf-account">
+      <div className="wcf-account-card">
+        <span className="wcf-avatar big">{profile.display_name[0]?.toUpperCase()}</span>
+        <div>
+          <div className="wcf-account-name">{profile.display_name}</div>
+          <div className="wcf-account-email">{email}</div>
+        </div>
+        <span className={"wcf-role-badge " + profile.role}>{profile.role === "admin" ? "Admin" : "Player"}</span>
+      </div>
+
+      <label className="wcf-account-field">
+        Display name
+        <div className="wcf-account-rename">
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+          <button onClick={() => onRename(name)} disabled={!name.trim() || name.trim() === profile.display_name}>
+            Save
+          </button>
+        </div>
+      </label>
+
+      <button className="wcf-signout" onClick={onSignOut}>Sign out</button>
+
+      {isAdmin && (
+        <div className="wcf-roles">
+          <h3>Manage roles</h3>
+          {profiles.map((p) => (
+            <div key={p.id} className="wcf-roles-row">
+              <span>{p.display_name}{p.id === profile.id ? " (you)" : ""}</span>
+              <button className="wcf-ghost" onClick={() => onSetRole(p.id, p.role === "admin" ? "player" : "admin")}>
+                {p.role === "admin" ? "Remove admin" : "Make admin"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function GameCard({ game, booked, isAdmin, editing, onToggle, onEdit, onSave, onDelete }: GameCardProps) {
-  const spotsLeft = game.maxPlayers - game.players.length;
-  const full = spotsLeft <= 0;
-  const [form, setForm] = useState<Game>(game);
+function GameCard({
+  game,
+  myId,
+  isAdmin,
+  editing,
+  goals,
+  onBook,
+  onCancel,
+  onMarkPaid,
+  onConfirmPayment,
+  onEdit,
+  onSave,
+  onDelete,
+  onSaveGoals,
+}: {
+  game: GameRow;
+  myId: string;
+  isAdmin: boolean;
+  editing: boolean;
+  goals: GoalRow[];
+  onBook: () => void;
+  onCancel: (bookingId: string) => void;
+  onMarkPaid: (bookingId: string) => void;
+  onConfirmPayment: (bookingId: string) => void;
+  onEdit: () => void;
+  onSave: (patch: Partial<GameRow>) => void;
+  onDelete: () => void;
+  onSaveGoals: (entries: Record<string, number>) => void;
+}) {
+  const [form, setForm] = useState<GameRow>(game);
+  const [goalDraft, setGoalDraft] = useState<Record<string, number>>({});
 
+  useEffect(() => setForm(game), [game, editing]);
   useEffect(() => {
-    setForm(game);
-  }, [game, editing]);
+    const seeded: Record<string, number> = {};
+    goals.forEach((g) => (seeded[g.player_id] = g.goals));
+    setGoalDraft(seeded);
+  }, [goals, editing]);
+
+  const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const waitingList = game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const myBooking = game.bookings.find((b) => b.player_id === myId);
+  const full = confirmed.length >= game.max_players;
+  const spotsLeft = Math.max(0, game.max_players - confirmed.length);
 
   return (
-    <article className={"wcf-card " + (booked ? "in" : "")}> 
+    <article className={"wcf-card " + (myBooking ? "in" : "")}>
       <div className="wcf-card-top">
         <div className="wcf-kick">
           <span className="wcf-kick-time">{game.kickoff}</span>
@@ -338,26 +684,52 @@ function GameCard({ game, booked, isAdmin, editing, onToggle, onEdit, onSave, on
           <div className="wcf-pitch">{game.pitch} · £{game.price}</div>
         </div>
         <div className={"wcf-count " + (full ? "full" : "")}>
-          <span className="wcf-count-n">{game.players.length}/{game.maxPlayers}</span>
+          <span className="wcf-count-n">{confirmed.length}/{game.max_players}</span>
           <span className="wcf-count-l">{full ? "Full" : `${spotsLeft} left`}</span>
         </div>
       </div>
 
       <div className="wcf-sheet">
-        {Array.from({ length: game.maxPlayers }).map((_, i) => {
-          const p = game.players[i];
+        {Array.from({ length: game.max_players }).map((_, i) => {
+          const b = confirmed[i];
           return (
-            <div key={i} className={"wcf-slot " + (p ? "taken" : "")}> 
+            <div key={i} className={"wcf-slot " + (b ? "taken" : "")}>
               <span className="wcf-slot-num">{i + 1}</span>
-              <span className="wcf-slot-name">{p ? p.name : "—"}</span>
+              <span className="wcf-slot-name">{b ? b.player.display_name : "—"}</span>
+              {b && <span className={"wcf-pay-dot " + b.status} title={b.status} />}
             </div>
           );
         })}
       </div>
 
+      {waitingList.length > 0 && (
+        <div className="wcf-waiting">
+          <div className="wcf-waiting-label">Waiting list</div>
+          {waitingList.map((b, i) => (
+            <div key={b.id} className="wcf-waiting-row">
+              <span>{i + 1}. {b.player.display_name}</span>
+              {b.player_id === myId && <span className="wcf-waiting-you">you</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {myBooking && !myBooking.waiting && (
+        <div className={"wcf-payment " + myBooking.status}>
+          {myBooking.status === "unpaid" && (
+            <>
+              <p>Secure your spot — send £{game.price} to <strong>{REVOLUT_HANDLE}</strong> on Revolut.</p>
+              <button onClick={() => onMarkPaid(myBooking.id)}>I&apos;ve paid</button>
+            </>
+          )}
+          {myBooking.status === "pending" && <p>Payment marked as sent — waiting on admin to confirm.</p>}
+          {myBooking.status === "confirmed" && <p>✓ Payment confirmed</p>}
+        </div>
+      )}
+
       <div className="wcf-card-actions">
-        <button className={"wcf-book " + (booked ? "cancel" : "")} onClick={onToggle} disabled={full && !booked}>
-          {booked ? "Give up spot" : full ? "Full" : "Grab a spot"}
+        <button className={"wcf-book " + (myBooking ? "cancel" : "")} onClick={() => (myBooking ? onCancel(myBooking.id) : onBook())}>
+          {myBooking ? (myBooking.waiting ? "Leave waiting list" : "Give up spot") : full ? "Join waiting list" : "Grab a spot"}
         </button>
         {isAdmin && (
           <div className="wcf-admin-actions">
@@ -394,14 +766,40 @@ function GameCard({ game, booked, isAdmin, editing, onToggle, onEdit, onSave, on
             <input
               type="number"
               max={MAX_SPOTS}
-              value={form.maxPlayers}
-              onChange={(e) => setForm({
-                ...form,
-                maxPlayers: Math.min(MAX_SPOTS, Number(e.target.value) || 0),
-              })}
+              value={form.max_players}
+              onChange={(e) => setForm({ ...form, max_players: Math.min(MAX_SPOTS, Number(e.target.value) || 0) })}
             />
           </label>
           <button className="wcf-save" onClick={() => onSave(form)}>Save changes</button>
+
+          {confirmed.length > 0 && (
+            <>
+              <h4 className="wcf-edit-subhead">Payments</h4>
+              {confirmed.map((b) => (
+                <div key={b.id} className="wcf-payment-row">
+                  <span>{b.player.display_name}</span>
+                  <span className={"wcf-pay-badge " + b.status}>{b.status}</span>
+                  {b.status !== "confirmed" && (
+                    <button className="wcf-ghost" onClick={() => onConfirmPayment(b.id)}>Confirm</button>
+                  )}
+                </div>
+              ))}
+
+              <h4 className="wcf-edit-subhead">Log goals</h4>
+              {confirmed.map((b) => (
+                <label key={b.id} className="wcf-goal-row">
+                  {b.player.display_name}
+                  <input
+                    type="number"
+                    min={0}
+                    value={goalDraft[b.player_id] ?? 0}
+                    onChange={(e) => setGoalDraft((g) => ({ ...g, [b.player_id]: Number(e.target.value) || 0 }))}
+                  />
+                </label>
+              ))}
+              <button className="wcf-save" onClick={() => onSaveGoals(goalDraft)}>Save goals</button>
+            </>
+          )}
         </div>
       )}
     </article>
@@ -412,7 +810,7 @@ const css = `
 .wcf-root{
   --bg:#0A1A34; --panel:#0F244A; --panel2:#15315F;
   --line:rgba(200,218,245,.13); --white:#EEF4FC; --dim:#8FA6C8;
-  --red:#E42A36; --red-hi:#F53A46; --blue:#2E74CC; --green:#33A957;
+  --red:#E42A36; --red-hi:#F53A46; --blue:#2E74CC; --green:#33A957; --amber:#E0A733;
   --mono:ui-monospace,"SF Mono","Roboto Mono",Menlo,monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   max-width:520px;margin:0 auto;min-height:100vh;background:var(--bg);
@@ -421,6 +819,19 @@ const css = `
 }
 .wcf-root *{box-sizing:border-box}
 .wcf-root path{stroke-linecap:round}
+
+.wcf-splash{flex:1;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.wcf-splash .wcf-logo.big{width:96px;height:96px;border-radius:24px}
+
+.wcf-signin{flex:1;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:24px;text-align:center}
+.wcf-logo.big{width:96px;height:96px;border-radius:24px;margin-bottom:6px}
+.wcf-signin .wcf-wordmark{font-size:30px;margin-top:6px}
+.wcf-signin-form{display:flex;flex-direction:column;gap:10px;width:100%;max-width:280px;margin-top:24px}
+.wcf-signin-form input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:12px;border-radius:10px;font-size:14px;font-family:var(--sans)}
+.wcf-signin-form button{background:var(--red);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:800;cursor:pointer}
+.wcf-signin-form button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
+.wcf-signin-error{color:var(--red-hi);font-size:12px;margin:0}
+.wcf-signin-sent{color:var(--dim);font-size:14px;max-width:280px;margin-top:24px;line-height:1.5}
 
 .wcf-top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
   padding:14px 16px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
@@ -433,18 +844,18 @@ const css = `
 .wcf-wordmark-sub{font-weight:800;font-size:10px;letter-spacing:2.5px;color:var(--red-hi);margin-top:3px}
 .wcf-role{display:flex;align-items:center;gap:7px;background:transparent;border:1px solid var(--line);
   color:var(--dim);padding:8px 13px;border-radius:999px;font-size:12px;font-weight:800;cursor:pointer;
-  font-family:var(--mono);letter-spacing:.5px;transition:.15s}
-.wcf-role .dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
-.wcf-role.on{color:#fff;background:var(--red);border-color:var(--red)}
-.wcf-role.on .dot{background:#fff}
+  font-family:var(--mono);letter-spacing:.5px;transition:.15s;max-width:140px}
+.wcf-role span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-role .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:0 0 auto}
+.wcf-role.admin .dot{background:var(--green)}
+.wcf-role.on{color:#fff;border-color:var(--red)}
 
 .wcf-main{flex:1;padding:14px 14px 92px;overflow-y:auto}
 .wcf-heading{display:flex;align-items:center;justify-content:space-between;margin:4px 2px 14px}
 .wcf-heading h2{margin:0;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim)}
 .wcf-addbtn{background:var(--red);color:#fff;border:none;padding:7px 13px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer}
 .wcf-empty{color:var(--dim);text-align:center;padding:40px 0;font-size:14px}
-.wcf-add{width:100%;background:transparent;border:1px dashed var(--line);color:var(--red-hi);
-  padding:12px;border-radius:12px;font-weight:800;cursor:pointer;margin-bottom:14px;font-size:13px}
+.wcf-empty.small{padding:8px 0;font-size:12px}
 
 .wcf-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:14px;position:relative;overflow:hidden}
 .wcf-card.in{border-color:rgba(51,169,87,.5)}
@@ -465,15 +876,29 @@ const css = `
   background:var(--bg);border-radius:10px;border:1px solid var(--line)}
 .wcf-slot{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px}
 .wcf-slot-num{font-family:var(--mono);color:var(--dim);width:20px;text-align:center;font-size:11px;border:1px solid var(--line);border-radius:4px;padding:1px 0}
-.wcf-slot-name{color:var(--dim)}
+.wcf-slot-name{color:var(--dim);flex:1}
 .wcf-slot.taken .wcf-slot-name{color:var(--white)}
 .wcf-slot.taken .wcf-slot-num{color:var(--green);border-color:rgba(51,169,87,.5)}
+.wcf-pay-dot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex:0 0 auto}
+.wcf-pay-dot.pending{background:var(--amber)}
+.wcf-pay-dot.confirmed{background:var(--green)}
+
+.wcf-waiting{margin:0 0 14px;padding:10px 12px;background:rgba(224,167,51,.08);border:1px dashed rgba(224,167,51,.4);border-radius:10px}
+.wcf-waiting-label{font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--amber);margin-bottom:6px}
+.wcf-waiting-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--dim);padding:2px 0}
+.wcf-waiting-you{color:var(--amber);font-weight:700;font-size:10px;text-transform:uppercase}
+
+.wcf-payment{margin:0 0 14px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;background:var(--panel2);border:1px solid var(--line)}
+.wcf-payment p{margin:0 0 8px}
+.wcf-payment.confirmed{border-color:rgba(51,169,87,.5)}
+.wcf-payment.confirmed p{margin:0;color:var(--green);font-weight:700}
+.wcf-payment.pending p{margin:0;color:var(--amber)}
+.wcf-payment button{background:var(--red);color:#fff;border:none;padding:9px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer}
 
 .wcf-card-actions{display:flex;align-items:center;gap:10px}
 .wcf-book{flex:1;background:var(--red);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;letter-spacing:.4px;cursor:pointer;transition:.15s}
 .wcf-book:hover{background:var(--red-hi)}
 .wcf-book.cancel{background:transparent;color:var(--white);border:1px solid var(--line)}
-.wcf-book:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-admin-actions{display:flex;gap:6px}
 .wcf-ghost{background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px 12px;border-radius:10px;font-weight:700;font-size:12px;cursor:pointer}
 .wcf-ghost.danger:hover{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
@@ -482,11 +907,30 @@ const css = `
 .wcf-edit label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-edit input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans)}
 .wcf-save{grid-column:1/-1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
+.wcf-edit-subhead{grid-column:1/-1;margin:8px 0 0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.wcf-payment-row{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:13px;padding:4px 0}
+.wcf-payment-row span:first-child{flex:1}
+.wcf-pay-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:3px 7px;border-radius:999px;background:var(--panel2);color:var(--dim)}
+.wcf-pay-badge.pending{color:var(--amber)}
+.wcf-pay-badge.confirmed{color:var(--green)}
+.wcf-goal-row{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;text-transform:none;font-weight:400;color:var(--white)}
+.wcf-goal-row input{width:64px;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:7px;border-radius:8px;font-size:13px}
 
+.wcf-clip-form{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.wcf-clip-form input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
+.wcf-clip-form button{background:var(--red);color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;cursor:pointer}
+.wcf-clip-form button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-clip{display:flex;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:12px;align-items:center}
 .wcf-clip-thumb{width:74px;height:52px;border-radius:9px;flex:0 0 auto;background:linear-gradient(135deg,var(--panel2),var(--bg));display:grid;place-items:center;color:var(--red-hi);font-size:16px;border:1px solid var(--line)}
+.wcf-clip-body{flex:1;min-width:0}
 .wcf-clip-title{font-weight:800;font-size:14px}
 .wcf-clip-sub{font-size:11px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
+.wcf-clip-del{background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;flex:0 0 auto;line-height:1}
+.wcf-clip-del:hover{color:var(--red-hi)}
+
+.wcf-subtabs{display:flex;gap:8px;margin:0 2px 12px}
+.wcf-subtabs button{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--dim);padding:9px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer}
+.wcf-subtabs button.active{background:var(--red);border-color:var(--red);color:#fff}
 
 .wcf-board{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:8px 14px 14px;overflow:hidden}
 .wcf-board-note{font-size:12px;color:var(--dim);margin:10px 2px 12px;line-height:1.4}
@@ -506,10 +950,31 @@ const css = `
 .wcf-post{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:11px}
 .wcf-post-head{display:flex;align-items:center;gap:9px;margin-bottom:7px}
 .wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
-.wcf-post-by{font-weight:800;font-size:13px}
+.wcf-avatar.big{width:44px;height:44px;font-size:18px}
+.wcf-post-by{font-weight:800;font-size:13px;flex:1}
+.wcf-post-del{background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;line-height:1}
+.wcf-post-del:hover{color:var(--red-hi)}
 .wcf-post-text{font-size:14px;line-height:1.45;margin:0 0 9px;color:#dbe5f4}
 .wcf-like{background:transparent;border:1px solid var(--line);color:var(--dim);padding:5px 11px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--mono)}
-.wcf-like:hover{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
+.wcf-like:hover,.wcf-like.liked{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
+
+.wcf-account{display:flex;flex-direction:column;gap:16px}
+.wcf-account-card{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+.wcf-account-name{font-weight:800;font-size:15px}
+.wcf-account-email{font-size:12px;color:var(--dim);margin-top:2px}
+.wcf-role-badge{margin-left:auto;font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
+.wcf-role-badge.admin{color:var(--green);border:1px solid rgba(51,169,87,.4)}
+.wcf-account-field{display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.wcf-account-rename{display:flex;gap:8px}
+.wcf-account-rename input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:10px;border-radius:9px;font-size:13px;font-family:var(--sans);text-transform:none}
+.wcf-account-rename button{background:var(--red);color:#fff;border:none;padding:0 14px;border-radius:9px;font-weight:800;cursor:pointer}
+.wcf-account-rename button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
+.wcf-signout{background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px;border-radius:10px;font-weight:700;cursor:pointer}
+.wcf-signout:hover{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
+.wcf-roles{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.wcf-roles h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.wcf-roles-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;font-size:13px;border-bottom:1px solid var(--line)}
+.wcf-roles-row:last-child{border-bottom:none}
 
 .wcf-nav{position:sticky;bottom:0;z-index:5;display:flex;background:rgba(10,26,52,.95);backdrop-filter:blur(8px);
   border-top:1px solid var(--line);padding:8px 6px calc(8px + env(safe-area-inset-bottom,0px))}
