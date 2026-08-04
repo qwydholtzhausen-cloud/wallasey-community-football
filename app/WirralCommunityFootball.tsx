@@ -1,15 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
 
-// TODO: swap in the real Revolut handle/link before going live with payments.
-const REVOLUT_HANDLE = "@your-revolut-handle";
+// Payment provider is intentionally just config, not baked into booking logic
+// (statuses below), so swapping to Stripe/Open Banking later only touches this.
+const PAYMENT_PROVIDER_LABEL = "Revolut";
+const PAYMENT_LINK = process.env.NEXT_PUBLIC_PAYMENT_LINK || "";
 const MAX_SPOTS = 16;
 
 type Role = "player" | "admin";
 type PayStatus = "unpaid" | "pending" | "confirmed";
+
+const STATUS_LABEL: Record<PayStatus, string> = {
+  unpaid: "Payment Pending",
+  pending: "Awaiting Approval",
+  confirmed: "Confirmed",
+};
+
+function StatusBadge({ status }: { status: PayStatus }) {
+  return <span className={"wcf-status-badge " + status}>{STATUS_LABEL[status]}</span>;
+}
 
 interface Profile {
   id: string;
@@ -217,6 +229,8 @@ function App({ session }: { session: Session }) {
   const [posts, setPosts] = useState<PostRow[]>([]);
   const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
+  const prevStatusRef = useRef<Record<string, PayStatus>>({});
 
   const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "feed" | "account" | "past">("fixtures");
   const [tableView, setTableView] = useState<"attendance" | "goals">("attendance");
@@ -291,6 +305,26 @@ function App({ session }: { session: Session }) {
     };
   }, [loadGames]);
 
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    const next: Record<string, PayStatus> = {};
+    games.forEach((g) => {
+      const mine = g.bookings.find((b) => b.player_id === myId);
+      if (!mine) return;
+      next[g.id] = mine.status;
+      if (prev[g.id] && prev[g.id] !== "confirmed" && mine.status === "confirmed") {
+        setToast(`✓ Payment confirmed for ${g.venue} · ${fmtDate(g.date)}`);
+      }
+    });
+    prevStatusRef.current = next;
+  }, [games, myId]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   async function book(gameId: string) {
     await supabase.from("bookings").insert({ game_id: gameId, player_id: myId });
   }
@@ -302,6 +336,9 @@ function App({ session }: { session: Session }) {
   }
   async function confirmPayment(bookingId: string) {
     await supabase.from("bookings").update({ status: "confirmed" }).eq("id", bookingId);
+  }
+  async function rejectPayment(bookingId: string) {
+    await supabase.from("bookings").update({ status: "unpaid" }).eq("id", bookingId);
   }
 
   async function addGame() {
@@ -431,6 +468,7 @@ function App({ session }: { session: Session }) {
 
   return (
     <>
+      {toast && <div className="wcf-toast">{toast}</div>}
       <header className="wcf-top">
         <div className="wcf-brand">
           <span className="wcf-logo">
@@ -471,6 +509,7 @@ function App({ session }: { session: Session }) {
                 onCancel={(bookingId) => cancel(bookingId)}
                 onMarkPaid={(bookingId) => markPaid(bookingId)}
                 onConfirmPayment={(bookingId) => confirmPayment(bookingId)}
+                onRejectPayment={(bookingId) => rejectPayment(bookingId)}
                 onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
                 onSave={(patch) => saveGame(g.id, patch)}
                 onDelete={() => deleteGame(g.id)}
@@ -496,6 +535,7 @@ function App({ session }: { session: Session }) {
                 onCancel={(bookingId) => cancel(bookingId)}
                 onMarkPaid={(bookingId) => markPaid(bookingId)}
                 onConfirmPayment={(bookingId) => confirmPayment(bookingId)}
+                onRejectPayment={(bookingId) => rejectPayment(bookingId)}
                 onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
                 onSave={(patch) => saveGame(g.id, patch)}
                 onDelete={() => deleteGame(g.id)}
@@ -702,6 +742,7 @@ function GameCard({
   onCancel,
   onMarkPaid,
   onConfirmPayment,
+  onRejectPayment,
   onEdit,
   onSave,
   onDelete,
@@ -717,6 +758,7 @@ function GameCard({
   onCancel: (bookingId: string) => void;
   onMarkPaid: (bookingId: string) => void;
   onConfirmPayment: (bookingId: string) => void;
+  onRejectPayment: (bookingId: string) => void;
   onEdit: () => void;
   onSave: (patch: Partial<GameRow>) => void;
   onDelete: () => void;
@@ -792,20 +834,38 @@ function GameCard({
 
       {myBooking && !myBooking.waiting && (
         <div className={"wcf-payment " + myBooking.status}>
+          <div className="wcf-payment-head">
+            <span>
+              {myBooking.status === "unpaid" && "You're in! Your spot has been reserved."}
+              {myBooking.status === "pending" && "Thanks! Your payment has been submitted for verification."}
+              {myBooking.status === "confirmed" && "Payment confirmed."}
+            </span>
+            <StatusBadge status={myBooking.status} />
+          </div>
+          <p className="wcf-payment-fee">Match fee: £{game.price}</p>
           {myBooking.status === "unpaid" && (
-            <>
-              <p>Secure your spot — send £{game.price} to <strong>{REVOLUT_HANDLE}</strong> on Revolut.</p>
+            <div className="wcf-payment-actions">
+              {PAYMENT_LINK && (
+                <a className="wcf-pay-now" href={PAYMENT_LINK} target="_blank" rel="noreferrer">
+                  Pay Now with {PAYMENT_PROVIDER_LABEL}
+                </a>
+              )}
               <button onClick={() => onMarkPaid(myBooking.id)}>I&apos;ve paid</button>
-            </>
+            </div>
           )}
-          {myBooking.status === "pending" && <p>Payment marked as sent — waiting on admin to confirm.</p>}
-          {myBooking.status === "confirmed" && <p>✓ Payment confirmed</p>}
+          {myBooking.status === "pending" && <p className="wcf-payment-note">An organiser will confirm it shortly.</p>}
         </div>
       )}
 
       <div className="wcf-card-actions">
         {!past && (
-          <button className={"wcf-book " + (myBooking ? "cancel" : "")} onClick={() => (myBooking ? onCancel(myBooking.id) : onBook())}>
+          <button
+            className={"wcf-book " + (myBooking ? "cancel" : "")}
+            onClick={() => {
+              if (!myBooking) return onBook();
+              if (confirm(myBooking.waiting ? "Leave the waiting list?" : "Give up your spot in this game?")) onCancel(myBooking.id);
+            }}
+          >
             {myBooking ? (myBooking.waiting ? "Leave waiting list" : "Give up spot") : full ? "Join waiting list" : "Grab a spot"}
           </button>
         )}
@@ -856,17 +916,20 @@ function GameCard({
               {confirmed.map((b) => (
                 <div key={b.id} className="wcf-payment-row">
                   <span>{b.player.display_name}</span>
-                  <span className={"wcf-pay-badge " + b.status}>{b.status}</span>
+                  <StatusBadge status={b.status} />
                   {b.status !== "confirmed" && (
-                    <button className="wcf-ghost" onClick={() => onConfirmPayment(b.id)}>Confirm</button>
+                    <button className="wcf-ghost" onClick={() => onConfirmPayment(b.id)}>Approve</button>
+                  )}
+                  {b.status === "pending" && (
+                    <button className="wcf-ghost" onClick={() => onRejectPayment(b.id)}>Reject</button>
                   )}
                   <button
                     className="wcf-ghost danger"
                     onClick={() => {
-                      if (confirm(`Remove ${b.player.display_name} from this game?`)) onCancel(b.id);
+                      if (confirm(`Remove ${b.player.display_name} from this game entirely? This frees their spot.`)) onCancel(b.id);
                     }}
                   >
-                    Decline
+                    Remove
                   </button>
                 </div>
               ))}
@@ -979,12 +1042,21 @@ const css = `
 .wcf-waiting-remove{background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer;flex:0 0 auto}
 .wcf-waiting-remove:hover{color:var(--red-hi)}
 
-.wcf-payment{margin:0 0 14px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;background:var(--panel2);border:1px solid var(--line)}
-.wcf-payment p{margin:0 0 8px}
+.wcf-payment{margin:0 0 14px;padding:12px;border-radius:10px;font-size:12px;line-height:1.5;background:var(--panel2);border:1px solid var(--line)}
+.wcf-payment-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;color:var(--white)}
+.wcf-payment-fee{margin:6px 0 10px;color:var(--dim);font-family:var(--mono)}
 .wcf-payment.confirmed{border-color:rgba(51,169,87,.5)}
-.wcf-payment.confirmed p{margin:0;color:var(--green);font-weight:700}
-.wcf-payment.pending p{margin:0;color:var(--amber)}
-.wcf-payment button{background:var(--red);color:#fff;border:none;padding:9px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer}
+.wcf-payment.pending .wcf-payment-note{margin:0;color:var(--amber)}
+.wcf-payment-actions{display:flex;gap:8px;flex-wrap:wrap}
+.wcf-payment-actions button,.wcf-pay-now{background:var(--red);color:#fff;border:none;padding:9px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center}
+.wcf-pay-now{background:var(--panel2);border:1px solid var(--line)}
+
+.wcf-status-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.3px;padding:3px 8px;border-radius:999px;background:var(--panel2);color:var(--dim);white-space:nowrap;flex:0 0 auto}
+.wcf-status-badge.unpaid{color:var(--dim);border:1px solid var(--line)}
+.wcf-status-badge.pending{color:var(--amber);border:1px solid rgba(224,167,51,.4)}
+.wcf-status-badge.confirmed{color:var(--green);border:1px solid rgba(51,169,87,.4)}
+
+.wcf-toast{position:sticky;top:0;z-index:6;background:var(--green);color:#04140a;font-weight:800;font-size:13px;text-align:center;padding:10px 14px}
 
 .wcf-card-actions{display:flex;align-items:center;gap:10px}
 .wcf-book{flex:1;background:var(--red);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;letter-spacing:.4px;cursor:pointer;transition:.15s}
@@ -1002,9 +1074,6 @@ const css = `
 .wcf-payment-row{grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;flex-wrap:wrap}
 .wcf-payment-row span:first-child{flex:1;min-width:80px}
 .wcf-payment-row .wcf-ghost{padding:7px 10px;font-size:11px}
-.wcf-pay-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:3px 7px;border-radius:999px;background:var(--panel2);color:var(--dim)}
-.wcf-pay-badge.pending{color:var(--amber)}
-.wcf-pay-badge.confirmed{color:var(--green)}
 .wcf-goal-row{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;text-transform:none;font-weight:400;color:var(--white)}
 .wcf-goal-row input{width:64px;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:7px;border-radius:8px;font-size:13px}
 
