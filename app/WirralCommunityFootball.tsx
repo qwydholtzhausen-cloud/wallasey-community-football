@@ -735,6 +735,16 @@ function GameCard({
             <div key={b.id} className="wcf-waiting-row">
               <span>{i + 1}. {b.player.display_name}</span>
               {b.player_id === myId && <span className="wcf-waiting-you">you</span>}
+              {isAdmin && editing && (
+                <button
+                  className="wcf-waiting-remove"
+                  onClick={() => {
+                    if (confirm(`Remove ${b.player.display_name} from the waiting list?`)) onCancel(b.id);
+                  }}
+                >
+                  Remove
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -808,6 +818,14 @@ function GameCard({
                   {b.status !== "confirmed" && (
                     <button className="wcf-ghost" onClick={() => onConfirmPayment(b.id)}>Confirm</button>
                   )}
+                  <button
+                    className="wcf-ghost danger"
+                    onClick={() => {
+                      if (confirm(`Remove ${b.player.display_name} from this game?`)) onCancel(b.id);
+                    }}
+                  >
+                    Decline
+                  </button>
                 </div>
               ))}
 
@@ -913,8 +931,11 @@ const css = `
 
 .wcf-waiting{margin:0 0 14px;padding:10px 12px;background:rgba(224,167,51,.08);border:1px dashed rgba(224,167,51,.4);border-radius:10px}
 .wcf-waiting-label{font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--amber);margin-bottom:6px}
-.wcf-waiting-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--dim);padding:2px 0}
+.wcf-waiting-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--dim);padding:2px 0}
+.wcf-waiting-row span:first-child{flex:1}
 .wcf-waiting-you{color:var(--amber);font-weight:700;font-size:10px;text-transform:uppercase}
+.wcf-waiting-remove{background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer;flex:0 0 auto}
+.wcf-waiting-remove:hover{color:var(--red-hi)}
 
 .wcf-payment{margin:0 0 14px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;background:var(--panel2);border:1px solid var(--line)}
 .wcf-payment p{margin:0 0 8px}
@@ -936,8 +957,9 @@ const css = `
 .wcf-edit input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans)}
 .wcf-save{grid-column:1/-1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
 .wcf-edit-subhead{grid-column:1/-1;margin:8px 0 0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
-.wcf-payment-row{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:13px;padding:4px 0}
-.wcf-payment-row span:first-child{flex:1}
+.wcf-payment-row{grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;flex-wrap:wrap}
+.wcf-payment-row span:first-child{flex:1;min-width:80px}
+.wcf-payment-row .wcf-ghost{padding:7px 10px;font-size:11px}
 .wcf-pay-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:3px 7px;border-radius:999px;background:var(--panel2);color:var(--dim)}
 .wcf-pay-badge.pending{color:var(--amber)}
 .wcf-pay-badge.confirmed{color:var(--green)}
