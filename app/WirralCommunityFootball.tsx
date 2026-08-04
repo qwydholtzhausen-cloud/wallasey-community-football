@@ -96,6 +96,13 @@ const Icon = {
       <path d="M4 5.5h16v11H9l-4 3.5v-3.5H4z" strokeLinejoin="round" />
     </svg>
   ),
+  history: (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 12a9 9 0 1 0 3-6.7" />
+      <path d="M3 4v4.5h4.5" />
+      <path d="M12 8v4.5l3 2" />
+    </svg>
+  ),
 };
 
 export default function WirralCommunityFootball() {
@@ -211,7 +218,7 @@ function App({ session }: { session: Session }) {
   const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "feed" | "account">("fixtures");
+  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "feed" | "account" | "past">("fixtures");
   const [tableView, setTableView] = useState<"attendance" | "goals">("attendance");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -391,11 +398,16 @@ function App({ session }: { session: Session }) {
       .sort((a, b) => b.count - a.count);
   }, [goalRows]);
 
+  const today = new Date().toISOString().slice(0, 10);
+  const upcomingGames = useMemo(() => games.filter((g) => g.date >= today).sort((a, b) => a.date.localeCompare(b.date)), [games, today]);
+  const pastGames = useMemo(() => games.filter((g) => g.date < today).sort((a, b) => b.date.localeCompare(a.date)), [games, today]);
+
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
     { k: "clips", label: "Clips", icon: Icon.play },
     { k: "table", label: "Table", icon: Icon.star },
     { k: "feed", label: "Feed", icon: Icon.chat },
+    ...(isAdmin ? [{ k: "past", label: "Past", icon: Icon.history } as const] : []),
   ] as const;
 
   const heading = {
@@ -404,6 +416,7 @@ function App({ session }: { session: Session }) {
     table: tableView === "attendance" ? "Attendance table" : "Goalscorers",
     feed: "Team feed",
     account: "Your account",
+    past: "Past fixtures",
   }[tab];
 
   if (loading || !myProfile) {
@@ -445,13 +458,38 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
-            {games.length === 0 && <p className="wcf-empty">No games on. {isAdmin ? "Add one above." : "Check back soon."}</p>}
-            {games.map((g) => (
+            {upcomingGames.length === 0 && <p className="wcf-empty">No games on. {isAdmin ? "Add one above." : "Check back soon."}</p>}
+            {upcomingGames.map((g) => (
               <GameCard
                 key={g.id}
                 game={g}
                 myId={myId}
                 isAdmin={isAdmin}
+                editing={editingId === g.id}
+                goals={goalRows.filter((r) => r.game_id === g.id)}
+                onBook={() => book(g.id)}
+                onCancel={(bookingId) => cancel(bookingId)}
+                onMarkPaid={(bookingId) => markPaid(bookingId)}
+                onConfirmPayment={(bookingId) => confirmPayment(bookingId)}
+                onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
+                onSave={(patch) => saveGame(g.id, patch)}
+                onDelete={() => deleteGame(g.id)}
+                onSaveGoals={(entries) => saveGoals(g.id, entries)}
+              />
+            ))}
+          </>
+        )}
+
+        {tab === "past" && isAdmin && (
+          <>
+            {pastGames.length === 0 && <p className="wcf-empty">No past fixtures yet.</p>}
+            {pastGames.map((g) => (
+              <GameCard
+                key={g.id}
+                game={g}
+                myId={myId}
+                isAdmin={isAdmin}
+                past
                 editing={editingId === g.id}
                 goals={goalRows.filter((r) => r.game_id === g.id)}
                 onBook={() => book(g.id)}
@@ -657,6 +695,7 @@ function GameCard({
   game,
   myId,
   isAdmin,
+  past = false,
   editing,
   goals,
   onBook,
@@ -671,6 +710,7 @@ function GameCard({
   game: GameRow;
   myId: string;
   isAdmin: boolean;
+  past?: boolean;
   editing: boolean;
   goals: GoalRow[];
   onBook: () => void;
@@ -764,9 +804,11 @@ function GameCard({
       )}
 
       <div className="wcf-card-actions">
-        <button className={"wcf-book " + (myBooking ? "cancel" : "")} onClick={() => (myBooking ? onCancel(myBooking.id) : onBook())}>
-          {myBooking ? (myBooking.waiting ? "Leave waiting list" : "Give up spot") : full ? "Join waiting list" : "Grab a spot"}
-        </button>
+        {!past && (
+          <button className={"wcf-book " + (myBooking ? "cancel" : "")} onClick={() => (myBooking ? onCancel(myBooking.id) : onBook())}>
+            {myBooking ? (myBooking.waiting ? "Leave waiting list" : "Give up spot") : full ? "Join waiting list" : "Grab a spot"}
+          </button>
+        )}
         {isAdmin && (
           <div className="wcf-admin-actions">
             <button className="wcf-ghost" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
