@@ -546,7 +546,13 @@ function App({ session }: { session: Session }) {
                   <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"}</div>
                 </div>
                 {(c.submitted_by === myId || isAdmin) && (
-                  <button className="wcf-clip-del" onClick={() => deleteClip(c.id)} aria-label="Delete clip">×</button>
+                  <button
+                    className="wcf-clip-del"
+                    onClick={() => { if (confirm(`Delete "${c.title}"?`)) deleteClip(c.id); }}
+                    aria-label="Delete clip"
+                  >
+                    ×
+                  </button>
                 )}
               </article>
             ))}
@@ -703,7 +709,19 @@ function AccountPanel({
           {profiles.map((p) => (
             <div key={p.id} className="wcf-roles-row">
               <span>{p.display_name}{p.id === profile.id ? " (you)" : ""}</span>
-              <button className="wcf-ghost" onClick={() => onSetRole(p.id, p.role === "admin" ? "player" : "admin")}>
+              <button
+                className="wcf-ghost"
+                onClick={() => {
+                  if (p.role === "admin") {
+                    const msg = p.id === profile.id
+                      ? "Remove your own admin access? You'll need another admin (or the SQL Editor) to get it back."
+                      : `Remove admin access from ${p.display_name}?`;
+                    if (confirm(msg)) onSetRole(p.id, "player");
+                  } else {
+                    onSetRole(p.id, "admin");
+                  }
+                }}
+              >
                 {p.role === "admin" ? "Remove admin" : "Make admin"}
               </button>
             </div>
@@ -855,7 +873,14 @@ function GameCard({
         {isAdmin && (
           <div className="wcf-admin-actions">
             <button className="wcf-ghost" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
-            <button className="wcf-ghost danger" onClick={onDelete}>Delete</button>
+            <button
+              className="wcf-ghost danger"
+              onClick={() => {
+                if (confirm(`Delete ${game.venue} on ${fmtDate(game.date)}? This removes the fixture and everyone's bookings.`)) onDelete();
+              }}
+            >
+              Delete
+            </button>
           </div>
         )}
       </div>
