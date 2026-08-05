@@ -484,31 +484,24 @@ function App({ session }: { session: Session }) {
     await supabase.auth.signOut();
   }
 
-  const attendanceLeaderboard = useMemo(() => {
-    const tally: Record<string, { name: string; count: number }> = {};
+  const playerStats = useMemo(() => {
+    const tally: Record<string, { name: string; apps: number; goals: number }> = {};
     games.forEach((g) =>
       g.bookings
         .filter((b) => !b.waiting)
         .forEach((b) => {
-          const cur = tally[b.player_id] ?? { name: b.player.display_name, count: 0 };
-          cur.count += 1;
+          const cur = tally[b.player_id] ?? { name: b.player.display_name, apps: 0, goals: 0 };
+          cur.apps += 1;
           tally[b.player_id] = cur;
         })
     );
-    return Object.values(tally).sort((a, b) => b.count - a.count);
-  }, [games]);
-
-  const goalsLeaderboard = useMemo(() => {
-    const tally: Record<string, { name: string; count: number }> = {};
     goalRows.forEach((r) => {
-      const cur = tally[r.player_id] ?? { name: r.player.display_name, count: 0 };
-      cur.count += r.goals;
+      const cur = tally[r.player_id] ?? { name: r.player.display_name, apps: 0, goals: 0 };
+      cur.goals += r.goals;
       tally[r.player_id] = cur;
     });
-    return Object.values(tally)
-      .filter((r) => r.count > 0)
-      .sort((a, b) => b.count - a.count);
-  }, [goalRows]);
+    return Object.values(tally).sort((a, b) => b.apps - a.apps);
+  }, [games, goalRows]);
 
   const today = new Date().toISOString().slice(0, 10);
   const upcomingGames = useMemo(() => games.filter((g) => g.date >= today).sort((a, b) => a.date.localeCompare(b.date)), [games, today]);
@@ -766,30 +759,23 @@ function App({ session }: { session: Session }) {
             )}
 
             {resultsView === "table" && (
-              <>
-                <div className="wcf-board">
-                  <p className="wcf-board-note">Confirmed spots across upcoming fixtures. Top attendees get first dibs.</p>
-                  {attendanceLeaderboard.map((row, i) => (
-                    <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
-                      <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
-                      <span className="wcf-board-name">{row.name}</span>
-                      <span className="wcf-board-count">{row.count}</span>
-                    </div>
-                  ))}
+              <div className="wcf-board">
+                <p className="wcf-board-note">Confirmed spots across upcoming fixtures, plus goals logged by admins. Sorted by appearances.</p>
+                <div className="wcf-board-row wcf-board-header">
+                  <span className="wcf-rank" />
+                  <span className="wcf-board-name">Player</span>
+                  <span className="wcf-board-count">Apps</span>
+                  <span className="wcf-board-count">Goals</span>
                 </div>
-
-                <div className="wcf-board">
-                  <p className="wcf-board-note">Goals logged by admins after each game.</p>
-                  {goalsLeaderboard.length === 0 && <p className="wcf-empty">No goals logged yet.</p>}
-                  {goalsLeaderboard.map((row, i) => (
-                    <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
-                      <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
-                      <span className="wcf-board-name">{row.name}</span>
-                      <span className="wcf-board-count">{row.count}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
+                {playerStats.map((row, i) => (
+                  <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
+                    <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
+                    <span className="wcf-board-name">{row.name}</span>
+                    <span className="wcf-board-count">{row.apps}</span>
+                    <span className="wcf-board-count">{row.goals || "—"}</span>
+                  </div>
+                ))}
+              </div>
             )}
 
             {resultsView === "fixtures" && (
@@ -1530,12 +1516,13 @@ const css = `
 .wcf-board-row{display:flex;align-items:center;gap:12px;padding:11px 8px;border-radius:9px;border-bottom:1px solid var(--line)}
 .wcf-board-row:last-child{border-bottom:none}
 .wcf-board-row.lead{background:rgba(51,169,87,.12);border-bottom:none;margin-bottom:2px}
+.wcf-board-header{padding:0 8px 8px;border-bottom:1px solid var(--line)}
+.wcf-board-header .wcf-board-name,.wcf-board-header .wcf-board-count{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);font-weight:700;font-family:var(--sans)}
 .wcf-rank{font-family:var(--mono);font-weight:700;color:var(--dim);width:26px;text-align:center;display:grid;place-items:center}
 .wcf-rank-star{color:var(--green);display:grid;place-items:center}
 .wcf-rank-star svg{width:20px;height:20px;fill:var(--green);stroke:var(--green)}
 .wcf-board-name{flex:1;font-weight:800;font-size:14px}
-.wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue)}
-.wcf-board+.wcf-board{margin-top:14px}
+.wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue);width:44px;text-align:right}
 
 .wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
