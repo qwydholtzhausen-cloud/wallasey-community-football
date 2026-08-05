@@ -6,7 +6,7 @@ import { supabase } from "../lib/supabase/client";
 
 // Payment provider is intentionally just config, not baked into booking logic
 // (statuses below), so swapping to Stripe/Open Banking later only touches this.
-const PAYMENT_PROVIDER_LABEL = "Revolut";
+const PAYMENT_PROVIDER_LABEL = "Monzo";
 const PAYMENT_LINK = process.env.NEXT_PUBLIC_PAYMENT_LINK || "";
 const MAX_SPOTS = 16;
 
@@ -223,8 +223,16 @@ function App({ session }: { session: Session }) {
   const [clips, setClips] = useState<ClipRow[]>([]);
   const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
+  const prevWaitingRef = useRef<Record<string, boolean>>({});
+
+  function notifyError(message: string) {
+    setToast({ kind: "error", text: message });
+  }
+  function notifySuccess(text: string) {
+    setToast({ kind: "success", text });
+  }
 
   const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "lineup" | "account" | "admin">("fixtures");
   const [tableView, setTableView] = useState<"attendance" | "goals">("attendance");
@@ -293,17 +301,24 @@ function App({ session }: { session: Session }) {
   }, [loadGames]);
 
   useEffect(() => {
-    const prev = prevStatusRef.current;
-    const next: Record<string, PayStatus> = {};
+    const prevStatus = prevStatusRef.current;
+    const prevWaiting = prevWaitingRef.current;
+    const nextStatus: Record<string, PayStatus> = {};
+    const nextWaiting: Record<string, boolean> = {};
     games.forEach((g) => {
       const mine = g.bookings.find((b) => b.player_id === myId);
       if (!mine) return;
-      next[g.id] = mine.status;
-      if (prev[g.id] && prev[g.id] !== "confirmed" && mine.status === "confirmed") {
-        setToast(`✓ Payment confirmed for ${g.venue} · ${fmtDate(g.date)}`);
+      nextStatus[g.id] = mine.status;
+      nextWaiting[g.id] = mine.waiting;
+      if (prevStatus[g.id] && prevStatus[g.id] !== "confirmed" && mine.status === "confirmed") {
+        notifySuccess(`✓ Payment confirmed for ${g.venue} · ${fmtDate(g.date)}`);
+      }
+      if (prevWaiting[g.id] === true && mine.waiting === false) {
+        notifySuccess(`🎉 A spot opened up — you're in for ${g.venue} · ${fmtDate(g.date)}!`);
       }
     });
-    prevStatusRef.current = next;
+    prevStatusRef.current = nextStatus;
+    prevWaitingRef.current = nextWaiting;
   }, [games, myId]);
 
   useEffect(() => {
@@ -313,68 +328,81 @@ function App({ session }: { session: Session }) {
   }, [toast]);
 
   async function book(gameId: string) {
-    await supabase.from("bookings").insert({ game_id: gameId, player_id: myId });
+    const { error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: myId });
+    if (error) notifyError(error.message);
   }
   async function cancel(bookingId: string) {
-    await supabase.from("bookings").delete().eq("id", bookingId);
+    const { error } = await supabase.from("bookings").delete().eq("id", bookingId);
+    if (error) notifyError(error.message);
   }
   async function markPaid(bookingId: string) {
-    await supabase.from("bookings").update({ status: "pending" }).eq("id", bookingId);
+    const { error } = await supabase.from("bookings").update({ status: "pending" }).eq("id", bookingId);
+    if (error) notifyError(error.message);
   }
   async function setBookingStatus(bookingId: string, status: PayStatus) {
-    await supabase.from("bookings").update({ status }).eq("id", bookingId);
+    const { error } = await supabase.from("bookings").update({ status }).eq("id", bookingId);
+    if (error) notifyError(error.message);
   }
 
   async function addGame() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("games")
       .insert({ date: defaultNewGameDate(), kickoff: "19:00", venue: "New venue", pitch: "8-a-side", price: 6, max_players: MAX_SPOTS })
       .select()
       .single();
+    if (error) return notifyError(error.message);
     await loadGames();
     if (data) setEditingId(data.id);
   }
   async function saveGame(id: string, patch: Partial<GameRow>) {
     const { bookings: _bookings, ...rest } = patch as GameRow;
-    await supabase.from("games").update(rest).eq("id", id);
+    const { error } = await supabase.from("games").update(rest).eq("id", id);
+    if (error) return notifyError(error.message);
     await loadGames();
     setEditingId(null);
   }
   async function deleteGame(id: string) {
-    await supabase.from("games").delete().eq("id", id);
+    const { error } = await supabase.from("games").delete().eq("id", id);
+    if (error) return notifyError(error.message);
     await loadGames();
   }
   async function adjustGoal(gameId: string, playerId: string, delta: number) {
     const current = goalRows.find((g) => g.game_id === gameId && g.player_id === playerId)?.goals ?? 0;
     const next = Math.max(0, current + delta);
-    await supabase.from("game_stats").upsert({ game_id: gameId, player_id: playerId, goals: next }, { onConflict: "game_id,player_id" });
+    const { error } = await supabase.from("game_stats").upsert({ game_id: gameId, player_id: playerId, goals: next }, { onConflict: "game_id,player_id" });
+    if (error) return notifyError(error.message);
     await loadGoals();
   }
 
   async function addClip(e: React.FormEvent) {
     e.preventDefault();
     if (!clipTitle.trim()) return;
-    await supabase.from("clips").insert({ title: clipTitle.trim(), video_url: clipUrl.trim() || null, submitted_by: myId });
+    const { error } = await supabase.from("clips").insert({ title: clipTitle.trim(), video_url: clipUrl.trim() || null, submitted_by: myId });
+    if (error) return notifyError(error.message);
     setClipTitle("");
     setClipUrl("");
     await loadClips();
   }
   async function deleteClip(id: string) {
-    await supabase.from("clips").delete().eq("id", id);
+    const { error } = await supabase.from("clips").delete().eq("id", id);
+    if (error) return notifyError(error.message);
     await loadClips();
   }
 
   async function setTeam(bookingId: string, team: Team | null) {
-    await supabase.from("bookings").update({ team }).eq("id", bookingId);
+    const { error } = await supabase.from("bookings").update({ team }).eq("id", bookingId);
+    if (error) notifyError(error.message);
   }
 
   async function renameSelf(name: string) {
     if (!name.trim()) return;
-    await supabase.from("profiles").update({ display_name: name.trim() }).eq("id", myId);
+    const { error } = await supabase.from("profiles").update({ display_name: name.trim() }).eq("id", myId);
+    if (error) return notifyError(error.message);
     await Promise.all([loadProfile(), loadProfiles()]);
   }
   async function setRole(id: string, role: Role) {
-    await supabase.from("profiles").update({ role }).eq("id", id);
+    const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
+    if (error) return notifyError(error.message);
     await loadProfiles();
   }
   async function deleteProfile(id: string, name: string) {
@@ -386,7 +414,7 @@ function App({ session }: { session: Session }) {
     });
     if (!res.ok) {
       const { error } = await res.json().catch(() => ({ error: "Something went wrong" }));
-      alert(error || "Couldn't delete that account");
+      notifyError(error || "Couldn't delete that account");
       return;
     }
     await Promise.all([loadProfiles(), loadGames()]);
@@ -459,7 +487,7 @@ function App({ session }: { session: Session }) {
 
   return (
     <>
-      {toast && <div className="wcf-toast">{toast}</div>}
+      {toast && <div className={"wcf-toast " + toast.kind}>{toast.text}</div>}
       <header className="wcf-top">
         <div className="wcf-brand">
           <span className="wcf-logo">
@@ -1157,6 +1185,7 @@ const css = `
 .wcf-status-badge.confirmed{color:var(--green);border:1px solid rgba(51,169,87,.4)}
 
 .wcf-toast{position:sticky;top:0;z-index:6;background:var(--green);color:#04140a;font-weight:800;font-size:13px;text-align:center;padding:10px 14px}
+.wcf-toast.error{background:var(--red);color:#fff}
 
 .wcf-card-actions{display:flex;align-items:center;gap:10px}
 .wcf-book{flex:1;background:var(--red);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;letter-spacing:.4px;cursor:pointer;transition:.15s}
