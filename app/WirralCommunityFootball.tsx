@@ -593,7 +593,9 @@ function App({ session }: { session: Session }) {
       <main className="wcf-main">
         <div className="wcf-heading">
           <h2>{heading}</h2>
-          {tab === "fixtures" && isAdmin && <button className="wcf-addbtn" onClick={addGame}>+ Fixture</button>}
+          {tab === "fixtures" && isAdmin && (
+            <button className="wcf-addbtn" onClick={() => { if (confirm("Add a new fixture?")) addGame(); }}>+ Fixture</button>
+          )}
         </div>
 
         {tab === "fixtures" && (
