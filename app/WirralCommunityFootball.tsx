@@ -266,8 +266,8 @@ function App({ session }: { session: Session }) {
   }
 
   const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "lineup" | "results" | "account" | "admin">("fixtures");
+  const [resultsView, setResultsView] = useState<"season" | "fixtures">("season");
   const [resultsMonth, setResultsMonth] = useState<string>("all");
-  const [tableView, setTableView] = useState<"attendance" | "goals">("attendance");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
   const [clipTitle, setClipTitle] = useState("");
@@ -484,6 +484,14 @@ function App({ session }: { session: Session }) {
     await supabase.auth.signOut();
   }
 
+  const goalsByPlayerId = useMemo(() => {
+    const tally: Record<string, number> = {};
+    goalRows.forEach((r) => {
+      tally[r.player_id] = (tally[r.player_id] ?? 0) + r.goals;
+    });
+    return tally;
+  }, [goalRows]);
+
   const attendanceLeaderboard = useMemo(() => {
     const tally: Record<string, { name: string; count: number }> = {};
     games.forEach((g) =>
@@ -495,8 +503,10 @@ function App({ session }: { session: Session }) {
           tally[b.player_id] = cur;
         })
     );
-    return Object.values(tally).sort((a, b) => b.count - a.count);
-  }, [games]);
+    return Object.entries(tally)
+      .map(([playerId, row]) => ({ ...row, goals: goalsByPlayerId[playerId] ?? 0 }))
+      .sort((a, b) => b.count - a.count);
+  }, [games, goalsByPlayerId]);
 
   const goalsLeaderboard = useMemo(() => {
     const tally: Record<string, { name: string; count: number }> = {};
@@ -560,7 +570,7 @@ function App({ session }: { session: Session }) {
   const heading = {
     fixtures: "Upcoming fixtures",
     clips: "Match clips",
-    table: tableView === "attendance" ? "Attendance table" : "Goalscorers",
+    table: "Attendance",
     lineup: "Next game line-up",
     results: "Results",
     account: "Your account",
@@ -680,37 +690,22 @@ function App({ session }: { session: Session }) {
         )}
 
         {tab === "table" && (
-          <div>
-            <div className="wcf-subtabs">
-              <button className={tableView === "attendance" ? "active" : ""} onClick={() => setTableView("attendance")}>Attendance</button>
-              <button className={tableView === "goals" ? "active" : ""} onClick={() => setTableView("goals")}>Goalscorers</button>
+          <div className="wcf-board">
+            <p className="wcf-board-note">Confirmed spots across upcoming fixtures. Top attendees get first dibs — goals shown alongside for context.</p>
+            <div className="wcf-board-row wcf-board-header">
+              <span className="wcf-rank" />
+              <span className="wcf-board-name">Player</span>
+              <span className="wcf-board-count">Games</span>
+              <span className="wcf-board-count">Goals</span>
             </div>
-            <div className="wcf-board">
-              {tableView === "attendance" ? (
-                <>
-                  <p className="wcf-board-note">Confirmed spots across upcoming fixtures. Top attendees get first dibs.</p>
-                  {attendanceLeaderboard.map((row, i) => (
-                    <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
-                      <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
-                      <span className="wcf-board-name">{row.name}</span>
-                      <span className="wcf-board-count">{row.count}</span>
-                    </div>
-                  ))}
-                </>
-              ) : (
-                <>
-                  <p className="wcf-board-note">Goals logged by admins after each game.</p>
-                  {goalsLeaderboard.length === 0 && <p className="wcf-empty">No goals logged yet.</p>}
-                  {goalsLeaderboard.map((row, i) => (
-                    <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
-                      <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
-                      <span className="wcf-board-name">{row.name}</span>
-                      <span className="wcf-board-count">{row.count}</span>
-                    </div>
-                  ))}
-                </>
-              )}
-            </div>
+            {attendanceLeaderboard.map((row, i) => (
+              <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
+                <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
+                <span className="wcf-board-name">{row.name}</span>
+                <span className="wcf-board-count">{row.count}</span>
+                <span className="wcf-board-count dim">{row.goals || "—"}</span>
+              </div>
+            ))}
           </div>
         )}
 
@@ -767,69 +762,94 @@ function App({ session }: { session: Session }) {
 
         {tab === "results" && (
           <>
-            {clubSettings?.record_holder_name && (
-              <div className="wcf-shoutout">
-                🏆 Most goals in a game — <strong>{clubSettings.record_holder_name}</strong> ({clubSettings.record_goals})
-                {clubSettings.record_note ? ` · ${clubSettings.record_note}` : ""}
-              </div>
-            )}
+            <div className="wcf-subtabs">
+              <button className={resultsView === "season" ? "active" : ""} onClick={() => setResultsView("season")}>Season</button>
+              <button className={resultsView === "fixtures" ? "active" : ""} onClick={() => setResultsView("fixtures")}>Fixtures</button>
+            </div>
 
-            {(headToHead.white.played > 0 || headToHead.red.played > 0) && (
-              <div className="wcf-h2h">
-                <div className="wcf-h2h-title">{cs.team_white_name} v {cs.team_red_name}</div>
-                <div className="wcf-h2h-row wcf-h2h-header">
-                  <span>Team</span><span>P</span><span>W</span><span>D</span><span>L</span><span>Pts</span>
-                </div>
-                {([["white", headToHead.white, cs.team_white_name, cs.team_white_color], ["red", headToHead.red, cs.team_red_name, cs.team_red_color]] as const).map(
-                  ([key, row, name, color]) => (
-                    <div key={key} className="wcf-h2h-row">
-                      <span className="wcf-h2h-team"><span className="wcf-h2h-dot" style={{ background: color }} />{name}</span>
-                      <span>{row.played}</span><span>{row.won}</span><span>{row.drawn}</span><span>{row.lost}</span>
-                      <span className="wcf-h2h-pts">{row.points}</span>
-                    </div>
-                  )
+            {resultsView === "season" && (
+              <>
+                {clubSettings?.record_holder_name && (
+                  <div className="wcf-shoutout">
+                    🏆 Most goals in a game — <strong>{clubSettings.record_holder_name}</strong> ({clubSettings.record_goals})
+                    {clubSettings.record_note ? ` · ${clubSettings.record_note}` : ""}
+                  </div>
                 )}
-              </div>
-            )}
 
-            <select className="wcf-month-filter" value={resultsMonth} onChange={(e) => setResultsMonth(e.target.value)}>
-              <option value="all">All results</option>
-              {resultsMonths.map((m) => (
-                <option key={m} value={m}>
-                  {new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
-                </option>
-              ))}
-            </select>
-
-            {filteredResults.length === 0 && <p className="wcf-empty">No results yet.</p>}
-            {filteredResults.map((g) => {
-              const scorers = goalRows.filter((r) => r.game_id === g.id && r.goals > 0).sort((a, b) => b.goals - a.goals);
-              const hasScore = g.team_white_score != null && g.team_red_score != null;
-              return (
-                <article key={g.id} className="wcf-result">
-                  <div className="wcf-result-head">
-                    <div>
-                      <div className="wcf-venue">{g.venue}</div>
-                      <div className="wcf-pitch">{fmtDate(g.date)}</div>
+                {(headToHead.white.played > 0 || headToHead.red.played > 0) && (
+                  <div className="wcf-h2h">
+                    <div className="wcf-h2h-title">{cs.team_white_name} v {cs.team_red_name}</div>
+                    <div className="wcf-h2h-row wcf-h2h-header">
+                      <span>Team</span><span>P</span><span>W</span><span>D</span><span>L</span><span>Pts</span>
                     </div>
-                    {hasScore && (
-                      <div className="wcf-result-score">
-                        <span style={{ color: cs.team_white_color }}>{g.team_white_score}</span>
-                        <span className="wcf-result-dash">–</span>
-                        <span style={{ color: cs.team_red_color }}>{g.team_red_score}</span>
-                      </div>
+                    {([["white", headToHead.white, cs.team_white_name, cs.team_white_color], ["red", headToHead.red, cs.team_red_name, cs.team_red_color]] as const).map(
+                      ([key, row, name, color]) => (
+                        <div key={key} className="wcf-h2h-row">
+                          <span className="wcf-h2h-team"><span className="wcf-h2h-dot" style={{ background: color }} />{name}</span>
+                          <span>{row.played}</span><span>{row.won}</span><span>{row.drawn}</span><span>{row.lost}</span>
+                          <span className="wcf-h2h-pts">{row.points}</span>
+                        </div>
+                      )
                     )}
                   </div>
-                  {scorers.length > 0 && (
-                    <div className="wcf-result-scorers">
-                      {scorers.map((s) => (
-                        <span key={s.id} className="wcf-result-scorer">{s.player.display_name} {s.goals > 1 ? `×${s.goals}` : ""}</span>
-                      ))}
+                )}
+
+                <div className="wcf-board">
+                  <p className="wcf-board-note">Goals logged by admins after each game.</p>
+                  {goalsLeaderboard.length === 0 && <p className="wcf-empty">No goals logged yet.</p>}
+                  {goalsLeaderboard.map((row, i) => (
+                    <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
+                      <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
+                      <span className="wcf-board-name">{row.name}</span>
+                      <span className="wcf-board-count">{row.count}</span>
                     </div>
-                  )}
-                </article>
-              );
-            })}
+                  ))}
+                </div>
+              </>
+            )}
+
+            {resultsView === "fixtures" && (
+              <>
+                <select className="wcf-month-filter" value={resultsMonth} onChange={(e) => setResultsMonth(e.target.value)}>
+                  <option value="all">All results</option>
+                  {resultsMonths.map((m) => (
+                    <option key={m} value={m}>
+                      {new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
+                    </option>
+                  ))}
+                </select>
+
+                {filteredResults.length === 0 && <p className="wcf-empty">No results yet.</p>}
+                {filteredResults.map((g) => {
+                  const scorers = goalRows.filter((r) => r.game_id === g.id && r.goals > 0).sort((a, b) => b.goals - a.goals);
+                  const hasScore = g.team_white_score != null && g.team_red_score != null;
+                  return (
+                    <article key={g.id} className="wcf-result">
+                      <div className="wcf-result-head">
+                        <div>
+                          <div className="wcf-venue">{g.venue}</div>
+                          <div className="wcf-pitch">{fmtDate(g.date)}</div>
+                        </div>
+                        {hasScore && (
+                          <div className="wcf-result-score">
+                            <span style={{ color: cs.team_white_color }}>{g.team_white_score}</span>
+                            <span className="wcf-result-dash">–</span>
+                            <span style={{ color: cs.team_red_color }}>{g.team_red_score}</span>
+                          </div>
+                        )}
+                      </div>
+                      {scorers.length > 0 && (
+                        <div className="wcf-result-scorers">
+                          {scorers.map((s) => (
+                            <span key={s.id} className="wcf-result-scorer">{s.player.display_name} {s.goals > 1 ? `×${s.goals}` : ""}</span>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </>
+            )}
           </>
         )}
 
@@ -1526,11 +1546,14 @@ const css = `
 .wcf-board-row{display:flex;align-items:center;gap:12px;padding:11px 8px;border-radius:9px;border-bottom:1px solid var(--line)}
 .wcf-board-row:last-child{border-bottom:none}
 .wcf-board-row.lead{background:rgba(51,169,87,.12);border-bottom:none;margin-bottom:2px}
+.wcf-board-header{padding:0 8px 8px;border-bottom:1px solid var(--line)}
+.wcf-board-header .wcf-board-name,.wcf-board-header .wcf-board-count{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);font-weight:700;font-family:var(--sans)}
 .wcf-rank{font-family:var(--mono);font-weight:700;color:var(--dim);width:26px;text-align:center;display:grid;place-items:center}
 .wcf-rank-star{color:var(--green);display:grid;place-items:center}
 .wcf-rank-star svg{width:20px;height:20px;fill:var(--green);stroke:var(--green)}
 .wcf-board-name{flex:1;font-weight:800;font-size:14px}
-.wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue)}
+.wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue);width:40px;text-align:right}
+.wcf-board-count.dim{color:var(--dim)}
 
 .wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
