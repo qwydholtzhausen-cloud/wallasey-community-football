@@ -1451,10 +1451,12 @@ function GameCard({
 
       {waitingList.length > 0 && (
         <div className="wcf-waiting">
-          <button className="wcf-waiting-toggle" onClick={() => setShowWaiting((v) => !v)}>
+          <div className="wcf-waiting-summary">
             <span className="wcf-waiting-label">Waiting list · {waitingList.length}</span>
             {myWaitingPosition > 0 && <span className="wcf-waiting-you">You&apos;re #{myWaitingPosition}</span>}
-            <span className="wcf-waiting-chevron">{showWaiting ? "▲" : "▼"}</span>
+          </div>
+          <button className="wcf-waiting-toggle" onClick={() => setShowWaiting((v) => !v)}>
+            {showWaiting ? "Hide waiting list" : "View waiting list"}
           </button>
           {showWaiting && (
             <div className="wcf-waiting-list">
@@ -1656,12 +1658,12 @@ const css = `
 .wcf-pay-dot.pending{background:var(--amber)}
 .wcf-pay-dot.confirmed{background:var(--green)}
 
-.wcf-waiting{margin:0 0 14px;padding:2px 12px;background:rgba(224,167,51,.08);border:1px dashed rgba(224,167,51,.4);border-radius:10px}
-.wcf-waiting-toggle{width:100%;display:flex;align-items:center;gap:8px;background:none;border:none;padding:10px 0;cursor:pointer;text-align:left}
-.wcf-waiting-toggle:active{opacity:.7}
-.wcf-waiting-label{flex:1;font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--amber);text-decoration:underline;text-underline-offset:3px}
-.wcf-waiting-chevron{color:var(--amber);font-size:11px}
-.wcf-waiting-list{padding-bottom:8px}
+.wcf-waiting{margin:0 0 14px;padding:12px;background:rgba(224,167,51,.08);border:1px dashed rgba(224,167,51,.4);border-radius:10px}
+.wcf-waiting-summary{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.wcf-waiting-label{flex:1;font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--amber)}
+.wcf-waiting-toggle{width:100%;background:var(--amber);color:#2a1c00;border:none;padding:10px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer}
+.wcf-waiting-toggle:active{opacity:.8}
+.wcf-waiting-list{padding-top:10px}
 .wcf-waiting-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--dim);padding:3px 0}
 .wcf-waiting-row span:first-child{flex:1}
 .wcf-waiting-you{background:var(--amber);color:#2a1c00;font-weight:800;font-size:10px;text-transform:uppercase;padding:3px 8px;border-radius:999px;flex:0 0 auto}
