@@ -512,6 +512,16 @@ function App({ session }: { session: Session }) {
     [nextGame]
   );
 
+  const overdueBookings = useMemo(() => {
+    const rows: { booking: BookingRow; game: GameRow }[] = [];
+    pastGames.forEach((g) => {
+      g.bookings
+        .filter((b) => !b.waiting && b.status !== "confirmed")
+        .forEach((b) => rows.push({ booking: b, game: g }));
+    });
+    return rows.sort((a, b) => b.game.date.localeCompare(a.game.date));
+  }, [pastGames]);
+
   const resultsMonths = useMemo(() => {
     const set = new Set<string>();
     pastGames.forEach((g) => set.add(g.date.slice(0, 7)));
@@ -623,6 +633,7 @@ function App({ session }: { session: Session }) {
           <AdminConsole
             upcoming={upcomingGames}
             previous={pastGames}
+            overdue={overdueBookings}
             goalRows={goalRows}
             cs={cs}
             expandedId={expandedGameId}
@@ -1024,6 +1035,7 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
 function AdminConsole({
   upcoming,
   previous,
+  overdue,
   goalRows,
   cs,
   expandedId,
@@ -1036,6 +1048,7 @@ function AdminConsole({
 }: {
   upcoming: GameRow[];
   previous: GameRow[];
+  overdue: { booking: BookingRow; game: GameRow }[];
   goalRows: GoalRow[];
   cs: ClubSettings;
   expandedId: string | null;
@@ -1049,6 +1062,28 @@ function AdminConsole({
   const shared = { goalRows, cs, expandedId, onToggleExpand, onSetStatus, onAdjustGoal, onRemoveBooking, onDeleteGame, onSaveTeamScore };
   return (
     <>
+      <h3 className="wcf-admin-section-head">Overdue</h3>
+      {overdue.length === 0 && <p className="wcf-empty small">Nothing overdue — everyone's paid up.</p>}
+      {overdue.map(({ booking: b, game: g }) => (
+        <div key={b.id} className="wcf-overdue-row">
+          <div>
+            <div className="wcf-admin-player-name">{b.player.display_name}</div>
+            <div className="wcf-pitch">{g.venue} · {fmtDate(g.date)} · £{g.price}</div>
+          </div>
+          <div className="wcf-admin-status">
+            <StatusBadge status={b.status} />
+            <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Approve</button>
+          </div>
+          <button
+            className="wcf-admin-remove"
+            onClick={() => { if (confirm(`Remove ${b.player.display_name} from this game?`)) onRemoveBooking(b.id); }}
+            aria-label="Remove from game"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+
       <h3 className="wcf-admin-section-head">Upcoming</h3>
       {upcoming.length === 0 && <p className="wcf-empty small">No upcoming fixtures.</p>}
       {upcoming.map((g) => (
@@ -1472,6 +1507,8 @@ const css = `
 .wcf-save{grid-column:1/-1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
 .wcf-admin-section-head{margin:18px 2px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-admin-section-head:first-child{margin-top:4px}
+.wcf-overdue-row{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid rgba(228,42,54,.35);border-radius:12px;padding:11px 13px;margin-bottom:9px;flex-wrap:wrap}
+.wcf-overdue-row>div:first-child{flex:1;min-width:120px}
 .wcf-admin-game{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
 .wcf-admin-game-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;color:var(--white);padding:13px 14px;cursor:pointer;text-align:left}
 .wcf-admin-game-info{display:flex;flex-direction:column;gap:2px}
