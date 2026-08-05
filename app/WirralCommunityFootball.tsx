@@ -829,8 +829,10 @@ function App({ session }: { session: Session }) {
                     <div className="wcf-h2h-row wcf-h2h-header">
                       <span>Team</span><span>P</span><span>W</span><span>D</span><span>L</span><span>Pts</span>
                     </div>
-                    {([["white", headToHead.white, cs.team_white_name, cs.team_white_color], ["red", headToHead.red, cs.team_red_name, cs.team_red_color]] as const).map(
-                      ([key, row, name, color]) => (
+                    {([["white", headToHead.white, cs.team_white_name, cs.team_white_color], ["red", headToHead.red, cs.team_red_name, cs.team_red_color]] as const)
+                      .slice()
+                      .sort((a, b) => b[1].points - a[1].points)
+                      .map(([key, row, name, color]) => (
                         <div key={key} className="wcf-h2h-row">
                           <span className="wcf-h2h-team"><span className="wcf-h2h-dot" style={{ background: color }} />{name}</span>
                           <span>{row.played}</span><span>{row.won}</span><span>{row.drawn}</span><span>{row.lost}</span>
