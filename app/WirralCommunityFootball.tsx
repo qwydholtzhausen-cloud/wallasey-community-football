@@ -333,13 +333,33 @@ function App({ session }: { session: Session }) {
     if (data) setGoalRows(data as unknown as GoalRow[]);
   }, []);
 
+  const loadAll = useCallback(
+    () => Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadGoals(), loadClubSettings()]),
+    [loadProfile, loadProfiles, loadGames, loadClips, loadGoals, loadClubSettings]
+  );
+
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadGoals(), loadClubSettings()]);
+      await loadAll();
       setLoading(false);
     })();
-  }, [loadProfile, loadProfiles, loadGames, loadClips, loadGoals, loadClubSettings]);
+  }, [loadAll]);
+
+  // PWAs/mobile browsers often suspend the page in the background and just
+  // resume the same in-memory state when reopened, rather than reloading -
+  // so refetch whenever the app actually comes back into view.
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState === "visible") loadAll();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [loadAll]);
 
   useEffect(() => {
     const channel = supabase
