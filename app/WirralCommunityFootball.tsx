@@ -1487,12 +1487,15 @@ function GameCard({
       <div className="wcf-card-actions">
         <button
           className={"wcf-book " + (myBooking ? "cancel" : "")}
+          disabled={!myBooking && full && waitingList.length >= 10}
           onClick={() => {
             if (!myBooking) return onBook();
             if (confirm(myBooking.waiting ? "Leave the waiting list?" : "Give up your spot in this game?")) onCancel(myBooking.id);
           }}
         >
-          {myBooking ? (myBooking.waiting ? "Leave waiting list" : "Give up spot") : full ? "Join waiting list" : "Grab a spot"}
+          {myBooking
+            ? myBooking.waiting ? "Leave waiting list" : "Give up spot"
+            : full ? (waitingList.length >= 10 ? "Waiting list full" : "Join waiting list") : "Grab a spot"}
         </button>
         {isAdmin && (
           <div className="wcf-admin-actions">
@@ -1629,8 +1632,9 @@ const css = `
 
 .wcf-waiting{margin:0 0 14px;padding:2px 12px;background:rgba(224,167,51,.08);border:1px dashed rgba(224,167,51,.4);border-radius:10px}
 .wcf-waiting-toggle{width:100%;display:flex;align-items:center;gap:8px;background:none;border:none;padding:10px 0;cursor:pointer;text-align:left}
-.wcf-waiting-label{flex:1;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--amber)}
-.wcf-waiting-chevron{color:var(--amber);font-size:9px}
+.wcf-waiting-toggle:active{opacity:.7}
+.wcf-waiting-label{flex:1;font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--amber);text-decoration:underline;text-underline-offset:3px}
+.wcf-waiting-chevron{color:var(--amber);font-size:11px}
 .wcf-waiting-list{padding-bottom:8px}
 .wcf-waiting-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--dim);padding:3px 0}
 .wcf-waiting-row span:first-child{flex:1}
@@ -1659,6 +1663,7 @@ const css = `
 .wcf-book{flex:1;background:var(--red);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;letter-spacing:.4px;cursor:pointer;transition:.15s}
 .wcf-book:hover{background:var(--red-hi)}
 .wcf-book.cancel{background:transparent;color:var(--white);border:1px solid var(--line)}
+.wcf-book:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-admin-actions{display:flex;gap:6px}
 .wcf-ghost{background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px 12px;border-radius:10px;font-weight:700;font-size:12px;cursor:pointer}
 .wcf-ghost.danger:hover{color:var(--red-hi);border-color:rgba(228,42,54,.5)}

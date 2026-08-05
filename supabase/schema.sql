@@ -192,10 +192,19 @@ as $$
 declare
   cap int;
   taken int;
+  waiting_count int;
 begin
   select max_players into cap from public.games where id = new.game_id;
   select count(*) into taken from public.bookings where game_id = new.game_id and waiting = false;
   new.waiting := taken >= cap;
+
+  if new.waiting then
+    select count(*) into waiting_count from public.bookings where game_id = new.game_id and waiting = true;
+    if waiting_count >= 10 then
+      raise exception 'The waiting list is full (10 max)';
+    end if;
+  end if;
+
   return new;
 end;
 $$;
@@ -387,3 +396,22 @@ create policy "awards_delete_admin" on public.awards for delete using (public.is
 -- ─────────────────────────────────────────────────────────────────
 
 alter publication supabase_realtime add table public.bookings;
+
+-- ─────────────────────────────────────────────────────────────────
+-- One-time data fix — recompute `waiting` for every existing booking
+-- based on booking order vs each game's max_players. Bookings made
+-- before the waiting-list trigger existed never had this computed.
+-- ─────────────────────────────────────────────────────────────────
+
+with ranked as (
+  select
+    b.id,
+    row_number() over (partition by b.game_id order by b.created_at asc) as rn,
+    g.max_players
+  from public.bookings b
+  join public.games g on g.id = b.game_id
+)
+update public.bookings b
+set waiting = (ranked.rn > ranked.max_players)
+from ranked
+where b.id = ranked.id;
