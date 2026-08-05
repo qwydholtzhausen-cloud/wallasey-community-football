@@ -1382,12 +1382,14 @@ function GameCard({
   onDelete: () => void;
 }) {
   const [form, setForm] = useState<GameRow>(game);
+  const [showWaiting, setShowWaiting] = useState(false);
 
   useEffect(() => setForm(game), [game, editing]);
 
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const waitingList = game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const myBooking = game.bookings.find((b) => b.player_id === myId);
+  const myWaitingPosition = waitingList.findIndex((b) => b.player_id === myId) + 1;
   const full = confirmed.length >= game.max_players;
   const spotsLeft = Math.max(0, game.max_players - confirmed.length);
 
@@ -1423,23 +1425,30 @@ function GameCard({
 
       {waitingList.length > 0 && (
         <div className="wcf-waiting">
-          <div className="wcf-waiting-label">Waiting list</div>
-          {waitingList.map((b, i) => (
-            <div key={b.id} className="wcf-waiting-row">
-              <span>{i + 1}. {b.player.display_name}</span>
-              {b.player_id === myId && <span className="wcf-waiting-you">you</span>}
-              {isAdmin && editing && (
-                <button
-                  className="wcf-waiting-remove"
-                  onClick={() => {
-                    if (confirm(`Remove ${b.player.display_name} from the waiting list?`)) onCancel(b.id);
-                  }}
-                >
-                  Remove
-                </button>
-              )}
+          <button className="wcf-waiting-toggle" onClick={() => setShowWaiting((v) => !v)}>
+            <span className="wcf-waiting-label">Waiting list · {waitingList.length}</span>
+            {myWaitingPosition > 0 && <span className="wcf-waiting-you">You&apos;re #{myWaitingPosition}</span>}
+            <span className="wcf-waiting-chevron">{showWaiting ? "▲" : "▼"}</span>
+          </button>
+          {showWaiting && (
+            <div className="wcf-waiting-list">
+              {waitingList.map((b, i) => (
+                <div key={b.id} className="wcf-waiting-row">
+                  <span>{i + 1}. {b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
+                  {isAdmin && editing && (
+                    <button
+                      className="wcf-waiting-remove"
+                      onClick={() => {
+                        if (confirm(`Remove ${b.player.display_name} from the waiting list?`)) onCancel(b.id);
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
 
@@ -1618,11 +1627,14 @@ const css = `
 .wcf-pay-dot.pending{background:var(--amber)}
 .wcf-pay-dot.confirmed{background:var(--green)}
 
-.wcf-waiting{margin:0 0 14px;padding:10px 12px;background:rgba(224,167,51,.08);border:1px dashed rgba(224,167,51,.4);border-radius:10px}
-.wcf-waiting-label{font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--amber);margin-bottom:6px}
-.wcf-waiting-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--dim);padding:2px 0}
+.wcf-waiting{margin:0 0 14px;padding:2px 12px;background:rgba(224,167,51,.08);border:1px dashed rgba(224,167,51,.4);border-radius:10px}
+.wcf-waiting-toggle{width:100%;display:flex;align-items:center;gap:8px;background:none;border:none;padding:10px 0;cursor:pointer;text-align:left}
+.wcf-waiting-label{flex:1;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--amber)}
+.wcf-waiting-chevron{color:var(--amber);font-size:9px}
+.wcf-waiting-list{padding-bottom:8px}
+.wcf-waiting-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--dim);padding:3px 0}
 .wcf-waiting-row span:first-child{flex:1}
-.wcf-waiting-you{color:var(--amber);font-weight:700;font-size:10px;text-transform:uppercase}
+.wcf-waiting-you{background:var(--amber);color:#2a1c00;font-weight:800;font-size:10px;text-transform:uppercase;padding:3px 8px;border-radius:999px;flex:0 0 auto}
 .wcf-waiting-remove{background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer;flex:0 0 auto}
 .wcf-waiting-remove:hover{color:var(--red-hi)}
 
