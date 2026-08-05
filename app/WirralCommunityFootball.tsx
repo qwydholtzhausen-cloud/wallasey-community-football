@@ -49,7 +49,30 @@ interface GameRow {
   pitch: string;
   price: number;
   max_players: number;
+  team_white_score: number | null;
+  team_red_score: number | null;
   bookings: BookingRow[];
+}
+
+interface ClubSettings {
+  team_white_name: string;
+  team_white_color: string;
+  team_red_name: string;
+  team_red_color: string;
+  record_holder_name: string | null;
+  record_goals: number | null;
+  record_note: string | null;
+}
+
+// Picks black or white text so admin-chosen team colours stay readable
+// regardless of how light/dark the colour they picked is.
+function readableTextColor(hex: string) {
+  const c = hex.replace("#", "");
+  const r = parseInt(c.substring(0, 2), 16) || 0;
+  const g = parseInt(c.substring(2, 4), 16) || 0;
+  const b = parseInt(c.substring(4, 6), 16) || 0;
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? "#0A1A34" : "#ffffff";
 }
 
 interface ClipRow {
@@ -108,6 +131,13 @@ const Icon = {
       <path d="M3 12a9 9 0 1 0 3-6.7" />
       <path d="M3 4v4.5h4.5" />
       <path d="M12 8v4.5l3 2" />
+    </svg>
+  ),
+  trophy: (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M7 4h10v5a5 5 0 0 1-10 0z" strokeLinejoin="round" />
+      <path d="M7 5H4v2a3 3 0 0 0 3 3M17 5h3v2a3 3 0 0 1-3 3" />
+      <path d="M12 14v3M9 20h6M9.5 17h5l.5 3H9z" strokeLinejoin="round" />
     </svg>
   ),
 };
@@ -222,6 +252,7 @@ function App({ session }: { session: Session }) {
   const [games, setGames] = useState<GameRow[]>([]);
   const [clips, setClips] = useState<ClipRow[]>([]);
   const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
+  const [clubSettings, setClubSettings] = useState<ClubSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
@@ -234,7 +265,8 @@ function App({ session }: { session: Session }) {
     setToast({ kind: "success", text });
   }
 
-  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "lineup" | "account" | "admin">("fixtures");
+  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "lineup" | "results" | "account" | "admin">("fixtures");
+  const [resultsMonth, setResultsMonth] = useState<string>("all");
   const [tableView, setTableView] = useState<"attendance" | "goals">("attendance");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
@@ -243,6 +275,15 @@ function App({ session }: { session: Session }) {
 
   const isAdmin = myProfile?.role === "admin" || myProfile?.role === "owner";
   const isOwner = myProfile?.role === "owner";
+  const cs: ClubSettings = clubSettings ?? {
+    team_white_name: "Whites",
+    team_white_color: "#EEF4FC",
+    team_red_name: "Reds",
+    team_red_color: "#E42A36",
+    record_holder_name: null,
+    record_goals: null,
+    record_note: null,
+  };
 
   const loadProfile = useCallback(async () => {
     const { data } = await supabase.from("profiles").select("id, display_name, role").eq("id", myId).single();
@@ -258,10 +299,18 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, bookings(id, player_id, status, waiting, team, created_at, player:profiles(id, display_name, role))"
+        "id, date, kickoff, venue, pitch, price, max_players, team_white_score, team_red_score, bookings(id, player_id, status, waiting, team, created_at, player:profiles(id, display_name, role))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
+  }, []);
+
+  const loadClubSettings = useCallback(async () => {
+    const { data } = await supabase
+      .from("club_settings")
+      .select("team_white_name, team_white_color, team_red_name, team_red_color, record_holder_name, record_goals, record_note")
+      .single();
+    if (data) setClubSettings(data as ClubSettings);
   }, []);
 
   const loadClips = useCallback(async () => {
@@ -283,10 +332,10 @@ function App({ session }: { session: Session }) {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadGoals()]);
+      await Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadGoals(), loadClubSettings()]);
       setLoading(false);
     })();
-  }, [loadProfile, loadProfiles, loadGames, loadClips, loadGoals]);
+  }, [loadProfile, loadProfiles, loadGames, loadClips, loadGoals, loadClubSettings]);
 
   useEffect(() => {
     const channel = supabase
@@ -373,6 +422,18 @@ function App({ session }: { session: Session }) {
     if (error) return notifyError(error.message);
     await loadGoals();
   }
+  async function saveTeamScore(gameId: string, side: "team_white_score" | "team_red_score", value: number | null) {
+    const { error } = await supabase.from("games").update({ [side]: value }).eq("id", gameId);
+    if (error) return notifyError(error.message);
+    await loadGames();
+  }
+
+  async function saveClubSettings(patch: Partial<ClubSettings>) {
+    const { error } = await supabase.from("club_settings").update(patch).eq("id", true);
+    if (error) return notifyError(error.message);
+    await loadClubSettings();
+    notifySuccess("Club settings saved");
+  }
 
   async function addClip(e: React.FormEvent) {
     e.preventDefault();
@@ -458,11 +519,41 @@ function App({ session }: { session: Session }) {
     [nextGame]
   );
 
+  const resultsMonths = useMemo(() => {
+    const set = new Set<string>();
+    pastGames.forEach((g) => set.add(g.date.slice(0, 7)));
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [pastGames]);
+
+  const filteredResults = useMemo(
+    () => (resultsMonth === "all" ? pastGames : pastGames.filter((g) => g.date.slice(0, 7) === resultsMonth)),
+    [pastGames, resultsMonth]
+  );
+
+  const headToHead = useMemo(() => {
+    const white = { played: 0, won: 0, drawn: 0, lost: 0, points: 0 };
+    const red = { played: 0, won: 0, drawn: 0, lost: 0, points: 0 };
+    pastGames.forEach((g) => {
+      if (g.team_white_score == null || g.team_red_score == null) return;
+      white.played++;
+      red.played++;
+      if (g.team_white_score > g.team_red_score) {
+        white.won++; white.points += 3; red.lost++;
+      } else if (g.team_white_score < g.team_red_score) {
+        red.won++; red.points += 3; white.lost++;
+      } else {
+        white.drawn++; red.drawn++; white.points += 1; red.points += 1;
+      }
+    });
+    return { white, red };
+  }, [pastGames]);
+
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
     { k: "clips", label: "Clips", icon: Icon.play },
     { k: "table", label: "Table", icon: Icon.star },
     { k: "lineup", label: "Line-up", icon: Icon.shirt },
+    { k: "results", label: "Results", icon: Icon.trophy },
     ...(isAdmin ? [{ k: "admin", label: "Admin", icon: Icon.history } as const] : []),
   ] as const;
 
@@ -471,6 +562,7 @@ function App({ session }: { session: Session }) {
     clips: "Match clips",
     table: tableView === "attendance" ? "Attendance table" : "Goalscorers",
     lineup: "Next game line-up",
+    results: "Results",
     account: "Your account",
     admin: "Payments & goals",
   }[tab];
@@ -539,12 +631,14 @@ function App({ session }: { session: Session }) {
             upcoming={upcomingGames}
             previous={pastGames}
             goalRows={goalRows}
+            cs={cs}
             expandedId={expandedGameId}
             onToggleExpand={(id) => setExpandedGameId(expandedGameId === id ? null : id)}
             onSetStatus={setBookingStatus}
             onAdjustGoal={adjustGoal}
             onRemoveBooking={cancel}
             onDeleteGame={deleteGame}
+            onSaveTeamScore={saveTeamScore}
           />
         )}
 
@@ -636,27 +730,106 @@ function App({ session }: { session: Session }) {
                     {isAdmin ? (
                       <div className="wcf-lineup-picks">
                         <button
-                          className={"wcf-lineup-pick white " + (b.team === "white" ? "active" : "")}
+                          style={b.team === "white" ? { background: cs.team_white_color, color: readableTextColor(cs.team_white_color), borderColor: cs.team_white_color } : undefined}
+                          className="wcf-lineup-pick"
                           onClick={() => setTeam(b.id, b.team === "white" ? null : "white")}
                         >
-                          Whites
+                          {cs.team_white_name}
                         </button>
                         <button
-                          className={"wcf-lineup-pick red " + (b.team === "red" ? "active" : "")}
+                          style={b.team === "red" ? { background: cs.team_red_color, color: readableTextColor(cs.team_red_color), borderColor: cs.team_red_color } : undefined}
+                          className="wcf-lineup-pick"
                           onClick={() => setTeam(b.id, b.team === "red" ? null : "red")}
                         >
-                          Reds
+                          {cs.team_red_name}
                         </button>
                       </div>
                     ) : (
-                      <span className={"wcf-lineup-badge " + (b.team ?? "none")}>
-                        {b.team === "white" ? "Whites" : b.team === "red" ? "Reds" : "Unassigned"}
+                      <span
+                        className="wcf-lineup-badge"
+                        style={
+                          b.team === "white"
+                            ? { background: cs.team_white_color, color: readableTextColor(cs.team_white_color) }
+                            : b.team === "red"
+                            ? { background: cs.team_red_color, color: readableTextColor(cs.team_red_color) }
+                            : undefined
+                        }
+                      >
+                        {b.team === "white" ? cs.team_white_name : b.team === "red" ? cs.team_red_name : "Unassigned"}
                       </span>
                     )}
                   </div>
                 ))}
               </>
             )}
+          </>
+        )}
+
+        {tab === "results" && (
+          <>
+            {clubSettings?.record_holder_name && (
+              <div className="wcf-shoutout">
+                🏆 Most goals in a game — <strong>{clubSettings.record_holder_name}</strong> ({clubSettings.record_goals})
+                {clubSettings.record_note ? ` · ${clubSettings.record_note}` : ""}
+              </div>
+            )}
+
+            {(headToHead.white.played > 0 || headToHead.red.played > 0) && (
+              <div className="wcf-h2h">
+                <div className="wcf-h2h-title">{cs.team_white_name} v {cs.team_red_name}</div>
+                <div className="wcf-h2h-row wcf-h2h-header">
+                  <span>Team</span><span>P</span><span>W</span><span>D</span><span>L</span><span>Pts</span>
+                </div>
+                {([["white", headToHead.white, cs.team_white_name, cs.team_white_color], ["red", headToHead.red, cs.team_red_name, cs.team_red_color]] as const).map(
+                  ([key, row, name, color]) => (
+                    <div key={key} className="wcf-h2h-row">
+                      <span className="wcf-h2h-team"><span className="wcf-h2h-dot" style={{ background: color }} />{name}</span>
+                      <span>{row.played}</span><span>{row.won}</span><span>{row.drawn}</span><span>{row.lost}</span>
+                      <span className="wcf-h2h-pts">{row.points}</span>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+
+            <select className="wcf-month-filter" value={resultsMonth} onChange={(e) => setResultsMonth(e.target.value)}>
+              <option value="all">All results</option>
+              {resultsMonths.map((m) => (
+                <option key={m} value={m}>
+                  {new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
+                </option>
+              ))}
+            </select>
+
+            {filteredResults.length === 0 && <p className="wcf-empty">No results yet.</p>}
+            {filteredResults.map((g) => {
+              const scorers = goalRows.filter((r) => r.game_id === g.id && r.goals > 0).sort((a, b) => b.goals - a.goals);
+              const hasScore = g.team_white_score != null && g.team_red_score != null;
+              return (
+                <article key={g.id} className="wcf-result">
+                  <div className="wcf-result-head">
+                    <div>
+                      <div className="wcf-venue">{g.venue}</div>
+                      <div className="wcf-pitch">{fmtDate(g.date)}</div>
+                    </div>
+                    {hasScore && (
+                      <div className="wcf-result-score">
+                        <span style={{ color: cs.team_white_color }}>{g.team_white_score}</span>
+                        <span className="wcf-result-dash">–</span>
+                        <span style={{ color: cs.team_red_color }}>{g.team_red_score}</span>
+                      </div>
+                    )}
+                  </div>
+                  {scorers.length > 0 && (
+                    <div className="wcf-result-scorers">
+                      {scorers.map((s) => (
+                        <span key={s.id} className="wcf-result-scorer">{s.player.display_name} {s.goals > 1 ? `×${s.goals}` : ""}</span>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </>
         )}
 
@@ -667,9 +840,11 @@ function App({ session }: { session: Session }) {
             isAdmin={isAdmin}
             isOwner={isOwner}
             profiles={profiles}
+            clubSettings={cs}
             onRename={renameSelf}
             onSetRole={setRole}
             onDeleteProfile={deleteProfile}
+            onSaveClubSettings={saveClubSettings}
             onSignOut={signOut}
           />
         )}
@@ -695,9 +870,11 @@ function AccountPanel({
   isAdmin,
   isOwner,
   profiles,
+  clubSettings,
   onRename,
   onSetRole,
   onDeleteProfile,
+  onSaveClubSettings,
   onSignOut,
 }: {
   profile: Profile;
@@ -705,9 +882,11 @@ function AccountPanel({
   isAdmin: boolean;
   isOwner: boolean;
   profiles: Profile[];
+  clubSettings: ClubSettings;
   onRename: (name: string) => void;
   onSetRole: (id: string, role: Role) => void;
   onDeleteProfile: (id: string, name: string) => void;
+  onSaveClubSettings: (patch: Partial<ClubSettings>) => void;
   onSignOut: () => void;
 }) {
   const [name, setName] = useState(profile.display_name);
@@ -781,6 +960,71 @@ function AccountPanel({
           })}
         </div>
       )}
+
+      {isAdmin && <ClubSettingsForm settings={clubSettings} onSave={onSaveClubSettings} />}
+    </div>
+  );
+}
+
+function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave: (patch: Partial<ClubSettings>) => void }) {
+  const [form, setForm] = useState(settings);
+
+  useEffect(() => setForm(settings), [settings]);
+
+  const dirty = JSON.stringify(form) !== JSON.stringify(settings);
+
+  return (
+    <div className="wcf-club-settings">
+      <h3>Club settings</h3>
+
+      <div className="wcf-team-settings">
+        <label className="wcf-team-field">
+          Team A name
+          <input value={form.team_white_name} onChange={(e) => setForm({ ...form, team_white_name: e.target.value })} />
+        </label>
+        <label className="wcf-team-field color">
+          Colour
+          <input type="color" value={form.team_white_color} onChange={(e) => setForm({ ...form, team_white_color: e.target.value })} />
+        </label>
+        <label className="wcf-team-field">
+          Team B name
+          <input value={form.team_red_name} onChange={(e) => setForm({ ...form, team_red_name: e.target.value })} />
+        </label>
+        <label className="wcf-team-field color">
+          Colour
+          <input type="color" value={form.team_red_color} onChange={(e) => setForm({ ...form, team_red_color: e.target.value })} />
+        </label>
+      </div>
+
+      <h4 className="wcf-edit-subhead">Most goals in a game (shoutout)</h4>
+      <div className="wcf-team-settings">
+        <label className="wcf-team-field">
+          Player name
+          <input
+            value={form.record_holder_name ?? ""}
+            onChange={(e) => setForm({ ...form, record_holder_name: e.target.value || null })}
+          />
+        </label>
+        <label className="wcf-team-field narrow">
+          Goals
+          <input
+            type="number"
+            min={0}
+            value={form.record_goals ?? ""}
+            onChange={(e) => setForm({ ...form, record_goals: e.target.value ? Number(e.target.value) : null })}
+          />
+        </label>
+        <label className="wcf-team-field wide">
+          Note (optional)
+          <input
+            value={form.record_note ?? ""}
+            onChange={(e) => setForm({ ...form, record_note: e.target.value || null })}
+            placeholder="e.g. vs Bidston Astro, March 2026"
+          />
+        </label>
+      </div>
+
+      <button className="wcf-save" onClick={() => onSave(form)} disabled={!dirty}>Save settings</button>
     </div>
   );
 }
@@ -789,24 +1033,28 @@ function AdminConsole({
   upcoming,
   previous,
   goalRows,
+  cs,
   expandedId,
   onToggleExpand,
   onSetStatus,
   onAdjustGoal,
   onRemoveBooking,
   onDeleteGame,
+  onSaveTeamScore,
 }: {
   upcoming: GameRow[];
   previous: GameRow[];
   goalRows: GoalRow[];
+  cs: ClubSettings;
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   onAdjustGoal: (gameId: string, playerId: string, delta: number) => void;
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
+  onSaveTeamScore: (gameId: string, side: "team_white_score" | "team_red_score", value: number | null) => void;
 }) {
-  const shared = { goalRows, expandedId, onToggleExpand, onSetStatus, onAdjustGoal, onRemoveBooking, onDeleteGame };
+  const shared = { goalRows, cs, expandedId, onToggleExpand, onSetStatus, onAdjustGoal, onRemoveBooking, onDeleteGame, onSaveTeamScore };
   return (
     <>
       <h3 className="wcf-admin-section-head">Upcoming</h3>
@@ -827,27 +1075,37 @@ function AdminGameRow({
   game,
   past,
   goalRows,
+  cs,
   expandedId,
   onToggleExpand,
   onSetStatus,
   onAdjustGoal,
   onRemoveBooking,
   onDeleteGame,
+  onSaveTeamScore,
 }: {
   game: GameRow;
   past: boolean;
   goalRows: GoalRow[];
+  cs: ClubSettings;
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   onAdjustGoal: (gameId: string, playerId: string, delta: number) => void;
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
+  onSaveTeamScore: (gameId: string, side: "team_white_score" | "team_red_score", value: number | null) => void;
 }) {
   const expanded = expandedId === game.id;
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const goalsByPlayer: Record<string, number> = {};
   goalRows.filter((r) => r.game_id === game.id).forEach((r) => (goalsByPlayer[r.player_id] = r.goals));
+  const [whiteScore, setWhiteScore] = useState(game.team_white_score?.toString() ?? "");
+  const [redScore, setRedScore] = useState(game.team_red_score?.toString() ?? "");
+  useEffect(() => {
+    setWhiteScore(game.team_white_score?.toString() ?? "");
+    setRedScore(game.team_red_score?.toString() ?? "");
+  }, [game.team_white_score, game.team_red_score]);
 
   return (
     <div className="wcf-admin-game">
@@ -860,6 +1118,27 @@ function AdminGameRow({
       </button>
       {expanded && (
         <div className="wcf-admin-game-body">
+          {past && (
+            <div className="wcf-admin-score">
+              <span>{cs.team_white_name}</span>
+              <input
+                type="number"
+                min={0}
+                value={whiteScore}
+                onChange={(e) => setWhiteScore(e.target.value)}
+                onBlur={() => onSaveTeamScore(game.id, "team_white_score", whiteScore === "" ? null : Number(whiteScore))}
+              />
+              <span className="wcf-admin-score-dash">–</span>
+              <input
+                type="number"
+                min={0}
+                value={redScore}
+                onChange={(e) => setRedScore(e.target.value)}
+                onBlur={() => onSaveTeamScore(game.id, "team_red_score", redScore === "" ? null : Number(redScore))}
+              />
+              <span>{cs.team_red_name}</span>
+            </div>
+          )}
           {confirmed.length === 0 && <p className="wcf-empty small">No one booked in.</p>}
           {confirmed.map((b) => (
             <div key={b.id} className="wcf-admin-player-row">
@@ -1208,6 +1487,9 @@ const css = `
 .wcf-admin-game-date{font-size:11px;color:var(--dim);font-family:var(--mono)}
 .wcf-admin-game-count{font-family:var(--mono);font-weight:700;color:var(--blue);flex:0 0 auto}
 .wcf-admin-game-body{padding:0 12px 12px;border-top:1px solid var(--line)}
+.wcf-admin-score{display:flex;align-items:center;justify-content:center;gap:9px;padding:12px 0;font-size:12px;font-weight:800}
+.wcf-admin-score input{width:44px;text-align:center;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:6px;border-radius:7px;font-family:var(--mono);font-size:13px}
+.wcf-admin-score-dash{color:var(--dim)}
 .wcf-admin-player-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .wcf-admin-player-row:last-child{border-bottom:none}
 .wcf-admin-player-name{flex:1;min-width:90px;font-weight:700;font-size:13px}
@@ -1258,11 +1540,26 @@ const css = `
 .wcf-lineup-name{font-weight:700;font-size:14px}
 .wcf-lineup-picks{display:flex;gap:6px}
 .wcf-lineup-pick{background:transparent;border:1px solid var(--line);color:var(--dim);padding:7px 11px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
-.wcf-lineup-pick.white.active{background:#EEF4FC;color:#0A1A34;border-color:#EEF4FC}
-.wcf-lineup-pick.red.active{background:var(--red);color:#fff;border-color:var(--red)}
 .wcf-lineup-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
-.wcf-lineup-badge.white{background:#EEF4FC;color:#0A1A34}
-.wcf-lineup-badge.red{background:var(--red);color:#fff}
+
+.wcf-shoutout{background:linear-gradient(135deg,rgba(228,42,54,.16),rgba(51,169,87,.1));border:1px solid rgba(228,42,54,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
+.wcf-h2h{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
+.wcf-h2h-title{font-weight:800;font-size:13px;margin-bottom:10px}
+.wcf-h2h-row{display:grid;grid-template-columns:1fr repeat(5,28px);align-items:center;font-size:12px;padding:6px 0;border-bottom:1px solid var(--line)}
+.wcf-h2h-row:last-child{border-bottom:none}
+.wcf-h2h-header{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.4px}
+.wcf-h2h-row span{text-align:center}
+.wcf-h2h-team{display:flex;align-items:center;gap:7px;text-align:left!important;font-weight:700}
+.wcf-h2h-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.wcf-h2h-pts{font-weight:800;color:var(--white)}
+
+.wcf-month-filter{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans);margin-bottom:14px}
+.wcf-result{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:11px}
+.wcf-result-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.wcf-result-score{font-family:var(--mono);font-weight:800;font-size:18px;display:flex;align-items:center;gap:6px}
+.wcf-result-dash{color:var(--dim);font-weight:400}
+.wcf-result-scorers{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
+.wcf-result-scorer{font-size:12px;color:var(--dim)}
 
 .wcf-account{display:flex;flex-direction:column;gap:16px}
 .wcf-account-card{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
@@ -1284,6 +1581,17 @@ const css = `
 .wcf-roles-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .wcf-roles-row:last-child{border-bottom:none}
 .wcf-roles-actions{display:flex;gap:6px;flex:0 0 auto}
+
+.wcf-club-settings{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:16px}
+.wcf-club-settings h3{margin:0 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.wcf-team-settings{display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:6px}
+.wcf-team-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.wcf-team-field.wide{grid-column:1/-1}
+.wcf-team-field input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans);text-transform:none}
+.wcf-team-field.color input{width:52px;padding:2px;height:38px;cursor:pointer}
+.wcf-team-field.narrow input{width:70px}
+.wcf-club-settings .wcf-save{margin-top:10px}
+.wcf-club-settings .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 
 .wcf-nav{position:sticky;bottom:0;z-index:5;display:flex;background:rgba(10,26,52,.95);backdrop-filter:blur(8px);
   border-top:1px solid var(--line);padding:8px 6px calc(8px + env(safe-area-inset-bottom,0px))}

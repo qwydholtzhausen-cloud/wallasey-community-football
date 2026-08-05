@@ -329,6 +329,37 @@ end;
 $$;
 
 -- ─────────────────────────────────────────────────────────────────
+-- Club settings — team names/colours and the manual "most goals in
+-- a game" shoutout, editable by admins instead of hardcoded. Single
+-- row enforced via the boolean primary key trick (id must be true).
+-- ─────────────────────────────────────────────────────────────────
+
+create table public.club_settings (
+  id boolean primary key default true check (id),
+  team_white_name text not null default 'Whites',
+  team_white_color text not null default '#EEF4FC',
+  team_red_name text not null default 'Reds',
+  team_red_color text not null default '#E42A36',
+  record_holder_name text,
+  record_goals int,
+  record_note text,
+  updated_at timestamptz not null default now()
+);
+
+insert into public.club_settings (id) values (true);
+
+alter table public.club_settings enable row level security;
+
+create policy "club_settings_select" on public.club_settings for select using (auth.role() = 'authenticated');
+create policy "club_settings_update_admin" on public.club_settings for update using (public.is_admin()) with check (public.is_admin());
+
+-- Final team score per game, for the Reds v Whites head-to-head table.
+-- Independent of individual goal tallies (own goals / unknown scorers
+-- happen), so admins enter it directly rather than it being derived.
+alter table public.games add column team_white_score int;
+alter table public.games add column team_red_score int;
+
+-- ─────────────────────────────────────────────────────────────────
 -- Realtime — so the team sheet updates live as people book/cancel
 -- ─────────────────────────────────────────────────────────────────
 
