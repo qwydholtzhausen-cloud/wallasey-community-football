@@ -516,6 +516,7 @@ function App({ session }: { session: Session }) {
             onSetStatus={setBookingStatus}
             onAdjustGoal={adjustGoal}
             onRemoveBooking={cancel}
+            onDeleteGame={deleteGame}
           />
         )}
 
@@ -765,6 +766,7 @@ function AdminConsole({
   onSetStatus,
   onAdjustGoal,
   onRemoveBooking,
+  onDeleteGame,
 }: {
   upcoming: GameRow[];
   previous: GameRow[];
@@ -774,19 +776,20 @@ function AdminConsole({
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   onAdjustGoal: (gameId: string, playerId: string, delta: number) => void;
   onRemoveBooking: (bookingId: string) => void;
+  onDeleteGame: (gameId: string) => void;
 }) {
-  const shared = { goalRows, expandedId, onToggleExpand, onSetStatus, onAdjustGoal, onRemoveBooking };
+  const shared = { goalRows, expandedId, onToggleExpand, onSetStatus, onAdjustGoal, onRemoveBooking, onDeleteGame };
   return (
     <>
       <h3 className="wcf-admin-section-head">Upcoming</h3>
       {upcoming.length === 0 && <p className="wcf-empty small">No upcoming fixtures.</p>}
       {upcoming.map((g) => (
-        <AdminGameRow key={g.id} game={g} {...shared} />
+        <AdminGameRow key={g.id} game={g} past={false} {...shared} />
       ))}
       <h3 className="wcf-admin-section-head">Previous</h3>
       {previous.length === 0 && <p className="wcf-empty small">No past fixtures yet.</p>}
       {previous.map((g) => (
-        <AdminGameRow key={g.id} game={g} {...shared} />
+        <AdminGameRow key={g.id} game={g} past {...shared} />
       ))}
     </>
   );
@@ -794,20 +797,24 @@ function AdminConsole({
 
 function AdminGameRow({
   game,
+  past,
   goalRows,
   expandedId,
   onToggleExpand,
   onSetStatus,
   onAdjustGoal,
   onRemoveBooking,
+  onDeleteGame,
 }: {
   game: GameRow;
+  past: boolean;
   goalRows: GoalRow[];
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   onAdjustGoal: (gameId: string, playerId: string, delta: number) => void;
   onRemoveBooking: (bookingId: string) => void;
+  onDeleteGame: (gameId: string) => void;
 }) {
   const expanded = expandedId === game.id;
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -851,6 +858,17 @@ function AdminGameRow({
               </button>
             </div>
           ))}
+          <button
+            className="wcf-admin-delete-game"
+            onClick={() => {
+              const when = past ? "past" : "upcoming";
+              if (confirm(`Delete this ${when} fixture: ${game.venue} on ${fmtDate(game.date)}? This removes it completely, along with everyone's bookings.`)) {
+                onDeleteGame(game.id);
+              }
+            }}
+          >
+            Delete this fixture
+          </button>
         </div>
       )}
     </div>
@@ -1174,6 +1192,7 @@ const css = `
 .wcf-admin-goals span{width:16px;text-align:center}
 .wcf-admin-remove{background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;line-height:1;padding:0 2px}
 .wcf-admin-remove:hover{color:var(--red-hi)}
+.wcf-admin-delete-game{width:100%;background:transparent;border:1px dashed rgba(228,42,54,.4);color:var(--red-hi);padding:10px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer;margin-top:10px}
 
 .wcf-clip-form{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
 .wcf-clip-form input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
