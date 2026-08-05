@@ -1278,6 +1278,7 @@ function AdminGameRow({
 }) {
   const expanded = expandedId === game.id;
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const waitingList = game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const goalsByPlayer: Record<string, number> = {};
   goalRows.filter((r) => r.game_id === game.id).forEach((r) => (goalsByPlayer[r.player_id] = r.goals));
   const [whiteScore, setWhiteScore] = useState(game.team_white_score?.toString() ?? "");
@@ -1347,6 +1348,25 @@ function AdminGameRow({
               </button>
             </div>
           ))}
+
+          {waitingList.length > 0 && (
+            <>
+              <h4 className="wcf-edit-subhead">Waiting list · {waitingList.length}</h4>
+              {waitingList.map((b, i) => (
+                <div key={b.id} className="wcf-admin-player-row">
+                  <span className="wcf-admin-player-name">{i + 1}. {b.player.display_name}</span>
+                  <button
+                    className="wcf-admin-remove"
+                    onClick={() => { if (confirm(`Remove ${b.player.display_name} from the waiting list?`)) onRemoveBooking(b.id); }}
+                    aria-label="Remove from waiting list"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
+
           <button
             className="wcf-admin-delete-game"
             onClick={() => {
@@ -1692,6 +1712,7 @@ const css = `
 .wcf-admin-score{display:flex;align-items:center;justify-content:center;gap:9px;padding:12px 0;font-size:12px;font-weight:800}
 .wcf-admin-score input{width:44px;text-align:center;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:6px;border-radius:7px;font-family:var(--mono);font-size:13px}
 .wcf-admin-score-dash{color:var(--dim)}
+.wcf-edit-subhead{margin:14px 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--amber)}
 .wcf-admin-player-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .wcf-admin-player-row:last-child{border-bottom:none}
 .wcf-admin-player-name{flex:1;min-width:90px;font-weight:700;font-size:13px}
