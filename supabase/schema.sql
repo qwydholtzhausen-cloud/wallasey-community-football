@@ -239,6 +239,25 @@ create trigger bookings_after_delete_promote_waiting
   after delete on public.bookings
   for each row execute function public.bookings_promote_waiting();
 
+-- game_stats isn't foreign-keyed to bookings (a goal tally and a
+-- booking are recorded independently), so removing someone's booking
+-- never cleaned up their goals for that game on its own.
+create function public.bookings_cleanup_stats()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from public.game_stats where game_id = old.game_id and player_id = old.player_id;
+  return old;
+end;
+$$;
+
+create trigger bookings_after_delete_cleanup_stats
+  after delete on public.bookings
+  for each row execute function public.bookings_cleanup_stats();
+
 -- ─────────────────────────────────────────────────────────────────
 -- Line-up — admin-assigned team (white/red) per booking. Naturally
 -- scoped to one game and reset for the next, since it's just a
