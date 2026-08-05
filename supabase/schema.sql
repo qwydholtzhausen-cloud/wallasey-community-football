@@ -152,7 +152,7 @@ create policy "games_delete_admin" on public.games for delete using (public.is_a
 -- your own spot; you can mark your own booking "pending" (I've paid), only
 -- an admin can confirm payment or edit someone else's booking
 create policy "bookings_select" on public.bookings for select using (auth.role() = 'authenticated');
-create policy "bookings_insert_own" on public.bookings for insert with check (player_id = auth.uid());
+create policy "bookings_insert_own_or_admin" on public.bookings for insert with check (player_id = auth.uid() or public.is_admin());
 create policy "bookings_delete_own_or_admin" on public.bookings for delete using (player_id = auth.uid() or public.is_admin());
 create policy "bookings_update_payment" on public.bookings for update
   using (player_id = auth.uid() or public.is_admin())

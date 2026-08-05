@@ -411,6 +411,10 @@ function App({ session }: { session: Session }) {
     const { error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: myId });
     if (error) notifyError(error.message);
   }
+  async function addBooking(gameId: string, playerId: string) {
+    const { error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: playerId });
+    if (error) notifyError(error.message);
+  }
   async function cancel(bookingId: string) {
     const { error } = await supabase.from("bookings").delete().eq("id", bookingId);
     if (error) notifyError(error.message);
@@ -699,6 +703,7 @@ function App({ session }: { session: Session }) {
             overdue={overdueBookings}
             goalRows={goalRows}
             cs={cs}
+            profiles={profiles}
             expandedId={expandedGameId}
             onToggleExpand={(id) => setExpandedGameId(expandedGameId === id ? null : id)}
             onSetStatus={setBookingStatus}
@@ -706,6 +711,7 @@ function App({ session }: { session: Session }) {
             onRemoveBooking={cancel}
             onDeleteGame={deleteGame}
             onSaveTeamScore={saveTeamScore}
+            onAddBooking={addBooking}
           />
         )}
 
@@ -1191,6 +1197,7 @@ function AdminConsole({
   overdue,
   goalRows,
   cs,
+  profiles,
   expandedId,
   onToggleExpand,
   onSetStatus,
@@ -1198,12 +1205,14 @@ function AdminConsole({
   onRemoveBooking,
   onDeleteGame,
   onSaveTeamScore,
+  onAddBooking,
 }: {
   upcoming: GameRow[];
   previous: GameRow[];
   overdue: { booking: BookingRow; game: GameRow }[];
   goalRows: GoalRow[];
   cs: ClubSettings;
+  profiles: Profile[];
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
   onSetStatus: (bookingId: string, status: PayStatus) => void;
@@ -1211,8 +1220,9 @@ function AdminConsole({
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
   onSaveTeamScore: (gameId: string, side: "team_white_score" | "team_red_score", value: number | null) => void;
+  onAddBooking: (gameId: string, playerId: string) => void;
 }) {
-  const shared = { goalRows, cs, expandedId, onToggleExpand, onSetStatus, onAdjustGoal, onRemoveBooking, onDeleteGame, onSaveTeamScore };
+  const shared = { goalRows, cs, profiles, expandedId, onToggleExpand, onSetStatus, onAdjustGoal, onRemoveBooking, onDeleteGame, onSaveTeamScore, onAddBooking };
   return (
     <>
       <h3 className="wcf-admin-section-head">Overdue</h3>
@@ -1256,6 +1266,7 @@ function AdminGameRow({
   past,
   goalRows,
   cs,
+  profiles,
   expandedId,
   onToggleExpand,
   onSetStatus,
@@ -1263,11 +1274,13 @@ function AdminGameRow({
   onRemoveBooking,
   onDeleteGame,
   onSaveTeamScore,
+  onAddBooking,
 }: {
   game: GameRow;
   past: boolean;
   goalRows: GoalRow[];
   cs: ClubSettings;
+  profiles: Profile[];
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
   onSetStatus: (bookingId: string, status: PayStatus) => void;
@@ -1275,6 +1288,7 @@ function AdminGameRow({
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
   onSaveTeamScore: (gameId: string, side: "team_white_score" | "team_red_score", value: number | null) => void;
+  onAddBooking: (gameId: string, playerId: string) => void;
 }) {
   const expanded = expandedId === game.id;
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -1283,10 +1297,14 @@ function AdminGameRow({
   goalRows.filter((r) => r.game_id === game.id).forEach((r) => (goalsByPlayer[r.player_id] = r.goals));
   const [whiteScore, setWhiteScore] = useState(game.team_white_score?.toString() ?? "");
   const [redScore, setRedScore] = useState(game.team_red_score?.toString() ?? "");
+  const [addPlayerId, setAddPlayerId] = useState("");
   useEffect(() => {
     setWhiteScore(game.team_white_score?.toString() ?? "");
     setRedScore(game.team_red_score?.toString() ?? "");
   }, [game.team_white_score, game.team_red_score]);
+
+  const bookedIds = new Set(game.bookings.map((b) => b.player_id));
+  const eligiblePlayers = profiles.filter((p) => !bookedIds.has(p.id)).sort((a, b) => a.display_name.localeCompare(b.display_name));
 
   return (
     <div className="wcf-admin-game">
@@ -1365,6 +1383,27 @@ function AdminGameRow({
                 </div>
               ))}
             </>
+          )}
+
+          {eligiblePlayers.length > 0 && (
+            <div className="wcf-admin-add-player">
+              <select value={addPlayerId} onChange={(e) => setAddPlayerId(e.target.value)}>
+                <option value="">Add a player who didn&apos;t book…</option>
+                {eligiblePlayers.map((p) => (
+                  <option key={p.id} value={p.id}>{p.display_name}</option>
+                ))}
+              </select>
+              <button
+                className="wcf-ghost"
+                disabled={!addPlayerId}
+                onClick={() => {
+                  onAddBooking(game.id, addPlayerId);
+                  setAddPlayerId("");
+                }}
+              >
+                Add
+              </button>
+            </div>
           )}
 
           <button
@@ -1729,6 +1768,9 @@ const css = `
 .wcf-admin-remove{background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;line-height:1;padding:0 2px}
 .wcf-admin-remove:hover{color:var(--red-hi)}
 .wcf-admin-delete-game{width:100%;background:transparent;border:1px dashed rgba(228,42,54,.4);color:var(--red-hi);padding:10px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer;margin-top:10px}
+.wcf-admin-add-player{display:flex;gap:8px;margin-top:14px}
+.wcf-admin-add-player select{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:12px;font-family:var(--sans)}
+.wcf-admin-add-player .wcf-ghost:disabled{opacity:.4;cursor:not-allowed}
 
 .wcf-clip-form{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
 .wcf-clip-form input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
