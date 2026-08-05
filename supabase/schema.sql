@@ -257,6 +257,78 @@ create trigger enforce_team_change
   for each row execute function public.prevent_non_admin_team_change();
 
 -- ─────────────────────────────────────────────────────────────────
+-- Owner role — a tier above admin. Admins can promote players to
+-- admin, but only the owner can touch an existing admin's role or
+-- delete an admin's account.
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check check (role in ('player', 'admin', 'owner'));
+
+-- owner counts as admin everywhere the app already checks is_admin()
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles where id = auth.uid() and role in ('admin', 'owner')
+  );
+$$;
+
+create function public.is_owner()
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles where id = auth.uid() and role = 'owner'
+  );
+$$;
+
+create or replace function public.prevent_self_role_escalation()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  caller_role text;
+begin
+  if new.role = old.role then
+    return new;
+  end if;
+
+  -- SQL Editor / service-role connections are already fully trusted
+  if auth.uid() is null then
+    return new;
+  end if;
+
+  select role into caller_role from public.profiles where id = auth.uid();
+
+  if caller_role = 'owner' then
+    return new;
+  end if;
+
+  if caller_role = 'admin' then
+    if old.role <> 'player' then
+      raise exception 'Only the owner can change an admin''s role';
+    end if;
+    if new.role <> 'admin' then
+      raise exception 'Admins can only promote players to admin';
+    end if;
+    return new;
+  end if;
+
+  raise exception 'Only admins can change roles';
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────
 -- Realtime — so the team sheet updates live as people book/cancel
 -- ─────────────────────────────────────────────────────────────────
 

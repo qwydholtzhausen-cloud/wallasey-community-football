@@ -787,16 +787,13 @@ function AdminGameRow({
           {confirmed.map((b) => (
             <div key={b.id} className="wcf-admin-player-row">
               <span className="wcf-admin-player-name">{b.player.display_name}</span>
-              <div className="wcf-admin-status-dots">
-                {(["unpaid", "pending", "confirmed"] as const).map((s) => (
-                  <button
-                    key={s}
-                    className={"wcf-status-dot " + s + (b.status === s ? " active" : "")}
-                    title={STATUS_LABEL[s]}
-                    aria-label={STATUS_LABEL[s]}
-                    onClick={() => onSetStatus(b.id, s)}
-                  />
-                ))}
+              <div className="wcf-admin-status">
+                <StatusBadge status={b.status} />
+                {b.status !== "confirmed" ? (
+                  <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Approve</button>
+                ) : (
+                  <button className="wcf-admin-undo" onClick={() => onSetStatus(b.id, "unpaid")}>Undo</button>
+                )}
               </div>
               <div className="wcf-admin-goals">
                 <button onClick={() => onAdjustGoal(game.id, b.player_id, -1)} disabled={(goalsByPlayer[b.player_id] ?? 0) <= 0}>−</button>
@@ -1125,12 +1122,10 @@ const css = `
 .wcf-admin-player-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .wcf-admin-player-row:last-child{border-bottom:none}
 .wcf-admin-player-name{flex:1;min-width:90px;font-weight:700;font-size:13px}
-.wcf-admin-status-dots{display:flex;gap:6px}
-.wcf-status-dot{width:20px;height:20px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
-.wcf-status-dot.unpaid{background:var(--red)}
-.wcf-status-dot.pending{background:var(--amber)}
-.wcf-status-dot.confirmed{background:var(--green)}
-.wcf-status-dot.active{border-color:var(--white);box-shadow:0 0 0 2px var(--panel)}
+.wcf-admin-status{display:flex;align-items:center;gap:8px}
+.wcf-admin-approve{background:var(--green);color:#04140a;border:none;padding:7px 12px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
+.wcf-admin-undo{background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer}
+.wcf-admin-undo:hover{color:var(--red-hi)}
 .wcf-admin-goals{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-weight:700}
 .wcf-admin-goals button{width:24px;height:24px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);color:var(--white);cursor:pointer;font-size:14px;line-height:1;display:grid;place-items:center}
 .wcf-admin-goals button:disabled{opacity:.4;cursor:not-allowed}
