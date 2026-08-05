@@ -541,9 +541,14 @@ function App({ session }: { session: Session }) {
     await supabase.auth.signOut();
   }
 
+  const today = new Date().toISOString().slice(0, 10);
+  const upcomingGames = useMemo(() => games.filter((g) => g.date >= today).sort((a, b) => a.date.localeCompare(b.date)), [games, today]);
+  const pastGames = useMemo(() => games.filter((g) => g.date < today).sort((a, b) => b.date.localeCompare(a.date)), [games, today]);
+
   const playerStats = useMemo(() => {
     const tally: Record<string, { name: string; apps: number; goals: number }> = {};
-    games.forEach((g) =>
+    const pastGameIds = new Set(pastGames.map((g) => g.id));
+    pastGames.forEach((g) =>
       g.bookings
         .filter((b) => !b.waiting)
         .forEach((b) => {
@@ -552,19 +557,18 @@ function App({ session }: { session: Session }) {
           tally[b.player_id] = cur;
         })
     );
-    goalRows.forEach((r) => {
-      const cur = tally[r.player_id] ?? { name: r.player.display_name, apps: 0, goals: 0 };
-      cur.goals += r.goals;
-      tally[r.player_id] = cur;
-    });
+    goalRows
+      .filter((r) => pastGameIds.has(r.game_id))
+      .forEach((r) => {
+        const cur = tally[r.player_id] ?? { name: r.player.display_name, apps: 0, goals: 0 };
+        cur.goals += r.goals;
+        tally[r.player_id] = cur;
+      });
     return Object.entries(tally)
       .map(([id, row]) => ({ id, ...row }))
       .sort((a, b) => b.apps - a.apps);
-  }, [games, goalRows]);
+  }, [pastGames, goalRows]);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const upcomingGames = useMemo(() => games.filter((g) => g.date >= today).sort((a, b) => a.date.localeCompare(b.date)), [games, today]);
-  const pastGames = useMemo(() => games.filter((g) => g.date < today).sort((a, b) => b.date.localeCompare(a.date)), [games, today]);
   const nextGame = upcomingGames[0];
   const nextConfirmed = useMemo(
     () => (nextGame ? nextGame.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)) : []),
@@ -1327,11 +1331,13 @@ function AdminGameRow({
                   <button className="wcf-admin-undo" onClick={() => onSetStatus(b.id, "unpaid")}>Undo</button>
                 )}
               </div>
-              <div className="wcf-admin-goals">
-                <button onClick={() => onAdjustGoal(game.id, b.player_id, -1)} disabled={(goalsByPlayer[b.player_id] ?? 0) <= 0}>−</button>
-                <span>{goalsByPlayer[b.player_id] ?? 0}</span>
-                <button onClick={() => onAdjustGoal(game.id, b.player_id, 1)}>+</button>
-              </div>
+              {past && (
+                <div className="wcf-admin-goals">
+                  <button onClick={() => onAdjustGoal(game.id, b.player_id, -1)} disabled={(goalsByPlayer[b.player_id] ?? 0) <= 0}>−</button>
+                  <span>{goalsByPlayer[b.player_id] ?? 0}</span>
+                  <button onClick={() => onAdjustGoal(game.id, b.player_id, 1)}>+</button>
+                </div>
+              )}
               <button
                 className="wcf-admin-remove"
                 onClick={() => { if (confirm(`Remove ${b.player.display_name} from this game?`)) onRemoveBooking(b.id); }}
