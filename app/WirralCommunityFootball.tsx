@@ -810,8 +810,8 @@ function App({ session }: { session: Session }) {
           <>
             <div className="wcf-subtabs">
               <button className={resultsView === "season" ? "active" : ""} onClick={() => setResultsView("season")}>Season</button>
-              <button className={resultsView === "table" ? "active" : ""} onClick={() => setResultsView("table")}>Table</button>
-              <button className={resultsView === "fixtures" ? "active" : ""} onClick={() => setResultsView("fixtures")}>Fixtures</button>
+              <button className={resultsView === "table" ? "active" : ""} onClick={() => setResultsView("table")}>Stats</button>
+              <button className={resultsView === "fixtures" ? "active" : ""} onClick={() => setResultsView("fixtures")}>Scores</button>
             </div>
 
             {resultsView === "season" && (
