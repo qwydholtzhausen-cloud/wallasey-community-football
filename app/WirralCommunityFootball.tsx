@@ -265,8 +265,8 @@ function App({ session }: { session: Session }) {
     setToast({ kind: "success", text });
   }
 
-  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "lineup" | "results" | "account" | "admin">("fixtures");
-  const [resultsView, setResultsView] = useState<"season" | "fixtures">("season");
+  const [tab, setTab] = useState<"fixtures" | "clips" | "lineup" | "results" | "account" | "admin">("fixtures");
+  const [resultsView, setResultsView] = useState<"season" | "table" | "fixtures">("season");
   const [resultsMonth, setResultsMonth] = useState<string>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
@@ -484,14 +484,6 @@ function App({ session }: { session: Session }) {
     await supabase.auth.signOut();
   }
 
-  const goalsByPlayerId = useMemo(() => {
-    const tally: Record<string, number> = {};
-    goalRows.forEach((r) => {
-      tally[r.player_id] = (tally[r.player_id] ?? 0) + r.goals;
-    });
-    return tally;
-  }, [goalRows]);
-
   const attendanceLeaderboard = useMemo(() => {
     const tally: Record<string, { name: string; count: number }> = {};
     games.forEach((g) =>
@@ -503,10 +495,8 @@ function App({ session }: { session: Session }) {
           tally[b.player_id] = cur;
         })
     );
-    return Object.entries(tally)
-      .map(([playerId, row]) => ({ ...row, goals: goalsByPlayerId[playerId] ?? 0 }))
-      .sort((a, b) => b.count - a.count);
-  }, [games, goalsByPlayerId]);
+    return Object.values(tally).sort((a, b) => b.count - a.count);
+  }, [games]);
 
   const goalsLeaderboard = useMemo(() => {
     const tally: Record<string, { name: string; count: number }> = {};
@@ -561,7 +551,6 @@ function App({ session }: { session: Session }) {
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
     { k: "clips", label: "Clips", icon: Icon.play },
-    { k: "table", label: "Table", icon: Icon.star },
     { k: "lineup", label: "Line-up", icon: Icon.shirt },
     { k: "results", label: "Results", icon: Icon.trophy },
     ...(isAdmin ? [{ k: "admin", label: "Admin", icon: Icon.history } as const] : []),
@@ -570,7 +559,6 @@ function App({ session }: { session: Session }) {
   const heading = {
     fixtures: "Upcoming fixtures",
     clips: "Match clips",
-    table: "Attendance",
     lineup: "Next game line-up",
     results: "Results",
     account: "Your account",
@@ -689,26 +677,6 @@ function App({ session }: { session: Session }) {
           </>
         )}
 
-        {tab === "table" && (
-          <div className="wcf-board">
-            <p className="wcf-board-note">Confirmed spots across upcoming fixtures. Top attendees get first dibs — goals shown alongside for context.</p>
-            <div className="wcf-board-row wcf-board-header">
-              <span className="wcf-rank" />
-              <span className="wcf-board-name">Player</span>
-              <span className="wcf-board-count">Games</span>
-              <span className="wcf-board-count">Goals</span>
-            </div>
-            {attendanceLeaderboard.map((row, i) => (
-              <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
-                <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
-                <span className="wcf-board-name">{row.name}</span>
-                <span className="wcf-board-count">{row.count}</span>
-                <span className="wcf-board-count dim">{row.goals || "—"}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
         {tab === "lineup" && (
           <>
             {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
@@ -764,6 +732,7 @@ function App({ session }: { session: Session }) {
           <>
             <div className="wcf-subtabs">
               <button className={resultsView === "season" ? "active" : ""} onClick={() => setResultsView("season")}>Season</button>
+              <button className={resultsView === "table" ? "active" : ""} onClick={() => setResultsView("table")}>Table</button>
               <button className={resultsView === "fixtures" ? "active" : ""} onClick={() => setResultsView("fixtures")}>Fixtures</button>
             </div>
 
@@ -793,6 +762,21 @@ function App({ session }: { session: Session }) {
                     )}
                   </div>
                 )}
+              </>
+            )}
+
+            {resultsView === "table" && (
+              <>
+                <div className="wcf-board">
+                  <p className="wcf-board-note">Confirmed spots across upcoming fixtures. Top attendees get first dibs.</p>
+                  {attendanceLeaderboard.map((row, i) => (
+                    <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
+                      <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
+                      <span className="wcf-board-name">{row.name}</span>
+                      <span className="wcf-board-count">{row.count}</span>
+                    </div>
+                  ))}
+                </div>
 
                 <div className="wcf-board">
                   <p className="wcf-board-note">Goals logged by admins after each game.</p>
@@ -1546,14 +1530,12 @@ const css = `
 .wcf-board-row{display:flex;align-items:center;gap:12px;padding:11px 8px;border-radius:9px;border-bottom:1px solid var(--line)}
 .wcf-board-row:last-child{border-bottom:none}
 .wcf-board-row.lead{background:rgba(51,169,87,.12);border-bottom:none;margin-bottom:2px}
-.wcf-board-header{padding:0 8px 8px;border-bottom:1px solid var(--line)}
-.wcf-board-header .wcf-board-name,.wcf-board-header .wcf-board-count{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);font-weight:700;font-family:var(--sans)}
 .wcf-rank{font-family:var(--mono);font-weight:700;color:var(--dim);width:26px;text-align:center;display:grid;place-items:center}
 .wcf-rank-star{color:var(--green);display:grid;place-items:center}
 .wcf-rank-star svg{width:20px;height:20px;fill:var(--green);stroke:var(--green)}
 .wcf-board-name{flex:1;font-weight:800;font-size:14px}
-.wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue);width:40px;text-align:right}
-.wcf-board-count.dim{color:var(--dim)}
+.wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue)}
+.wcf-board+.wcf-board{margin-top:14px}
 
 .wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
