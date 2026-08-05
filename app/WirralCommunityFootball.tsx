@@ -484,6 +484,21 @@ function App({ session }: { session: Session }) {
     }
     await Promise.all([loadProfiles(), loadGames()]);
   }
+  async function addPlayer(email: string, displayName: string) {
+    const res = await fetch("/api/admin/add-player", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ email, displayName }),
+    });
+    if (!res.ok) {
+      const { error } = await res.json().catch(() => ({ error: "Something went wrong" }));
+      notifyError(error || "Couldn't add that player");
+      return false;
+    }
+    notifySuccess(`${displayName || email} can now sign in with that email`);
+    await loadProfiles();
+    return true;
+  }
   async function signOut() {
     await supabase.auth.signOut();
   }
@@ -853,6 +868,7 @@ function App({ session }: { session: Session }) {
             onRename={renameSelf}
             onSetRole={setRole}
             onDeleteProfile={deleteProfile}
+            onAddPlayer={addPlayer}
             onSaveClubSettings={saveClubSettings}
             onSignOut={signOut}
           />
@@ -883,6 +899,7 @@ function AccountPanel({
   onRename,
   onSetRole,
   onDeleteProfile,
+  onAddPlayer,
   onSaveClubSettings,
   onSignOut,
 }: {
@@ -895,6 +912,7 @@ function AccountPanel({
   onRename: (name: string) => void;
   onSetRole: (id: string, role: Role) => void;
   onDeleteProfile: (id: string, name: string) => void;
+  onAddPlayer: (email: string, displayName: string) => Promise<boolean>;
   onSaveClubSettings: (patch: Partial<ClubSettings>) => void;
   onSignOut: () => void;
 }) {
@@ -924,6 +942,8 @@ function AccountPanel({
       </label>
 
       <button className="wcf-signout" onClick={onSignOut}>Sign out</button>
+
+      {isAdmin && <AddPlayerForm onAdd={onAddPlayer} />}
 
       {isAdmin && (
         <div className="wcf-roles">
@@ -972,6 +992,45 @@ function AccountPanel({
 
       {isAdmin && <ClubSettingsForm settings={clubSettings} onSave={onSaveClubSettings} />}
     </div>
+  );
+}
+
+function AddPlayerForm({ onAdd }: { onAdd: (email: string, displayName: string) => Promise<boolean> }) {
+  const [email, setEmail] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setAdding(true);
+    const ok = await onAdd(email.trim(), displayName.trim());
+    setAdding(false);
+    if (ok) {
+      setEmail("");
+      setDisplayName("");
+    }
+  }
+
+  return (
+    <form className="wcf-add-player" onSubmit={submit}>
+      <h3>Add a player</h3>
+      <p className="wcf-board-note" style={{ margin: "0 0 10px" }}>
+        For anyone who can&apos;t self sign up — they can then sign in with this email straight away.
+      </p>
+      <div className="wcf-team-settings">
+        <label className="wcf-team-field wide">
+          Email
+          <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="them@email.com" />
+        </label>
+        <label className="wcf-team-field wide">
+          Display name (optional)
+          <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Defaults to their email" />
+        </label>
+      </div>
+      <button className="wcf-save" type="submit" disabled={adding || !email.trim()}>
+        {adding ? "Adding…" : "Add player"}
+      </button>
+    </form>
   );
 }
 
@@ -1622,16 +1681,16 @@ const css = `
 .wcf-roles-row:last-child{border-bottom:none}
 .wcf-roles-actions{display:flex;gap:6px;flex:0 0 auto}
 
-.wcf-club-settings{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:16px}
-.wcf-club-settings h3{margin:0 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.wcf-club-settings,.wcf-add-player{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:16px}
+.wcf-club-settings h3,.wcf-add-player h3{margin:0 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-team-settings{display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:6px}
 .wcf-team-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-team-field.wide{grid-column:1/-1}
 .wcf-team-field input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans);text-transform:none}
 .wcf-team-field.color input{width:52px;padding:2px;height:38px;cursor:pointer}
 .wcf-team-field.narrow input{width:70px}
-.wcf-club-settings .wcf-save{margin-top:10px}
-.wcf-club-settings .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
+.wcf-club-settings .wcf-save,.wcf-add-player .wcf-save{margin-top:10px}
+.wcf-club-settings .wcf-save:disabled,.wcf-add-player .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 
 .wcf-nav{position:sticky;bottom:0;z-index:5;display:flex;background:rgba(10,26,52,.95);backdrop-filter:blur(8px);
   border-top:1px solid var(--line);padding:8px 6px calc(8px + env(safe-area-inset-bottom,0px))}
