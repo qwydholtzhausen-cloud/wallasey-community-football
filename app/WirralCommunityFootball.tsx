@@ -450,17 +450,21 @@ function App({ session }: { session: Session }) {
     if (error) return notifyError(error.message);
     await loadGames();
   }
-  async function adjustGoal(gameId: string, playerId: string, delta: number) {
-    const current = goalRows.find((g) => g.game_id === gameId && g.player_id === playerId)?.goals ?? 0;
-    const next = Math.max(0, current + delta);
-    const { error } = await supabase.from("game_stats").upsert({ game_id: gameId, player_id: playerId, goals: next }, { onConflict: "game_id,player_id" });
-    if (error) return notifyError(error.message);
-    await loadGoals();
-  }
-  async function saveTeamScore(gameId: string, side: "team_white_score" | "team_red_score", value: number | null) {
-    const { error } = await supabase.from("games").update({ [side]: value }).eq("id", gameId);
-    if (error) return notifyError(error.message);
-    await loadGames();
+  async function saveResult(gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) {
+    const { error: scoreErr } = await supabase
+      .from("games")
+      .update({ team_white_score: whiteScore, team_red_score: redScore })
+      .eq("id", gameId);
+    if (scoreErr) return notifyError(scoreErr.message);
+
+    const rows = Object.entries(goals).map(([player_id, goals]) => ({ game_id: gameId, player_id, goals }));
+    if (rows.length) {
+      const { error: goalsErr } = await supabase.from("game_stats").upsert(rows, { onConflict: "game_id,player_id" });
+      if (goalsErr) return notifyError(goalsErr.message);
+    }
+
+    await Promise.all([loadGames(), loadGoals()]);
+    notifySuccess("Result saved");
   }
 
   async function saveClubSettings(patch: Partial<ClubSettings>) {
@@ -707,10 +711,9 @@ function App({ session }: { session: Session }) {
             expandedId={expandedGameId}
             onToggleExpand={(id) => setExpandedGameId(expandedGameId === id ? null : id)}
             onSetStatus={setBookingStatus}
-            onAdjustGoal={adjustGoal}
             onRemoveBooking={cancel}
             onDeleteGame={deleteGame}
-            onSaveTeamScore={saveTeamScore}
+            onSaveResult={saveResult}
             onAddBooking={addBooking}
           />
         )}
@@ -1201,10 +1204,9 @@ function AdminConsole({
   expandedId,
   onToggleExpand,
   onSetStatus,
-  onAdjustGoal,
   onRemoveBooking,
   onDeleteGame,
-  onSaveTeamScore,
+  onSaveResult,
   onAddBooking,
 }: {
   upcoming: GameRow[];
@@ -1216,13 +1218,12 @@ function AdminConsole({
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
   onSetStatus: (bookingId: string, status: PayStatus) => void;
-  onAdjustGoal: (gameId: string, playerId: string, delta: number) => void;
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
-  onSaveTeamScore: (gameId: string, side: "team_white_score" | "team_red_score", value: number | null) => void;
+  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
 }) {
-  const shared = { goalRows, cs, profiles, expandedId, onToggleExpand, onSetStatus, onAdjustGoal, onRemoveBooking, onDeleteGame, onSaveTeamScore, onAddBooking };
+  const shared = { goalRows, cs, profiles, expandedId, onToggleExpand, onSetStatus, onRemoveBooking, onDeleteGame, onSaveResult, onAddBooking };
   return (
     <>
       <h3 className="wcf-admin-section-head">Overdue</h3>
@@ -1270,10 +1271,9 @@ function AdminGameRow({
   expandedId,
   onToggleExpand,
   onSetStatus,
-  onAdjustGoal,
   onRemoveBooking,
   onDeleteGame,
-  onSaveTeamScore,
+  onSaveResult,
   onAddBooking,
 }: {
   game: GameRow;
@@ -1284,10 +1284,9 @@ function AdminGameRow({
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
   onSetStatus: (bookingId: string, status: PayStatus) => void;
-  onAdjustGoal: (gameId: string, playerId: string, delta: number) => void;
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
-  onSaveTeamScore: (gameId: string, side: "team_white_score" | "team_red_score", value: number | null) => void;
+  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
 }) {
   const expanded = expandedId === game.id;
@@ -1297,14 +1296,34 @@ function AdminGameRow({
   goalRows.filter((r) => r.game_id === game.id).forEach((r) => (goalsByPlayer[r.player_id] = r.goals));
   const [whiteScore, setWhiteScore] = useState(game.team_white_score?.toString() ?? "");
   const [redScore, setRedScore] = useState(game.team_red_score?.toString() ?? "");
+  const [goalDraft, setGoalDraft] = useState<Record<string, number>>(goalsByPlayer);
   const [addPlayerId, setAddPlayerId] = useState("");
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     setWhiteScore(game.team_white_score?.toString() ?? "");
     setRedScore(game.team_red_score?.toString() ?? "");
-  }, [game.team_white_score, game.team_red_score]);
+    setGoalDraft(goalsByPlayer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.team_white_score, game.team_red_score, goalRows, expanded]);
 
   const bookedIds = new Set(game.bookings.map((b) => b.player_id));
   const eligiblePlayers = profiles.filter((p) => !bookedIds.has(p.id)).sort((a, b) => a.display_name.localeCompare(b.display_name));
+
+  const dirty =
+    whiteScore !== (game.team_white_score?.toString() ?? "") ||
+    redScore !== (game.team_red_score?.toString() ?? "") ||
+    confirmed.some((b) => (goalDraft[b.player_id] ?? 0) !== (goalsByPlayer[b.player_id] ?? 0));
+
+  async function submitResult() {
+    setSaving(true);
+    await onSaveResult(
+      game.id,
+      whiteScore === "" ? null : Number(whiteScore),
+      redScore === "" ? null : Number(redScore),
+      goalDraft
+    );
+    setSaving(false);
+  }
 
   return (
     <div className="wcf-admin-game">
@@ -1320,21 +1339,9 @@ function AdminGameRow({
           {past && (
             <div className="wcf-admin-score">
               <span>{cs.team_white_name}</span>
-              <input
-                type="number"
-                min={0}
-                value={whiteScore}
-                onChange={(e) => setWhiteScore(e.target.value)}
-                onBlur={() => onSaveTeamScore(game.id, "team_white_score", whiteScore === "" ? null : Number(whiteScore))}
-              />
+              <input type="number" min={0} value={whiteScore} onChange={(e) => setWhiteScore(e.target.value)} />
               <span className="wcf-admin-score-dash">–</span>
-              <input
-                type="number"
-                min={0}
-                value={redScore}
-                onChange={(e) => setRedScore(e.target.value)}
-                onBlur={() => onSaveTeamScore(game.id, "team_red_score", redScore === "" ? null : Number(redScore))}
-              />
+              <input type="number" min={0} value={redScore} onChange={(e) => setRedScore(e.target.value)} />
               <span>{cs.team_red_name}</span>
             </div>
           )}
@@ -1352,9 +1359,14 @@ function AdminGameRow({
               </div>
               {past && (
                 <div className="wcf-admin-goals">
-                  <button onClick={() => onAdjustGoal(game.id, b.player_id, -1)} disabled={(goalsByPlayer[b.player_id] ?? 0) <= 0}>−</button>
-                  <span>{goalsByPlayer[b.player_id] ?? 0}</span>
-                  <button onClick={() => onAdjustGoal(game.id, b.player_id, 1)}>+</button>
+                  <button
+                    onClick={() => setGoalDraft((g) => ({ ...g, [b.player_id]: Math.max(0, (g[b.player_id] ?? 0) - 1) }))}
+                    disabled={(goalDraft[b.player_id] ?? 0) <= 0}
+                  >
+                    −
+                  </button>
+                  <span>{goalDraft[b.player_id] ?? 0}</span>
+                  <button onClick={() => setGoalDraft((g) => ({ ...g, [b.player_id]: (g[b.player_id] ?? 0) + 1 }))}>+</button>
                 </div>
               )}
               <button
@@ -1366,6 +1378,12 @@ function AdminGameRow({
               </button>
             </div>
           ))}
+
+          {past && confirmed.length > 0 && (
+            <button className="wcf-save" onClick={submitResult} disabled={!dirty || saving}>
+              {saving ? "Saving…" : "Save result"}
+            </button>
+          )}
 
           {waitingList.length > 0 && (
             <>
@@ -1768,6 +1786,8 @@ const css = `
 .wcf-admin-remove{background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;line-height:1;padding:0 2px}
 .wcf-admin-remove:hover{color:var(--red-hi)}
 .wcf-admin-delete-game{width:100%;background:transparent;border:1px dashed rgba(228,42,54,.4);color:var(--red-hi);padding:10px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer;margin-top:10px}
+.wcf-admin-game-body > .wcf-save{width:100%;margin:12px 0}
+.wcf-admin-game-body > .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-admin-add-player{display:flex;gap:8px;margin-top:14px}
 .wcf-admin-add-player select{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:12px;font-family:var(--sans)}
 .wcf-admin-add-player .wcf-ghost:disabled{opacity:.4;cursor:not-allowed}
