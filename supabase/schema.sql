@@ -360,6 +360,29 @@ alter table public.games add column team_white_score int;
 alter table public.games add column team_red_score int;
 
 -- ─────────────────────────────────────────────────────────────────
+-- Awards — free-form admin-managed shoutouts (Goal of the Season,
+-- Player of the Season, etc). Deliberately just title/value/note text
+-- rather than fixed columns per award type, so admins aren't limited
+-- to whatever awards were thought of when this was built.
+-- Supersedes club_settings.record_* (left in place, unused, rather
+-- than dropped - not worth the migration risk for existing data).
+-- ─────────────────────────────────────────────────────────────────
+
+create table public.awards (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  value text not null,
+  note text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.awards enable row level security;
+
+create policy "awards_select" on public.awards for select using (auth.role() = 'authenticated');
+create policy "awards_insert_admin" on public.awards for insert with check (public.is_admin());
+create policy "awards_delete_admin" on public.awards for delete using (public.is_admin());
+
+-- ─────────────────────────────────────────────────────────────────
 -- Realtime — so the team sheet updates live as people book/cancel
 -- ─────────────────────────────────────────────────────────────────
 

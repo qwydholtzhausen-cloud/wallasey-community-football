@@ -59,9 +59,13 @@ interface ClubSettings {
   team_white_color: string;
   team_red_name: string;
   team_red_color: string;
-  record_holder_name: string | null;
-  record_goals: number | null;
-  record_note: string | null;
+}
+
+interface AwardRow {
+  id: string;
+  title: string;
+  value: string;
+  note: string | null;
 }
 
 // Picks black or white text so admin-chosen team colours stay readable
@@ -257,6 +261,7 @@ function App({ session }: { session: Session }) {
   const [clips, setClips] = useState<ClipRow[]>([]);
   const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
   const [clubSettings, setClubSettings] = useState<ClubSettings | null>(null);
+  const [awards, setAwards] = useState<AwardRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
@@ -284,9 +289,6 @@ function App({ session }: { session: Session }) {
     team_white_color: "#EEF4FC",
     team_red_name: "Reds",
     team_red_color: "#E42A36",
-    record_holder_name: null,
-    record_goals: null,
-    record_note: null,
   };
 
   const loadProfile = useCallback(async () => {
@@ -312,9 +314,14 @@ function App({ session }: { session: Session }) {
   const loadClubSettings = useCallback(async () => {
     const { data } = await supabase
       .from("club_settings")
-      .select("team_white_name, team_white_color, team_red_name, team_red_color, record_holder_name, record_goals, record_note")
+      .select("team_white_name, team_white_color, team_red_name, team_red_color")
       .single();
     if (data) setClubSettings(data as ClubSettings);
+  }, []);
+
+  const loadAwards = useCallback(async () => {
+    const { data } = await supabase.from("awards").select("id, title, value, note").order("created_at", { ascending: true });
+    if (data) setAwards(data as AwardRow[]);
   }, []);
 
   const loadClips = useCallback(async () => {
@@ -334,8 +341,8 @@ function App({ session }: { session: Session }) {
   }, []);
 
   const loadAll = useCallback(
-    () => Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadGoals(), loadClubSettings()]),
-    [loadProfile, loadProfiles, loadGames, loadClips, loadGoals, loadClubSettings]
+    () => Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadGoals(), loadClubSettings(), loadAwards()]),
+    [loadProfile, loadProfiles, loadGames, loadClips, loadGoals, loadClubSettings, loadAwards]
   );
 
   useEffect(() => {
@@ -457,6 +464,17 @@ function App({ session }: { session: Session }) {
     if (error) return notifyError(error.message);
     await loadClubSettings();
     notifySuccess("Club settings saved");
+  }
+
+  async function addAward(title: string, value: string, note: string) {
+    const { error } = await supabase.from("awards").insert({ title, value, note: note || null });
+    if (error) return notifyError(error.message);
+    await loadAwards();
+  }
+  async function deleteAward(id: string) {
+    const { error } = await supabase.from("awards").delete().eq("id", id);
+    if (error) return notifyError(error.message);
+    await loadAwards();
   }
 
   async function addClip(e: React.FormEvent) {
@@ -785,12 +803,12 @@ function App({ session }: { session: Session }) {
 
             {resultsView === "season" && (
               <>
-                {clubSettings?.record_holder_name && (
-                  <div className="wcf-shoutout">
-                    🏆 Most goals in a game — <strong>{clubSettings.record_holder_name}</strong> ({clubSettings.record_goals})
-                    {clubSettings.record_note ? ` · ${clubSettings.record_note}` : ""}
+                {awards.map((a) => (
+                  <div key={a.id} className="wcf-shoutout">
+                    {a.title} — <strong>{a.value}</strong>
+                    {a.note ? ` · ${a.note}` : ""}
                   </div>
-                )}
+                ))}
 
                 {(headToHead.white.played > 0 || headToHead.red.played > 0) && (
                   <div className="wcf-h2h">
@@ -885,11 +903,14 @@ function App({ session }: { session: Session }) {
             isOwner={isOwner}
             profiles={profiles}
             clubSettings={cs}
+            awards={awards}
             onRename={renameSelf}
             onSetRole={setRole}
             onDeleteProfile={deleteProfile}
             onAddPlayer={addPlayer}
             onSaveClubSettings={saveClubSettings}
+            onAddAward={addAward}
+            onDeleteAward={deleteAward}
             onSignOut={signOut}
           />
         )}
@@ -916,11 +937,14 @@ function AccountPanel({
   isOwner,
   profiles,
   clubSettings,
+  awards,
   onRename,
   onSetRole,
   onDeleteProfile,
   onAddPlayer,
   onSaveClubSettings,
+  onAddAward,
+  onDeleteAward,
   onSignOut,
 }: {
   profile: Profile;
@@ -929,11 +953,14 @@ function AccountPanel({
   isOwner: boolean;
   profiles: Profile[];
   clubSettings: ClubSettings;
+  awards: AwardRow[];
   onRename: (name: string) => void;
   onSetRole: (id: string, role: Role) => void;
   onDeleteProfile: (id: string, name: string) => void;
   onAddPlayer: (email: string, displayName: string) => Promise<boolean>;
   onSaveClubSettings: (patch: Partial<ClubSettings>) => void;
+  onAddAward: (title: string, value: string, note: string) => Promise<void>;
+  onDeleteAward: (id: string) => void;
   onSignOut: () => void;
 }) {
   const [name, setName] = useState(profile.display_name);
@@ -1011,6 +1038,7 @@ function AccountPanel({
       )}
 
       {isAdmin && <ClubSettingsForm settings={clubSettings} onSave={onSaveClubSettings} />}
+      {isAdmin && <AwardsForm awards={awards} onAdd={onAddAward} onDelete={onDeleteAward} />}
     </div>
   );
 }
@@ -1084,35 +1112,71 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
         </label>
       </div>
 
-      <h4 className="wcf-edit-subhead">Most goals in a game (shoutout)</h4>
-      <div className="wcf-team-settings">
-        <label className="wcf-team-field">
-          Player name
-          <input
-            value={form.record_holder_name ?? ""}
-            onChange={(e) => setForm({ ...form, record_holder_name: e.target.value || null })}
-          />
-        </label>
-        <label className="wcf-team-field narrow">
-          Goals
-          <input
-            type="number"
-            min={0}
-            value={form.record_goals ?? ""}
-            onChange={(e) => setForm({ ...form, record_goals: e.target.value ? Number(e.target.value) : null })}
-          />
-        </label>
-        <label className="wcf-team-field wide">
-          Note (optional)
-          <input
-            value={form.record_note ?? ""}
-            onChange={(e) => setForm({ ...form, record_note: e.target.value || null })}
-            placeholder="e.g. vs Bidston Astro, March 2026"
-          />
-        </label>
-      </div>
-
       <button className="wcf-save" onClick={() => onSave(form)} disabled={!dirty}>Save settings</button>
+    </div>
+  );
+}
+
+function AwardsForm({
+  awards,
+  onAdd,
+  onDelete,
+}: {
+  awards: AwardRow[];
+  onAdd: (title: string, value: string, note: string) => Promise<void>;
+  onDelete: (id: string) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [value, setValue] = useState("");
+  const [note, setNote] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setAdding(true);
+    await onAdd(title.trim(), value.trim(), note.trim());
+    setAdding(false);
+    setTitle("");
+    setValue("");
+    setNote("");
+  }
+
+  return (
+    <div className="wcf-club-settings">
+      <h3>Awards & shoutouts</h3>
+
+      {awards.map((a) => (
+        <div key={a.id} className="wcf-award-row">
+          <span>{a.title} — <strong>{a.value}</strong>{a.note ? ` · ${a.note}` : ""}</span>
+          <button
+            className="wcf-admin-remove"
+            onClick={() => { if (confirm(`Remove "${a.title}"?`)) onDelete(a.id); }}
+            aria-label="Remove award"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+
+      <form onSubmit={submit}>
+        <div className="wcf-team-settings">
+          <label className="wcf-team-field wide">
+            Title
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. 🏆 Player of the Season" required />
+          </label>
+          <label className="wcf-team-field wide">
+            Value
+            <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. Marcus, or 30 goals, or anything" required />
+          </label>
+          <label className="wcf-team-field wide">
+            Note (optional)
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. voted by the squad" />
+          </label>
+        </div>
+        <button className="wcf-save" type="submit" disabled={adding || !title.trim() || !value.trim()}>
+          {adding ? "Adding…" : "Add award"}
+        </button>
+      </form>
     </div>
   );
 }
@@ -1703,6 +1767,8 @@ const css = `
 
 .wcf-club-settings,.wcf-add-player{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:16px}
 .wcf-club-settings h3,.wcf-add-player h3{margin:0 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.wcf-award-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line)}
+.wcf-award-row:last-of-type{border-bottom:none;margin-bottom:10px}
 .wcf-team-settings{display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:6px}
 .wcf-team-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-team-field.wide{grid-column:1/-1}
