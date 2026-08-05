@@ -10,7 +10,7 @@ const PAYMENT_PROVIDER_LABEL = "Revolut";
 const PAYMENT_LINK = process.env.NEXT_PUBLIC_PAYMENT_LINK || "";
 const MAX_SPOTS = 16;
 
-type Role = "player" | "admin";
+type Role = "player" | "admin" | "owner";
 type PayStatus = "unpaid" | "pending" | "confirmed";
 
 const STATUS_LABEL: Record<PayStatus, string> = {
@@ -233,7 +233,8 @@ function App({ session }: { session: Session }) {
   const [clipTitle, setClipTitle] = useState("");
   const [clipUrl, setClipUrl] = useState("");
 
-  const isAdmin = myProfile?.role === "admin";
+  const isAdmin = myProfile?.role === "admin" || myProfile?.role === "owner";
+  const isOwner = myProfile?.role === "owner";
 
   const loadProfile = useCallback(async () => {
     const { data } = await supabase.from("profiles").select("id, display_name, role").eq("id", myId).single();
@@ -375,6 +376,20 @@ function App({ session }: { session: Session }) {
   async function setRole(id: string, role: Role) {
     await supabase.from("profiles").update({ role }).eq("id", id);
     await loadProfiles();
+  }
+  async function deleteProfile(id: string, name: string) {
+    if (!confirm(`Permanently delete ${name}'s account? This removes their login and all their bookings. This can't be undone.`)) return;
+    const res = await fetch("/api/admin/delete-user", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ targetId: id }),
+    });
+    if (!res.ok) {
+      const { error } = await res.json().catch(() => ({ error: "Something went wrong" }));
+      alert(error || "Couldn't delete that account");
+      return;
+    }
+    await Promise.all([loadProfiles(), loadGames()]);
   }
   async function signOut() {
     await supabase.auth.signOut();
@@ -621,9 +636,11 @@ function App({ session }: { session: Session }) {
             profile={myProfile}
             email={session.user.email ?? ""}
             isAdmin={isAdmin}
+            isOwner={isOwner}
             profiles={profiles}
             onRename={renameSelf}
             onSetRole={setRole}
+            onDeleteProfile={deleteProfile}
             onSignOut={signOut}
           />
         )}
@@ -641,21 +658,27 @@ function App({ session }: { session: Session }) {
   );
 }
 
+const ROLE_LABEL: Record<Role, string> = { player: "Player", admin: "Admin", owner: "Owner" };
+
 function AccountPanel({
   profile,
   email,
   isAdmin,
+  isOwner,
   profiles,
   onRename,
   onSetRole,
+  onDeleteProfile,
   onSignOut,
 }: {
   profile: Profile;
   email: string;
   isAdmin: boolean;
+  isOwner: boolean;
   profiles: Profile[];
   onRename: (name: string) => void;
   onSetRole: (id: string, role: Role) => void;
+  onDeleteProfile: (id: string, name: string) => void;
   onSignOut: () => void;
 }) {
   const [name, setName] = useState(profile.display_name);
@@ -670,7 +693,7 @@ function AccountPanel({
           <div className="wcf-account-name">{profile.display_name}</div>
           <div className="wcf-account-email">{email}</div>
         </div>
-        <span className={"wcf-role-badge " + profile.role}>{profile.role === "admin" ? "Admin" : "Player"}</span>
+        <span className={"wcf-role-badge " + profile.role}>{ROLE_LABEL[profile.role]}</span>
       </div>
 
       <label className="wcf-account-field">
@@ -688,26 +711,45 @@ function AccountPanel({
       {isAdmin && (
         <div className="wcf-roles">
           <h3>Manage roles</h3>
-          {profiles.map((p) => (
-            <div key={p.id} className="wcf-roles-row">
-              <span>{p.display_name}{p.id === profile.id ? " (you)" : ""}</span>
-              <button
-                className="wcf-ghost"
-                onClick={() => {
-                  if (p.role === "admin") {
-                    const msg = p.id === profile.id
-                      ? "Remove your own admin access? You'll need another admin (or the SQL Editor) to get it back."
-                      : `Remove admin access from ${p.display_name}?`;
-                    if (confirm(msg)) onSetRole(p.id, "player");
-                  } else {
-                    onSetRole(p.id, "admin");
-                  }
-                }}
-              >
-                {p.role === "admin" ? "Remove admin" : "Make admin"}
-              </button>
-            </div>
-          ))}
+          {profiles.map((p) => {
+            const isSelf = p.id === profile.id;
+            // Owner rows are fully protected in the UI. Admins can only
+            // touch player rows; only the owner can manage other admins.
+            const canManageRole = p.role === "owner" ? false : p.role === "player" ? true : isOwner;
+            const canDelete = p.role !== "owner" && !isSelf && (p.role === "player" || isOwner);
+            return (
+              <div key={p.id} className="wcf-roles-row">
+                <span>{p.display_name}{isSelf ? " (you)" : ""} <span className={"wcf-role-badge small " + p.role}>{ROLE_LABEL[p.role]}</span></span>
+                <div className="wcf-roles-actions">
+                  {canManageRole && (
+                    <button
+                      className="wcf-ghost"
+                      onClick={() => {
+                        if (p.role === "admin") {
+                          const msg = isSelf
+                            ? "Remove your own admin access? You'll need the owner (or the SQL Editor) to get it back."
+                            : `Remove admin access from ${p.display_name}?`;
+                          if (confirm(msg)) onSetRole(p.id, "player");
+                        } else {
+                          onSetRole(p.id, "admin");
+                        }
+                      }}
+                    >
+                      {p.role === "admin" ? "Remove admin" : "Make admin"}
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      className="wcf-ghost danger"
+                      onClick={() => onDeleteProfile(p.id, p.display_name)}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1180,6 +1222,8 @@ const css = `
 .wcf-account-email{font-size:12px;color:var(--dim);margin-top:2px}
 .wcf-role-badge{margin-left:auto;font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
 .wcf-role-badge.admin{color:var(--green);border:1px solid rgba(51,169,87,.4)}
+.wcf-role-badge.owner{color:var(--red-hi);border:1px solid rgba(228,42,54,.4)}
+.wcf-role-badge.small{margin-left:4px;padding:2px 7px;font-size:9px}
 .wcf-account-field{display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-account-rename{display:flex;gap:8px}
 .wcf-account-rename input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:10px;border-radius:9px;font-size:13px;font-family:var(--sans);text-transform:none}
@@ -1189,8 +1233,9 @@ const css = `
 .wcf-signout:hover{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
 .wcf-roles{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .wcf-roles h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
-.wcf-roles-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;font-size:13px;border-bottom:1px solid var(--line)}
+.wcf-roles-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .wcf-roles-row:last-child{border-bottom:none}
+.wcf-roles-actions{display:flex;gap:6px;flex:0 0 auto}
 
 .wcf-nav{position:sticky;bottom:0;z-index:5;display:flex;background:rgba(10,26,52,.95);backdrop-filter:blur(8px);
   border-top:1px solid var(--line);padding:8px 6px calc(8px + env(safe-area-inset-bottom,0px))}
