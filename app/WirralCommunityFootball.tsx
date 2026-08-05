@@ -241,6 +241,10 @@ function SignIn() {
           {error && <p className="wcf-signin-error">{error}</p>}
         </form>
       )}
+
+      <p className="wcf-privacy-note">
+        We only store your name, email, and booking history to run the club — nothing else.
+      </p>
     </div>
   );
 }
@@ -500,7 +504,9 @@ function App({ session }: { session: Session }) {
       cur.goals += r.goals;
       tally[r.player_id] = cur;
     });
-    return Object.values(tally).sort((a, b) => b.apps - a.apps);
+    return Object.entries(tally)
+      .map(([id, row]) => ({ id, ...row }))
+      .sort((a, b) => b.apps - a.apps);
   }, [games, goalRows]);
 
   const today = new Date().toISOString().slice(0, 10);
@@ -781,9 +787,9 @@ function App({ session }: { session: Session }) {
                   <span className="wcf-board-count">Goals</span>
                 </div>
                 {playerStats.map((row, i) => (
-                  <div key={row.name} className={"wcf-board-row " + (i === 0 ? "lead" : "")}>
+                  <div key={row.id} className={"wcf-board-row " + (i === 0 ? "lead " : "") + (row.id === myId ? "me" : "")}>
                     <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
-                    <span className="wcf-board-name">{row.name}</span>
+                    <span className="wcf-board-name">{row.name}{row.id === myId ? " (you)" : ""}</span>
                     <span className="wcf-board-count">{row.apps}</span>
                     <span className="wcf-board-count">{row.goals || "—"}</span>
                   </div>
@@ -1417,6 +1423,7 @@ const css = `
 .wcf-signin-sent{color:var(--dim);font-size:14px;max-width:280px;margin:0 0 4px;line-height:1.5}
 .wcf-signin-form input[inputmode="numeric"]{letter-spacing:4px;text-align:center;font-family:var(--mono);font-size:18px}
 .wcf-signin-back{background:none!important;border:none!important;color:var(--dim)!important;font-weight:600!important;font-size:12px!important;padding:4px!important;cursor:pointer;text-decoration:underline}
+.wcf-privacy-note{color:var(--dim);font-size:11px;max-width:260px;margin-top:32px;line-height:1.5;opacity:.8}
 
 .wcf-top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
   padding:14px 16px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
@@ -1555,6 +1562,8 @@ const css = `
 .wcf-board-row{display:flex;align-items:center;gap:12px;padding:11px 8px;border-radius:9px;border-bottom:1px solid var(--line)}
 .wcf-board-row:last-child{border-bottom:none}
 .wcf-board-row.lead{background:rgba(51,169,87,.12);border-bottom:none;margin-bottom:2px}
+.wcf-board-row.me{background:rgba(46,116,204,.14)}
+.wcf-board-row.me .wcf-board-name{color:var(--blue)}
 .wcf-board-header{padding:0 8px 8px;border-bottom:1px solid var(--line)}
 .wcf-board-header .wcf-board-name,.wcf-board-header .wcf-board-count{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);font-weight:700;font-family:var(--sans)}
 .wcf-rank{font-family:var(--mono);font-weight:700;color:var(--dim);width:26px;text-align:center;display:grid;place-items:center}
