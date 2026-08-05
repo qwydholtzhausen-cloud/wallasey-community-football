@@ -226,9 +226,10 @@ function App({ session }: { session: Session }) {
   const [toast, setToast] = useState<string | null>(null);
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
 
-  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "lineup" | "account" | "past">("fixtures");
+  const [tab, setTab] = useState<"fixtures" | "clips" | "table" | "lineup" | "account" | "admin">("fixtures");
   const [tableView, setTableView] = useState<"attendance" | "goals">("attendance");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
   const [clipTitle, setClipTitle] = useState("");
   const [clipUrl, setClipUrl] = useState("");
 
@@ -319,11 +320,8 @@ function App({ session }: { session: Session }) {
   async function markPaid(bookingId: string) {
     await supabase.from("bookings").update({ status: "pending" }).eq("id", bookingId);
   }
-  async function confirmPayment(bookingId: string) {
-    await supabase.from("bookings").update({ status: "confirmed" }).eq("id", bookingId);
-  }
-  async function rejectPayment(bookingId: string) {
-    await supabase.from("bookings").update({ status: "unpaid" }).eq("id", bookingId);
+  async function setBookingStatus(bookingId: string, status: PayStatus) {
+    await supabase.from("bookings").update({ status }).eq("id", bookingId);
   }
 
   async function addGame() {
@@ -345,9 +343,10 @@ function App({ session }: { session: Session }) {
     await supabase.from("games").delete().eq("id", id);
     await loadGames();
   }
-  async function saveGoals(gameId: string, entries: Record<string, number>) {
-    const rows = Object.entries(entries).map(([player_id, goals]) => ({ game_id: gameId, player_id, goals }));
-    if (rows.length) await supabase.from("game_stats").upsert(rows, { onConflict: "game_id,player_id" });
+  async function adjustGoal(gameId: string, playerId: string, delta: number) {
+    const current = goalRows.find((g) => g.game_id === gameId && g.player_id === playerId)?.goals ?? 0;
+    const next = Math.max(0, current + delta);
+    await supabase.from("game_stats").upsert({ game_id: gameId, player_id: playerId, goals: next }, { onConflict: "game_id,player_id" });
     await loadGoals();
   }
 
@@ -421,7 +420,7 @@ function App({ session }: { session: Session }) {
     { k: "clips", label: "Clips", icon: Icon.play },
     { k: "table", label: "Table", icon: Icon.star },
     { k: "lineup", label: "Line-up", icon: Icon.shirt },
-    ...(isAdmin ? [{ k: "past", label: "Past", icon: Icon.history } as const] : []),
+    ...(isAdmin ? [{ k: "admin", label: "Admin", icon: Icon.history } as const] : []),
   ] as const;
 
   const heading = {
@@ -430,7 +429,7 @@ function App({ session }: { session: Session }) {
     table: tableView === "attendance" ? "Attendance table" : "Goalscorers",
     lineup: "Next game line-up",
     account: "Your account",
-    past: "Past fixtures",
+    admin: "Payments & goals",
   }[tab];
 
   if (loading || !myProfile) {
@@ -481,45 +480,28 @@ function App({ session }: { session: Session }) {
                 myId={myId}
                 isAdmin={isAdmin}
                 editing={editingId === g.id}
-                goals={goalRows.filter((r) => r.game_id === g.id)}
                 onBook={() => book(g.id)}
                 onCancel={(bookingId) => cancel(bookingId)}
                 onMarkPaid={(bookingId) => markPaid(bookingId)}
-                onConfirmPayment={(bookingId) => confirmPayment(bookingId)}
-                onRejectPayment={(bookingId) => rejectPayment(bookingId)}
                 onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
                 onSave={(patch) => saveGame(g.id, patch)}
                 onDelete={() => deleteGame(g.id)}
-                onSaveGoals={(entries) => saveGoals(g.id, entries)}
               />
             ))}
           </>
         )}
 
-        {tab === "past" && isAdmin && (
-          <>
-            {pastGames.length === 0 && <p className="wcf-empty">No past fixtures yet.</p>}
-            {pastGames.map((g) => (
-              <GameCard
-                key={g.id}
-                game={g}
-                myId={myId}
-                isAdmin={isAdmin}
-                past
-                editing={editingId === g.id}
-                goals={goalRows.filter((r) => r.game_id === g.id)}
-                onBook={() => book(g.id)}
-                onCancel={(bookingId) => cancel(bookingId)}
-                onMarkPaid={(bookingId) => markPaid(bookingId)}
-                onConfirmPayment={(bookingId) => confirmPayment(bookingId)}
-                onRejectPayment={(bookingId) => rejectPayment(bookingId)}
-                onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
-                onSave={(patch) => saveGame(g.id, patch)}
-                onDelete={() => deleteGame(g.id)}
-                onSaveGoals={(entries) => saveGoals(g.id, entries)}
-              />
-            ))}
-          </>
+        {tab === "admin" && isAdmin && (
+          <AdminConsole
+            upcoming={upcomingGames}
+            previous={pastGames}
+            goalRows={goalRows}
+            expandedId={expandedGameId}
+            onToggleExpand={(id) => setExpandedGameId(expandedGameId === id ? null : id)}
+            onSetStatus={setBookingStatus}
+            onAdjustGoal={adjustGoal}
+            onRemoveBooking={cancel}
+          />
         )}
 
         {tab === "clips" && (
@@ -732,48 +714,136 @@ function AccountPanel({
   );
 }
 
+function AdminConsole({
+  upcoming,
+  previous,
+  goalRows,
+  expandedId,
+  onToggleExpand,
+  onSetStatus,
+  onAdjustGoal,
+  onRemoveBooking,
+}: {
+  upcoming: GameRow[];
+  previous: GameRow[];
+  goalRows: GoalRow[];
+  expandedId: string | null;
+  onToggleExpand: (id: string) => void;
+  onSetStatus: (bookingId: string, status: PayStatus) => void;
+  onAdjustGoal: (gameId: string, playerId: string, delta: number) => void;
+  onRemoveBooking: (bookingId: string) => void;
+}) {
+  const shared = { goalRows, expandedId, onToggleExpand, onSetStatus, onAdjustGoal, onRemoveBooking };
+  return (
+    <>
+      <h3 className="wcf-admin-section-head">Upcoming</h3>
+      {upcoming.length === 0 && <p className="wcf-empty small">No upcoming fixtures.</p>}
+      {upcoming.map((g) => (
+        <AdminGameRow key={g.id} game={g} {...shared} />
+      ))}
+      <h3 className="wcf-admin-section-head">Previous</h3>
+      {previous.length === 0 && <p className="wcf-empty small">No past fixtures yet.</p>}
+      {previous.map((g) => (
+        <AdminGameRow key={g.id} game={g} {...shared} />
+      ))}
+    </>
+  );
+}
+
+function AdminGameRow({
+  game,
+  goalRows,
+  expandedId,
+  onToggleExpand,
+  onSetStatus,
+  onAdjustGoal,
+  onRemoveBooking,
+}: {
+  game: GameRow;
+  goalRows: GoalRow[];
+  expandedId: string | null;
+  onToggleExpand: (id: string) => void;
+  onSetStatus: (bookingId: string, status: PayStatus) => void;
+  onAdjustGoal: (gameId: string, playerId: string, delta: number) => void;
+  onRemoveBooking: (bookingId: string) => void;
+}) {
+  const expanded = expandedId === game.id;
+  const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const goalsByPlayer: Record<string, number> = {};
+  goalRows.filter((r) => r.game_id === game.id).forEach((r) => (goalsByPlayer[r.player_id] = r.goals));
+
+  return (
+    <div className="wcf-admin-game">
+      <button className="wcf-admin-game-head" onClick={() => onToggleExpand(game.id)}>
+        <span className="wcf-admin-game-info">
+          <span className="wcf-admin-game-venue">{game.venue}</span>
+          <span className="wcf-admin-game-date">{fmtDate(game.date)} · {game.kickoff}</span>
+        </span>
+        <span className="wcf-admin-game-count">{confirmed.length}/{game.max_players}</span>
+      </button>
+      {expanded && (
+        <div className="wcf-admin-game-body">
+          {confirmed.length === 0 && <p className="wcf-empty small">No one booked in.</p>}
+          {confirmed.map((b) => (
+            <div key={b.id} className="wcf-admin-player-row">
+              <span className="wcf-admin-player-name">{b.player.display_name}</span>
+              <div className="wcf-admin-status-dots">
+                {(["unpaid", "pending", "confirmed"] as const).map((s) => (
+                  <button
+                    key={s}
+                    className={"wcf-status-dot " + s + (b.status === s ? " active" : "")}
+                    title={STATUS_LABEL[s]}
+                    aria-label={STATUS_LABEL[s]}
+                    onClick={() => onSetStatus(b.id, s)}
+                  />
+                ))}
+              </div>
+              <div className="wcf-admin-goals">
+                <button onClick={() => onAdjustGoal(game.id, b.player_id, -1)} disabled={(goalsByPlayer[b.player_id] ?? 0) <= 0}>−</button>
+                <span>{goalsByPlayer[b.player_id] ?? 0}</span>
+                <button onClick={() => onAdjustGoal(game.id, b.player_id, 1)}>+</button>
+              </div>
+              <button
+                className="wcf-admin-remove"
+                onClick={() => { if (confirm(`Remove ${b.player.display_name} from this game?`)) onRemoveBooking(b.id); }}
+                aria-label="Remove from game"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GameCard({
   game,
   myId,
   isAdmin,
-  past = false,
   editing,
-  goals,
   onBook,
   onCancel,
   onMarkPaid,
-  onConfirmPayment,
-  onRejectPayment,
   onEdit,
   onSave,
   onDelete,
-  onSaveGoals,
 }: {
   game: GameRow;
   myId: string;
   isAdmin: boolean;
-  past?: boolean;
   editing: boolean;
-  goals: GoalRow[];
   onBook: () => void;
   onCancel: (bookingId: string) => void;
   onMarkPaid: (bookingId: string) => void;
-  onConfirmPayment: (bookingId: string) => void;
-  onRejectPayment: (bookingId: string) => void;
   onEdit: () => void;
   onSave: (patch: Partial<GameRow>) => void;
   onDelete: () => void;
-  onSaveGoals: (entries: Record<string, number>) => void;
 }) {
   const [form, setForm] = useState<GameRow>(game);
-  const [goalDraft, setGoalDraft] = useState<Record<string, number>>({});
 
   useEffect(() => setForm(game), [game, editing]);
-  useEffect(() => {
-    const seeded: Record<string, number> = {};
-    goals.forEach((g) => (seeded[g.player_id] = g.goals));
-    setGoalDraft(seeded);
-  }, [goals, editing]);
 
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const waitingList = game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -845,31 +915,36 @@ function GameCard({
           </div>
           <p className="wcf-payment-fee">Match fee: £{game.price}</p>
           {myBooking.status === "unpaid" && (
-            <div className="wcf-payment-actions">
-              {PAYMENT_LINK && (
-                <a className="wcf-pay-now" href={PAYMENT_LINK} target="_blank" rel="noreferrer">
-                  Pay Now with {PAYMENT_PROVIDER_LABEL}
-                </a>
-              )}
-              <button onClick={() => onMarkPaid(myBooking.id)}>I&apos;ve paid</button>
-            </div>
+            <>
+              <p className="wcf-payment-note">
+                {PAYMENT_LINK
+                  ? `Tap Pay Now to pay with ${PAYMENT_PROVIDER_LABEL}, then press I've paid.`
+                  : `Pay your organiser £${game.price} via ${PAYMENT_PROVIDER_LABEL}, then press I've paid.`}
+              </p>
+              <div className="wcf-payment-actions">
+                {PAYMENT_LINK && (
+                  <a className="wcf-pay-now" href={PAYMENT_LINK} target="_blank" rel="noreferrer">
+                    Pay Now with {PAYMENT_PROVIDER_LABEL}
+                  </a>
+                )}
+                <button onClick={() => onMarkPaid(myBooking.id)}>I&apos;ve paid</button>
+              </div>
+            </>
           )}
           {myBooking.status === "pending" && <p className="wcf-payment-note">An organiser will confirm it shortly.</p>}
         </div>
       )}
 
       <div className="wcf-card-actions">
-        {!past && (
-          <button
-            className={"wcf-book " + (myBooking ? "cancel" : "")}
-            onClick={() => {
-              if (!myBooking) return onBook();
-              if (confirm(myBooking.waiting ? "Leave the waiting list?" : "Give up your spot in this game?")) onCancel(myBooking.id);
-            }}
-          >
-            {myBooking ? (myBooking.waiting ? "Leave waiting list" : "Give up spot") : full ? "Join waiting list" : "Grab a spot"}
-          </button>
-        )}
+        <button
+          className={"wcf-book " + (myBooking ? "cancel" : "")}
+          onClick={() => {
+            if (!myBooking) return onBook();
+            if (confirm(myBooking.waiting ? "Leave the waiting list?" : "Give up your spot in this game?")) onCancel(myBooking.id);
+          }}
+        >
+          {myBooking ? (myBooking.waiting ? "Leave waiting list" : "Give up spot") : full ? "Join waiting list" : "Grab a spot"}
+        </button>
         {isAdmin && (
           <div className="wcf-admin-actions">
             <button className="wcf-ghost" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
@@ -917,46 +992,6 @@ function GameCard({
             />
           </label>
           <button className="wcf-save" onClick={() => onSave(form)}>Save changes</button>
-
-          {confirmed.length > 0 && (
-            <>
-              <h4 className="wcf-edit-subhead">Payments</h4>
-              {confirmed.map((b) => (
-                <div key={b.id} className="wcf-payment-row">
-                  <span>{b.player.display_name}</span>
-                  <StatusBadge status={b.status} />
-                  {b.status !== "confirmed" && (
-                    <button className="wcf-ghost" onClick={() => onConfirmPayment(b.id)}>Approve</button>
-                  )}
-                  {b.status === "pending" && (
-                    <button className="wcf-ghost" onClick={() => onRejectPayment(b.id)}>Reject</button>
-                  )}
-                  <button
-                    className="wcf-ghost danger"
-                    onClick={() => {
-                      if (confirm(`Remove ${b.player.display_name} from this game entirely? This frees their spot.`)) onCancel(b.id);
-                    }}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-
-              <h4 className="wcf-edit-subhead">Log goals</h4>
-              {confirmed.map((b) => (
-                <label key={b.id} className="wcf-goal-row">
-                  {b.player.display_name}
-                  <input
-                    type="number"
-                    min={0}
-                    value={goalDraft[b.player_id] ?? 0}
-                    onChange={(e) => setGoalDraft((g) => ({ ...g, [b.player_id]: Number(e.target.value) || 0 }))}
-                  />
-                </label>
-              ))}
-              <button className="wcf-save" onClick={() => onSaveGoals(goalDraft)}>Save goals</button>
-            </>
-          )}
         </div>
       )}
     </article>
@@ -1078,12 +1113,30 @@ const css = `
 .wcf-edit label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-edit input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans)}
 .wcf-save{grid-column:1/-1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
-.wcf-edit-subhead{grid-column:1/-1;margin:8px 0 0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
-.wcf-payment-row{grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;flex-wrap:wrap}
-.wcf-payment-row span:first-child{flex:1;min-width:80px}
-.wcf-payment-row .wcf-ghost{padding:7px 10px;font-size:11px}
-.wcf-goal-row{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;text-transform:none;font-weight:400;color:var(--white)}
-.wcf-goal-row input{width:64px;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:7px;border-radius:8px;font-size:13px}
+.wcf-admin-section-head{margin:18px 2px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.wcf-admin-section-head:first-child{margin-top:4px}
+.wcf-admin-game{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
+.wcf-admin-game-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;color:var(--white);padding:13px 14px;cursor:pointer;text-align:left}
+.wcf-admin-game-info{display:flex;flex-direction:column;gap:2px}
+.wcf-admin-game-venue{font-weight:800;font-size:14px}
+.wcf-admin-game-date{font-size:11px;color:var(--dim);font-family:var(--mono)}
+.wcf-admin-game-count{font-family:var(--mono);font-weight:700;color:var(--blue);flex:0 0 auto}
+.wcf-admin-game-body{padding:0 12px 12px;border-top:1px solid var(--line)}
+.wcf-admin-player-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.wcf-admin-player-row:last-child{border-bottom:none}
+.wcf-admin-player-name{flex:1;min-width:90px;font-weight:700;font-size:13px}
+.wcf-admin-status-dots{display:flex;gap:6px}
+.wcf-status-dot{width:20px;height:20px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
+.wcf-status-dot.unpaid{background:var(--red)}
+.wcf-status-dot.pending{background:var(--amber)}
+.wcf-status-dot.confirmed{background:var(--green)}
+.wcf-status-dot.active{border-color:var(--white);box-shadow:0 0 0 2px var(--panel)}
+.wcf-admin-goals{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-weight:700}
+.wcf-admin-goals button{width:24px;height:24px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);color:var(--white);cursor:pointer;font-size:14px;line-height:1;display:grid;place-items:center}
+.wcf-admin-goals button:disabled{opacity:.4;cursor:not-allowed}
+.wcf-admin-goals span{width:16px;text-align:center}
+.wcf-admin-remove{background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;line-height:1;padding:0 2px}
+.wcf-admin-remove:hover{color:var(--red-hi)}
 
 .wcf-clip-form{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
 .wcf-clip-form input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
