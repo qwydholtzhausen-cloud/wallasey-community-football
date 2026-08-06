@@ -1675,7 +1675,7 @@ function GameCard({
         <div className="wcf-edit">
           <label>
             Kickoff
-            <input value={form.kickoff} onChange={(e) => setForm({ ...form, kickoff: e.target.value })} />
+            <input type="time" value={form.kickoff} onChange={(e) => setForm({ ...form, kickoff: e.target.value })} />
           </label>
           <label>
             Date
