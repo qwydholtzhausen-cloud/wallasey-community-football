@@ -107,6 +107,33 @@ function defaultNewGameDate() {
   return d.toISOString().slice(0, 10);
 }
 
+// Current UK wall-clock time as "YYYY-MM-DDTHH:MM", regardless of the
+// viewer's own device timezone.
+function nowInLondon() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
+// A fixture's date+kickoff plus a buffer, as "YYYY-MM-DDTHH:MM" in the
+// same wall-clock frame - pure calendar arithmetic via Date.UTC, never
+// touching the browser's actual local timezone.
+function kickoffCutoff(date: string, kickoff: string, bufferMinutes: number) {
+  const [y, mo, d] = date.split("-").map(Number);
+  const [h, m] = kickoff.split(":").map(Number);
+  const cutoff = new Date(Date.UTC(y, (mo || 1) - 1, d || 1, h || 0, m || 0) + bufferMinutes * 60000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${cutoff.getUTCFullYear()}-${pad(cutoff.getUTCMonth() + 1)}-${pad(cutoff.getUTCDate())}T${pad(cutoff.getUTCHours())}:${pad(cutoff.getUTCMinutes())}`;
+}
+
 const Icon = {
   cal: (
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
@@ -550,9 +577,15 @@ function App({ session }: { session: Session }) {
     await supabase.auth.signOut();
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  const upcomingGames = useMemo(() => games.filter((g) => g.date >= today).sort((a, b) => a.date.localeCompare(b.date)), [games, today]);
-  const pastGames = useMemo(() => games.filter((g) => g.date < today).sort((a, b) => b.date.localeCompare(a.date)), [games, today]);
+  const nowUk = nowInLondon();
+  const upcomingGames = useMemo(
+    () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) > nowUk).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)),
+    [games, nowUk]
+  );
+  const pastGames = useMemo(
+    () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
+    [games, nowUk]
+  );
 
   const playerStats = useMemo(() => {
     const tally: Record<string, { name: string; apps: number; goals: number }> = {};
