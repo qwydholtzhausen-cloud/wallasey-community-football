@@ -997,7 +997,12 @@ function AccountPanel({
         Display name
         <div className="wcf-account-rename">
           <input value={name} onChange={(e) => setName(e.target.value)} />
-          <button onClick={() => onRename(name)} disabled={!name.trim() || name.trim() === profile.display_name}>
+          <button
+            onClick={() => {
+              if (confirm(`Change your display name to "${name.trim()}"?`)) onRename(name);
+            }}
+            disabled={!name.trim() || name.trim() === profile.display_name}
+          >
             Save
           </button>
         </div>
