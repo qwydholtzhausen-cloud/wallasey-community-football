@@ -988,6 +988,7 @@ function AccountPanel({
   onSignOut: () => void;
 }) {
   const [name, setName] = useState(profile.display_name);
+  const [showRoles, setShowRoles] = useState(false);
 
   useEffect(() => setName(profile.display_name), [profile.display_name]);
 
@@ -1023,8 +1024,11 @@ function AccountPanel({
 
       {isAdmin && (
         <div className="wcf-roles">
-          <h3>Manage roles</h3>
-          {profiles.map((p) => {
+          <h3>Manage roles · {profiles.length}</h3>
+          <button className="wcf-ghost wcf-roles-toggle" onClick={() => setShowRoles((v) => !v)}>
+            {showRoles ? "Hide players" : "View players"}
+          </button>
+          {showRoles && profiles.map((p) => {
             const isSelf = p.id === profile.id;
             // Owner rows are fully protected in the UI. Admins can only
             // touch player rows; only the owner can manage other admins.
@@ -1887,6 +1891,7 @@ const css = `
 .wcf-signout:hover{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
 .wcf-roles{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .wcf-roles h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.wcf-roles-toggle{width:100%;margin-bottom:4px}
 .wcf-roles-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .wcf-roles-row:last-child{border-bottom:none}
 .wcf-roles-actions{display:flex;gap:6px;flex:0 0 auto}
