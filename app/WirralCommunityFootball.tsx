@@ -584,6 +584,14 @@ function App({ session }: { session: Session }) {
     [nextGame]
   );
   useEffect(() => setEditingLineup(false), [nextGame?.id]);
+  const nextGrouped = useMemo(
+    () => ({
+      white: nextConfirmed.filter((b) => b.team === "white"),
+      red: nextConfirmed.filter((b) => b.team === "red"),
+      unassigned: nextConfirmed.filter((b) => !b.team),
+    }),
+    [nextConfirmed]
+  );
 
   const overdueBookings = useMemo(() => {
     const rows: { booking: BookingRow; game: GameRow }[] = [];
@@ -774,10 +782,11 @@ function App({ session }: { session: Session }) {
                   )}
                 </div>
                 {nextConfirmed.length === 0 && <p className="wcf-empty">No one&apos;s booked in yet.</p>}
-                {nextConfirmed.map((b) => (
-                  <div key={b.id} className="wcf-lineup-row">
-                    <span className="wcf-lineup-name">{b.player.display_name}</span>
-                    {isAdmin && editingLineup ? (
+
+                {isAdmin && editingLineup ? (
+                  nextConfirmed.map((b) => (
+                    <div key={b.id} className="wcf-lineup-row">
+                      <span className="wcf-lineup-name">{b.player.display_name}</span>
                       <div className="wcf-lineup-picks">
                         <button
                           style={b.team === "white" ? { background: cs.team_white_color, color: readableTextColor(cs.team_white_color), borderColor: cs.team_white_color } : undefined}
@@ -794,22 +803,32 @@ function App({ session }: { session: Session }) {
                           {cs.team_red_name}
                         </button>
                       </div>
-                    ) : (
-                      <span
-                        className="wcf-lineup-badge"
-                        style={
-                          b.team === "white"
-                            ? { background: cs.team_white_color, color: readableTextColor(cs.team_white_color) }
-                            : b.team === "red"
-                            ? { background: cs.team_red_color, color: readableTextColor(cs.team_red_color) }
-                            : undefined
-                        }
-                      >
-                        {b.team === "white" ? cs.team_white_name : b.team === "red" ? cs.team_red_name : "Unassigned"}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                    </div>
+                  ))
+                ) : (
+                  ([["white", nextGrouped.white, cs.team_white_name, cs.team_white_color], ["red", nextGrouped.red, cs.team_red_name, cs.team_red_color], ["unassigned", nextGrouped.unassigned, "Unassigned", null]] as const).map(
+                    ([key, group, name, color]) =>
+                      group.length > 0 && (
+                        <div key={key} className="wcf-lineup-group">
+                          <div className="wcf-lineup-group-label">{name} · {group.length}</div>
+                          {group.map((b) => (
+                            <div
+                              key={b.id}
+                              className={"wcf-lineup-row" + (b.player_id === myId ? " me" : "")}
+                              style={b.player_id === myId && color ? { boxShadow: `0 0 0 1px ${color}, 0 0 14px ${color}99` } : undefined}
+                            >
+                              <span className="wcf-lineup-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
+                              {color && (
+                                <span className="wcf-lineup-badge" style={{ background: color, color: readableTextColor(color) }}>
+                                  {name}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )
+                  )
+                )}
               </>
             )}
           </>
@@ -1849,11 +1868,14 @@ const css = `
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
 
 .wcf-lineup-head{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
-.wcf-lineup-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px}
+.wcf-lineup-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px;transition:box-shadow .2s}
+.wcf-lineup-row.me{border-color:transparent}
 .wcf-lineup-name{font-weight:700;font-size:14px}
 .wcf-lineup-picks{display:flex;gap:6px}
 .wcf-lineup-pick{background:transparent;border:1px solid var(--line);color:var(--dim);padding:7px 11px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
 .wcf-lineup-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
+.wcf-lineup-group{margin-bottom:6px}
+.wcf-lineup-group-label{font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 2px 8px}
 
 .wcf-shoutout{background:linear-gradient(135deg,rgba(228,42,54,.16),rgba(51,169,87,.1));border:1px solid rgba(228,42,54,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
 .wcf-h2h{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
