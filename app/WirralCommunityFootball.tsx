@@ -1035,7 +1035,9 @@ function AccountPanel({
                             : `Remove admin access from ${p.display_name}?`;
                           if (confirm(msg)) onSetRole(p.id, "player");
                         } else {
-                          onSetRole(p.id, "admin");
+                          if (confirm(`Make ${p.display_name} an admin? They'll be able to manage fixtures, payments, and other players.`)) {
+                            onSetRole(p.id, "admin");
+                          }
                         }
                       }}
                     >
