@@ -279,6 +279,7 @@ function App({ session }: { session: Session }) {
   const [resultsMonth, setResultsMonth] = useState<string>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
+  const [editingLineup, setEditingLineup] = useState(false);
   const [clipTitle, setClipTitle] = useState("");
   const [clipUrl, setClipUrl] = useState("");
 
@@ -582,6 +583,7 @@ function App({ session }: { session: Session }) {
     () => (nextGame ? nextGame.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)) : []),
     [nextGame]
   );
+  useEffect(() => setEditingLineup(false), [nextGame?.id]);
 
   const overdueBookings = useMemo(() => {
     const rows: { booking: BookingRow; game: GameRow }[] = [];
@@ -761,14 +763,21 @@ function App({ session }: { session: Session }) {
             {nextGame && (
               <>
                 <div className="wcf-lineup-head">
-                  <div className="wcf-venue">{nextGame.venue}</div>
-                  <div className="wcf-pitch">{fmtDate(nextGame.date)} · {nextGame.kickoff}</div>
+                  <div>
+                    <div className="wcf-venue">{nextGame.venue}</div>
+                    <div className="wcf-pitch">{fmtDate(nextGame.date)} · {nextGame.kickoff}</div>
+                  </div>
+                  {isAdmin && (
+                    <button className="wcf-ghost" onClick={() => setEditingLineup((v) => !v)}>
+                      {editingLineup ? "Lock in" : "Edit line-up"}
+                    </button>
+                  )}
                 </div>
                 {nextConfirmed.length === 0 && <p className="wcf-empty">No one&apos;s booked in yet.</p>}
                 {nextConfirmed.map((b) => (
                   <div key={b.id} className="wcf-lineup-row">
                     <span className="wcf-lineup-name">{b.player.display_name}</span>
-                    {isAdmin ? (
+                    {isAdmin && editingLineup ? (
                       <div className="wcf-lineup-picks">
                         <button
                           style={b.team === "white" ? { background: cs.team_white_color, color: readableTextColor(cs.team_white_color), borderColor: cs.team_white_color } : undefined}
@@ -1835,7 +1844,7 @@ const css = `
 .wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
 
-.wcf-lineup-head{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
+.wcf-lineup-head{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .wcf-lineup-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px}
 .wcf-lineup-name{font-weight:700;font-size:14px}
 .wcf-lineup-picks{display:flex;gap:6px}
