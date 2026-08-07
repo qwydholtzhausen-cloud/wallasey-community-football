@@ -4,9 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
 
-// Payment provider is intentionally just config, not baked into booking logic
-// (statuses below), so swapping to Stripe/Open Banking later only touches this.
-const PAYMENT_PROVIDER_LABEL = "Monzo";
+// The payment link is just config, not baked into booking logic (statuses
+// below), so swapping providers later only touches this one env var.
 const PAYMENT_LINK = process.env.NEXT_PUBLIC_PAYMENT_LINK || "";
 const MAX_SPOTS = 16;
 
@@ -1626,13 +1625,13 @@ function GameCard({
             <>
               <p className="wcf-payment-note">
                 {PAYMENT_LINK
-                  ? `Tap Pay Now to pay with ${PAYMENT_PROVIDER_LABEL}, then press I've paid.`
-                  : `Pay your organiser £${game.price} via ${PAYMENT_PROVIDER_LABEL}, then press I've paid.`}
+                  ? "Tap Pay Now to secure your spot, then press I've paid."
+                  : `Pay your organiser £${game.price} to secure your spot, then press I've paid.`}
               </p>
               <div className="wcf-payment-actions">
                 {PAYMENT_LINK && (
                   <a className="wcf-pay-now" href={PAYMENT_LINK} target="_blank" rel="noreferrer">
-                    Pay Now with {PAYMENT_PROVIDER_LABEL}
+                    Pay Now
                   </a>
                 )}
                 <button onClick={() => onMarkPaid(myBooking.id)}>I&apos;ve paid</button>
