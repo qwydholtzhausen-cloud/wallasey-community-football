@@ -1659,6 +1659,7 @@ function AccountPanel({
   const [name, setName] = useState(profile.display_name);
   const [showRoles, setShowRoles] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
+  const [openGuide, setOpenGuide] = useState<"install" | "notifications" | null>(null);
   // push_opt_in is a shared per-user DB flag, but permission is granted
   // per-device/per-browser - deriving "on" from both means a fresh device
   // (or one where permission was never actually granted) correctly shows
@@ -1719,6 +1720,30 @@ function AccountPanel({
           </button>
         )}
       </div>
+
+      <div className="wcf-guides">
+        <h3>Getting set up</h3>
+        <button className="wcf-guide-row" onClick={() => setOpenGuide("install")}>
+          <span>📱 Add to your home screen</span>
+          <span className="wcf-guide-arrow">›</span>
+        </button>
+        <button className="wcf-guide-row" onClick={() => setOpenGuide("notifications")}>
+          <span>🔔 Enable notifications</span>
+          <span className="wcf-guide-arrow">›</span>
+        </button>
+      </div>
+
+      {openGuide && (
+        <div className="wcf-lightbox" onClick={() => setOpenGuide(null)}>
+          <button className="wcf-lightbox-close" onClick={() => setOpenGuide(null)} aria-label="Close">×</button>
+          <img
+            className="wcf-lightbox-img"
+            src={openGuide === "install" ? "/Install_Guide.png" : "/Notifications_Guide.png"}
+            alt={openGuide === "install" ? "How to add the app to your home screen" : "How to enable push notifications"}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       <button className="wcf-signout" onClick={onSignOut}>Sign out</button>
 
@@ -2702,6 +2727,14 @@ const css = `
 .wcf-push-toggle.on{background:var(--green);border-color:var(--green);color:var(--bg)}
 .wcf-push-toggle:disabled{opacity:.6;cursor:not-allowed}
 .wcf-push-test{align-self:flex-start;font-size:11.5px;padding:7px 12px}
+.wcf-guides{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px;display:flex;flex-direction:column}
+.wcf-guides h3{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--dim);margin:8px 10px 4px}
+.wcf-guide-row{display:flex;align-items:center;justify-content:space-between;background:transparent;border:none;color:var(--white);font-size:13.5px;font-weight:600;font-family:var(--sans);padding:11px 10px;border-radius:9px;cursor:pointer;text-align:left}
+.wcf-guide-row:hover{background:var(--panel2)}
+.wcf-guide-arrow{color:var(--dim);font-size:18px}
+.wcf-lightbox{position:fixed;inset:0;background:rgba(4,9,20,.92);z-index:100;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 12px 40px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+.wcf-lightbox-img{max-width:min(480px,100%);width:100%;border-radius:14px;box-shadow:0 20px 60px -20px rgba(0,0,0,.6)}
+.wcf-lightbox-close{position:fixed;top:16px;right:16px;width:38px;height:38px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-size:22px;line-height:1;cursor:pointer;z-index:101}
 .wcf-push-stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:12.5px;color:var(--dim);font-weight:600}
 .wcf-roles{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .wcf-roles h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
