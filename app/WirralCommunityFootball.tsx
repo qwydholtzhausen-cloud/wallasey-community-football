@@ -313,6 +313,7 @@ function App({ session }: { session: Session }) {
   const [resultsView, setResultsView] = useState<"season" | "table" | "fixtures" | "pot">("season");
   const [potAmount, setPotAmount] = useState("");
   const [potDescription, setPotDescription] = useState("");
+  const [potEntryKind, setPotEntryKind] = useState<"add" | "deduct">("add");
   const [addingPotEntry, setAddingPotEntry] = useState(false);
   const [resultsMonth, setResultsMonth] = useState<string>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1039,58 +1040,87 @@ function App({ session }: { session: Session }) {
                 </div>
 
                 {isAdmin && (
-                  <form
-                    className="wcf-pot-add"
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      const amount = Number(potAmount);
-                      if (!amount || !potDescription.trim()) return;
-                      setAddingPotEntry(true);
-                      await addPotEntry(amount, potDescription.trim());
-                      setAddingPotEntry(false);
-                      setPotAmount("");
-                      setPotDescription("");
-                    }}
-                  >
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder="Amount (use - for spending)"
-                      value={potAmount}
-                      onChange={(e) => setPotAmount(e.target.value)}
-                    />
-                    <input
-                      placeholder="e.g. Summer BBQ, new bibs, sponsorship"
-                      value={potDescription}
-                      onChange={(e) => setPotDescription(e.target.value)}
-                    />
-                    <button type="submit" disabled={addingPotEntry || !potAmount || !potDescription.trim()}>
-                      {addingPotEntry ? "Adding…" : "Add entry"}
-                    </button>
-                  </form>
-                )}
-
-                {potLedger.length === 0 && <p className="wcf-empty">Nothing in the ledger yet.</p>}
-                {potLedger.map((entry) => (
-                  <div key={entry.id} className="wcf-pot-row">
-                    <div>
-                      <div className="wcf-pot-row-desc">{entry.description}</div>
-                      <div className="wcf-pitch">{fmtDate(entry.date)}{entry.kind === "auto" ? " · auto" : ""}</div>
-                    </div>
-                    <span className={"wcf-pot-row-amount " + (entry.amount < 0 ? "neg" : "pos")}>
-                      {entry.amount < 0 ? "−" : "+"}£{Math.abs(entry.amount).toFixed(2)}
-                    </span>
-                    {isAdmin && entry.kind === "manual" && (
+                  <>
+                    <form
+                      className="wcf-pot-add"
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        const magnitude = Math.abs(Number(potAmount));
+                        if (!magnitude || !potDescription.trim()) return;
+                        const amount = potEntryKind === "deduct" ? -magnitude : magnitude;
+                        setAddingPotEntry(true);
+                        await addPotEntry(amount, potDescription.trim());
+                        setAddingPotEntry(false);
+                        setPotAmount("");
+                        setPotDescription("");
+                        setPotEntryKind("add");
+                      }}
+                    >
+                      <div className="wcf-pot-kind-toggle">
+                        <button
+                          type="button"
+                          className={potEntryKind === "add" ? "active" : ""}
+                          onClick={() => setPotEntryKind("add")}
+                        >
+                          + Add money
+                        </button>
+                        <button
+                          type="button"
+                          className={potEntryKind === "deduct" ? "active deduct" : ""}
+                          onClick={() => setPotEntryKind("deduct")}
+                        >
+                          − Deduct money
+                        </button>
+                      </div>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="Amount, e.g. 20"
+                        value={potAmount}
+                        onChange={(e) => setPotAmount(e.target.value)}
+                      />
+                      <input
+                        placeholder="e.g. Summer BBQ, new bibs, sponsorship"
+                        value={potDescription}
+                        onChange={(e) => setPotDescription(e.target.value)}
+                      />
                       <button
-                        className="wcf-admin-remove"
-                        onClick={() => { if (confirm("Remove this pot entry?")) deletePotEntry(entry.id); }}
-                        aria-label="Remove entry"
+                        type="submit"
+                        className={potEntryKind === "deduct" ? "wcf-pot-submit deduct" : "wcf-pot-submit"}
+                        disabled={addingPotEntry || !potAmount || !potDescription.trim()}
                       >
-                        ×
+                        {addingPotEntry
+                          ? "Saving…"
+                          : potEntryKind === "deduct"
+                          ? "Deduct from pot"
+                          : "Add to pot"}
                       </button>
-                    )}
-                  </div>
-                ))}
+                    </form>
+
+                    {potLedger.length === 0 && <p className="wcf-empty">Nothing in the ledger yet.</p>}
+                    {potLedger.map((entry) => (
+                      <div key={entry.id} className="wcf-pot-row">
+                        <div>
+                          <div className="wcf-pot-row-desc">{entry.description}</div>
+                          <div className="wcf-pitch">{fmtDate(entry.date)}{entry.kind === "auto" ? " · auto" : ""}</div>
+                        </div>
+                        <span className={"wcf-pot-row-amount " + (entry.amount < 0 ? "neg" : "pos")}>
+                          {entry.amount < 0 ? "−" : "+"}£{Math.abs(entry.amount).toFixed(2)}
+                        </span>
+                        {entry.kind === "manual" && (
+                          <button
+                            className="wcf-admin-remove"
+                            onClick={() => { if (confirm("Remove this pot entry?")) deletePotEntry(entry.id); }}
+                            aria-label="Remove entry"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                )}
               </>
             )}
           </>
@@ -2080,8 +2110,13 @@ const css = `
 .wcf-pot-total-note{font-size:12px;color:var(--dim);line-height:1.5;margin:0;max-width:340px;margin-left:auto;margin-right:auto}
 .wcf-pot-add{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
 .wcf-pot-add input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
-.wcf-pot-add button{background:var(--red);color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;cursor:pointer}
-.wcf-pot-add button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
+.wcf-pot-kind-toggle{display:flex;gap:8px}
+.wcf-pot-kind-toggle button{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--dim);padding:11px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer}
+.wcf-pot-kind-toggle button.active{background:rgba(51,169,87,.18);border-color:var(--green);color:var(--green)}
+.wcf-pot-kind-toggle button.active.deduct{background:rgba(230,60,60,.16);border-color:var(--red-hi);color:var(--red-hi)}
+.wcf-pot-submit{background:var(--green);color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;cursor:pointer}
+.wcf-pot-submit.deduct{background:var(--red-hi)}
+.wcf-pot-submit:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-pot-row{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px}
 .wcf-pot-row>div:first-child{flex:1;min-width:0}
 .wcf-pot-row-desc{font-weight:700;font-size:13px}
