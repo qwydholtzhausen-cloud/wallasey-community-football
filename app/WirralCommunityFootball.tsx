@@ -1719,6 +1719,11 @@ function AccountPanel({
             Send me a test push
           </button>
         )}
+        {!pushOn && (
+          <p className="wcf-push-note">
+            Note: the app must be added to your Home Screen for notifications to work — see &quot;Add to your home screen&quot; below if you haven&apos;t yet.
+          </p>
+        )}
       </div>
 
       <div className="wcf-guides">
@@ -2727,6 +2732,7 @@ const css = `
 .wcf-push-toggle.on{background:var(--green);border-color:var(--green);color:var(--bg)}
 .wcf-push-toggle:disabled{opacity:.6;cursor:not-allowed}
 .wcf-push-test{align-self:flex-start;font-size:11.5px;padding:7px 12px}
+.wcf-push-note{font-size:11px;color:var(--dim);line-height:1.5;margin:0}
 .wcf-guides{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px;display:flex;flex-direction:column}
 .wcf-guides h3{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--dim);margin:8px 10px 4px}
 .wcf-guide-row{display:flex;align-items:center;justify-content:space-between;background:transparent;border:none;color:var(--white);font-size:13.5px;font-weight:600;font-family:var(--sans);padding:11px 10px;border-radius:9px;cursor:pointer;text-align:left}
