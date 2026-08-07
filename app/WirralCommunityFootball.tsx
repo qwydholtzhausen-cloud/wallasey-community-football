@@ -585,7 +585,10 @@ function App({ session }: { session: Session }) {
 
   async function book(gameId: string) {
     const { data, error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: myId }).select("id, waiting").single();
-    if (error) return notifyError(error.message);
+    if (error) {
+      if (error.code === "42501") return notifyError("You have an overdue payment — speak to an admin to confirm it before booking again.");
+      return notifyError(error.message);
+    }
     if (data && !data.waiting) pushNotify("notify-payment-needed", { bookingId: data.id });
   }
   async function addBooking(gameId: string, playerId: string) {
@@ -771,6 +774,19 @@ function App({ session }: { session: Session }) {
     () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
     [games, nowUk]
   );
+
+  // Same definition as the admin console's "Overdue" section - an
+  // unconfirmed, non-waiting booking on a game that's already happened.
+  // Mirrors the RLS check in has_overdue_payment() so the UI matches what
+  // the database will actually enforce, not just a client-side guess.
+  const myOverdueBookings = useMemo(
+    () =>
+      pastGames.flatMap((g) =>
+        g.bookings.filter((b) => b.player_id === myId && !b.waiting && b.status !== "confirmed").map((b) => ({ game: g, booking: b }))
+      ),
+    [pastGames, myId]
+  );
+  const iAmOverdue = myOverdueBookings.length > 0;
 
   function motmVotingOpen(g: GameRow) {
     return kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) > nowUk;
@@ -1101,6 +1117,18 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
+            {iAmOverdue && (
+              <div className="wcf-overdue-banner">
+                <strong>Overdue payment</strong> — you still owe for{" "}
+                {myOverdueBookings.map((o, i) => (
+                  <span key={o.booking.id}>
+                    {i > 0 ? ", " : ""}
+                    {o.game.venue} ({fmtDate(o.game.date)})
+                  </span>
+                ))}
+                . Speak to an admin to confirm you&apos;ve paid before booking your next game.
+              </div>
+            )}
             {upcomingGames.length === 0 && <p className="wcf-empty">No games on. {isAdmin ? "Add one above." : "Check back soon."}</p>}
             {upcomingGames.map((g) => (
               <GameCard
@@ -1108,6 +1136,7 @@ function App({ session }: { session: Session }) {
                 game={g}
                 myId={myId}
                 isAdmin={isAdmin}
+                overdue={iAmOverdue}
                 editing={editingId === g.id}
                 onBook={() => book(g.id)}
                 onCancel={(bookingId) => cancel(bookingId)}
@@ -2177,6 +2206,7 @@ function GameCard({
   game,
   myId,
   isAdmin,
+  overdue,
   editing,
   onBook,
   onCancel,
@@ -2188,6 +2218,7 @@ function GameCard({
   game: GameRow;
   myId: string;
   isAdmin: boolean;
+  overdue: boolean;
   editing: boolean;
   onBook: () => void;
   onCancel: (bookingId: string) => void;
@@ -2302,18 +2333,22 @@ function GameCard({
       )}
 
       <div className="wcf-card-actions">
-        <button
-          className={"wcf-book " + (myBooking ? "cancel" : "")}
-          disabled={!myBooking && full && waitingList.length >= 10}
-          onClick={() => {
-            if (!myBooking) return onBook();
-            if (confirm(myBooking.waiting ? "Leave the waiting list?" : "Give up your spot in this game?")) onCancel(myBooking.id);
-          }}
-        >
-          {myBooking
-            ? myBooking.waiting ? "Leave waiting list" : "Give up spot"
-            : full ? (waitingList.length >= 10 ? "Waiting list full" : "Join waiting list") : "Grab a spot"}
-        </button>
+        {!myBooking && overdue ? (
+          <p className="wcf-overdue-note">Overdue payment — speak to an admin before booking your next game.</p>
+        ) : (
+          <button
+            className={"wcf-book " + (myBooking ? "cancel" : "")}
+            disabled={!myBooking && full && waitingList.length >= 10}
+            onClick={() => {
+              if (!myBooking) return onBook();
+              if (confirm(myBooking.waiting ? "Leave the waiting list?" : "Give up your spot in this game?")) onCancel(myBooking.id);
+            }}
+          >
+            {myBooking
+              ? myBooking.waiting ? "Leave waiting list" : "Give up spot"
+              : full ? (waitingList.length >= 10 ? "Waiting list full" : "Join waiting list") : "Grab a spot"}
+          </button>
+        )}
         {isAdmin && (
           <div className="wcf-admin-actions">
             <button className="wcf-ghost" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
@@ -2496,6 +2531,9 @@ const css = `
 .wcf-admin-section-head{margin:18px 2px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-admin-section-head:first-child{margin-top:4px}
 .wcf-overdue-row{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid rgba(228,42,54,.35);border-radius:12px;padding:11px 13px;margin-bottom:9px;flex-wrap:wrap}
+.wcf-overdue-banner{background:linear-gradient(135deg,rgba(228,42,54,.18),rgba(228,42,54,.06));border:1px solid rgba(228,42,54,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5;color:var(--white)}
+.wcf-overdue-banner strong{color:var(--red-hi)}
+.wcf-overdue-note{font-size:12px;color:var(--red-hi);font-weight:700;text-align:center;margin:0;flex:1}
 .wcf-overdue-row>div:first-child{flex:1;min-width:120px}
 .wcf-admin-game{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
 .wcf-admin-game-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;color:var(--white);padding:13px 14px;cursor:pointer;text-align:left}

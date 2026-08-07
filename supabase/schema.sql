@@ -628,3 +628,36 @@ create table public.notified_events (
 );
 
 alter table public.notified_events enable row level security;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Block new bookings for a player who still owes money from a past
+-- game (same definition as the admin console's "Overdue" section:
+-- an unconfirmed, non-waiting booking on a game whose date has
+-- passed). Enforced in the RLS policy itself, not just the UI, so it
+-- can't be bypassed - admins can still add an overdue player to a
+-- game manually if they choose to override it.
+-- ─────────────────────────────────────────────────────────────────
+
+create or replace function public.has_overdue_payment(check_player_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.bookings b
+    join public.games g on g.id = b.game_id
+    where b.player_id = check_player_id
+      and b.waiting = false
+      and b.status != 'confirmed'
+      and g.date < (now() at time zone 'Europe/London')::date
+  );
+$$;
+
+drop policy if exists "bookings_insert_own_or_admin" on public.bookings;
+create policy "bookings_insert_own_or_admin" on public.bookings for insert with check (
+  (player_id = auth.uid() and not public.has_overdue_payment(auth.uid()))
+  or public.is_admin()
+);
