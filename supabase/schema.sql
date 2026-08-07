@@ -495,3 +495,26 @@ begin
   raise exception 'Only admins can change roles';
 end;
 $$;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Community pot — auto contribution per game is computed client-side
+-- from confirmed payments vs pitch cost (nothing to store), so this
+-- only needs a place for the pitch cost itself and admin's manual
+-- entries (socials, sponsorship, equipment spend, etc).
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.games add column pitch_cost numeric not null default 55;
+
+create table public.pot_entries (
+  id uuid primary key default gen_random_uuid(),
+  amount numeric not null,
+  description text not null,
+  created_by uuid references public.profiles (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.pot_entries enable row level security;
+
+create policy "pot_entries_select" on public.pot_entries for select using (auth.role() = 'authenticated');
+create policy "pot_entries_insert_admin" on public.pot_entries for insert with check (public.is_admin());
+create policy "pot_entries_delete_admin" on public.pot_entries for delete using (public.is_admin());

@@ -48,9 +48,17 @@ interface GameRow {
   pitch: string;
   price: number;
   max_players: number;
+  pitch_cost: number;
   team_white_score: number | null;
   team_red_score: number | null;
   bookings: BookingRow[];
+}
+
+interface PotEntry {
+  id: string;
+  amount: number;
+  description: string;
+  created_at: string;
 }
 
 interface ClubSettings {
@@ -288,6 +296,7 @@ function App({ session }: { session: Session }) {
   const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
   const [clubSettings, setClubSettings] = useState<ClubSettings | null>(null);
   const [awards, setAwards] = useState<AwardRow[]>([]);
+  const [potEntries, setPotEntries] = useState<PotEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
@@ -301,7 +310,10 @@ function App({ session }: { session: Session }) {
   }
 
   const [tab, setTab] = useState<"fixtures" | "clips" | "lineup" | "results" | "account" | "admin">("fixtures");
-  const [resultsView, setResultsView] = useState<"season" | "table" | "fixtures">("season");
+  const [resultsView, setResultsView] = useState<"season" | "table" | "fixtures" | "pot">("season");
+  const [potAmount, setPotAmount] = useState("");
+  const [potDescription, setPotDescription] = useState("");
+  const [addingPotEntry, setAddingPotEntry] = useState(false);
   const [resultsMonth, setResultsMonth] = useState<string>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
@@ -332,7 +344,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, team_white_score, team_red_score, bookings(id, player_id, status, waiting, team, created_at, player:profiles(id, display_name, role))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, bookings(id, player_id, status, waiting, team, created_at, player:profiles(id, display_name, role))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -349,6 +361,11 @@ function App({ session }: { session: Session }) {
   const loadAwards = useCallback(async () => {
     const { data } = await supabase.from("awards").select("id, title, value, note").order("created_at", { ascending: true });
     if (data) setAwards(data as AwardRow[]);
+  }, []);
+
+  const loadPotEntries = useCallback(async () => {
+    const { data } = await supabase.from("pot_entries").select("id, amount, description, created_at").order("created_at", { ascending: false });
+    if (data) setPotEntries(data as PotEntry[]);
   }, []);
 
   const loadClips = useCallback(async () => {
@@ -368,8 +385,8 @@ function App({ session }: { session: Session }) {
   }, []);
 
   const loadAll = useCallback(
-    () => Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadGoals(), loadClubSettings(), loadAwards()]),
-    [loadProfile, loadProfiles, loadGames, loadClips, loadGoals, loadClubSettings, loadAwards]
+    () => Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadGoals(), loadClubSettings(), loadAwards(), loadPotEntries()]),
+    [loadProfile, loadProfiles, loadGames, loadClips, loadGoals, loadClubSettings, loadAwards, loadPotEntries]
   );
 
   useEffect(() => {
@@ -512,6 +529,17 @@ function App({ session }: { session: Session }) {
     await loadAwards();
   }
 
+  async function addPotEntry(amount: number, description: string) {
+    const { error } = await supabase.from("pot_entries").insert({ amount, description, created_by: myId });
+    if (error) return notifyError(error.message);
+    await loadPotEntries();
+  }
+  async function deletePotEntry(id: string) {
+    const { error } = await supabase.from("pot_entries").delete().eq("id", id);
+    if (error) return notifyError(error.message);
+    await loadPotEntries();
+  }
+
   async function addClip(e: React.FormEvent) {
     e.preventDefault();
     if (!clipTitle.trim()) return;
@@ -585,6 +613,29 @@ function App({ session }: { session: Session }) {
     () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
     [games, nowUk]
   );
+
+  const potLedger = useMemo(() => {
+    const autoEntries = pastGames.map((g) => {
+      const confirmedPaid = g.bookings.filter((b) => !b.waiting && b.status === "confirmed").length;
+      const amount = confirmedPaid * g.price - g.pitch_cost;
+      return {
+        id: `game-${g.id}`,
+        date: g.date,
+        amount,
+        description: `${g.venue} · ${fmtDate(g.date)} — ${confirmedPaid} paid × £${g.price} − £${g.pitch_cost} pitch`,
+        kind: "auto" as const,
+      };
+    });
+    const manualEntries = potEntries.map((e) => ({
+      id: e.id,
+      date: e.created_at.slice(0, 10),
+      amount: e.amount,
+      description: e.description,
+      kind: "manual" as const,
+    }));
+    return [...autoEntries, ...manualEntries].sort((a, b) => b.date.localeCompare(a.date));
+  }, [pastGames, potEntries]);
+  const potTotal = useMemo(() => potLedger.reduce((sum, e) => sum + e.amount, 0), [potLedger]);
 
   const playerStats = useMemo(() => {
     const tally: Record<string, { name: string; apps: number; goals: number }> = {};
@@ -872,6 +923,7 @@ function App({ session }: { session: Session }) {
               <button className={resultsView === "season" ? "active" : ""} onClick={() => setResultsView("season")}>Season</button>
               <button className={resultsView === "table" ? "active" : ""} onClick={() => setResultsView("table")}>Stats</button>
               <button className={resultsView === "fixtures" ? "active" : ""} onClick={() => setResultsView("fixtures")}>Scores</button>
+              <button className={resultsView === "pot" ? "active" : ""} onClick={() => setResultsView("pot")}>Pot</button>
             </div>
 
             {resultsView === "season" && (
@@ -965,6 +1017,73 @@ function App({ session }: { session: Session }) {
                     </article>
                   );
                 })}
+              </>
+            )}
+
+            {resultsView === "pot" && (
+              <>
+                <div className="wcf-pot-total">
+                  <div className="wcf-pot-total-label">Community pot</div>
+                  <div className="wcf-pot-total-amount">£{potTotal.toFixed(2)}</div>
+                  <p className="wcf-pot-total-note">
+                    Built up from game surpluses (match fees vs pitch hire) plus socials, sponsorship and other contributions.
+                    Goes towards equipment, socials and running the club.
+                  </p>
+                </div>
+
+                {isAdmin && (
+                  <form
+                    className="wcf-pot-add"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const amount = Number(potAmount);
+                      if (!amount || !potDescription.trim()) return;
+                      setAddingPotEntry(true);
+                      await addPotEntry(amount, potDescription.trim());
+                      setAddingPotEntry(false);
+                      setPotAmount("");
+                      setPotDescription("");
+                    }}
+                  >
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Amount (use - for spending)"
+                      value={potAmount}
+                      onChange={(e) => setPotAmount(e.target.value)}
+                    />
+                    <input
+                      placeholder="e.g. Summer BBQ, new bibs, sponsorship"
+                      value={potDescription}
+                      onChange={(e) => setPotDescription(e.target.value)}
+                    />
+                    <button type="submit" disabled={addingPotEntry || !potAmount || !potDescription.trim()}>
+                      {addingPotEntry ? "Adding…" : "Add entry"}
+                    </button>
+                  </form>
+                )}
+
+                {potLedger.length === 0 && <p className="wcf-empty">Nothing in the ledger yet.</p>}
+                {potLedger.map((entry) => (
+                  <div key={entry.id} className="wcf-pot-row">
+                    <div>
+                      <div className="wcf-pot-row-desc">{entry.description}</div>
+                      <div className="wcf-pitch">{fmtDate(entry.date)}{entry.kind === "auto" ? " · auto" : ""}</div>
+                    </div>
+                    <span className={"wcf-pot-row-amount " + (entry.amount < 0 ? "neg" : "pos")}>
+                      {entry.amount < 0 ? "−" : "+"}£{Math.abs(entry.amount).toFixed(2)}
+                    </span>
+                    {isAdmin && entry.kind === "manual" && (
+                      <button
+                        className="wcf-admin-remove"
+                        onClick={() => { if (confirm("Remove this pot entry?")) deletePotEntry(entry.id); }}
+                        aria-label="Remove entry"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
               </>
             )}
           </>
@@ -1726,6 +1845,10 @@ function GameCard({
             <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) || 0 })} />
           </label>
           <label>
+            Pitch cost £
+            <input type="number" value={form.pitch_cost} onChange={(e) => setForm({ ...form, pitch_cost: Number(e.target.value) || 0 })} />
+          </label>
+          <label>
             Max players
             <input
               type="number"
@@ -1943,6 +2066,21 @@ const css = `
 .wcf-lineup-group-label{font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 2px 8px}
 
 .wcf-shoutout{background:linear-gradient(135deg,rgba(228,42,54,.16),rgba(51,169,87,.1));border:1px solid rgba(228,42,54,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
+
+.wcf-pot-total{background:linear-gradient(135deg,rgba(51,169,87,.16),rgba(46,116,204,.1));border:1px solid rgba(51,169,87,.35);border-radius:16px;padding:18px;margin-bottom:16px;text-align:center}
+.wcf-pot-total-label{font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim)}
+.wcf-pot-total-amount{font-family:var(--mono);font-weight:800;font-size:36px;color:var(--green);margin:4px 0 8px}
+.wcf-pot-total-note{font-size:12px;color:var(--dim);line-height:1.5;margin:0;max-width:340px;margin-left:auto;margin-right:auto}
+.wcf-pot-add{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.wcf-pot-add input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
+.wcf-pot-add button{background:var(--red);color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;cursor:pointer}
+.wcf-pot-add button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
+.wcf-pot-row{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px}
+.wcf-pot-row>div:first-child{flex:1;min-width:0}
+.wcf-pot-row-desc{font-weight:700;font-size:13px}
+.wcf-pot-row-amount{font-family:var(--mono);font-weight:800;font-size:14px;flex:0 0 auto}
+.wcf-pot-row-amount.pos{color:var(--green)}
+.wcf-pot-row-amount.neg{color:var(--red-hi)}
 .wcf-h2h{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .wcf-h2h-title{font-weight:800;font-size:13px;margin-bottom:10px}
 .wcf-h2h-row{display:grid;grid-template-columns:1fr repeat(5,28px);align-items:center;font-size:12px;padding:6px 0;border-bottom:1px solid var(--line)}
