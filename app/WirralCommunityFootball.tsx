@@ -133,6 +133,14 @@ function fmtDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
 
+// "2026-08" -> "2026-07" etc, handling year rollover via Date.UTC rather
+// than manual month/year arithmetic.
+function previousMonthKey(nowUkStr: string) {
+  const [y, mo] = nowUkStr.slice(0, 7).split("-").map(Number);
+  const d = new Date(Date.UTC(y, mo - 2, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 function defaultNewGameDate() {
   const d = new Date();
   d.setDate(d.getDate() + 7);
@@ -849,6 +857,48 @@ function App({ session }: { session: Session }) {
     return map;
   }, [feedReactions]);
 
+  // Player of the Month: computed, not stored - whoever won MOTM the most
+  // times in the last fully-completed calendar month, tie-broken by total
+  // votes received that month. Needs at least 2 voted games that month to
+  // mean anything, and only reveals once the month's over (not a mid-month
+  // leaderboard that flips around), staying up for the whole next month.
+  const playerOfMonth = useMemo(() => {
+    const monthKey = previousMonthKey(nowUk);
+    const monthGames = pastGames.filter(
+      (g) => g.date.startsWith(monthKey) && g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g)
+    );
+    if (monthGames.length < 2) return null;
+
+    const wins: Record<string, number> = {};
+    const votes: Record<string, number> = {};
+    const names: Record<string, string> = {};
+
+    for (const g of monthGames) {
+      const tally = motmTallyByGame[g.id] ?? {};
+      const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+      const topCount = ranked[0]?.[1] ?? 0;
+      for (const [playerId, count] of ranked) {
+        votes[playerId] = (votes[playerId] ?? 0) + count;
+        names[playerId] ??= g.bookings.find((b) => b.player_id === playerId)?.player.display_name ?? "";
+        if (topCount > 0 && count === topCount) wins[playerId] = (wins[playerId] ?? 0) + 1;
+      }
+    }
+
+    const contenders = Object.keys(wins);
+    if (contenders.length === 0) return null;
+    const maxWins = Math.max(...contenders.map((id) => wins[id]));
+    let leaders = contenders.filter((id) => wins[id] === maxWins);
+    if (leaders.length > 1) {
+      const maxVotes = Math.max(...leaders.map((id) => votes[id] ?? 0));
+      leaders = leaders.filter((id) => (votes[id] ?? 0) === maxVotes);
+    }
+
+    return {
+      monthLabel: new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
+      names: leaders.map((id) => names[id]).filter(Boolean),
+    };
+  }, [pastGames, motmTallyByGame, nowUk]);
+
   const playerStats = useMemo(() => {
     const tally: Record<string, { name: string; apps: number; goals: number }> = {};
     const pastGameIds = new Set(pastGames.map((g) => g.id));
@@ -1187,6 +1237,11 @@ function App({ session }: { session: Session }) {
 
             {resultsView === "season" && (
               <>
+                {playerOfMonth && (
+                  <div className="wcf-shoutout wcf-potm">
+                    🏅 Player of the Month — {playerOfMonth.monthLabel}: <strong>{playerOfMonth.names.join(" & ")}</strong>
+                  </div>
+                )}
                 {awards.map((a) => (
                   <div key={a.id} className="wcf-shoutout">
                     {a.title} — <strong>{a.value}</strong>
@@ -2412,6 +2467,7 @@ const css = `
 .wcf-lineup-group-label{font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 2px 8px}
 
 .wcf-shoutout{background:linear-gradient(135deg,rgba(228,42,54,.16),rgba(51,169,87,.1));border:1px solid rgba(228,42,54,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
+.wcf-potm{background:linear-gradient(135deg,rgba(224,167,51,.2),rgba(224,167,51,.06));border-color:rgba(224,167,51,.4)}
 
 .wcf-pot-total{background:linear-gradient(135deg,rgba(51,169,87,.16),rgba(46,116,204,.1));border:1px solid rgba(51,169,87,.35);border-radius:16px;padding:18px;margin-bottom:16px;text-align:center}
 .wcf-pot-total-label{font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim)}
