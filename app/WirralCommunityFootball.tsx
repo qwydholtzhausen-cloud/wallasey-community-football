@@ -354,6 +354,7 @@ function App({ session }: { session: Session }) {
   const [editingLineup, setEditingLineup] = useState(false);
   const [clipTitle, setClipTitle] = useState("");
   const [clipUrl, setClipUrl] = useState("");
+  const [feedView, setFeedView] = useState<"feed" | "clips">("feed");
 
   const isAdmin = myProfile?.role === "admin" || myProfile?.role === "co-owner" || myProfile?.role === "owner";
   const isOwner = myProfile?.role === "owner";
@@ -834,6 +835,11 @@ function App({ session }: { session: Session }) {
     return items.sort((a, b) => b.ts - a.ts);
   }, [clips, games, motmTallyByGame, potLedger, profiles, cs.team_white_name, cs.team_red_name, nowUk]);
 
+  const visibleFeedItems = useMemo(
+    () => feedItems.filter((item) => (feedView === "clips" ? item.kind === "clip" : item.kind === "derived")),
+    [feedItems, feedView]
+  );
+
   const feedReactionTally = useMemo(() => {
     const map: Record<string, Record<string, number>> = {};
     for (const r of feedReactions) {
@@ -1019,14 +1025,25 @@ function App({ session }: { session: Session }) {
 
         {tab === "feed" && (
           <>
-            <form className="wcf-clip-form" onSubmit={addClip}>
-              <input placeholder="Clip title" value={clipTitle} onChange={(e) => setClipTitle(e.target.value)} />
-              <input placeholder="YouTube link (optional)" value={clipUrl} onChange={(e) => setClipUrl(e.target.value)} />
-              <button type="submit" disabled={!clipTitle.trim()}>Share clip</button>
-            </form>
+            <div className="wcf-subtabs">
+              <button className={feedView === "feed" ? "active" : ""} onClick={() => setFeedView("feed")}>Feed</button>
+              <button className={feedView === "clips" ? "active" : ""} onClick={() => setFeedView("clips")}>Clips</button>
+            </div>
 
-            {feedItems.length === 0 && <p className="wcf-empty">Nothing yet — check back after the first game.</p>}
-            {feedItems.map((item) => {
+            {feedView === "clips" && (
+              <form className="wcf-clip-form" onSubmit={addClip}>
+                <input placeholder="Clip title" value={clipTitle} onChange={(e) => setClipTitle(e.target.value)} />
+                <input placeholder="YouTube link (optional)" value={clipUrl} onChange={(e) => setClipUrl(e.target.value)} />
+                <button type="submit" disabled={!clipTitle.trim()}>Share clip</button>
+              </form>
+            )}
+
+            {visibleFeedItems.length === 0 && (
+              <p className="wcf-empty">
+                {feedView === "clips" ? "No clips yet — share the first one!" : "Nothing yet — check back after the first game."}
+              </p>
+            )}
+            {visibleFeedItems.map((item) => {
               const tally = feedReactionTally[item.key] ?? {};
               const reactionRow = (
                 <div className="wcf-feed-reactions">
