@@ -566,3 +566,27 @@ create policy "motm_votes_update_own" on public.motm_votes for update
   );
 
 create policy "motm_votes_delete_own_or_admin" on public.motm_votes for delete using (voter_id = auth.uid() or public.is_admin());
+
+-- ─────────────────────────────────────────────────────────────────
+-- Club feed reactions — the feed itself is mostly derived client-side
+-- from existing tables (games, profiles, pot_entries, clips), not
+-- stored. item_key is a synthetic string built by the client (e.g.
+-- "game-<id>-fulltime", "motm-<id>", "pot-150", "join-<id>",
+-- "clip-<id>") rather than a foreign key, since feed rows aren't all
+-- the same underlying type.
+-- ─────────────────────────────────────────────────────────────────
+
+create table public.feed_reactions (
+  id uuid primary key default gen_random_uuid(),
+  item_key text not null,
+  emoji text not null,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (item_key, emoji, user_id)
+);
+
+alter table public.feed_reactions enable row level security;
+
+create policy "feed_reactions_select" on public.feed_reactions for select using (auth.role() = 'authenticated');
+create policy "feed_reactions_insert_own" on public.feed_reactions for insert with check (user_id = auth.uid());
+create policy "feed_reactions_delete_own" on public.feed_reactions for delete using (user_id = auth.uid());

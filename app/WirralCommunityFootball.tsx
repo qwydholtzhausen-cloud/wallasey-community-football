@@ -30,6 +30,7 @@ interface Profile {
   id: string;
   display_name: string;
   role: Role;
+  created_at?: string;
 }
 
 type Team = "white" | "red";
@@ -71,6 +72,19 @@ interface MotmVote {
   voter_id: string;
   candidate_id: string;
 }
+
+interface FeedReaction {
+  id: string;
+  item_key: string;
+  emoji: string;
+  user_id: string;
+}
+
+const FEED_REACTION_EMOJI = ["👍", "🔥"] as const;
+
+type FeedItem =
+  | { key: string; ts: number; kind: "clip"; clip: ClipRow }
+  | { key: string; ts: number; kind: "derived"; icon: string; tone: "amber" | "green" | "blue"; text: React.ReactNode };
 
 interface ClubSettings {
   team_white_name: string;
@@ -163,6 +177,12 @@ const Icon = {
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="12" cy="12" r="9" />
       <path d="M10 8.5l6 3.5-6 3.5z" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+  pulse: (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M7 12h2.5l1.5-4 3 8 1.5-4H17" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   ),
   star: (
@@ -309,6 +329,7 @@ function App({ session }: { session: Session }) {
   const [awards, setAwards] = useState<AwardRow[]>([]);
   const [potEntries, setPotEntries] = useState<PotEntry[]>([]);
   const [motmVotes, setMotmVotes] = useState<MotmVote[]>([]);
+  const [feedReactions, setFeedReactions] = useState<FeedReaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
@@ -321,7 +342,7 @@ function App({ session }: { session: Session }) {
     setToast({ kind: "success", text });
   }
 
-  const [tab, setTab] = useState<"fixtures" | "clips" | "lineup" | "results" | "account" | "admin">("fixtures");
+  const [tab, setTab] = useState<"fixtures" | "feed" | "lineup" | "results" | "account" | "admin">("fixtures");
   const [resultsView, setResultsView] = useState<"season" | "table" | "fixtures" | "pot">("season");
   const [potAmount, setPotAmount] = useState("");
   const [potDescription, setPotDescription] = useState("");
@@ -349,7 +370,7 @@ function App({ session }: { session: Session }) {
   }, [myId]);
 
   const loadProfiles = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id, display_name, role").order("display_name");
+    const { data } = await supabase.from("profiles").select("id, display_name, role, created_at").order("display_name");
     if (data) setProfiles(data as Profile[]);
   }, []);
 
@@ -386,6 +407,11 @@ function App({ session }: { session: Session }) {
     if (data) setMotmVotes(data as MotmVote[]);
   }, []);
 
+  const loadFeedReactions = useCallback(async () => {
+    const { data } = await supabase.from("feed_reactions").select("id, item_key, emoji, user_id");
+    if (data) setFeedReactions(data as FeedReaction[]);
+  }, []);
+
   const loadClips = useCallback(async () => {
     const { data } = await supabase
       .from("clips")
@@ -414,8 +440,20 @@ function App({ session }: { session: Session }) {
         loadAwards(),
         loadPotEntries(),
         loadMotmVotes(),
+        loadFeedReactions(),
       ]),
-    [loadProfile, loadProfiles, loadGames, loadClips, loadGoals, loadClubSettings, loadAwards, loadPotEntries, loadMotmVotes]
+    [
+      loadProfile,
+      loadProfiles,
+      loadGames,
+      loadClips,
+      loadGoals,
+      loadClubSettings,
+      loadAwards,
+      loadPotEntries,
+      loadMotmVotes,
+      loadFeedReactions,
+    ]
   );
 
   useEffect(() => {
@@ -577,6 +615,15 @@ function App({ session }: { session: Session }) {
     await loadMotmVotes();
   }
 
+  async function toggleReaction(itemKey: string, emoji: string) {
+    const existing = feedReactions.find((r) => r.item_key === itemKey && r.emoji === emoji && r.user_id === myId);
+    const { error } = existing
+      ? await supabase.from("feed_reactions").delete().eq("id", existing.id)
+      : await supabase.from("feed_reactions").insert({ item_key: itemKey, emoji, user_id: myId });
+    if (error) return notifyError(error.message);
+    await loadFeedReactions();
+  }
+
   async function addClip(e: React.FormEvent) {
     e.preventDefault();
     if (!clipTitle.trim()) return;
@@ -698,6 +745,104 @@ function App({ session }: { session: Session }) {
   }, [games, potEntries]);
   const potTotal = useMemo(() => potLedger.reduce((sum, e) => sum + e.amount, 0), [potLedger]);
 
+  // The club feed is mostly a view over data that already exists elsewhere
+  // (results, joiners, the pot) rather than its own write path - only clips
+  // and MOTM votes are genuinely new here, so most of this list is derived,
+  // not stored.
+  const feedItems = useMemo(() => {
+    const items: FeedItem[] = [];
+
+    for (const c of clips) {
+      items.push({ key: `clip-${c.id}`, ts: new Date(c.created_at).getTime(), kind: "clip", clip: c });
+    }
+
+    for (const g of games) {
+      if (g.team_white_score == null || g.team_red_score == null) continue;
+      items.push({
+        key: `game-${g.id}-fulltime`,
+        ts: new Date(kickoffCutoff(g.date, g.kickoff, 90)).getTime(),
+        kind: "derived",
+        icon: "⚽",
+        tone: "blue",
+        text: (
+          <>
+            Full time: <strong>{cs.team_white_name} {g.team_white_score}–{g.team_red_score} {cs.team_red_name}</strong>
+          </>
+        ),
+      });
+
+      if (!motmVotingOpen(g)) {
+        const tally = motmTallyByGame[g.id] ?? {};
+        const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+        const winnerId = ranked[0]?.[0];
+        const winner = winnerId ? g.bookings.find((b) => b.player_id === winnerId)?.player : undefined;
+        if (winner) {
+          items.push({
+            key: `motm-${g.id}`,
+            ts: new Date(kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES)).getTime(),
+            kind: "derived",
+            icon: "🏆",
+            tone: "amber",
+            text: (
+              <>
+                <strong>{winner.display_name}</strong> voted Man of the Match
+              </>
+            ),
+          });
+        }
+      }
+    }
+
+    // Every £50 the pot's running total crosses, oldest to newest.
+    const chron = [...potLedger].sort((a, b) => a.date.localeCompare(b.date));
+    let running = 0;
+    for (const e of chron) {
+      const before = running;
+      running += e.amount;
+      for (let t = Math.floor(before / 50 + 1) * 50; t > before && t <= running; t += 50) {
+        items.push({
+          key: `pot-${t}`,
+          ts: new Date(e.date + "T12:00:00").getTime(),
+          kind: "derived",
+          icon: "💰",
+          tone: "green",
+          text: (
+            <>
+              Community pot passed <strong>£{t}</strong>
+            </>
+          ),
+        });
+      }
+    }
+
+    for (const p of profiles) {
+      if (!p.created_at) continue;
+      items.push({
+        key: `join-${p.id}`,
+        ts: new Date(p.created_at).getTime(),
+        kind: "derived",
+        icon: "🎉",
+        tone: "blue",
+        text: (
+          <>
+            <strong>{p.display_name}</strong> joined the club
+          </>
+        ),
+      });
+    }
+
+    return items.sort((a, b) => b.ts - a.ts);
+  }, [clips, games, motmTallyByGame, potLedger, profiles, cs.team_white_name, cs.team_red_name, nowUk]);
+
+  const feedReactionTally = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {};
+    for (const r of feedReactions) {
+      map[r.item_key] ??= {};
+      map[r.item_key][r.emoji] = (map[r.item_key][r.emoji] ?? 0) + 1;
+    }
+    return map;
+  }, [feedReactions]);
+
   const playerStats = useMemo(() => {
     const tally: Record<string, { name: string; apps: number; goals: number }> = {};
     const pastGameIds = new Set(pastGames.map((g) => g.id));
@@ -778,7 +923,7 @@ function App({ session }: { session: Session }) {
 
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
-    { k: "clips", label: "Clips", icon: Icon.play },
+    { k: "feed", label: "Feed", icon: Icon.pulse },
     { k: "lineup", label: "Line-up", icon: Icon.shirt },
     { k: "results", label: "Results", icon: Icon.trophy },
     ...(isAdmin ? [{ k: "admin", label: "Admin", icon: Icon.history } as const] : []),
@@ -786,7 +931,7 @@ function App({ session }: { session: Session }) {
 
   const heading = {
     fixtures: "Upcoming fixtures",
-    clips: "Match clips",
+    feed: "Club feed",
     lineup: "Next game line-up",
     results: "Results",
     account: "Your account",
@@ -872,40 +1017,76 @@ function App({ session }: { session: Session }) {
           />
         )}
 
-        {tab === "clips" && (
+        {tab === "feed" && (
           <>
             <form className="wcf-clip-form" onSubmit={addClip}>
               <input placeholder="Clip title" value={clipTitle} onChange={(e) => setClipTitle(e.target.value)} />
               <input placeholder="YouTube link (optional)" value={clipUrl} onChange={(e) => setClipUrl(e.target.value)} />
               <button type="submit" disabled={!clipTitle.trim()}>Share clip</button>
             </form>
-            {clips.length === 0 && <p className="wcf-empty">No clips yet.</p>}
-            {clips.map((c) => (
-              <article key={c.id} className="wcf-clip">
-                {c.video_url ? (
-                  <a className="wcf-clip-thumb" href={c.video_url} target="_blank" rel="noreferrer">
-                    <span>▶</span>
-                  </a>
-                ) : (
-                  <div className="wcf-clip-thumb">
-                    <span>▶</span>
-                  </div>
-                )}
-                <div className="wcf-clip-body">
-                  <div className="wcf-clip-title">{c.title}</div>
-                  <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"}</div>
+
+            {feedItems.length === 0 && <p className="wcf-empty">Nothing yet — check back after the first game.</p>}
+            {feedItems.map((item) => {
+              const tally = feedReactionTally[item.key] ?? {};
+              const reactionRow = (
+                <div className="wcf-feed-reactions">
+                  {FEED_REACTION_EMOJI.map((emoji) => {
+                    const count = tally[emoji] ?? 0;
+                    const mine = feedReactions.some((r) => r.item_key === item.key && r.emoji === emoji && r.user_id === myId);
+                    return (
+                      <button
+                        key={emoji}
+                        className={"wcf-feed-reaction" + (mine ? " mine" : "")}
+                        onClick={() => toggleReaction(item.key, emoji)}
+                      >
+                        {emoji} {count > 0 ? count : ""}
+                      </button>
+                    );
+                  })}
                 </div>
-                {(c.submitted_by === myId || isAdmin) && (
-                  <button
-                    className="wcf-clip-del"
-                    onClick={() => { if (confirm(`Delete "${c.title}"?`)) deleteClip(c.id); }}
-                    aria-label="Delete clip"
-                  >
-                    ×
-                  </button>
-                )}
-              </article>
-            ))}
+              );
+
+              if (item.kind === "clip") {
+                const c = item.clip;
+                return (
+                  <article key={item.key} className="wcf-clip">
+                    {c.video_url ? (
+                      <a className="wcf-clip-thumb" href={c.video_url} target="_blank" rel="noreferrer">
+                        <span>▶</span>
+                      </a>
+                    ) : (
+                      <div className="wcf-clip-thumb">
+                        <span>▶</span>
+                      </div>
+                    )}
+                    <div className="wcf-clip-body">
+                      <div className="wcf-clip-title">{c.title}</div>
+                      <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"}</div>
+                      {reactionRow}
+                    </div>
+                    {(c.submitted_by === myId || isAdmin) && (
+                      <button
+                        className="wcf-clip-del"
+                        onClick={() => { if (confirm(`Delete "${c.title}"?`)) deleteClip(c.id); }}
+                        aria-label="Delete clip"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </article>
+                );
+              }
+
+              return (
+                <article key={item.key} className="wcf-feed-item">
+                  <div className={"wcf-feed-icon " + item.tone}>{item.icon}</div>
+                  <div className="wcf-feed-body">
+                    <div className="wcf-feed-text">{item.text}</div>
+                    {reactionRow}
+                  </div>
+                </article>
+              );
+            })}
           </>
         )}
 
@@ -2163,13 +2344,23 @@ const css = `
 .wcf-clip-form input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
 .wcf-clip-form button{background:var(--red);color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;cursor:pointer}
 .wcf-clip-form button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
-.wcf-clip{display:flex;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:12px;align-items:center}
+.wcf-clip{display:flex;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:12px;align-items:flex-start}
 .wcf-clip-thumb{width:74px;height:52px;border-radius:9px;flex:0 0 auto;background:linear-gradient(135deg,var(--panel2),var(--bg));display:grid;place-items:center;color:var(--red-hi);font-size:16px;border:1px solid var(--line)}
 .wcf-clip-body{flex:1;min-width:0}
 .wcf-clip-title{font-weight:800;font-size:14px}
 .wcf-clip-sub{font-size:11px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
 .wcf-clip-del{background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;flex:0 0 auto;line-height:1}
 .wcf-clip-del:hover{color:var(--red-hi)}
+.wcf-feed-item{display:flex;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:11px 12px;margin-bottom:10px;align-items:flex-start}
+.wcf-feed-icon{width:32px;height:32px;border-radius:9px;flex:0 0 auto;display:grid;place-items:center;font-size:15px}
+.wcf-feed-icon.amber{background:rgba(224,167,51,.16)}
+.wcf-feed-icon.green{background:rgba(51,169,87,.16)}
+.wcf-feed-icon.blue{background:rgba(46,116,204,.16)}
+.wcf-feed-body{flex:1;min-width:0}
+.wcf-feed-text{font-size:13px;color:var(--white);line-height:1.4}
+.wcf-feed-reactions{display:flex;gap:6px;margin-top:8px}
+.wcf-feed-reaction{font-size:11px;font-family:var(--mono);color:var(--dim);background:var(--panel2);border:1px solid transparent;border-radius:20px;padding:3px 9px;cursor:pointer}
+.wcf-feed-reaction.mine{border-color:var(--green);color:var(--green)}
 
 .wcf-subtabs{display:flex;gap:8px;margin:0 2px 12px}
 .wcf-subtabs button{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--dim);padding:9px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer}
