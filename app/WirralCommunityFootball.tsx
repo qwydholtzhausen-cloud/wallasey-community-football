@@ -8,6 +8,10 @@ import { supabase } from "../lib/supabase/client";
 // below), so swapping providers later only touches this one env var.
 const PAYMENT_LINK = process.env.NEXT_PUBLIC_PAYMENT_LINK || "";
 const MAX_SPOTS = 16;
+// Man of the Match voting stays open for this long after kickoff, then the
+// result locks in - long enough to cover a 5-a-side evening plus stragglers
+// checking the app later that night.
+const MOTM_VOTE_WINDOW_MINUTES = 300;
 
 type Role = "player" | "admin" | "co-owner" | "owner";
 type PayStatus = "unpaid" | "pending" | "confirmed";
@@ -59,6 +63,13 @@ interface PotEntry {
   amount: number;
   description: string;
   created_at: string;
+}
+
+interface MotmVote {
+  id: string;
+  game_id: string;
+  voter_id: string;
+  candidate_id: string;
 }
 
 interface ClubSettings {
@@ -297,6 +308,7 @@ function App({ session }: { session: Session }) {
   const [clubSettings, setClubSettings] = useState<ClubSettings | null>(null);
   const [awards, setAwards] = useState<AwardRow[]>([]);
   const [potEntries, setPotEntries] = useState<PotEntry[]>([]);
+  const [motmVotes, setMotmVotes] = useState<MotmVote[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
@@ -369,6 +381,11 @@ function App({ session }: { session: Session }) {
     if (data) setPotEntries(data as PotEntry[]);
   }, []);
 
+  const loadMotmVotes = useCallback(async () => {
+    const { data } = await supabase.from("motm_votes").select("id, game_id, voter_id, candidate_id");
+    if (data) setMotmVotes(data as MotmVote[]);
+  }, []);
+
   const loadClips = useCallback(async () => {
     const { data } = await supabase
       .from("clips")
@@ -386,8 +403,19 @@ function App({ session }: { session: Session }) {
   }, []);
 
   const loadAll = useCallback(
-    () => Promise.all([loadProfile(), loadProfiles(), loadGames(), loadClips(), loadGoals(), loadClubSettings(), loadAwards(), loadPotEntries()]),
-    [loadProfile, loadProfiles, loadGames, loadClips, loadGoals, loadClubSettings, loadAwards, loadPotEntries]
+    () =>
+      Promise.all([
+        loadProfile(),
+        loadProfiles(),
+        loadGames(),
+        loadClips(),
+        loadGoals(),
+        loadClubSettings(),
+        loadAwards(),
+        loadPotEntries(),
+        loadMotmVotes(),
+      ]),
+    [loadProfile, loadProfiles, loadGames, loadClips, loadGoals, loadClubSettings, loadAwards, loadPotEntries, loadMotmVotes]
   );
 
   useEffect(() => {
@@ -541,6 +569,14 @@ function App({ session }: { session: Session }) {
     await loadPotEntries();
   }
 
+  async function castMotmVote(gameId: string, candidateId: string) {
+    const { error } = await supabase
+      .from("motm_votes")
+      .upsert({ game_id: gameId, voter_id: myId, candidate_id: candidateId }, { onConflict: "game_id,voter_id" });
+    if (error) return notifyError(error.message);
+    await loadMotmVotes();
+  }
+
   async function addClip(e: React.FormEvent) {
     e.preventDefault();
     if (!clipTitle.trim()) return;
@@ -614,6 +650,23 @@ function App({ session }: { session: Session }) {
     () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
     [games, nowUk]
   );
+
+  function motmVotingOpen(g: GameRow) {
+    return kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) > nowUk;
+  }
+  const myMotmVoteByGame = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const v of motmVotes) if (v.voter_id === myId) map[v.game_id] = v.candidate_id;
+    return map;
+  }, [motmVotes, myId]);
+  const motmTallyByGame = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {};
+    for (const v of motmVotes) {
+      map[v.game_id] ??= {};
+      map[v.game_id][v.candidate_id] = (map[v.game_id][v.candidate_id] ?? 0) + 1;
+    }
+    return map;
+  }, [motmVotes]);
 
   const potLedger = useMemo(() => {
     // Counts as soon as a game has any confirmed payment - people pay in
@@ -1000,6 +1053,15 @@ function App({ session }: { session: Session }) {
                 {filteredResults.map((g) => {
                   const scorers = goalRows.filter((r) => r.game_id === g.id && r.goals > 0).sort((a, b) => b.goals - a.goals);
                   const hasScore = g.team_white_score != null && g.team_red_score != null;
+                  const candidates = g.bookings.filter((b) => !b.waiting && b.status === "confirmed");
+                  const votingOpen = motmVotingOpen(g);
+                  const tally = motmTallyByGame[g.id] ?? {};
+                  const totalVotes = Object.values(tally).reduce((sum, n) => sum + n, 0);
+                  const myVote = myMotmVoteByGame[g.id];
+                  const ranked = candidates
+                    .map((c) => ({ candidate: c, votes: tally[c.player_id] ?? 0 }))
+                    .sort((a, b) => b.votes - a.votes);
+                  const topVotes = ranked[0]?.votes ?? 0;
                   return (
                     <article key={g.id} className="wcf-result">
                       <div className="wcf-result-head">
@@ -1019,6 +1081,45 @@ function App({ session }: { session: Session }) {
                         <div className="wcf-result-scorers">
                           {scorers.map((s) => (
                             <span key={s.id} className="wcf-result-scorer">{s.player.display_name} {s.goals > 1 ? `×${s.goals}` : ""}</span>
+                          ))}
+                        </div>
+                      )}
+
+                      {hasScore && candidates.length > 0 && votingOpen && (
+                        <div className="wcf-motm">
+                          <div className="wcf-motm-label">Vote Man of the Match · results hidden until voting closes</div>
+                          <div className="wcf-motm-candidates">
+                            {candidates.map((c) => (
+                              <button
+                                key={c.id}
+                                className={"wcf-motm-vote" + (myVote === c.player_id ? " voted" : "")}
+                                onClick={() => castMotmVote(g.id, c.player_id)}
+                              >
+                                {c.player.display_name}{myVote === c.player_id ? " ✓" : ""}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {hasScore && !votingOpen && totalVotes > 0 && (
+                        <div className="wcf-motm wcf-motm-closed">
+                          <div className="wcf-motm-winner">
+                            🏆 Man of the Match — <strong>{ranked[0].candidate.player.display_name}</strong>
+                          </div>
+                          {ranked.filter((r) => r.votes > 0).map((r) => (
+                            <div key={r.candidate.id} className="wcf-motm-bar-row">
+                              <div className="wcf-motm-bar-top">
+                                <span className={r.votes === topVotes ? "winner" : ""}>{r.candidate.player.display_name}</span>
+                                <span className="wcf-motm-count">{r.votes}</span>
+                              </div>
+                              <div className="wcf-motm-bar-track">
+                                <div
+                                  className={"wcf-motm-bar-fill" + (r.votes === topVotes ? " winner" : "")}
+                                  style={{ width: `${Math.max(6, (r.votes / topVotes) * 100)}%` }}
+                                />
+                              </div>
+                            </div>
                           ))}
                         </div>
                       )}
@@ -2140,6 +2241,22 @@ const css = `
 .wcf-result-dash{color:var(--dim);font-weight:400}
 .wcf-result-scorers{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
 .wcf-result-scorer{font-size:12px;color:var(--dim)}
+.wcf-motm{margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
+.wcf-motm-label{font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
+.wcf-motm-candidates{display:flex;flex-wrap:wrap;gap:6px}
+.wcf-motm-vote{font-size:11.5px;font-weight:700;padding:6px 11px;border-radius:20px;border:1px solid var(--line);background:transparent;color:var(--white);cursor:pointer}
+.wcf-motm-vote.voted{background:var(--green);border-color:var(--green);color:var(--bg)}
+.wcf-motm-winner{font-size:13px;font-weight:700;color:var(--white);margin-bottom:9px}
+.wcf-motm-winner strong{color:var(--amber)}
+.wcf-motm-bar-row{margin-bottom:7px}
+.wcf-motm-bar-row:last-child{margin-bottom:0}
+.wcf-motm-bar-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;font-size:12px}
+.wcf-motm-bar-top span:first-child{color:var(--dim);font-weight:600}
+.wcf-motm-bar-top span.winner{color:var(--amber)}
+.wcf-motm-count{font-family:var(--mono);color:var(--dim);font-size:11px}
+.wcf-motm-bar-track{height:6px;border-radius:5px;background:var(--panel2);overflow:hidden}
+.wcf-motm-bar-fill{height:100%;border-radius:5px;background:var(--dim)}
+.wcf-motm-bar-fill.winner{background:var(--amber)}
 
 .wcf-account{display:flex;flex-direction:column;gap:16px}
 .wcf-account-card{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}

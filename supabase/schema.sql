@@ -518,3 +518,51 @@ alter table public.pot_entries enable row level security;
 create policy "pot_entries_select" on public.pot_entries for select using (auth.role() = 'authenticated');
 create policy "pot_entries_insert_admin" on public.pot_entries for insert with check (public.is_admin());
 create policy "pot_entries_delete_admin" on public.pot_entries for delete using (public.is_admin());
+
+-- ─────────────────────────────────────────────────────────────────
+-- Man of the Match voting — one vote per player per game, changeable
+-- (upsert on game_id+voter_id) until the app-side voting window
+-- closes. Tallies aren't hidden at the DB level (kept simple, same
+-- trust level as the rest of the app) - the client just doesn't
+-- render them until the window's closed.
+-- ─────────────────────────────────────────────────────────────────
+
+create table public.motm_votes (
+  id uuid primary key default gen_random_uuid(),
+  game_id uuid not null references public.games (id) on delete cascade,
+  voter_id uuid not null references public.profiles (id) on delete cascade,
+  candidate_id uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (game_id, voter_id)
+);
+
+alter table public.motm_votes enable row level security;
+
+create policy "motm_votes_select" on public.motm_votes for select using (auth.role() = 'authenticated');
+
+create policy "motm_votes_insert_own" on public.motm_votes for insert with check (
+  voter_id = auth.uid()
+  and exists (
+    select 1 from public.bookings b
+    where b.game_id = motm_votes.game_id and b.player_id = voter_id
+      and b.status = 'confirmed' and b.waiting = false
+  )
+  and exists (
+    select 1 from public.bookings b
+    where b.game_id = motm_votes.game_id and b.player_id = candidate_id
+      and b.status = 'confirmed' and b.waiting = false
+  )
+);
+
+create policy "motm_votes_update_own" on public.motm_votes for update
+  using (voter_id = auth.uid())
+  with check (
+    voter_id = auth.uid()
+    and exists (
+      select 1 from public.bookings b
+      where b.game_id = motm_votes.game_id and b.player_id = candidate_id
+        and b.status = 'confirmed' and b.waiting = false
+    )
+  );
+
+create policy "motm_votes_delete_own_or_admin" on public.motm_votes for delete using (voter_id = auth.uid() or public.is_admin());
