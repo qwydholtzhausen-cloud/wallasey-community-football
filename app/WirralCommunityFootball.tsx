@@ -459,7 +459,7 @@ function App({ session }: { session: Session }) {
   async function addGame() {
     const { data, error } = await supabase
       .from("games")
-      .insert({ date: defaultNewGameDate(), kickoff: "19:00", venue: "New venue", pitch: "8-a-side", price: 6, max_players: MAX_SPOTS })
+      .insert({ date: defaultNewGameDate(), kickoff: "19:00", venue: "New venue", pitch: "8-a-side", price: 5, max_players: MAX_SPOTS })
       .select()
       .single();
     if (error) return notifyError(error.message);
