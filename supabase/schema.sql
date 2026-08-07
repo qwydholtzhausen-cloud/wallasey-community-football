@@ -434,3 +434,64 @@ update public.bookings b
 set waiting = (ranked.rn > ranked.max_players)
 from ranked
 where b.id = ranked.id;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Co-owner role — full admin-equivalent capability everywhere
+-- (is_admin() now includes it), but protected from regular admins
+-- exactly like owner is. Only the owner can promote someone to
+-- co-owner, or change/remove a co-owner's role. Co-owners have the
+-- same authority over *existing* admins that a regular admin does
+-- (i.e. none - still owner-only), not expanded owner-level authority.
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check check (role in ('player', 'admin', 'co-owner', 'owner'));
+
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles where id = auth.uid() and role in ('admin', 'co-owner', 'owner')
+  );
+$$;
+
+create or replace function public.prevent_self_role_escalation()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  caller_role text;
+begin
+  if new.role = old.role then
+    return new;
+  end if;
+
+  if auth.uid() is null then
+    return new;
+  end if;
+
+  select role into caller_role from public.profiles where id = auth.uid();
+
+  if caller_role = 'owner' then
+    return new;
+  end if;
+
+  if caller_role in ('admin', 'co-owner') then
+    if old.role <> 'player' then
+      raise exception 'Only the owner can change that role';
+    end if;
+    if new.role <> 'admin' then
+      raise exception 'You can only promote a player to admin';
+    end if;
+    return new;
+  end if;
+
+  raise exception 'Only admins can change roles';
+end;
+$$;

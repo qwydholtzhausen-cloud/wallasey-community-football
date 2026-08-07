@@ -9,7 +9,7 @@ import { supabase } from "../lib/supabase/client";
 const PAYMENT_LINK = process.env.NEXT_PUBLIC_PAYMENT_LINK || "";
 const MAX_SPOTS = 16;
 
-type Role = "player" | "admin" | "owner";
+type Role = "player" | "admin" | "co-owner" | "owner";
 type PayStatus = "unpaid" | "pending" | "confirmed";
 
 const STATUS_LABEL: Record<PayStatus, string> = {
@@ -309,7 +309,7 @@ function App({ session }: { session: Session }) {
   const [clipTitle, setClipTitle] = useState("");
   const [clipUrl, setClipUrl] = useState("");
 
-  const isAdmin = myProfile?.role === "admin" || myProfile?.role === "owner";
+  const isAdmin = myProfile?.role === "admin" || myProfile?.role === "co-owner" || myProfile?.role === "owner";
   const isOwner = myProfile?.role === "owner";
   const cs: ClubSettings = clubSettings ?? {
     team_white_name: "Whites",
@@ -1003,7 +1003,7 @@ function App({ session }: { session: Session }) {
   );
 }
 
-const ROLE_LABEL: Record<Role, string> = { player: "Player", admin: "Admin", owner: "Owner" };
+const ROLE_LABEL: Record<Role, string> = { player: "Player", admin: "Admin", "co-owner": "Co-Owner", owner: "Owner" };
 
 function AccountPanel({
   profile,
@@ -1081,31 +1081,64 @@ function AccountPanel({
           </button>
           {showRoles && profiles.map((p) => {
             const isSelf = p.id === profile.id;
-            // Owner rows are fully protected in the UI. Admins can only
-            // touch player rows; only the owner can manage other admins.
-            const canManageRole = p.role === "owner" ? false : p.role === "player" ? true : isOwner;
-            const canDelete = p.role !== "owner" && !isSelf && (p.role === "player" || isOwner);
+            // Owner rows are fully protected in the UI (SQL Editor only).
+            // Co-owner rows can only be touched by the owner. Admins/
+            // co-owners can promote a player, but only the owner can
+            // touch an existing admin or co-owner's role.
+            const canDelete =
+              p.role === "player" ? !isSelf : (p.role === "admin" || p.role === "co-owner") ? isOwner && !isSelf : false;
             return (
               <div key={p.id} className="wcf-roles-row">
                 <span>{p.display_name}{isSelf ? " (you)" : ""} <span className={"wcf-role-badge small " + p.role}>{ROLE_LABEL[p.role]}</span></span>
                 <div className="wcf-roles-actions">
-                  {canManageRole && (
+                  {p.role === "player" && (
                     <button
                       className="wcf-ghost"
                       onClick={() => {
-                        if (p.role === "admin") {
+                        if (confirm(`Make ${p.display_name} an admin? They'll be able to manage fixtures, payments, and other players.`)) {
+                          onSetRole(p.id, "admin");
+                        }
+                      }}
+                    >
+                      Make admin
+                    </button>
+                  )}
+                  {p.role === "admin" && isOwner && (
+                    <>
+                      <button
+                        className="wcf-ghost"
+                        onClick={() => {
                           const msg = isSelf
                             ? "Remove your own admin access? You'll need the owner (or the SQL Editor) to get it back."
                             : `Remove admin access from ${p.display_name}?`;
                           if (confirm(msg)) onSetRole(p.id, "player");
-                        } else {
-                          if (confirm(`Make ${p.display_name} an admin? They'll be able to manage fixtures, payments, and other players.`)) {
-                            onSetRole(p.id, "admin");
+                        }}
+                      >
+                        Remove admin
+                      </button>
+                      <button
+                        className="wcf-ghost"
+                        onClick={() => {
+                          if (confirm(`Make ${p.display_name} a co-owner? Only you'll be able to change or remove that access afterwards.`)) {
+                            onSetRole(p.id, "co-owner");
                           }
-                        }
+                        }}
+                      >
+                        Make co-owner
+                      </button>
+                    </>
+                  )}
+                  {p.role === "co-owner" && isOwner && (
+                    <button
+                      className="wcf-ghost"
+                      onClick={() => {
+                        const msg = isSelf
+                          ? "Remove your own co-owner access? You'll need the owner to get it back."
+                          : `Remove co-owner access from ${p.display_name}? They'll become an admin.`;
+                        if (confirm(msg)) onSetRole(p.id, "admin");
                       }}
                     >
-                      {p.role === "admin" ? "Remove admin" : "Make admin"}
+                      Remove co-owner
                     </button>
                   )}
                   {canDelete && (
@@ -1934,6 +1967,7 @@ const css = `
 .wcf-account-email{font-size:12px;color:var(--dim);margin-top:2px}
 .wcf-role-badge{margin-left:auto;font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
 .wcf-role-badge.admin{color:var(--green);border:1px solid rgba(51,169,87,.4)}
+.wcf-role-badge.co-owner{color:var(--blue);border:1px solid rgba(46,116,204,.4)}
 .wcf-role-badge.owner{color:var(--red-hi);border:1px solid rgba(228,42,54,.4)}
 .wcf-role-badge.small{margin-left:4px;padding:2px 7px;font-size:9px}
 .wcf-account-field{display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}

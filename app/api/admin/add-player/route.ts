@@ -22,7 +22,7 @@ export async function POST(req: Request) {
   const admin = createClient(supabaseUrl, serviceKey);
 
   const { data: callerProfile } = await admin.from("profiles").select("role").eq("id", callerId).single();
-  if (!callerProfile || !["admin", "owner"].includes(callerProfile.role)) {
+  if (!callerProfile || !["admin", "co-owner", "owner"].includes(callerProfile.role)) {
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 

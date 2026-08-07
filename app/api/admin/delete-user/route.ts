@@ -20,7 +20,7 @@ export async function POST(req: Request) {
   const admin = createClient(supabaseUrl, serviceKey);
 
   const { data: callerProfile } = await admin.from("profiles").select("role").eq("id", callerId).single();
-  if (!callerProfile || !["admin", "owner"].includes(callerProfile.role)) {
+  if (!callerProfile || !["admin", "co-owner", "owner"].includes(callerProfile.role)) {
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
   if (callerId === targetId) {
@@ -31,6 +31,9 @@ export async function POST(req: Request) {
   if (!targetProfile) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   if (targetProfile.role === "owner") {
     return NextResponse.json({ error: "Can't delete the owner account" }, { status: 403 });
+  }
+  if (targetProfile.role === "co-owner" && callerProfile.role !== "owner") {
+    return NextResponse.json({ error: "Only the owner can delete a co-owner's account" }, { status: 403 });
   }
   if (targetProfile.role === "admin" && callerProfile.role !== "owner") {
     return NextResponse.json({ error: "Only the owner can delete an admin's account" }, { status: 403 });
