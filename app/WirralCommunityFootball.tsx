@@ -615,17 +615,24 @@ function App({ session }: { session: Session }) {
   );
 
   const potLedger = useMemo(() => {
-    const autoEntries = pastGames.map((g) => {
-      const confirmedPaid = g.bookings.filter((b) => !b.waiting && b.status === "confirmed").length;
-      const amount = confirmedPaid * g.price - g.pitch_cost;
-      return {
-        id: `game-${g.id}`,
-        date: g.date,
-        amount,
-        description: `${g.venue} · ${fmtDate(g.date)} — ${confirmedPaid} paid × £${g.price} − £${g.pitch_cost} pitch`,
-        kind: "auto" as const,
-      };
-    });
+    // Counts as soon as a game has any confirmed payment - people pay in
+    // advance to secure a spot, so that money is real before kickoff, not
+    // after. Games with zero confirmed payments are excluded entirely
+    // (rather than showing an immediate -pitch_cost the moment a fixture
+    // is created, before anyone's even had a chance to book).
+    const autoEntries = games
+      .filter((g) => g.bookings.some((b) => !b.waiting && b.status === "confirmed"))
+      .map((g) => {
+        const confirmedPaid = g.bookings.filter((b) => !b.waiting && b.status === "confirmed").length;
+        const amount = confirmedPaid * g.price - g.pitch_cost;
+        return {
+          id: `game-${g.id}`,
+          date: g.date,
+          amount,
+          description: `${g.venue} · ${fmtDate(g.date)} — ${confirmedPaid} paid × £${g.price} − £${g.pitch_cost} pitch`,
+          kind: "auto" as const,
+        };
+      });
     const manualEntries = potEntries.map((e) => ({
       id: e.id,
       date: e.created_at.slice(0, 10),
@@ -634,7 +641,7 @@ function App({ session }: { session: Session }) {
       kind: "manual" as const,
     }));
     return [...autoEntries, ...manualEntries].sort((a, b) => b.date.localeCompare(a.date));
-  }, [pastGames, potEntries]);
+  }, [games, potEntries]);
   const potTotal = useMemo(() => potLedger.reduce((sum, e) => sum + e.amount, 0), [potLedger]);
 
   const playerStats = useMemo(() => {
