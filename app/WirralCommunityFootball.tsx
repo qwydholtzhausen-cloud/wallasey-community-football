@@ -3,15 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
+import { MOTM_VOTE_WINDOW_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey } from "../lib/time";
 
 // The payment link is just config, not baked into booking logic (statuses
 // below), so swapping providers later only touches this one env var.
 const PAYMENT_LINK = process.env.NEXT_PUBLIC_PAYMENT_LINK || "";
+const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "";
 const MAX_SPOTS = 16;
-// Man of the Match voting stays open for this long after kickoff, then the
-// result locks in - long enough to cover a 5-a-side evening plus stragglers
-// checking the app later that night.
-const MOTM_VOTE_WINDOW_MINUTES = 300;
 
 type Role = "player" | "admin" | "co-owner" | "owner";
 type PayStatus = "unpaid" | "pending" | "confirmed";
@@ -31,6 +29,7 @@ interface Profile {
   display_name: string;
   role: Role;
   created_at?: string;
+  push_opt_in?: boolean;
 }
 
 type Team = "white" | "red";
@@ -133,45 +132,17 @@ function fmtDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
 
-// "2026-08" -> "2026-07" etc, handling year rollover via Date.UTC rather
-// than manual month/year arithmetic.
-function previousMonthKey(nowUkStr: string) {
-  const [y, mo] = nowUkStr.slice(0, 7).split("-").map(Number);
-  const d = new Date(Date.UTC(y, mo - 2, 1));
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
 function defaultNewGameDate() {
   const d = new Date();
   d.setDate(d.getDate() + 7);
   return d.toISOString().slice(0, 10);
-}
-
-// Current UK wall-clock time as "YYYY-MM-DDTHH:MM", regardless of the
-// viewer's own device timezone.
-function nowInLondon() {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/London",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date());
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
-  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
-}
-
-// A fixture's date+kickoff plus a buffer, as "YYYY-MM-DDTHH:MM" in the
-// same wall-clock frame - pure calendar arithmetic via Date.UTC, never
-// touching the browser's actual local timezone.
-function kickoffCutoff(date: string, kickoff: string, bufferMinutes: number) {
-  const [y, mo, d] = date.split("-").map(Number);
-  const [h, m] = kickoff.split(":").map(Number);
-  const cutoff = new Date(Date.UTC(y, (mo || 1) - 1, d || 1, h || 0, m || 0) + bufferMinutes * 60000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${cutoff.getUTCFullYear()}-${pad(cutoff.getUTCMonth() + 1)}-${pad(cutoff.getUTCDate())}T${pad(cutoff.getUTCHours())}:${pad(cutoff.getUTCMinutes())}`;
 }
 
 const Icon = {
@@ -374,7 +345,7 @@ function App({ session }: { session: Session }) {
   };
 
   const loadProfile = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id, display_name, role").eq("id", myId).single();
+    const { data } = await supabase.from("profiles").select("id, display_name, role, push_opt_in").eq("id", myId).single();
     if (data) setMyProfile(data as Profile);
   }, [myId]);
 
@@ -527,13 +498,90 @@ function App({ session }: { session: Session }) {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // Best-effort - push delivery shouldn't block or fail the booking/fixture
+  // action itself, so failures here just log rather than surface a toast.
+  async function pushNotify(path: string, body: Record<string, string>) {
+    try {
+      await fetch(`/api/push/${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      console.error("Push notify failed", path, err);
+    }
+  }
+
+  async function enablePush() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      notifyError("Push isn't supported in this browser");
+      return false;
+    }
+    try {
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        notifyError("Notifications were blocked — check your browser/phone settings to allow them");
+        return false;
+      }
+      const sub =
+        (await reg.pushManager.getSubscription()) ??
+        (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) }));
+      const json = sub.toJSON();
+      const { error } = await supabase
+        .from("push_subscriptions")
+        .upsert(
+          { user_id: myId, endpoint: json.endpoint, p256dh: json.keys?.p256dh, auth_key: json.keys?.auth },
+          { onConflict: "endpoint" }
+        );
+      if (error) return notifyError(error.message), false;
+      const { error: profErr } = await supabase.from("profiles").update({ push_opt_in: true }).eq("id", myId);
+      if (profErr) return notifyError(profErr.message), false;
+      await loadProfile();
+      return true;
+    } catch (err) {
+      notifyError(err instanceof Error ? err.message : "Couldn't enable notifications");
+      return false;
+    }
+  }
+
+  async function disablePush() {
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = await reg?.pushManager.getSubscription();
+      if (sub) {
+        await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+        await sub.unsubscribe();
+      }
+    } catch (err) {
+      console.error("Push unsubscribe failed", err);
+    }
+    const { error } = await supabase.from("profiles").update({ push_opt_in: false }).eq("id", myId);
+    if (error) return notifyError(error.message);
+    await loadProfile();
+  }
+
+  async function sendTestPush() {
+    const res = await fetch("/api/push/test", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    if (!res.ok) {
+      notifyError("Couldn't send a test push");
+      return;
+    }
+    notifySuccess("Test push sent — should land in a few seconds");
+  }
+
   async function book(gameId: string) {
-    const { error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: myId });
-    if (error) notifyError(error.message);
+    const { data, error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: myId }).select("id, waiting").single();
+    if (error) return notifyError(error.message);
+    if (data && !data.waiting) pushNotify("notify-payment-needed", { bookingId: data.id });
   }
   async function addBooking(gameId: string, playerId: string) {
-    const { error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: playerId });
-    if (error) notifyError(error.message);
+    const { data, error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: playerId }).select("id, waiting").single();
+    if (error) return notifyError(error.message);
+    if (data && !data.waiting) pushNotify("notify-payment-needed", { bookingId: data.id });
   }
   async function cancel(bookingId: string) {
     const { error } = await supabase.from("bookings").delete().eq("id", bookingId);
@@ -545,7 +593,11 @@ function App({ session }: { session: Session }) {
   }
   async function setBookingStatus(bookingId: string, status: PayStatus) {
     const { error } = await supabase.from("bookings").update({ status }).eq("id", bookingId);
-    if (error) notifyError(error.message);
+    if (error) return notifyError(error.message);
+    if (status === "confirmed") {
+      const game = games.find((g) => g.bookings.some((b) => b.id === bookingId));
+      if (game) pushNotify("notify-last-spot", { gameId: game.id });
+    }
   }
 
   async function addGame() {
@@ -556,7 +608,10 @@ function App({ session }: { session: Session }) {
       .single();
     if (error) return notifyError(error.message);
     await loadGames();
-    if (data) setEditingId(data.id);
+    if (data) {
+      setEditingId(data.id);
+      pushNotify("notify-new-fixture", { gameId: data.id });
+    }
   }
   async function saveGame(id: string, patch: Partial<GameRow>) {
     const { bookings: _bookings, ...rest } = patch as GameRow;
@@ -1497,6 +1552,9 @@ function App({ session }: { session: Session }) {
             onAddAward={addAward}
             onDeleteAward={deleteAward}
             onSignOut={signOut}
+            onEnablePush={enablePush}
+            onDisablePush={disablePush}
+            onSendTestPush={sendTestPush}
           />
         )}
       </main>
@@ -1531,6 +1589,9 @@ function AccountPanel({
   onAddAward,
   onDeleteAward,
   onSignOut,
+  onEnablePush,
+  onDisablePush,
+  onSendTestPush,
 }: {
   profile: Profile;
   email: string;
@@ -1547,9 +1608,13 @@ function AccountPanel({
   onAddAward: (title: string, value: string, note: string) => Promise<void>;
   onDeleteAward: (id: string) => void;
   onSignOut: () => void;
+  onEnablePush: () => Promise<boolean>;
+  onDisablePush: () => Promise<void>;
+  onSendTestPush: () => Promise<void>;
 }) {
   const [name, setName] = useState(profile.display_name);
   const [showRoles, setShowRoles] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
 
   useEffect(() => setName(profile.display_name), [profile.display_name]);
 
@@ -1578,6 +1643,32 @@ function AccountPanel({
           </button>
         </div>
       </label>
+
+      <div className="wcf-push-section">
+        <div className="wcf-push-row">
+          <div>
+            <div className="wcf-push-label">Game-day notifications</div>
+            <div className="wcf-push-sub">Kickoff reminders, payment nudges, spots opening up</div>
+          </div>
+          <button
+            className={"wcf-push-toggle " + (profile.push_opt_in ? "on" : "")}
+            disabled={pushBusy}
+            onClick={async () => {
+              setPushBusy(true);
+              if (profile.push_opt_in) await onDisablePush();
+              else await onEnablePush();
+              setPushBusy(false);
+            }}
+          >
+            {pushBusy ? "…" : profile.push_opt_in ? "On" : "Off"}
+          </button>
+        </div>
+        {profile.push_opt_in && (
+          <button className="wcf-ghost wcf-push-test" onClick={onSendTestPush}>
+            Send me a test push
+          </button>
+        )}
+      </div>
 
       <button className="wcf-signout" onClick={onSignOut}>Sign out</button>
 
@@ -2538,6 +2629,14 @@ const css = `
 .wcf-account-rename button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-signout{background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px;border-radius:10px;font-weight:700;cursor:pointer}
 .wcf-signout:hover{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
+.wcf-push-section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 13px;display:flex;flex-direction:column;gap:9px}
+.wcf-push-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.wcf-push-label{font-size:13px;font-weight:700;color:var(--white)}
+.wcf-push-sub{font-size:11px;color:var(--dim);margin-top:2px}
+.wcf-push-toggle{flex:0 0 auto;background:var(--panel2);border:1px solid var(--line);color:var(--dim);font-weight:800;font-size:12px;padding:7px 16px;border-radius:20px;cursor:pointer}
+.wcf-push-toggle.on{background:var(--green);border-color:var(--green);color:var(--bg)}
+.wcf-push-toggle:disabled{opacity:.6;cursor:not-allowed}
+.wcf-push-test{align-self:flex-start;font-size:11.5px;padding:7px 12px}
 .wcf-roles{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .wcf-roles h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-roles-toggle{width:100%;margin-bottom:4px}

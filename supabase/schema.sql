@@ -590,3 +590,41 @@ alter table public.feed_reactions enable row level security;
 create policy "feed_reactions_select" on public.feed_reactions for select using (auth.role() = 'authenticated');
 create policy "feed_reactions_insert_own" on public.feed_reactions for insert with check (user_id = auth.uid());
 create policy "feed_reactions_delete_own" on public.feed_reactions for delete using (user_id = auth.uid());
+
+-- ─────────────────────────────────────────────────────────────────
+-- Push notifications. One row per browser/device that's granted
+-- permission (someone using the app on their phone and laptop gets
+-- two rows, both get pushed to). Sending only ever happens from the
+-- server (service_role key, via Route Handlers) since it needs the
+-- VAPID private key - RLS here only governs who can register/remove
+-- their own device.
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.profiles add column push_opt_in boolean not null default true;
+
+create table public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth_key text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.push_subscriptions enable row level security;
+
+create policy "push_subscriptions_select_own" on public.push_subscriptions for select using (user_id = auth.uid());
+create policy "push_subscriptions_insert_own" on public.push_subscriptions for insert with check (user_id = auth.uid());
+create policy "push_subscriptions_delete_own" on public.push_subscriptions for delete using (user_id = auth.uid());
+
+-- Generic "have we already pushed for this?" ledger, reused by the daily
+-- cron for both MOTM-winner and Player-of-the-Month announcements, so a
+-- cron run that fires more than once around the same boundary can't send
+-- the same push twice. No RLS policies on purpose - only the service_role
+-- key (server-side cron) ever touches this table.
+create table public.notified_events (
+  event_key text primary key,
+  notified_at timestamptz not null default now()
+);
+
+alter table public.notified_events enable row level security;

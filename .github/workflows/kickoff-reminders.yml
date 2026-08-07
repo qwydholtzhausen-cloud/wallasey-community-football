@@ -1,0 +1,18 @@
+name: Kickoff reminders
+
+on:
+  schedule:
+    # Vercel's free plan only allows cron jobs once a day, too coarse for a
+    # "kickoff in 1 hour" push - this polls the same route handler every 15
+    # min instead, entirely free, no plan change needed.
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call kickoff-reminders endpoint
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/kickoff-reminders" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
