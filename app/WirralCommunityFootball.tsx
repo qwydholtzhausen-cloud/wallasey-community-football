@@ -584,17 +584,19 @@ function App({ session }: { session: Session }) {
   }
 
   async function book(gameId: string) {
-    const { data, error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: myId }).select("id, waiting").single();
+    // Payment-needed push isn't instant - it's picked up by the frequent
+    // cron job 30 min later, only if still unpaid by then (see
+    // api/cron/frequent). Firing it here would just nag someone who's
+    // already looking at the Pay Now button.
+    const { error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: myId });
     if (error) {
       if (error.code === "42501") return notifyError("You have an overdue payment — speak to an admin to confirm it before booking again.");
       return notifyError(error.message);
     }
-    if (data && !data.waiting) pushNotify("notify-payment-needed", { bookingId: data.id });
   }
   async function addBooking(gameId: string, playerId: string) {
-    const { data, error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: playerId }).select("id, waiting").single();
+    const { error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: playerId });
     if (error) return notifyError(error.message);
-    if (data && !data.waiting) pushNotify("notify-payment-needed", { bookingId: data.id });
   }
   async function cancel(bookingId: string) {
     const { error } = await supabase.from("bookings").delete().eq("id", bookingId);

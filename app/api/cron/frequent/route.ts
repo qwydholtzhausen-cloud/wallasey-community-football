@@ -18,11 +18,22 @@ interface Booking {
   team: "white" | "red" | null;
 }
 
+interface GameRef {
+  id: string;
+  venue: string;
+  date: string;
+  price: number;
+}
+
+function fmtDateLabel(date: string) {
+  return new Date(date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
 // Triggered every ~15 min by a GitHub Actions schedule (not Vercel Cron -
-// Hobby's cron only runs once a day, too coarse for "kickoff in 1 hour").
-// The 45-70 min window is wider than the 15 min polling interval to absorb
-// GitHub Actions' own scheduling jitter; notified_events is what actually
-// guarantees each game only gets one reminder, not the window's precision.
+// Hobby's cron only runs once a day, too coarse for anything time-based on
+// this scale). Two independent jobs share the one poll: the kickoff+team
+// reminder, and the payment-needed nudge - both use notified_events for
+// idempotency rather than the window/delay timing being exact.
 export async function GET(req: Request) {
   const auth = req.headers.get("authorization");
   if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -33,15 +44,18 @@ export async function GET(req: Request) {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   const admin = createClient(supabaseUrl, serviceKey);
 
-  const nowMs = toMs(nowInLondon());
+  const { data: notified } = await admin.from("notified_events").select("event_key");
+  const notifiedKeys = new Set((notified ?? []).map((r) => r.event_key));
+  async function markNotified(key: string) {
+    await admin.from("notified_events").insert({ event_key: key });
+  }
 
+  // --- Kickoff + team reminder, ~1hr before kickoff ---
+  const nowMs = toMs(nowInLondon());
   const { data: games } = await admin.from("games").select("id, date, kickoff, venue, bookings(player_id, status, waiting, team)");
   const { data: settings } = await admin.from("club_settings").select("team_white_name, team_red_name").single();
   const whiteLabel = settings?.team_white_name || "Whites";
   const redLabel = settings?.team_red_name || "Reds";
-
-  const { data: notified } = await admin.from("notified_events").select("event_key");
-  const notifiedKeys = new Set((notified ?? []).map((r) => r.event_key));
 
   for (const g of games ?? []) {
     const key = `kickoff-${g.id}`;
@@ -52,7 +66,7 @@ export async function GET(req: Request) {
 
     const confirmed = (g.bookings as Booking[]).filter((b) => !b.waiting && b.status === "confirmed");
     if (confirmed.length === 0) {
-      await admin.from("notified_events").insert({ event_key: key });
+      await markNotified(key);
       continue;
     }
 
@@ -68,7 +82,40 @@ export async function GET(req: Request) {
       })
     );
 
-    await admin.from("notified_events").insert({ event_key: key });
+    await markNotified(key);
+  }
+
+  // --- Payment-needed nudge, 30 min after booking if still unpaid ---
+  // Deliberately not instant: right after booking, the player's already
+  // looking at the Pay Now button in-app, so a push at that exact moment
+  // is redundant. Re-checking status here (not just delaying the original
+  // instant push) means someone who pays within the window never gets a
+  // needless nag at all.
+  const { data: unpaidBookings } = await admin
+    .from("bookings")
+    .select("id, player_id, created_at, game:games(id, venue, date, price)")
+    .eq("status", "unpaid")
+    .eq("waiting", false);
+
+  for (const b of unpaidBookings ?? []) {
+    const key = `payment-${b.id}`;
+    if (notifiedKeys.has(key)) continue;
+
+    const ageMinutes = (Date.now() - new Date(b.created_at).getTime()) / 60000;
+    if (ageMinutes < 30) continue;
+
+    const game = (Array.isArray(b.game) ? b.game[0] : b.game) as GameRef | null;
+    if (!game) {
+      await markNotified(key);
+      continue;
+    }
+
+    await sendPushToUsers([b.player_id], {
+      title: "Payment needed",
+      body: `You're booked for ${game.venue} on ${fmtDateLabel(game.date)} — pay £${game.price} ahead of kick-off.`,
+      url: "/",
+    });
+    await markNotified(key);
   }
 
   return NextResponse.json({ ok: true });

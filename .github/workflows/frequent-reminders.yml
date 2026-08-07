@@ -1,0 +1,19 @@
+name: Frequent reminders
+
+on:
+  schedule:
+    # Vercel's free plan only allows cron jobs once a day, too coarse for
+    # time-sensitive pushes like "kickoff in 1 hour" or a 30-min-delayed
+    # payment nudge - this polls the same route handler every 15 min
+    # instead, entirely free, no plan change needed.
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call frequent-reminders endpoint
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/frequent" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
