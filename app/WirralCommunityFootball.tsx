@@ -309,6 +309,7 @@ function App({ session }: { session: Session }) {
   const [potEntries, setPotEntries] = useState<PotEntry[]>([]);
   const [motmVotes, setMotmVotes] = useState<MotmVote[]>([]);
   const [feedReactions, setFeedReactions] = useState<FeedReaction[]>([]);
+  const [pushStats, setPushStats] = useState<{ total: number; subscribed: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
@@ -497,6 +498,14 @@ function App({ session }: { session: Session }) {
     const t = setTimeout(() => setToast(null), 6000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  useEffect(() => {
+    if (!isAdmin || tab !== "account") return;
+    (async () => {
+      const res = await fetch("/api/push/stats", { headers: { Authorization: `Bearer ${session.access_token}` } });
+      if (res.ok) setPushStats(await res.json());
+    })();
+  }, [isAdmin, tab, session.access_token]);
 
   // Best-effort - push delivery shouldn't block or fail the booking/fixture
   // action itself, so failures here just log rather than surface a toast.
@@ -1556,6 +1565,7 @@ function App({ session }: { session: Session }) {
             onEnablePush={enablePush}
             onDisablePush={disablePush}
             onSendTestPush={sendTestPush}
+            pushStats={pushStats}
           />
         )}
       </main>
@@ -1593,6 +1603,7 @@ function AccountPanel({
   onEnablePush,
   onDisablePush,
   onSendTestPush,
+  pushStats,
 }: {
   profile: Profile;
   email: string;
@@ -1600,6 +1611,7 @@ function AccountPanel({
   isOwner: boolean;
   profiles: Profile[];
   clubSettings: ClubSettings;
+  pushStats: { total: number; subscribed: number } | null;
   awards: AwardRow[];
   onRename: (name: string) => void;
   onSetRole: (id: string, role: Role) => void;
@@ -1678,6 +1690,12 @@ function AccountPanel({
       </div>
 
       <button className="wcf-signout" onClick={onSignOut}>Sign out</button>
+
+      {isAdmin && pushStats && (
+        <div className="wcf-push-stat">
+          🔔 {pushStats.subscribed} of {pushStats.total} players have notifications on
+        </div>
+      )}
 
       {isAdmin && <AddPlayerForm onAdd={onAddPlayer} />}
 
@@ -2644,6 +2662,7 @@ const css = `
 .wcf-push-toggle.on{background:var(--green);border-color:var(--green);color:var(--bg)}
 .wcf-push-toggle:disabled{opacity:.6;cursor:not-allowed}
 .wcf-push-test{align-self:flex-start;font-size:11.5px;padding:7px 12px}
+.wcf-push-stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:12.5px;color:var(--dim);font-weight:600}
 .wcf-roles{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .wcf-roles h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-roles-toggle{width:100%;margin-bottom:4px}
