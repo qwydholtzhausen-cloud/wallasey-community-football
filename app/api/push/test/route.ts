@@ -12,10 +12,17 @@ export async function POST(req: Request) {
   const { data: userData, error: userErr } = await asCaller.auth.getUser(token);
   if (userErr || !userData.user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  await sendPushToUsers([userData.user.id], {
+  const result = await sendPushToUsers([userData.user.id], {
     title: "Test push 🔔",
     body: "If you can see this, notifications are working on this device.",
   });
 
-  return NextResponse.json({ ok: true });
+  if (result.sent === 0) {
+    return NextResponse.json(
+      { error: "No active subscription found for this device - try toggling notifications off and back on" },
+      { status: 404 }
+    );
+  }
+
+  return NextResponse.json({ ok: true, ...result });
 }

@@ -567,7 +567,8 @@ function App({ session }: { session: Session }) {
       headers: { Authorization: `Bearer ${session.access_token}` },
     });
     if (!res.ok) {
-      notifyError("Couldn't send a test push");
+      const { error } = await res.json().catch(() => ({ error: "Couldn't send a test push" }));
+      notifyError(error || "Couldn't send a test push");
       return;
     }
     notifySuccess("Test push sent — should land in a few seconds");
@@ -1615,6 +1616,12 @@ function AccountPanel({
   const [name, setName] = useState(profile.display_name);
   const [showRoles, setShowRoles] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
+  // push_opt_in is a shared per-user DB flag, but permission is granted
+  // per-device/per-browser - deriving "on" from both means a fresh device
+  // (or one where permission was never actually granted) correctly shows
+  // "Off" instead of a stale "On" that doesn't reflect reality here.
+  const pushGranted = typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted";
+  const pushOn = !!profile.push_opt_in && pushGranted;
 
   useEffect(() => setName(profile.display_name), [profile.display_name]);
 
@@ -1651,19 +1658,19 @@ function AccountPanel({
             <div className="wcf-push-sub">Kickoff reminders, payment nudges, spots opening up</div>
           </div>
           <button
-            className={"wcf-push-toggle " + (profile.push_opt_in ? "on" : "")}
+            className={"wcf-push-toggle " + (pushOn ? "on" : "")}
             disabled={pushBusy}
             onClick={async () => {
               setPushBusy(true);
-              if (profile.push_opt_in) await onDisablePush();
+              if (pushOn) await onDisablePush();
               else await onEnablePush();
               setPushBusy(false);
             }}
           >
-            {pushBusy ? "…" : profile.push_opt_in ? "On" : "Off"}
+            {pushBusy ? "…" : pushOn ? "On" : "Off"}
           </button>
         </div>
-        {profile.push_opt_in && (
+        {pushOn && (
           <button className="wcf-ghost wcf-push-test" onClick={onSendTestPush}>
             Send me a test push
           </button>

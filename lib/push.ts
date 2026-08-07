@@ -16,22 +16,34 @@ export interface PushPayload {
   url?: string;
 }
 
+export interface PushResult {
+  sent: number;
+  failed: number;
+}
+
 // Every trigger point (booking, fixture creation, cron jobs, webhooks) goes
 // through this - it's the one place that knows how to actually reach a
 // device, so opt-out and dead-subscription cleanup only need handling once.
-export async function sendPushToUsers(userIds: string[], payload: PushPayload) {
-  if (userIds.length === 0) return;
+// Returns counts rather than void so callers (notably the test-push route)
+// can tell "nothing to send to" apart from "sent successfully" - a silent
+// void return here is exactly what made the original delivery problem hard
+// to diagnose.
+export async function sendPushToUsers(userIds: string[], payload: PushPayload): Promise<PushResult> {
+  if (userIds.length === 0) return { sent: 0, failed: 0 };
   const admin = createClient(supabaseUrl, serviceKey);
 
   const { data: optedIn } = await admin.from("profiles").select("id").in("id", userIds).eq("push_opt_in", true);
   const allowedIds = (optedIn ?? []).map((p) => p.id);
-  if (allowedIds.length === 0) return;
+  if (allowedIds.length === 0) return { sent: 0, failed: 0 };
 
   const { data: subs } = await admin
     .from("push_subscriptions")
     .select("id, endpoint, p256dh, auth_key")
     .in("user_id", allowedIds);
-  if (!subs || subs.length === 0) return;
+  if (!subs || subs.length === 0) return { sent: 0, failed: 0 };
+
+  let sent = 0;
+  let failed = 0;
 
   await Promise.all(
     subs.map(async (sub) => {
@@ -40,7 +52,9 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload) {
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth_key } },
           JSON.stringify(payload)
         );
+        sent++;
       } catch (err) {
+        failed++;
         const statusCode = (err as { statusCode?: number }).statusCode;
         if (statusCode === 404 || statusCode === 410) {
           // Stale (uninstalled, permission revoked, storage cleared) -
@@ -52,11 +66,13 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload) {
       }
     })
   );
+
+  return { sent, failed };
 }
 
-export async function sendPushBroadcast(payload: PushPayload, excludeUserId?: string) {
+export async function sendPushBroadcast(payload: PushPayload, excludeUserId?: string): Promise<PushResult> {
   const admin = createClient(supabaseUrl, serviceKey);
   const { data: profiles } = await admin.from("profiles").select("id").eq("push_opt_in", true);
   const ids = (profiles ?? []).map((p) => p.id).filter((id) => id !== excludeUserId);
-  await sendPushToUsers(ids, payload);
+  return sendPushToUsers(ids, payload);
 }
