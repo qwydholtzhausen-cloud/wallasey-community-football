@@ -422,7 +422,7 @@ function App({ session }: { session: Session }) {
   }
 
   const [tab, setTab] = useState<"fixtures" | "feed" | "lineup" | "results" | "account" | "admin">("fixtures");
-  const [resultsView, setResultsView] = useState<"season" | "table" | "fixtures" | "pot">("season");
+  const [resultsView, setResultsView] = useState<"season" | "table" | "fixtures" | "pot" | "finances">("season");
   const [potAmount, setPotAmount] = useState("");
   const [potDescription, setPotDescription] = useState("");
   const [potEntryKind, setPotEntryKind] = useState<"add" | "deduct">("add");
@@ -1059,6 +1059,54 @@ function App({ session }: { session: Session }) {
     return [...autoEntries, ...manualEntries].sort((a, b) => b.date.localeCompare(a.date));
   }, [games, potEntries]);
   const potTotal = useMemo(() => potLedger.reduce((sum, e) => sum + e.amount, 0), [potLedger]);
+
+  // Income/expenses computed from source data (games, manual entries)
+  // rather than potLedger's already-netted auto entries - a game's net
+  // +£30 hides that it was actually £110 in vs £80 pitch cost, and this
+  // view is specifically about showing those two sides separately.
+  const financeSummary = useMemo(() => {
+    let grossIncome = 0;
+    let pitchExpense = 0;
+    for (const g of games) {
+      const confirmedPaid = g.bookings.filter((b) => !b.waiting && b.status === "confirmed").length;
+      if (confirmedPaid === 0) continue; // matches potLedger's own inclusion rule
+      grossIncome += confirmedPaid * g.price;
+      pitchExpense += g.pitch_cost;
+    }
+    const manualIncome = potEntries.filter((e) => e.amount > 0).reduce((sum, e) => sum + e.amount, 0);
+    const manualExpense = potEntries.filter((e) => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
+
+    const byCategory = { pitch: pitchExpense, socials: 0, equipment: 0, sponsorship: 0, other: 0 } as Record<PotCategory, number>;
+    for (const e of potEntries) {
+      if (e.amount < 0) byCategory[e.category] += Math.abs(e.amount);
+    }
+
+    const chron = [...potLedger].sort((a, b) => a.date.localeCompare(b.date));
+    let running = 0;
+    const balancePoints = chron.map((e) => {
+      running += e.amount;
+      return { date: e.date, balance: running };
+    });
+
+    const byFixture = potLedger.filter((e) => e.kind === "auto").slice(0, 8);
+
+    return { income: grossIncome + manualIncome, expenses: pitchExpense + manualExpense, byCategory, balancePoints, byFixture };
+  }, [games, potEntries, potLedger]);
+
+  function exportFinanceCsv() {
+    const rows = [
+      ["Date", "Description", "Category", "Amount"],
+      ...potLedger.map((e) => [e.date, e.description, POT_CATEGORY_LABEL[e.category], e.amount.toFixed(2)]),
+    ];
+    const csv = rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `wirral-community-football-finances-${nowInLondon().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   // The club feed is mostly a view over data that already exists elsewhere
   // (results, joiners, the pot) rather than its own write path - only clips
@@ -1713,6 +1761,9 @@ function App({ session }: { session: Session }) {
               <button className={resultsView === "table" ? "active" : ""} onClick={() => setResultsView("table")}>Stats</button>
               <button className={resultsView === "fixtures" ? "active" : ""} onClick={() => setResultsView("fixtures")}>Scores</button>
               <button className={resultsView === "pot" ? "active" : ""} onClick={() => setResultsView("pot")}>Pot</button>
+              {isAdmin && (
+                <button className={resultsView === "finances" ? "active" : ""} onClick={() => setResultsView("finances")}>Finances</button>
+              )}
             </div>
 
             {resultsView === "season" && (
@@ -1972,6 +2023,89 @@ function App({ session }: { session: Session }) {
                     ))}
                   </>
                 )}
+              </>
+            )}
+
+            {resultsView === "finances" && isAdmin && (
+              <>
+                <div className="wcf-fin-stats">
+                  <div className="wcf-fin-tile">
+                    <div className="wcf-fin-tile-label">Income</div>
+                    <div className="wcf-fin-tile-value green">£{financeSummary.income.toFixed(2)}</div>
+                  </div>
+                  <div className="wcf-fin-tile">
+                    <div className="wcf-fin-tile-label">Expenses</div>
+                    <div className="wcf-fin-tile-value red">£{financeSummary.expenses.toFixed(2)}</div>
+                  </div>
+                  <div className="wcf-fin-tile">
+                    <div className="wcf-fin-tile-label">Net</div>
+                    <div className={"wcf-fin-tile-value " + (potTotal < 0 ? "red" : "green")}>
+                      {potTotal < 0 ? "−" : ""}£{Math.abs(potTotal).toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+
+                {financeSummary.balancePoints.length > 0 && (
+                  <div className="wcf-fin-card">
+                    <div className="wcf-fin-card-head">Balance over time</div>
+                    <div className="wcf-fin-chart">
+                      {financeSummary.balancePoints.slice(-8).map((p, i) => {
+                        const maxAbs = Math.max(1, ...financeSummary.balancePoints.slice(-8).map((q) => Math.abs(q.balance)));
+                        const height = (Math.abs(p.balance) / maxAbs) * 100;
+                        return (
+                          <div key={i} className="wcf-fin-bar-col">
+                            <div className={"wcf-fin-bar" + (p.balance < 0 ? " neg" : "")} style={{ height: `${height}%` }} />
+                            <div className="wcf-fin-bar-label">{fmtDate(p.date).slice(0, 6)}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="wcf-fin-card">
+                  <div className="wcf-fin-card-head">By fixture</div>
+                  {financeSummary.byFixture.length === 0 && <p className="wcf-empty small">No fixtures with confirmed payments yet.</p>}
+                  {financeSummary.byFixture.map((e) => (
+                    <div key={e.id} className="wcf-fin-fx-row">
+                      <div>
+                        <div className="wcf-fin-fx-desc">{e.description.split(" — ")[0]}</div>
+                        <div className="wcf-pitch">{fmtDate(e.date)}</div>
+                      </div>
+                      <span className={"wcf-fin-fx-net " + (e.amount < 0 ? "red" : "green")}>
+                        {e.amount < 0 ? "−" : "+"}£{Math.abs(e.amount).toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="wcf-fin-card">
+                  <div className="wcf-fin-card-head">Where it's gone</div>
+                  {(() => {
+                    const totalSpend = Object.values(financeSummary.byCategory).reduce((s, v) => s + v, 0);
+                    const cats = (Object.keys(financeSummary.byCategory) as PotCategory[]).filter((c) => financeSummary.byCategory[c] > 0);
+                    if (cats.length === 0) return <p className="wcf-empty small">Nothing spent yet.</p>;
+                    return cats
+                      .sort((a, b) => financeSummary.byCategory[b] - financeSummary.byCategory[a])
+                      .map((c) => {
+                        const amt = financeSummary.byCategory[c];
+                        const pct = totalSpend > 0 ? (amt / totalSpend) * 100 : 0;
+                        return (
+                          <div key={c} className="wcf-fin-cat-row">
+                            <div className="wcf-fin-cat-top">
+                              <span>{POT_CATEGORY_LABEL[c]}</span>
+                              <span>£{amt.toFixed(2)} · {pct.toFixed(0)}%</span>
+                            </div>
+                            <div className="wcf-fin-cat-track">
+                              <div className="wcf-fin-cat-fill" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      });
+                  })()}
+                </div>
+
+                <button className="wcf-ghost wcf-fin-export" onClick={exportFinanceCsv}>⬇ Export season as CSV</button>
               </>
             )}
           </>
@@ -3179,6 +3313,33 @@ const css = `
 .wcf-pot-row>div:first-child{flex:1;min-width:0}
 .wcf-pot-row-desc{font-weight:700;font-size:13px}
 .wcf-pot-cat-tag{display:inline-block;margin-left:7px;font-size:9.5px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;color:var(--dim);background:var(--panel2);padding:1px 7px;border-radius:20px}
+.wcf-fin-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.wcf-fin-tile{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 8px;text-align:center}
+.wcf-fin-tile-label{font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--dim)}
+.wcf-fin-tile-value{font-family:var(--mono);font-weight:800;font-size:18px;margin-top:5px;color:var(--white)}
+.wcf-fin-tile-value.green{color:var(--green)}
+.wcf-fin-tile-value.red{color:var(--red-hi)}
+.wcf-fin-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:14px}
+.wcf-fin-card-head{font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--dim);margin-bottom:12px}
+.wcf-fin-chart{display:flex;align-items:flex-end;gap:6px;height:80px}
+.wcf-fin-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+.wcf-fin-bar{width:100%;border-radius:4px 4px 0 0;background:var(--blue);min-height:2px}
+.wcf-fin-bar.neg{background:var(--red-hi)}
+.wcf-fin-bar-label{font-size:8px;color:var(--dim);margin-top:5px;font-family:var(--mono)}
+.wcf-fin-fx-row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);gap:10px}
+.wcf-fin-fx-row:last-child{border-bottom:none;padding-bottom:0}
+.wcf-fin-fx-desc{font-size:12.5px;font-weight:700;color:var(--white)}
+.wcf-fin-fx-net{font-family:var(--mono);font-weight:800;font-size:13px;flex-shrink:0}
+.wcf-fin-fx-net.green{color:var(--green)}
+.wcf-fin-fx-net.red{color:var(--red-hi)}
+.wcf-fin-cat-row{margin-bottom:10px}
+.wcf-fin-cat-row:last-child{margin-bottom:0}
+.wcf-fin-cat-top{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:4px}
+.wcf-fin-cat-top span:first-child{color:var(--white);font-weight:600}
+.wcf-fin-cat-top span:last-child{color:var(--dim);font-family:var(--mono)}
+.wcf-fin-cat-track{height:7px;border-radius:5px;background:var(--panel2);overflow:hidden}
+.wcf-fin-cat-fill{height:100%;border-radius:5px;background:var(--amber)}
+.wcf-fin-export{width:100%;display:flex;align-items:center;justify-content:center}
 .wcf-pot-row-amount{font-family:var(--mono);font-weight:800;font-size:14px;flex:0 0 auto}
 .wcf-pot-row-amount.pos{color:var(--green)}
 .wcf-pot-row-amount.neg{color:var(--red-hi)}
