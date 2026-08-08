@@ -412,20 +412,24 @@ function App({ session }: { session: Session }) {
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  // Keyed by profile id, not just a bare device-level flag - a deleted
+  // and re-added account gets a brand new id (see deleteProfile/addPlayer,
+  // full auth.users delete+recreate), so a stale dismiss from the old
+  // account can't suppress the nudge for the new one.
   const [pushNudgeDismissed, setPushNudgeDismissed] = useState(true);
   useEffect(() => {
-    setPushNudgeDismissed(localStorage.getItem("wcf-push-nudge-dismissed") === "true");
-  }, []);
+    setPushNudgeDismissed(localStorage.getItem(`wcf-push-nudge-dismissed-${myId}`) === "true");
+  }, [myId]);
   function dismissPushNudge() {
-    localStorage.setItem("wcf-push-nudge-dismissed", "true");
+    localStorage.setItem(`wcf-push-nudge-dismissed-${myId}`, "true");
     setPushNudgeDismissed(true);
   }
   const [ratingNudgeDismissed, setRatingNudgeDismissed] = useState(true);
   useEffect(() => {
-    setRatingNudgeDismissed(localStorage.getItem("wcf-rating-nudge-dismissed") === "true");
-  }, []);
+    setRatingNudgeDismissed(localStorage.getItem(`wcf-rating-nudge-dismissed-${myId}`) === "true");
+  }, [myId]);
   function dismissRatingNudge() {
-    localStorage.setItem("wcf-rating-nudge-dismissed", "true");
+    localStorage.setItem(`wcf-rating-nudge-dismissed-${myId}`, "true");
     setRatingNudgeDismissed(true);
   }
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
