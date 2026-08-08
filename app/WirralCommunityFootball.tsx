@@ -747,11 +747,13 @@ function App({ session }: { session: Session }) {
   async function hideFeedItem(itemKey: string) {
     const { error } = await supabase.from("feed_hidden_items").insert({ item_key: itemKey, hidden_by: myId });
     if (error) return notifyError(error.message);
+    notifySuccess("Archived — find it again under \"Show archived\"");
     await loadHiddenFeedItems();
   }
   async function unhideFeedItem(itemKey: string) {
     const { error } = await supabase.from("feed_hidden_items").delete().eq("item_key", itemKey);
     if (error) return notifyError(error.message);
+    notifySuccess("Restored to the feed");
     await loadHiddenFeedItems();
   }
 
@@ -1332,17 +1334,18 @@ function App({ session }: { session: Session }) {
                     <div className="wcf-feed-text">{item.text}</div>
                     <div className="wcf-feed-date">{fmtFeedDate(item.ts)}</div>
                     {reactionRow}
+                    {isAdmin && (
+                      <button
+                        className="wcf-feed-archive-btn"
+                        onClick={() => {
+                          if (isHidden) return unhideFeedItem(item.key);
+                          if (confirm("Archive this from the feed? You can restore it later from \"Show archived\".")) hideFeedItem(item.key);
+                        }}
+                      >
+                        {isHidden ? "↺ Restore" : "Archive"}
+                      </button>
+                    )}
                   </div>
-                  {isAdmin && (
-                    <button
-                      className="wcf-clip-del"
-                      onClick={() => (isHidden ? unhideFeedItem(item.key) : hideFeedItem(item.key))}
-                      aria-label={isHidden ? "Restore from archive" : "Archive"}
-                      title={isHidden ? "Restore" : "Archive"}
-                    >
-                      {isHidden ? "↺" : "×"}
-                    </button>
-                  )}
                 </article>
               );
             })}
@@ -2727,6 +2730,8 @@ const css = `
 .wcf-feed-body{flex:1;min-width:0}
 .wcf-feed-text{font-size:13px;color:var(--white);line-height:1.4}
 .wcf-feed-date{font-size:10.5px;color:var(--dim);font-family:var(--mono);margin-top:3px}
+.wcf-feed-archive-btn{margin-top:8px;font-size:11px;font-weight:800;padding:5px 11px;border-radius:20px;background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer}
+.wcf-feed-archive-btn:hover{border-color:var(--red-hi);color:var(--red-hi)}
 .wcf-archive-toggle{font-size:11.5px;padding:7px 12px;margin-bottom:12px}
 .wcf-feed-reactions{display:flex;gap:6px;margin-top:8px}
 .wcf-feed-reaction{font-size:11px;font-family:var(--mono);color:var(--dim);background:var(--panel2);border:1px solid transparent;border-radius:20px;padding:3px 9px;cursor:pointer}
