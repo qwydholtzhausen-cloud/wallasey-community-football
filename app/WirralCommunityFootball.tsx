@@ -995,6 +995,20 @@ function App({ session }: { session: Session }) {
     logAction("Added player", displayName || email);
     return true;
   }
+  async function generateLoginCode(email: string): Promise<string | null> {
+    const res = await fetch("/api/admin/generate-login-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      notifyError(data.error || "Couldn't generate a code");
+      return null;
+    }
+    logAction("Generated login code", email);
+    return data.code as string;
+  }
   async function signOut() {
     await supabase.auth.signOut();
   }
@@ -2222,6 +2236,7 @@ function App({ session }: { session: Session }) {
             onSetRole={setRole}
             onDeleteProfile={deleteProfile}
             onAddPlayer={addPlayer}
+            onGenerateLoginCode={generateLoginCode}
             onSaveClubSettings={saveClubSettings}
             onAddAward={addAward}
             onDeleteAward={deleteAward}
@@ -2269,6 +2284,7 @@ function AccountPanel({
   onSetRole,
   onDeleteProfile,
   onAddPlayer,
+  onGenerateLoginCode,
   onSaveClubSettings,
   onAddAward,
   onDeleteAward,
@@ -2308,6 +2324,7 @@ function AccountPanel({
   onSetRole: (id: string, role: Role) => void;
   onDeleteProfile: (id: string, name: string) => void;
   onAddPlayer: (email: string, displayName: string) => Promise<boolean>;
+  onGenerateLoginCode: (email: string) => Promise<string | null>;
   onSaveClubSettings: (patch: Partial<ClubSettings>) => void;
   onAddAward: (title: string, value: string, note: string) => Promise<void>;
   onDeleteAward: (id: string) => void;
@@ -2427,6 +2444,7 @@ function AccountPanel({
       )}
 
       {isAdmin && <AddPlayerForm onAdd={onAddPlayer} />}
+      {isAdmin && <LoginCodeForm onGenerate={onGenerateLoginCode} />}
 
       {isAdmin && (
         <div className="wcf-roles">
@@ -2589,6 +2607,45 @@ function AddPlayerForm({ onAdd }: { onAdd: (email: string, displayName: string) 
       <button className="wcf-save" type="submit" disabled={adding || !email.trim()}>
         {adding ? "Adding…" : "Add player"}
       </button>
+    </form>
+  );
+}
+
+function LoginCodeForm({ onGenerate }: { onGenerate: (email: string) => Promise<string | null> }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setCode(null);
+    const result = await onGenerate(email.trim());
+    setBusy(false);
+    if (result) setCode(result);
+  }
+
+  return (
+    <form className="wcf-add-player" onSubmit={submit}>
+      <h3>Generate a login code</h3>
+      <p className="wcf-board-note" style={{ margin: "0 0 10px" }}>
+        For when someone isn&apos;t getting the sign-in email — creates a real code without sending it, so you can read it out to them directly.
+      </p>
+      <div className="wcf-team-settings">
+        <label className="wcf-team-field wide">
+          Their email
+          <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="them@email.com" />
+        </label>
+      </div>
+      <button className="wcf-save" type="submit" disabled={busy || !email.trim()}>
+        {busy ? "Generating…" : "Generate code"}
+      </button>
+      {code && (
+        <div className="wcf-login-code">
+          <span className="wcf-login-code-value">{code}</span>
+          <span className="wcf-login-code-note">Expires soon — share it with them now, they enter it on the normal sign-in screen</span>
+        </div>
+      )}
     </form>
   );
 }
@@ -3550,6 +3607,9 @@ const css = `
 .wcf-team-field.narrow input{width:70px}
 .wcf-club-settings .wcf-save,.wcf-add-player .wcf-save{margin-top:10px}
 .wcf-club-settings .wcf-save:disabled,.wcf-add-player .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
+.wcf-login-code{margin-top:12px;background:var(--panel2);border:1px solid rgba(51,169,87,.4);border-radius:10px;padding:14px;text-align:center}
+.wcf-login-code-value{display:block;font-family:var(--mono);font-weight:800;font-size:28px;letter-spacing:4px;color:var(--green)}
+.wcf-login-code-note{display:block;font-size:11px;color:var(--dim);margin-top:6px;line-height:1.4}
 
 .wcf-nav{position:sticky;bottom:0;z-index:5;display:flex;background:rgba(10,26,52,.95);backdrop-filter:blur(8px);
   border-top:1px solid var(--line);padding:8px 6px calc(8px + env(safe-area-inset-bottom,0px))}
