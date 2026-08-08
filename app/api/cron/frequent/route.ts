@@ -129,7 +129,7 @@ export async function GET(req: Request) {
     await markNotified(key);
   }
 
-  // --- Remove unpaid bookings on upcoming games after 7 days ---
+  // --- Unpaid bookings on upcoming games: day-5 warning, day-7 removal ---
   // For fixtures posted well in advance (a month's worth at once, say),
   // this reclaims a spot from someone who booked but never actually paid,
   // rather than letting it sit held for weeks while someone who'd pay
@@ -139,6 +139,11 @@ export async function GET(req: Request) {
   // yet. Only touches games that haven't kicked off yet - once a game's
   // played, the existing overdue reminder + booking-block flow takes
   // over instead, which is a warning rather than a removal.
+  //
+  // The day-5 warning is a notification only - it never deletes anything.
+  // The ONLY code path anywhere in the app that removes someone from a
+  // booking for non-payment is the day-7 block below; this just gives
+  // them a heads-up two days ahead of it.
   const { data: staleUnpaid } = await admin
     .from("bookings")
     .select("id, player_id, created_at, player:profiles!bookings_player_id_fkey(display_name), game:games(id, venue, date, kickoff, price)")
@@ -147,12 +152,27 @@ export async function GET(req: Request) {
 
   for (const b of staleUnpaid ?? []) {
     const ageDays = (Date.now() - new Date(b.created_at).getTime()) / (24 * 60 * 60 * 1000);
-    if (ageDays < 7) continue;
+    if (ageDays < 5) continue;
 
     const game = (Array.isArray(b.game) ? b.game[0] : b.game) as GameRefWithKickoff | null;
     if (!game) continue;
     if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= nowMs) continue; // already past - overdue flow below handles it instead
 
+    if (ageDays < 7) {
+      // Day-5 warning - notification only, no delete.
+      const key = `pre-removal-${b.id}`;
+      if (notifiedKeys.has(key)) continue;
+      await sendPushToUsers([b.player_id], {
+        title: "You'll lose this spot soon ⚠️",
+        body: `You'll be removed from ${game.venue} on ${fmtDateLabel(game.date)} in 2 days unless you pay — pay now to keep your spot.`,
+        url: "/",
+      });
+      await markNotified(key);
+      continue;
+    }
+
+    // Day-7 removal - the one and only place that actually deletes a
+    // booking for non-payment.
     const player = Array.isArray(b.player) ? b.player[0] : b.player;
 
     const { error: deleteErr } = await admin.from("bookings").delete().eq("id", b.id);
