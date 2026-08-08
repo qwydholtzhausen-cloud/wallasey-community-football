@@ -2768,6 +2768,7 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
   useEffect(() => setForm(settings), [settings]);
 
   const dirty = JSON.stringify(form) !== JSON.stringify(settings);
+  const kickoffValid = /^([01]\d|2[0-3]):[0-5]\d$/.test(form.default_kickoff);
 
   return (
     <div className="wcf-club-settings">
@@ -2795,8 +2796,14 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
           <input value={form.default_venue} onChange={(e) => setForm({ ...form, default_venue: e.target.value })} placeholder="e.g. Guinea Gap" />
         </label>
         <label className="wcf-team-field wide">
-          Default kickoff
-          <input type="time" value={form.default_kickoff} onChange={(e) => setForm({ ...form, default_kickoff: e.target.value })} />
+          Default kickoff (24hr, e.g. 19:00)
+          <input
+            value={form.default_kickoff}
+            onChange={(e) => setForm({ ...form, default_kickoff: e.target.value })}
+            placeholder="19:00"
+            inputMode="numeric"
+          />
+          {!kickoffValid && <span className="wcf-field-error">Use 24hr HH:MM, e.g. 19:00</span>}
         </label>
         <label className="wcf-team-field wide">
           Default pitch format
@@ -2828,7 +2835,7 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
         </label>
       </div>
 
-      <button className="wcf-save" onClick={() => onSave(form)} disabled={!dirty}>Save settings</button>
+      <button className="wcf-save" onClick={() => onSave(form)} disabled={!dirty || !kickoffValid}>Save settings</button>
     </div>
   );
 }
@@ -3762,10 +3769,9 @@ const css = `
 .wcf-team-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700;min-width:0}
 .wcf-team-field.wide{grid-column:1/-1}
 .wcf-team-field input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans);text-transform:none;width:100%;max-width:100%;min-width:0;box-sizing:border-box;display:block}
-.wcf-team-field input[type="time"]{padding-right:4px;overflow:hidden}
-.wcf-team-field.wide{overflow:hidden}
 .wcf-team-field.color input{width:52px;padding:2px;height:38px;cursor:pointer}
 .wcf-team-field.narrow input{width:70px}
+.wcf-field-error{text-transform:none;letter-spacing:normal;font-weight:600;font-size:11px;color:var(--red-hi);margin-top:2px}
 .wcf-club-settings .wcf-save,.wcf-add-player .wcf-save{margin-top:10px}
 .wcf-club-settings .wcf-save:disabled,.wcf-add-player .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-login-code{margin-top:12px;background:var(--panel2);border:1px solid rgba(51,169,87,.4);border-radius:10px;padding:14px;text-align:center}
