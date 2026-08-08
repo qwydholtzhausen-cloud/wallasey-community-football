@@ -627,21 +627,39 @@ function App({ session }: { session: Session }) {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // Pulls a guaranteed-current session token directly from Supabase
+  // (transparently refreshing if needed) rather than trusting the
+  // `session` prop, which is only as fresh as the last onAuthStateChange
+  // event - on a backgrounded mobile PWA that listener's refresh timer can
+  // stall, leaving the prop holding a token that's actually gone stale (or
+  // fully invalid) without the UI showing anything's wrong. Confirmed as a
+  // real, reproducible failure mode, not just a theory - every admin fetch
+  // to a Route Handler goes through this now instead of reading the prop
+  // directly.
+  async function getFreshAccessToken(): Promise<string | null> {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  }
+
   useEffect(() => {
     if (!isAdmin || tab !== "account") return;
     (async () => {
-      const res = await fetch("/api/push/stats", { headers: { Authorization: `Bearer ${session.access_token}` } });
+      const token = await getFreshAccessToken();
+      if (!token) return;
+      const res = await fetch("/api/push/stats", { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) setPushStats(await res.json());
     })();
-  }, [isAdmin, tab, session.access_token]);
+  }, [isAdmin, tab]);
 
   // Best-effort - push delivery shouldn't block or fail the booking/fixture
   // action itself, so failures here just log rather than surface a toast.
   async function pushNotify(path: string, body: Record<string, string>) {
     try {
+      const token = await getFreshAccessToken();
+      if (!token) return console.error("Push notify skipped - no session", path);
       await fetch(`/api/push/${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       });
     } catch (err) {
@@ -740,9 +758,11 @@ function App({ session }: { session: Session }) {
   }
 
   async function sendTestPush() {
+    const token = await getFreshAccessToken();
+    if (!token) return notifyError("Your session's expired — refresh the page and sign in again, then retry.");
     const res = await fetch("/api/push/test", {
       method: "POST",
-      headers: { Authorization: `Bearer ${session.access_token}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
       const { error } = await res.json().catch(() => ({ error: "Couldn't send a test push" }));
@@ -969,9 +989,11 @@ function App({ session }: { session: Session }) {
   }
   async function deleteProfile(id: string, name: string) {
     if (!confirm(`Permanently delete ${name}'s account? This removes their login and all their bookings. This can't be undone.`)) return;
+    const token = await getFreshAccessToken();
+    if (!token) return notifyError("Your session's expired — refresh the page and sign in again, then retry.");
     const res = await fetch("/api/admin/delete-user", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ targetId: id }),
     });
     if (!res.ok) {
@@ -983,9 +1005,14 @@ function App({ session }: { session: Session }) {
     logAction("Deleted account", name);
   }
   async function addPlayer(email: string, displayName: string) {
+    const token = await getFreshAccessToken();
+    if (!token) {
+      notifyError("Your session's expired — refresh the page and sign in again, then retry.");
+      return false;
+    }
     const res = await fetch("/api/admin/add-player", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ email, displayName }),
     });
     if (!res.ok) {
@@ -999,20 +1026,14 @@ function App({ session }: { session: Session }) {
     return true;
   }
   async function generateLoginCode(email: string): Promise<string | null> {
-    // Pulls a guaranteed-current session directly from Supabase (refreshing
-    // it under the hood if needed) rather than trusting the `session` prop,
-    // which is only as fresh as the last onAuthStateChange event - on a
-    // backgrounded mobile PWA that listener's refresh timer can lag behind
-    // an actually-expired token without the UI showing anything's wrong.
-    const { data: freshSession } = await supabase.auth.getSession();
-    const accessToken = freshSession.session?.access_token;
-    if (!accessToken) {
+    const token = await getFreshAccessToken();
+    if (!token) {
       notifyError("Your session's expired — refresh the page and sign in again, then retry.");
       return null;
     }
     const res = await fetch("/api/admin/generate-login-code", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ email }),
     });
     const data = await res.json().catch(() => ({}));
