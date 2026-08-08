@@ -1419,7 +1419,10 @@ function App({ session }: { session: Session }) {
                 {filteredResults.map((g) => {
                   const scorers = goalRows.filter((r) => r.game_id === g.id && r.goals > 0).sort((a, b) => b.goals - a.goals);
                   const hasScore = g.team_white_score != null && g.team_red_score != null;
-                  const candidates = g.bookings.filter((b) => !b.waiting && b.status === "confirmed");
+                  // Who actually played, not who's been payment-confirmed -
+                  // those often lag behind by days, and voting closes hours
+                  // after kickoff.
+                  const candidates = g.bookings.filter((b) => !b.waiting);
                   const votingOpen = motmVotingOpen(g);
                   const tally = motmTallyByGame[g.id] ?? {};
                   const totalVotes = Object.values(tally).reduce((sum, n) => sum + n, 0);

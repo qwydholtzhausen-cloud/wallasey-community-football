@@ -69,9 +69,11 @@ export async function GET(req: Request) {
     const [winnerId] = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
 
     const { data: winnerProfile } = await admin.from("profiles").select("display_name").eq("id", winnerId).single();
-    const confirmedIds = g.bookings.filter((b) => !b.waiting && b.status === "confirmed").map((b) => b.player_id);
+    // Everyone who actually played, not just payment-confirmed ones - same
+    // reasoning as the kickoff reminder.
+    const playedIds = g.bookings.filter((b) => !b.waiting).map((b) => b.player_id);
 
-    await sendPushToUsers(confirmedIds, {
+    await sendPushToUsers(playedIds, {
       title: "Man of the Match 🏆",
       body: winnerProfile ? `${winnerProfile.display_name} won Man of the Match for ${g.venue}.` : "Man of the Match has been decided.",
       url: "/",

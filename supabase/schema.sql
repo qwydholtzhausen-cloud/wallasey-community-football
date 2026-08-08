@@ -682,3 +682,35 @@ create policy "games_select" on public.games for select using (published = true 
 -- record of what was actually paid.
 alter table public.games alter column pitch_cost set default 50;
 update public.games set pitch_cost = 50 where pitch_cost = 55 and date >= current_date;
+
+-- ─────────────────────────────────────────────────────────────────
+-- MOTM voting eligibility was gated on payment status ("confirmed"),
+-- not just "did they actually play" - payment confirmation is an admin
+-- action that often lags well behind kickoff, and voting closes only
+-- hours after it, so this was likely blocking people who genuinely
+-- played from voting or being voted for.
+-- ─────────────────────────────────────────────────────────────────
+
+drop policy if exists "motm_votes_insert_own" on public.motm_votes;
+create policy "motm_votes_insert_own" on public.motm_votes for insert with check (
+  voter_id = auth.uid()
+  and exists (
+    select 1 from public.bookings b
+    where b.game_id = motm_votes.game_id and b.player_id = voter_id and b.waiting = false
+  )
+  and exists (
+    select 1 from public.bookings b
+    where b.game_id = motm_votes.game_id and b.player_id = candidate_id and b.waiting = false
+  )
+);
+
+drop policy if exists "motm_votes_update_own" on public.motm_votes;
+create policy "motm_votes_update_own" on public.motm_votes for update
+  using (voter_id = auth.uid())
+  with check (
+    voter_id = auth.uid()
+    and exists (
+      select 1 from public.bookings b
+      where b.game_id = motm_votes.game_id and b.player_id = candidate_id and b.waiting = false
+    )
+  );

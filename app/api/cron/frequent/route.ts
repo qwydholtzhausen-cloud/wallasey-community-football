@@ -64,7 +64,11 @@ export async function GET(req: Request) {
     const minutesUntilKickoff = (toMs(kickoffCutoff(g.date, g.kickoff, 0)) - nowMs) / 60000;
     if (minutesUntilKickoff < 45 || minutesUntilKickoff > 70) continue;
 
-    const confirmed = (g.bookings as Booking[]).filter((b) => !b.waiting && b.status === "confirmed");
+    // Everyone with an actual spot, not just payment-confirmed ones -
+    // payment confirmation is an admin action that often lags well behind
+    // kickoff, so gating on it here would mean most players never get
+    // this reminder at all.
+    const confirmed = (g.bookings as Booking[]).filter((b) => !b.waiting);
     if (confirmed.length === 0) {
       await markNotified(key);
       continue;
