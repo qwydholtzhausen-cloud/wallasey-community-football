@@ -2794,11 +2794,11 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
           Default venue for new fixtures
           <input value={form.default_venue} onChange={(e) => setForm({ ...form, default_venue: e.target.value })} placeholder="e.g. Guinea Gap" />
         </label>
-        <label className="wcf-team-field">
+        <label className="wcf-team-field wide">
           Default kickoff
           <input type="time" value={form.default_kickoff} onChange={(e) => setForm({ ...form, default_kickoff: e.target.value })} />
         </label>
-        <label className="wcf-team-field">
+        <label className="wcf-team-field wide">
           Default pitch format
           <input
             value={form.default_pitch}
@@ -2806,7 +2806,7 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
             placeholder="e.g. 8-a-side"
           />
         </label>
-        <label className="wcf-team-field">
+        <label className="wcf-team-field wide">
           Default match fee (£)
           <input
             type="number"
@@ -2816,7 +2816,7 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
             onChange={(e) => setForm({ ...form, default_price: Number(e.target.value) || 0 })}
           />
         </label>
-        <label className="wcf-team-field">
+        <label className="wcf-team-field wide">
           Default squad size
           <input
             type="number"
@@ -3360,17 +3360,17 @@ const css = `
   --red:#E42A36; --red-hi:#F53A46; --blue:#2E74CC; --green:#33A957; --amber:#E0A733;
   --mono:ui-monospace,"SF Mono","Roboto Mono",Menlo,monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  max-width:520px;margin:0 auto;min-height:100vh;background:var(--bg);
+  max-width:520px;margin:0 auto;height:100vh;height:100dvh;overflow:hidden;background:var(--bg);
   color:var(--white);font-family:var(--sans);display:flex;flex-direction:column;
   border-left:1px solid var(--line);border-right:1px solid var(--line);
 }
 .wcf-root *{box-sizing:border-box}
 .wcf-root path{stroke-linecap:round}
 
-.wcf-splash{flex:1;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.wcf-splash{flex:1;display:flex;align-items:center;justify-content:center}
 .wcf-splash .wcf-logo.big{width:96px;height:96px;border-radius:24px}
 
-.wcf-signin{flex:1;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:24px;text-align:center}
+.wcf-signin{flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:24px;text-align:center}
 .wcf-logo.big{width:96px;height:96px;border-radius:24px;margin-bottom:6px}
 .wcf-signin .wcf-wordmark{font-size:30px;margin-top:6px}
 .wcf-signin-form{display:flex;flex-direction:column;gap:10px;width:100%;max-width:280px;margin-top:24px}
@@ -3749,18 +3749,19 @@ const css = `
 .wcf-roles{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .wcf-roles h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-roles-toggle{width:100%;margin-bottom:4px}
-.wcf-roles-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.wcf-roles-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line);flex-wrap:wrap;min-width:0}
 .wcf-roles-row:last-child{border-bottom:none}
-.wcf-roles-actions{display:flex;gap:6px;flex:0 0 auto}
+.wcf-roles-row>span{min-width:0;overflow-wrap:break-word}
+.wcf-roles-actions{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
 
 .wcf-club-settings,.wcf-add-player{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:16px}
 .wcf-club-settings h3,.wcf-add-player h3{margin:0 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-award-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line)}
 .wcf-award-row:last-of-type{border-bottom:none;margin-bottom:10px}
 .wcf-team-settings{display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:6px}
-.wcf-team-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.wcf-team-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700;min-width:0}
 .wcf-team-field.wide{grid-column:1/-1}
-.wcf-team-field input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans);text-transform:none}
+.wcf-team-field input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans);text-transform:none;width:100%;min-width:0}
 .wcf-team-field.color input{width:52px;padding:2px;height:38px;cursor:pointer}
 .wcf-team-field.narrow input{width:70px}
 .wcf-club-settings .wcf-save,.wcf-add-player .wcf-save{margin-top:10px}
