@@ -1098,7 +1098,14 @@ function App({ session }: { session: Session }) {
   // Same "is push actually working on this device" derivation used in
   // AccountPanel - the DB flag alone isn't enough proof (see the toggle
   // fix), and permission is per-device anyway.
-  const myPushGranted = typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted";
+  // Browser permission is per-origin, not per-account - it survives a
+  // delete+recreate of the profile even though there's no live
+  // push_subscriptions row for the new profile id yet. push_opt_in is
+  // kept in sync with a real subscription by enablePush/disablePush (and
+  // matches what the Account toggle itself shows, see AccountPanel's
+  // pushOn), so both conditions are needed here, not permission alone.
+  const myPushGranted =
+    typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted" && !!myProfile?.push_opt_in;
   const showPushNudge = !myPushGranted && !pushNudgeDismissed;
   const myRating = selfRatings.find((r) => r.player_id === myId) ?? null;
   const showRatingNudge = !myRating && !ratingNudgeDismissed;
