@@ -168,6 +168,9 @@ interface ClubSettings {
   team_red_color: string;
   default_venue: string;
   default_kickoff: string;
+  default_price: number;
+  default_pitch: string;
+  default_max_players: number;
 }
 
 interface AwardRow {
@@ -451,6 +454,9 @@ function App({ session }: { session: Session }) {
     team_red_color: "#E42A36",
     default_venue: "New venue",
     default_kickoff: "19:00",
+    default_price: 5,
+    default_pitch: "8-a-side",
+    default_max_players: MAX_SPOTS,
   };
 
   const loadProfile = useCallback(async () => {
@@ -476,7 +482,9 @@ function App({ session }: { session: Session }) {
   const loadClubSettings = useCallback(async () => {
     const { data } = await supabase
       .from("club_settings")
-      .select("team_white_name, team_white_color, team_red_name, team_red_color, default_venue, default_kickoff")
+      .select(
+        "team_white_name, team_white_color, team_red_name, team_red_color, default_venue, default_kickoff, default_price, default_pitch, default_max_players"
+      )
       .single();
     if (data) setClubSettings(data as ClubSettings);
   }, []);
@@ -834,9 +842,9 @@ function App({ session }: { session: Session }) {
         date: defaultNewGameDate(),
         kickoff: cs.default_kickoff,
         venue: cs.default_venue,
-        pitch: "8-a-side",
-        price: 5,
-        max_players: MAX_SPOTS,
+        pitch: cs.default_pitch,
+        price: cs.default_price,
+        max_players: cs.default_max_players,
         published: false,
       })
       .select()
@@ -1509,6 +1517,28 @@ function App({ session }: { session: Session }) {
     });
     return { white, red };
   }, [pastGames]);
+
+  // Private per-player record - computed from the same past-games data as
+  // headToHead above rather than stored anywhere, so it's always in sync
+  // and (per the user's request) never has to be back-filled or migrated.
+  // Only ever shown to the player themselves in Account.
+  const myRecord = useMemo(() => {
+    let played = 0, won = 0, drawn = 0, lost = 0;
+    pastGames.forEach((g) => {
+      if (g.team_white_score == null || g.team_red_score == null) return;
+      const myBooking = g.bookings.find((b) => b.player_id === myId && !b.waiting);
+      if (!myBooking || !myBooking.team) return;
+      played++;
+      const diff =
+        myBooking.team === "white"
+          ? g.team_white_score - g.team_red_score
+          : g.team_red_score - g.team_white_score;
+      if (diff > 0) won++;
+      else if (diff < 0) lost++;
+      else drawn++;
+    });
+    return { played, won, drawn, lost, winPct: played > 0 ? Math.round((won / played) * 100) : null };
+  }, [pastGames, myId]);
 
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
@@ -2293,6 +2323,7 @@ function App({ session }: { session: Session }) {
             onSaveAdminRating={saveAdminRating}
             ratingPlayerId={ratingPlayerId}
             onToggleRatingPlayer={(id) => setRatingPlayerId((cur) => (cur === id ? null : id))}
+            myRecord={myRecord}
           />
         )}
       </main>
@@ -2341,12 +2372,14 @@ function AccountPanel({
   onSaveAdminRating,
   ratingPlayerId,
   onToggleRatingPlayer,
+  myRecord,
 }: {
   profile: Profile;
   email: string;
   isAdmin: boolean;
   isOwner: boolean;
   profiles: Profile[];
+  myRecord: { played: number; won: number; drawn: number; lost: number; winPct: number | null };
   auditLog: AuditLogEntry[];
   showAuditLog: boolean;
   onToggleAuditLog: () => void;
@@ -2417,6 +2450,24 @@ function AccountPanel({
           Helps admins put together fair teams. Only visible to you and admins — once an admin rates you, theirs takes over.
         </p>
         <RatingForm initial={myRating} onSave={onSaveSelfRating} saveLabel={myRating ? "Update my rating" : "Save my rating"} />
+      </div>
+
+      <div className="wcf-record-section">
+        <h3>My record</h3>
+        <p className="wcf-rating-note">Only visible to you — worked out from every past game you had a spot in.</p>
+        {myRecord.played === 0 ? (
+          <p className="wcf-record-empty">No results yet — this fills in once you've played a game.</p>
+        ) : (
+          <>
+            <div className="wcf-record-pct">{myRecord.winPct}%<span>win rate</span></div>
+            <div className="wcf-record-row">
+              <div><strong>{myRecord.played}</strong><span>Played</span></div>
+              <div><strong>{myRecord.won}</strong><span>Won</span></div>
+              <div><strong>{myRecord.drawn}</strong><span>Drawn</span></div>
+              <div><strong>{myRecord.lost}</strong><span>Lost</span></div>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="wcf-push-section">
@@ -2724,6 +2775,34 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
         <label className="wcf-team-field">
           Default kickoff
           <input type="time" value={form.default_kickoff} onChange={(e) => setForm({ ...form, default_kickoff: e.target.value })} />
+        </label>
+        <label className="wcf-team-field">
+          Default pitch format
+          <input
+            value={form.default_pitch}
+            onChange={(e) => setForm({ ...form, default_pitch: e.target.value })}
+            placeholder="e.g. 8-a-side"
+          />
+        </label>
+        <label className="wcf-team-field">
+          Default match fee (£)
+          <input
+            type="number"
+            min={0}
+            step="0.5"
+            value={form.default_price}
+            onChange={(e) => setForm({ ...form, default_price: Number(e.target.value) || 0 })}
+          />
+        </label>
+        <label className="wcf-team-field">
+          Default squad size
+          <input
+            type="number"
+            min={1}
+            max={MAX_SPOTS}
+            value={form.default_max_players}
+            onChange={(e) => setForm({ ...form, default_max_players: Math.min(MAX_SPOTS, Number(e.target.value) || 0) })}
+          />
         </label>
       </div>
 
@@ -3607,6 +3686,15 @@ const css = `
 .wcf-rating-section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:16px}
 .wcf-rating-section h3{font-size:13px;font-weight:800;color:var(--white);margin:0 0 4px}
 .wcf-rating-note{font-size:11px;color:var(--dim);line-height:1.5;margin:0 0 12px}
+.wcf-record-section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:16px}
+.wcf-record-section h3{font-size:13px;font-weight:800;color:var(--white);margin:0 0 4px}
+.wcf-record-empty{font-size:11px;color:var(--dim);margin:0}
+.wcf-record-pct{font-size:32px;font-weight:800;color:var(--white);text-align:center;margin:6px 0 12px}
+.wcf-record-pct span{display:block;font-size:11px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.wcf-record-row{display:flex;justify-content:space-around;text-align:center;border-top:1px solid var(--line);padding-top:10px}
+.wcf-record-row>div{display:flex;flex-direction:column;gap:2px}
+.wcf-record-row strong{font-size:16px;color:var(--white)}
+.wcf-record-row span{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.03em}
 .wcf-rating-form{display:flex;flex-direction:column;gap:10px}
 .wcf-rating-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .wcf-rating-row>span:first-child{font-size:12.5px;font-weight:700;color:var(--white);flex-shrink:0}

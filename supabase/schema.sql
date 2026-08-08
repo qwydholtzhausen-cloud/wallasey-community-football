@@ -819,3 +819,9 @@ create policy "admin_ratings_update_admin" on public.player_admin_ratings for up
 -- and a hardcoded 19:00.
 alter table public.club_settings add column default_venue text not null default 'New venue';
 alter table public.club_settings add column default_kickoff text not null default '19:00';
+
+-- Same reasoning extended to the rest of the "+ Fixture" defaults that were
+-- previously hardcoded in the client (price, pitch format, squad size).
+alter table public.club_settings add column default_price numeric not null default 5;
+alter table public.club_settings add column default_pitch text not null default '8-a-side';
+alter table public.club_settings add column default_max_players int not null default 16;
