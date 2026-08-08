@@ -999,9 +999,20 @@ function App({ session }: { session: Session }) {
     return true;
   }
   async function generateLoginCode(email: string): Promise<string | null> {
+    // Pulls a guaranteed-current session directly from Supabase (refreshing
+    // it under the hood if needed) rather than trusting the `session` prop,
+    // which is only as fresh as the last onAuthStateChange event - on a
+    // backgrounded mobile PWA that listener's refresh timer can lag behind
+    // an actually-expired token without the UI showing anything's wrong.
+    const { data: freshSession } = await supabase.auth.getSession();
+    const accessToken = freshSession.session?.access_token;
+    if (!accessToken) {
+      notifyError("Your session's expired — refresh the page and sign in again, then retry.");
+      return null;
+    }
     const res = await fetch("/api/admin/generate-login-code", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ email }),
     });
     const data = await res.json().catch(() => ({}));
