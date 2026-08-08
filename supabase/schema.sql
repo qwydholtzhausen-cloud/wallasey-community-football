@@ -769,3 +769,47 @@ alter table public.bookings add column confirmed_at timestamptz;
 -- 'other' since there's no way to infer their real category retroactively.
 alter table public.pot_entries add column category text not null default 'other'
   check (category in ('pitch', 'socials', 'equipment', 'sponsorship', 'other'));
+
+-- ─────────────────────────────────────────────────────────────────
+-- Team fairness ratings. Two separate tables, not one, because
+-- visibility is genuinely different: a player can see (and set) their
+-- own self-rating, admins can see it too (needed for the fallback
+-- logic below), but no player - including the one being rated - can
+-- ever see an admin rating. Admin ratings are shared across all
+-- admins/co-owners (one row per player, last write wins) rather than
+-- per-admin, so there's one agreed view of the squad.
+--
+-- Effective rating for fairness calculations = admin rating if one
+-- exists, else the player's own self-rating, else unrated.
+-- ─────────────────────────────────────────────────────────────────
+
+create table public.player_self_ratings (
+  player_id uuid primary key references public.profiles (id) on delete cascade,
+  fitness int not null check (fitness between 1 and 5),
+  attack int not null check (attack between 1 and 5),
+  defence int not null check (defence between 1 and 5),
+  position text not null check (position in ('keeper', 'defence', 'midfield', 'attack')),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.player_self_ratings enable row level security;
+
+create policy "self_ratings_select" on public.player_self_ratings for select using (player_id = auth.uid() or public.is_admin());
+create policy "self_ratings_insert_own" on public.player_self_ratings for insert with check (player_id = auth.uid());
+create policy "self_ratings_update_own" on public.player_self_ratings for update using (player_id = auth.uid()) with check (player_id = auth.uid());
+
+create table public.player_admin_ratings (
+  player_id uuid primary key references public.profiles (id) on delete cascade,
+  fitness int not null check (fitness between 1 and 5),
+  attack int not null check (attack between 1 and 5),
+  defence int not null check (defence between 1 and 5),
+  position text not null check (position in ('keeper', 'defence', 'midfield', 'attack')),
+  updated_by uuid references public.profiles (id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.player_admin_ratings enable row level security;
+
+create policy "admin_ratings_select_admin" on public.player_admin_ratings for select using (public.is_admin());
+create policy "admin_ratings_insert_admin" on public.player_admin_ratings for insert with check (public.is_admin());
+create policy "admin_ratings_update_admin" on public.player_admin_ratings for update using (public.is_admin()) with check (public.is_admin());

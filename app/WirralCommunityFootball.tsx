@@ -24,6 +24,50 @@ function StatusBadge({ status }: { status: PayStatus }) {
   return <span className={"wcf-status-badge " + status}>{STATUS_LABEL[status]}</span>;
 }
 
+function StarPicker({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  return (
+    <div className="wcf-star-picker">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} type="button" className={"wcf-star" + (n <= value ? " on" : "")} onClick={() => onChange(n)} aria-label={`${n} of 5`}>
+          ★
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function RatingForm({
+  initial,
+  onSave,
+  saveLabel,
+}: {
+  initial: PlayerRating | null;
+  onSave: (fitness: number, attack: number, defence: number, position: PlayerPosition) => void;
+  saveLabel: string;
+}) {
+  const [fitness, setFitness] = useState(initial?.fitness ?? 3);
+  const [attack, setAttack] = useState(initial?.attack ?? 3);
+  const [defence, setDefence] = useState(initial?.defence ?? 3);
+  const [position, setPosition] = useState<PlayerPosition>(initial?.position ?? "midfield");
+
+  return (
+    <div className="wcf-rating-form">
+      <div className="wcf-rating-row"><span>Fitness</span><StarPicker value={fitness} onChange={setFitness} /></div>
+      <div className="wcf-rating-row"><span>Attack</span><StarPicker value={attack} onChange={setAttack} /></div>
+      <div className="wcf-rating-row"><span>Defence</span><StarPicker value={defence} onChange={setDefence} /></div>
+      <div className="wcf-rating-row">
+        <span>Position</span>
+        <select value={position} onChange={(e) => setPosition(e.target.value as PlayerPosition)}>
+          {POSITIONS.map((p) => (
+            <option key={p} value={p}>{POSITION_LABEL[p]}</option>
+          ))}
+        </select>
+      </div>
+      <button className="wcf-save" onClick={() => onSave(fitness, attack, defence, position)}>{saveLabel}</button>
+    </div>
+  );
+}
+
 interface Profile {
   id: string;
   display_name: string;
@@ -61,6 +105,18 @@ interface GameRow {
 }
 
 type PotCategory = "pitch" | "socials" | "equipment" | "sponsorship" | "other";
+
+type PlayerPosition = "keeper" | "defence" | "midfield" | "attack";
+const POSITION_LABEL: Record<PlayerPosition, string> = { keeper: "Keeper", defence: "Defence", midfield: "Midfield", attack: "Attack" };
+const POSITIONS: PlayerPosition[] = ["keeper", "defence", "midfield", "attack"];
+
+interface PlayerRating {
+  player_id: string;
+  fitness: number;
+  attack: number;
+  defence: number;
+  position: PlayerPosition;
+}
 const POT_CATEGORY_LABEL: Record<PotCategory, string> = {
   pitch: "Pitch hire",
   socials: "Socials",
@@ -340,6 +396,10 @@ function App({ session }: { session: Session }) {
   const [showArchived, setShowArchived] = useState(false);
   const [pushStats, setPushStats] = useState<{ total: number; subscribed: number } | null>(null);
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
+  const [selfRatings, setSelfRatings] = useState<PlayerRating[]>([]);
+  const [adminRatings, setAdminRatings] = useState<PlayerRating[]>([]);
+  const [lineupView, setLineupView] = useState<"sheet" | "fairness">("sheet");
+  const [ratingPlayerId, setRatingPlayerId] = useState<string | null>(null);
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
@@ -438,6 +498,19 @@ function App({ session }: { session: Session }) {
     if (data) setHiddenFeedKeys(data.map((r) => r.item_key));
   }, []);
 
+  // RLS scopes what actually comes back: a non-admin only ever gets their
+  // own row from either table (self-ratings) or nothing at all
+  // (admin-ratings, never visible to players) - no client-side filtering
+  // needed on top of that.
+  const loadSelfRatings = useCallback(async () => {
+    const { data } = await supabase.from("player_self_ratings").select("player_id, fitness, attack, defence, position");
+    if (data) setSelfRatings(data as PlayerRating[]);
+  }, []);
+  const loadAdminRatings = useCallback(async () => {
+    const { data } = await supabase.from("player_admin_ratings").select("player_id, fitness, attack, defence, position");
+    if (data) setAdminRatings(data as PlayerRating[]);
+  }, []);
+
   const loadClips = useCallback(async () => {
     const { data } = await supabase
       .from("clips")
@@ -468,6 +541,8 @@ function App({ session }: { session: Session }) {
         loadMotmVotes(),
         loadFeedReactions(),
         loadHiddenFeedItems(),
+        loadSelfRatings(),
+        loadAdminRatings(),
       ]),
     [
       loadProfile,
@@ -481,6 +556,8 @@ function App({ session }: { session: Session }) {
       loadMotmVotes,
       loadFeedReactions,
       loadHiddenFeedItems,
+      loadSelfRatings,
+      loadAdminRatings,
     ]
   );
 
@@ -588,6 +665,25 @@ function App({ session }: { session: Session }) {
   async function toggleAuditLog() {
     if (!showAuditLog) await loadAuditLog();
     setShowAuditLog((v) => !v);
+  }
+
+  async function saveSelfRating(fitness: number, attack: number, defence: number, position: PlayerPosition) {
+    const { error } = await supabase
+      .from("player_self_ratings")
+      .upsert({ player_id: myId, fitness, attack, defence, position, updated_at: new Date().toISOString() });
+    if (error) return notifyError(error.message);
+    notifySuccess("Saved your self-rating");
+    await loadSelfRatings();
+  }
+
+  async function saveAdminRating(playerId: string, fitness: number, attack: number, defence: number, position: PlayerPosition) {
+    const { error } = await supabase
+      .from("player_admin_ratings")
+      .upsert({ player_id: playerId, fitness, attack, defence, position, updated_by: myId, updated_at: new Date().toISOString() });
+    if (error) return notifyError(error.message);
+    notifySuccess("Rating saved");
+    logAction("Rated player", profiles.find((p) => p.id === playerId)?.display_name ?? "someone");
+    await loadAdminRatings();
   }
 
   async function enablePush() {
@@ -1177,6 +1273,43 @@ function App({ session }: { session: Session }) {
     [nextConfirmed]
   );
 
+  // Admin rating wins if one exists; otherwise fall back to the player's
+  // own self-rating; otherwise they're simply unrated.
+  const ratingByPlayer = useMemo(() => {
+    const map: Record<string, PlayerRating> = {};
+    for (const r of selfRatings) map[r.player_id] = r;
+    for (const r of adminRatings) map[r.player_id] = r;
+    return map;
+  }, [selfRatings, adminRatings]);
+
+  const teamFairness = useMemo(() => {
+    function teamStats(bookings: BookingRow[]) {
+      const ratings = bookings.map((b) => ratingByPlayer[b.player_id]).filter((r): r is PlayerRating => !!r);
+      const avg = (key: "fitness" | "attack" | "defence") =>
+        ratings.length ? ratings.reduce((sum, r) => sum + r[key], 0) / ratings.length : 0;
+      const positions: Record<PlayerPosition, number> = { keeper: 0, defence: 0, midfield: 0, attack: 0 };
+      for (const r of ratings) positions[r.position]++;
+      return { fitness: avg("fitness"), attack: avg("attack"), defence: avg("defence"), positions, rated: ratings.length, total: bookings.length };
+    }
+    const white = teamStats(nextGrouped.white);
+    const red = teamStats(nextGrouped.red);
+
+    const flags: string[] = [];
+    if (white.rated > 0 && red.rated > 0) {
+      if (Math.abs(white.fitness - red.fitness) >= 1) flags.push("Noticeable fitness gap between the two teams");
+      if (Math.abs(white.attack - red.attack) >= 1) flags.push("One team has significantly stronger attack");
+      if (Math.abs(white.defence - red.defence) >= 1) flags.push("One team has significantly stronger defence");
+    }
+    if (Math.abs(white.positions.keeper - red.positions.keeper) >= 1) flags.push("Keepers aren't evenly split");
+    for (const pos of ["defence", "midfield", "attack"] as PlayerPosition[]) {
+      if (Math.abs(white.positions[pos] - red.positions[pos]) >= 2) {
+        flags.push(`Uneven ${POSITION_LABEL[pos].toLowerCase()} split (${white.positions[pos]} vs ${red.positions[pos]})`);
+      }
+    }
+
+    return { white, red, flags };
+  }, [nextGrouped, ratingByPlayer]);
+
   const overdueBookings = useMemo(() => {
     const rows: { booking: BookingRow; game: GameRow }[] = [];
     pastGames.forEach((g) => {
@@ -1446,6 +1579,64 @@ function App({ session }: { session: Session }) {
 
         {tab === "lineup" && (
           <>
+            {isAdmin && (
+              <div className="wcf-subtabs">
+                <button className={lineupView === "sheet" ? "active" : ""} onClick={() => setLineupView("sheet")}>Team Sheet</button>
+                <button className={lineupView === "fairness" ? "active" : ""} onClick={() => setLineupView("fairness")}>Fairness</button>
+              </div>
+            )}
+
+            {lineupView === "fairness" && isAdmin && (
+              <>
+                {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
+                {nextGame && (nextGrouped.white.length === 0 && nextGrouped.red.length === 0) && (
+                  <p className="wcf-empty">Assign players to Whites/Reds in Team Sheet to see a fairness check.</p>
+                )}
+                {nextGame && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
+                  <>
+                    <div className="wcf-fairness-teams">
+                      {([["white", teamFairness.white, cs.team_white_name, cs.team_white_color], ["red", teamFairness.red, cs.team_red_name, cs.team_red_color]] as const).map(
+                        ([key, stats, name, color]) => (
+                          <div key={key} className="wcf-fairness-card">
+                            <div className="wcf-fairness-card-head" style={{ color }}>{name}</div>
+                            {(["fitness", "attack", "defence"] as const).map((metric) => (
+                              <div key={metric} className="wcf-fairness-metric">
+                                <div className="wcf-fairness-metric-top">
+                                  <span>{metric[0].toUpperCase()}{metric.slice(1)}</span>
+                                  <span>{stats.rated ? stats[metric].toFixed(1) : "—"}</span>
+                                </div>
+                                <div className="wcf-fairness-track">
+                                  <div className="wcf-fairness-fill" style={{ width: `${(stats[metric] / 5) * 100}%`, background: color ?? undefined }} />
+                                </div>
+                              </div>
+                            ))}
+                            <div className="wcf-fairness-positions">
+                              {POSITIONS.map((p) => (
+                                <span key={p} className="wcf-fairness-pos-tag">{POSITION_LABEL[p]} · {stats.positions[p]}</span>
+                              ))}
+                            </div>
+                            <div className="wcf-fairness-rated-note">{stats.rated} of {stats.total} rated</div>
+                          </div>
+                        )
+                      )}
+                    </div>
+
+                    {teamFairness.flags.length === 0 ? (
+                      <p className="wcf-fairness-ok">✅ No notable imbalances found.</p>
+                    ) : (
+                      <div className="wcf-fairness-flags">
+                        {teamFairness.flags.map((f) => (
+                          <div key={f} className="wcf-fairness-flag">⚠️ {f}</div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+
+            {lineupView === "sheet" && (
+              <>
             {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
             {nextGame && (
               <>
@@ -1508,6 +1699,8 @@ function App({ session }: { session: Session }) {
                       )
                   )
                 )}
+              </>
+            )}
               </>
             )}
           </>
@@ -1808,6 +2001,12 @@ function App({ session }: { session: Session }) {
             auditLog={auditLog}
             showAuditLog={showAuditLog}
             onToggleAuditLog={toggleAuditLog}
+            myRating={selfRatings.find((r) => r.player_id === myId) ?? null}
+            onSaveSelfRating={saveSelfRating}
+            adminRatings={adminRatings}
+            onSaveAdminRating={saveAdminRating}
+            ratingPlayerId={ratingPlayerId}
+            onToggleRatingPlayer={(id) => setRatingPlayerId((cur) => (cur === id ? null : id))}
           />
         )}
       </main>
@@ -1849,6 +2048,12 @@ function AccountPanel({
   auditLog,
   showAuditLog,
   onToggleAuditLog,
+  myRating,
+  onSaveSelfRating,
+  adminRatings,
+  onSaveAdminRating,
+  ratingPlayerId,
+  onToggleRatingPlayer,
 }: {
   profile: Profile;
   email: string;
@@ -1858,6 +2063,12 @@ function AccountPanel({
   auditLog: AuditLogEntry[];
   showAuditLog: boolean;
   onToggleAuditLog: () => void;
+  myRating: PlayerRating | null;
+  onSaveSelfRating: (fitness: number, attack: number, defence: number, position: PlayerPosition) => void;
+  adminRatings: PlayerRating[];
+  onSaveAdminRating: (playerId: string, fitness: number, attack: number, defence: number, position: PlayerPosition) => void;
+  ratingPlayerId: string | null;
+  onToggleRatingPlayer: (id: string) => void;
   clubSettings: ClubSettings;
   pushStats: { total: number; subscribed: number } | null;
   awards: AwardRow[];
@@ -1911,6 +2122,14 @@ function AccountPanel({
           </button>
         </div>
       </label>
+
+      <div className="wcf-rating-section">
+        <h3>Rate yourself</h3>
+        <p className="wcf-rating-note">
+          Helps admins put together fair teams. Only visible to you and admins — once an admin rates you, theirs takes over.
+        </p>
+        <RatingForm initial={myRating} onSave={onSaveSelfRating} saveLabel={myRating ? "Update my rating" : "Save my rating"} />
+      </div>
 
       <div className="wcf-push-section">
         <div className="wcf-push-row">
@@ -2053,7 +2272,20 @@ function AccountPanel({
                       Delete
                     </button>
                   )}
+                  <button className="wcf-ghost" onClick={() => onToggleRatingPlayer(p.id)}>
+                    {adminRatings.some((r) => r.player_id === p.id) ? "Rated ✓" : "Rate"}
+                  </button>
                 </div>
+                {ratingPlayerId === p.id && (
+                  <RatingForm
+                    initial={adminRatings.find((r) => r.player_id === p.id) ?? null}
+                    onSave={(fitness, attack, defence, position) => {
+                      onSaveAdminRating(p.id, fitness, attack, defence, position);
+                      onToggleRatingPlayer(p.id);
+                    }}
+                    saveLabel={`Save ${p.display_name}'s rating`}
+                  />
+                )}
               </div>
             );
           })}
@@ -2909,6 +3141,20 @@ const css = `
 .wcf-lineup-picks{display:flex;gap:6px}
 .wcf-lineup-pick{background:transparent;border:1px solid var(--line);color:var(--dim);padding:7px 11px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
 .wcf-lineup-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
+.wcf-fairness-teams{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.wcf-fairness-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
+.wcf-fairness-card-head{font-weight:800;font-size:13px;margin-bottom:10px}
+.wcf-fairness-metric{margin-bottom:8px}
+.wcf-fairness-metric-top{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:3px}
+.wcf-fairness-metric-top span:last-child{font-family:var(--mono);color:var(--white)}
+.wcf-fairness-track{height:6px;border-radius:5px;background:var(--panel2);overflow:hidden}
+.wcf-fairness-fill{height:100%;border-radius:5px;background:var(--blue)}
+.wcf-fairness-positions{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+.wcf-fairness-pos-tag{font-size:9.5px;font-weight:700;color:var(--dim);background:var(--panel2);padding:2px 7px;border-radius:20px}
+.wcf-fairness-rated-note{font-size:10px;color:var(--dim);margin-top:8px;font-family:var(--mono)}
+.wcf-fairness-ok{font-size:13px;color:var(--green);font-weight:700;text-align:center;padding:10px}
+.wcf-fairness-flags{display:flex;flex-direction:column;gap:8px}
+.wcf-fairness-flag{background:rgba(224,167,51,.14);border:1px solid rgba(224,167,51,.35);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--white)}
 .wcf-lineup-group{margin-bottom:6px}
 .wcf-lineup-group-label{font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 2px 8px}
 
@@ -2987,6 +3233,16 @@ const css = `
 .wcf-signout{background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px;border-radius:10px;font-weight:700;cursor:pointer}
 .wcf-signout:hover{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
 .wcf-push-section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 13px;display:flex;flex-direction:column;gap:9px}
+.wcf-rating-section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:16px}
+.wcf-rating-section h3{font-size:13px;font-weight:800;color:var(--white);margin:0 0 4px}
+.wcf-rating-note{font-size:11px;color:var(--dim);line-height:1.5;margin:0 0 12px}
+.wcf-rating-form{display:flex;flex-direction:column;gap:10px}
+.wcf-rating-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.wcf-rating-row>span:first-child{font-size:12.5px;font-weight:700;color:var(--white);flex-shrink:0}
+.wcf-rating-row select{background:var(--panel2);border:1px solid var(--line);color:var(--white);padding:7px 10px;border-radius:8px;font-size:12.5px;font-family:var(--sans)}
+.wcf-star-picker{display:flex;gap:3px}
+.wcf-star{background:none;border:none;font-size:20px;color:var(--line);cursor:pointer;padding:0;line-height:1}
+.wcf-star.on{color:var(--amber)}
 .wcf-push-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .wcf-push-label{font-size:13px;font-weight:700;color:var(--white)}
 .wcf-push-sub{font-size:11px;color:var(--dim);margin-top:2px}
