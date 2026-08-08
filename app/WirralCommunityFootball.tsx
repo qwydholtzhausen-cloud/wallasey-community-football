@@ -420,6 +420,14 @@ function App({ session }: { session: Session }) {
     localStorage.setItem("wcf-push-nudge-dismissed", "true");
     setPushNudgeDismissed(true);
   }
+  const [ratingNudgeDismissed, setRatingNudgeDismissed] = useState(true);
+  useEffect(() => {
+    setRatingNudgeDismissed(localStorage.getItem("wcf-rating-nudge-dismissed") === "true");
+  }, []);
+  function dismissRatingNudge() {
+    localStorage.setItem("wcf-rating-nudge-dismissed", "true");
+    setRatingNudgeDismissed(true);
+  }
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
   const prevWaitingRef = useRef<Record<string, boolean>>({});
 
@@ -1088,6 +1096,8 @@ function App({ session }: { session: Session }) {
   // fix), and permission is per-device anyway.
   const myPushGranted = typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted";
   const showPushNudge = !myPushGranted && !pushNudgeDismissed;
+  const myRating = selfRatings.find((r) => r.player_id === myId) ?? null;
+  const showRatingNudge = !myRating && !ratingNudgeDismissed;
 
   function motmVotingOpen(g: GameRow) {
     return kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) > nowUk;
@@ -1608,6 +1618,18 @@ function App({ session }: { session: Session }) {
                 <div className="wcf-nudge-actions">
                   <button onClick={async () => { if (await enablePush()) dismissPushNudge(); }}>Enable</button>
                   <button className="wcf-ghost" onClick={dismissPushNudge}>Not now</button>
+                </div>
+              </div>
+            )}
+            {showRatingNudge && (
+              <div className="wcf-nudge-banner">
+                <div>
+                  <strong>⭐ Rate yourself</strong>
+                  <p>Helps admins put together fairer teams — takes 30 seconds.</p>
+                </div>
+                <div className="wcf-nudge-actions">
+                  <button onClick={() => setTab("account")}>Rate now</button>
+                  <button className="wcf-ghost" onClick={dismissRatingNudge}>Not now</button>
                 </div>
               </div>
             )}
@@ -2317,7 +2339,7 @@ function App({ session }: { session: Session }) {
             auditLog={auditLog}
             showAuditLog={showAuditLog}
             onToggleAuditLog={toggleAuditLog}
-            myRating={selfRatings.find((r) => r.player_id === myId) ?? null}
+            myRating={myRating}
             onSaveSelfRating={saveSelfRating}
             adminRatings={adminRatings}
             onSaveAdminRating={saveAdminRating}
