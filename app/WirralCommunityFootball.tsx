@@ -370,6 +370,9 @@ function SignIn() {
             {sending ? "Sending…" : "Send sign-in code"}
           </button>
           {error && <p className="wcf-signin-error">{error}</p>}
+          <button type="button" className="wcf-signin-back" disabled={!email.trim()} onClick={() => setSent(true)}>
+            I already have a code
+          </button>
         </form>
       )}
 
@@ -3233,6 +3236,7 @@ const css = `
 .wcf-signin-sent{color:var(--dim);font-size:14px;max-width:280px;margin:0 0 4px;line-height:1.5}
 .wcf-signin-form input[inputmode="numeric"]{letter-spacing:4px;text-align:center;font-family:var(--mono);font-size:18px}
 .wcf-signin-back{background:none!important;border:none!important;color:var(--dim)!important;font-weight:600!important;font-size:12px!important;padding:4px!important;cursor:pointer;text-decoration:underline}
+.wcf-signin-back:disabled{opacity:.4;cursor:not-allowed;text-decoration:none}
 .wcf-privacy-note{color:var(--dim);font-size:11px;max-width:260px;margin-top:32px;line-height:1.5;opacity:.8}
 
 .wcf-top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
