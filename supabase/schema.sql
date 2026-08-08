@@ -825,3 +825,21 @@ alter table public.club_settings add column default_kickoff text not null defaul
 alter table public.club_settings add column default_price numeric not null default 5;
 alter table public.club_settings add column default_pitch text not null default '8-a-side';
 alter table public.club_settings add column default_max_players int not null default 16;
+
+-- push_opt_in defaulted to true, so every brand-new profile looked
+-- "opted in" before ever granting real browser permission or
+-- registering a push_subscriptions row - misleading if read directly
+-- (the UI already cross-checks against a real subscription for
+-- anything it displays, but the raw flag itself was just wrong).
+-- Flip the default going forward, then one-time-correct every
+-- existing profile to match reality: true only if they actually have
+-- a live subscription, false otherwise.
+alter table public.profiles alter column push_opt_in set default false;
+
+update public.profiles p
+set push_opt_in = false
+where not exists (select 1 from public.push_subscriptions s where s.user_id = p.id);
+
+update public.profiles p
+set push_opt_in = true
+where exists (select 1 from public.push_subscriptions s where s.user_id = p.id);
