@@ -133,6 +133,13 @@ function fmtDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
 
+// Feed items are dated historical facts, not live status - without a
+// visible date, something like "Pot passed £50" reads as a claim about
+// right now rather than a moment that happened and may since have moved.
+function fmtFeedDate(ts: number) {
+  return new Date(ts).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -310,6 +317,8 @@ function App({ session }: { session: Session }) {
   const [potEntries, setPotEntries] = useState<PotEntry[]>([]);
   const [motmVotes, setMotmVotes] = useState<MotmVote[]>([]);
   const [feedReactions, setFeedReactions] = useState<FeedReaction[]>([]);
+  const [hiddenFeedKeys, setHiddenFeedKeys] = useState<string[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
   const [pushStats, setPushStats] = useState<{ total: number; subscribed: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
@@ -402,6 +411,11 @@ function App({ session }: { session: Session }) {
     if (data) setFeedReactions(data as FeedReaction[]);
   }, []);
 
+  const loadHiddenFeedItems = useCallback(async () => {
+    const { data } = await supabase.from("feed_hidden_items").select("item_key");
+    if (data) setHiddenFeedKeys(data.map((r) => r.item_key));
+  }, []);
+
   const loadClips = useCallback(async () => {
     const { data } = await supabase
       .from("clips")
@@ -431,6 +445,7 @@ function App({ session }: { session: Session }) {
         loadPotEntries(),
         loadMotmVotes(),
         loadFeedReactions(),
+        loadHiddenFeedItems(),
       ]),
     [
       loadProfile,
@@ -443,6 +458,7 @@ function App({ session }: { session: Session }) {
       loadPotEntries,
       loadMotmVotes,
       loadFeedReactions,
+      loadHiddenFeedItems,
     ]
   );
 
@@ -728,6 +744,17 @@ function App({ session }: { session: Session }) {
     await loadFeedReactions();
   }
 
+  async function hideFeedItem(itemKey: string) {
+    const { error } = await supabase.from("feed_hidden_items").insert({ item_key: itemKey, hidden_by: myId });
+    if (error) return notifyError(error.message);
+    await loadHiddenFeedItems();
+  }
+  async function unhideFeedItem(itemKey: string) {
+    const { error } = await supabase.from("feed_hidden_items").delete().eq("item_key", itemKey);
+    if (error) return notifyError(error.message);
+    await loadHiddenFeedItems();
+  }
+
   async function addClip(e: React.FormEvent) {
     e.preventDefault();
     if (!clipTitle.trim()) return;
@@ -957,10 +984,14 @@ function App({ session }: { session: Session }) {
     return items.sort((a, b) => b.ts - a.ts);
   }, [clips, games, motmTallyByGame, potLedger, profiles, cs.team_white_name, cs.team_red_name, nowUk]);
 
-  const visibleFeedItems = useMemo(
-    () => feedItems.filter((item) => (feedView === "clips" ? item.kind === "clip" : item.kind === "derived")),
-    [feedItems, feedView]
-  );
+  const visibleFeedItems = useMemo(() => {
+    const kindMatch = feedItems.filter((item) => (feedView === "clips" ? item.kind === "clip" : item.kind === "derived"));
+    if (feedView === "clips") return kindMatch;
+    // In the normal feed view, archived items are hidden. The "Show
+    // archived" toggle (admin-only) flips to showing *only* the archived
+    // ones, so they can be reviewed and restored rather than lost.
+    return kindMatch.filter((item) => showArchived === hiddenFeedKeys.includes(item.key));
+  }, [feedItems, feedView, hiddenFeedKeys, showArchived]);
 
   const feedReactionTally = useMemo(() => {
     const map: Record<string, Record<string, number>> = {};
@@ -1227,9 +1258,19 @@ function App({ session }: { session: Session }) {
               </form>
             )}
 
+            {feedView === "feed" && isAdmin && (
+              <button className="wcf-ghost wcf-archive-toggle" onClick={() => setShowArchived((v) => !v)}>
+                {showArchived ? "Back to feed" : `Show archived${hiddenFeedKeys.length ? ` (${hiddenFeedKeys.length})` : ""}`}
+              </button>
+            )}
+
             {visibleFeedItems.length === 0 && (
               <p className="wcf-empty">
-                {feedView === "clips" ? "No clips yet — share the first one!" : "Nothing yet — check back after the first game."}
+                {feedView === "clips"
+                  ? "No clips yet — share the first one!"
+                  : showArchived
+                  ? "Nothing archived."
+                  : "Nothing yet — check back after the first game."}
               </p>
             )}
             {visibleFeedItems.map((item) => {
@@ -1267,7 +1308,7 @@ function App({ session }: { session: Session }) {
                     )}
                     <div className="wcf-clip-body">
                       <div className="wcf-clip-title">{c.title}</div>
-                      <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"}</div>
+                      <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"} · {fmtFeedDate(item.ts)}</div>
                       {reactionRow}
                     </div>
                     {(c.submitted_by === myId || isAdmin) && (
@@ -1283,13 +1324,25 @@ function App({ session }: { session: Session }) {
                 );
               }
 
+              const isHidden = hiddenFeedKeys.includes(item.key);
               return (
                 <article key={item.key} className="wcf-feed-item">
                   <div className={"wcf-feed-icon " + item.tone}>{item.icon}</div>
                   <div className="wcf-feed-body">
                     <div className="wcf-feed-text">{item.text}</div>
+                    <div className="wcf-feed-date">{fmtFeedDate(item.ts)}</div>
                     {reactionRow}
                   </div>
+                  {isAdmin && (
+                    <button
+                      className="wcf-clip-del"
+                      onClick={() => (isHidden ? unhideFeedItem(item.key) : hideFeedItem(item.key))}
+                      aria-label={isHidden ? "Restore from archive" : "Archive"}
+                      title={isHidden ? "Restore" : "Archive"}
+                    >
+                      {isHidden ? "↺" : "×"}
+                    </button>
+                  )}
                 </article>
               );
             })}
@@ -2673,6 +2726,8 @@ const css = `
 .wcf-feed-icon.blue{background:rgba(46,116,204,.16)}
 .wcf-feed-body{flex:1;min-width:0}
 .wcf-feed-text{font-size:13px;color:var(--white);line-height:1.4}
+.wcf-feed-date{font-size:10.5px;color:var(--dim);font-family:var(--mono);margin-top:3px}
+.wcf-archive-toggle{font-size:11.5px;padding:7px 12px;margin-bottom:12px}
 .wcf-feed-reactions{display:flex;gap:6px;margin-top:8px}
 .wcf-feed-reaction{font-size:11px;font-family:var(--mono);color:var(--dim);background:var(--panel2);border:1px solid transparent;border-radius:20px;padding:3px 9px;cursor:pointer}
 .wcf-feed-reaction.mine{border-color:var(--green);color:var(--green)}

@@ -714,3 +714,23 @@ create policy "motm_votes_update_own" on public.motm_votes for update
       where b.game_id = motm_votes.game_id and b.player_id = candidate_id and b.waiting = false
     )
   );
+
+-- ─────────────────────────────────────────────────────────────────
+-- Archiving derived feed items (full-time scores, MOTM winners, pot
+-- milestones, new joiners) - these aren't real rows, so there's
+-- nothing to delete. item_key matches the same synthetic string the
+-- feed already uses for reactions. Admin-only, reversible (a row
+-- here just means "hidden", removing it un-hides).
+-- ─────────────────────────────────────────────────────────────────
+
+create table public.feed_hidden_items (
+  item_key text primary key,
+  hidden_by uuid references public.profiles (id) on delete set null,
+  hidden_at timestamptz not null default now()
+);
+
+alter table public.feed_hidden_items enable row level security;
+
+create policy "feed_hidden_items_select" on public.feed_hidden_items for select using (auth.role() = 'authenticated');
+create policy "feed_hidden_items_insert_admin" on public.feed_hidden_items for insert with check (public.is_admin());
+create policy "feed_hidden_items_delete_admin" on public.feed_hidden_items for delete using (public.is_admin());
