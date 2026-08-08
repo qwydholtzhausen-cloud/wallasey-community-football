@@ -42,6 +42,7 @@ interface BookingRow {
   team: Team | null;
   created_at: string;
   player: Profile;
+  confirmer: { display_name: string } | null;
 }
 
 interface GameRow {
@@ -387,7 +388,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, bookings(id, player_id, status, waiting, team, created_at, player:profiles(id, display_name, role))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, bookings(id, player_id, status, waiting, team, created_at, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -674,8 +675,15 @@ function App({ session }: { session: Session }) {
     // fixture, and it's already visible live via the payment status dot on
     // each booking and the Overdue section, so logging it too would just
     // bury the genuinely rare, otherwise-invisible actions (role changes,
-    // fixture posts/deletes) under routine noise.
-    const { error } = await supabase.from("bookings").update({ status }).eq("id", bookingId);
+    // fixture posts/deletes) under routine noise. Who confirmed it is still
+    // tracked on the booking itself (confirmed_by/confirmed_at) so it's
+    // there if ever needed, without it being a noisy feed of its own.
+    const patch: { status: PayStatus; confirmed_by?: string; confirmed_at?: string } = { status };
+    if (status === "confirmed") {
+      patch.confirmed_by = myId;
+      patch.confirmed_at = new Date().toISOString();
+    }
+    const { error } = await supabase.from("bookings").update(patch).eq("id", bookingId);
     if (error) return notifyError(error.message);
   }
 
@@ -2352,7 +2360,10 @@ function AdminGameRow({
           {confirmed.length === 0 && <p className="wcf-empty small">No one booked in.</p>}
           {confirmed.map((b) => (
             <div key={b.id} className="wcf-admin-player-row">
-              <span className="wcf-admin-player-name">{b.player.display_name}</span>
+              <span className="wcf-admin-player-name">
+                {b.player.display_name}
+                {b.status === "confirmed" && b.confirmer && <span className="wcf-confirmed-by">by {b.confirmer.display_name}</span>}
+              </span>
               <div className="wcf-admin-status">
                 <StatusBadge status={b.status} />
                 {b.status !== "confirmed" ? (
@@ -2801,6 +2812,7 @@ const css = `
 .wcf-admin-player-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .wcf-admin-player-row:last-child{border-bottom:none}
 .wcf-admin-player-name{flex:1;min-width:90px;font-weight:700;font-size:13px}
+.wcf-confirmed-by{display:block;font-size:10px;font-weight:600;color:var(--dim);margin-top:1px}
 .wcf-admin-status{display:flex;align-items:center;gap:8px}
 .wcf-admin-approve{background:var(--green);color:#04140a;border:none;padding:7px 12px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
 .wcf-admin-undo{background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer}

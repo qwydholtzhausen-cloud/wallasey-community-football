@@ -755,3 +755,10 @@ alter table public.audit_log enable row level security;
 
 create policy "audit_log_select_admin" on public.audit_log for select using (public.is_admin());
 create policy "audit_log_insert_admin" on public.audit_log for insert with check (public.is_admin());
+
+-- Who confirmed a payment and when, tracked on the booking itself rather
+-- than the audit log - payment confirmations happen too often (~16/week
+-- per fixture) to belong in a log meant for rare, otherwise-invisible
+-- actions, but the attribution is still worth keeping on hand.
+alter table public.bookings add column confirmed_by uuid references public.profiles (id) on delete set null;
+alter table public.bookings add column confirmed_at timestamptz;
