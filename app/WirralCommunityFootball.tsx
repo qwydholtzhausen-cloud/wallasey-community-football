@@ -399,6 +399,7 @@ function App({ session }: { session: Session }) {
   const [selfRatings, setSelfRatings] = useState<PlayerRating[]>([]);
   const [adminRatings, setAdminRatings] = useState<PlayerRating[]>([]);
   const [lineupView, setLineupView] = useState<"sheet" | "fairness">("sheet");
+  const [suggestedTeams, setSuggestedTeams] = useState<{ white: string[]; red: string[] } | null>(null);
   const [ratingPlayerId, setRatingPlayerId] = useState<string | null>(null);
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -934,6 +935,22 @@ function App({ session }: { session: Session }) {
     if (error) notifyError(error.message);
   }
 
+  async function applySuggestedTeams() {
+    if (!suggestedTeams) return;
+    const bookingIdByPlayer = new Map(nextConfirmed.map((b) => [b.player_id, b.id]));
+    await Promise.all(
+      [...suggestedTeams.white.map((id) => [id, "white"] as const), ...suggestedTeams.red.map((id) => [id, "red"] as const)].map(
+        ([playerId, team]) => {
+          const bookingId = bookingIdByPlayer.get(playerId);
+          return bookingId ? setTeam(bookingId, team) : Promise.resolve();
+        }
+      )
+    );
+    setSuggestedTeams(null);
+    await loadGames();
+    notifySuccess("Applied the suggested split — tweak any individual player in Team Sheet if needed");
+  }
+
   async function renameSelf(name: string) {
     if (!name.trim()) return;
     const { error } = await supabase.from("profiles").update({ display_name: name.trim() }).eq("id", myId);
@@ -1312,6 +1329,7 @@ function App({ session }: { session: Session }) {
     [nextGame]
   );
   useEffect(() => setEditingLineup(false), [nextGame?.id]);
+  useEffect(() => setSuggestedTeams(null), [nextGame?.id]);
   const nextGrouped = useMemo(
     () => ({
       white: nextConfirmed.filter((b) => b.team === "white"),
@@ -1330,18 +1348,17 @@ function App({ session }: { session: Session }) {
     return map;
   }, [selfRatings, adminRatings]);
 
-  const teamFairness = useMemo(() => {
-    function teamStats(bookings: BookingRow[]) {
-      const ratings = bookings.map((b) => ratingByPlayer[b.player_id]).filter((r): r is PlayerRating => !!r);
-      const avg = (key: "fitness" | "attack" | "defence") =>
-        ratings.length ? ratings.reduce((sum, r) => sum + r[key], 0) / ratings.length : 0;
-      const positions: Record<PlayerPosition, number> = { keeper: 0, defence: 0, midfield: 0, attack: 0 };
-      for (const r of ratings) positions[r.position]++;
-      return { fitness: avg("fitness"), attack: avg("attack"), defence: avg("defence"), positions, rated: ratings.length, total: bookings.length };
-    }
-    const white = teamStats(nextGrouped.white);
-    const red = teamStats(nextGrouped.red);
-
+  // Standalone (not memoized) so the same math can score both the live
+  // saved split and a not-yet-applied suggestion before committing to it.
+  function teamStats(playerIds: string[]) {
+    const ratings = playerIds.map((id) => ratingByPlayer[id]).filter((r): r is PlayerRating => !!r);
+    const avg = (key: "fitness" | "attack" | "defence") =>
+      ratings.length ? ratings.reduce((sum, r) => sum + r[key], 0) / ratings.length : 0;
+    const positions: Record<PlayerPosition, number> = { keeper: 0, defence: 0, midfield: 0, attack: 0 };
+    for (const r of ratings) positions[r.position]++;
+    return { fitness: avg("fitness"), attack: avg("attack"), defence: avg("defence"), positions, rated: ratings.length, total: playerIds.length };
+  }
+  function fairnessFlags(white: ReturnType<typeof teamStats>, red: ReturnType<typeof teamStats>) {
     const flags: string[] = [];
     if (white.rated > 0 && red.rated > 0) {
       if (Math.abs(white.fitness - red.fitness) >= 1) flags.push("Noticeable fitness gap between the two teams");
@@ -1354,9 +1371,52 @@ function App({ session }: { session: Session }) {
         flags.push(`Uneven ${POSITION_LABEL[pos].toLowerCase()} split (${white.positions[pos]} vs ${red.positions[pos]})`);
       }
     }
+    return flags;
+  }
 
-    return { white, red, flags };
+  const teamFairness = useMemo(() => {
+    const white = teamStats(nextGrouped.white.map((b) => b.player_id));
+    const red = teamStats(nextGrouped.red.map((b) => b.player_id));
+    return { white, red, flags: fairnessFlags(white, red) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextGrouped, ratingByPlayer]);
+
+  // Unrated players default to a neutral 3 rather than 0, so a handful of
+  // unrated players don't get treated as "worst on the pitch" and all
+  // dumped on one team - they just don't move the needle either way.
+  // Keepers are alternated first since you basically always want exactly
+  // one specialist per team; everyone else is sorted by ability and
+  // greedily assigned to whichever team's running total is currently
+  // lower (a simple, explainable balance heuristic, not a black-box
+  // optimizer) with a size guard so squads don't end up lopsided.
+  function generateBalancedTeams(): { white: string[]; red: string[] } {
+    const players = nextConfirmed.map((b) => {
+      const r = ratingByPlayer[b.player_id];
+      return { id: b.player_id, overall: r ? (r.fitness + r.attack + r.defence) / 3 : 3, position: r?.position ?? null };
+    });
+    const keepers = players.filter((p) => p.position === "keeper").sort((a, b) => b.overall - a.overall);
+    const others = players.filter((p) => p.position !== "keeper").sort((a, b) => b.overall - a.overall);
+
+    const white: string[] = [];
+    const red: string[] = [];
+    let whiteTotal = 0;
+    let redTotal = 0;
+
+    keepers.forEach((k, i) => {
+      if (i % 2 === 0) { white.push(k.id); whiteTotal += k.overall; }
+      else { red.push(k.id); redTotal += k.overall; }
+    });
+
+    others.forEach((p) => {
+      const sizeDiff = white.length - red.length;
+      if (sizeDiff >= 2) { red.push(p.id); redTotal += p.overall; }
+      else if (sizeDiff <= -2) { white.push(p.id); whiteTotal += p.overall; }
+      else if (whiteTotal <= redTotal) { white.push(p.id); whiteTotal += p.overall; }
+      else { red.push(p.id); redTotal += p.overall; }
+    });
+
+    return { white, red };
+  }
 
   const overdueBookings = useMemo(() => {
     const rows: { booking: BookingRow; game: GameRow }[] = [];
@@ -1637,49 +1697,87 @@ function App({ session }: { session: Session }) {
             {lineupView === "fairness" && isAdmin && (
               <>
                 {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
-                {nextGame && (nextGrouped.white.length === 0 && nextGrouped.red.length === 0) && (
-                  <p className="wcf-empty">Assign players to Whites/Reds in Team Sheet to see a fairness check.</p>
-                )}
-                {nextGame && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
-                  <>
-                    <div className="wcf-fairness-teams">
-                      {([["white", teamFairness.white, cs.team_white_name, cs.team_white_color], ["red", teamFairness.red, cs.team_red_name, cs.team_red_color]] as const).map(
-                        ([key, stats, name, color]) => (
-                          <div key={key} className="wcf-fairness-card">
-                            <div className="wcf-fairness-card-head" style={{ color }}>{name}</div>
-                            {(["fitness", "attack", "defence"] as const).map((metric) => (
-                              <div key={metric} className="wcf-fairness-metric">
-                                <div className="wcf-fairness-metric-top">
-                                  <span>{metric[0].toUpperCase()}{metric.slice(1)}</span>
-                                  <span>{stats.rated ? stats[metric].toFixed(1) : "—"}</span>
-                                </div>
-                                <div className="wcf-fairness-track">
-                                  <div className="wcf-fairness-fill" style={{ width: `${(stats[metric] / 5) * 100}%`, background: color ?? undefined }} />
-                                </div>
-                              </div>
-                            ))}
-                            <div className="wcf-fairness-positions">
-                              {POSITIONS.map((p) => (
-                                <span key={p} className="wcf-fairness-pos-tag">{POSITION_LABEL[p]} · {stats.positions[p]}</span>
-                              ))}
-                            </div>
-                            <div className="wcf-fairness-rated-note">{stats.rated} of {stats.total} rated</div>
-                          </div>
-                        )
-                      )}
-                    </div>
 
-                    {teamFairness.flags.length === 0 ? (
-                      <p className="wcf-fairness-ok">✅ No notable imbalances found.</p>
+                {nextGame && nextConfirmed.length > 0 && (
+                  <>
+                    {!suggestedTeams ? (
+                      <button className="wcf-generate-teams" onClick={() => setSuggestedTeams(generateBalancedTeams())}>
+                        🔀 Generate recommended teams
+                      </button>
                     ) : (
-                      <div className="wcf-fairness-flags">
-                        {teamFairness.flags.map((f) => (
-                          <div key={f} className="wcf-fairness-flag">⚠️ {f}</div>
-                        ))}
+                      <div className="wcf-suggestion-actions">
+                        <button className="wcf-generate-teams" onClick={() => setSuggestedTeams(generateBalancedTeams())}>↻ Regenerate</button>
+                        <button className="wcf-ghost" onClick={() => setSuggestedTeams(null)}>Discard</button>
+                        <button className="wcf-apply-teams" onClick={applySuggestedTeams}>Apply this split</button>
                       </div>
+                    )}
+                    {suggestedTeams && (
+                      <p className="wcf-suggestion-note">
+                        Preview only — nothing's saved until you tap "Apply this split", and you can still hand-tweak anyone in Team Sheet afterward.
+                      </p>
                     )}
                   </>
                 )}
+
+                {nextGame && !suggestedTeams && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && nextConfirmed.length === 0 && (
+                  <p className="wcf-empty">No one&apos;s booked in yet.</p>
+                )}
+                {nextGame && !suggestedTeams && nextConfirmed.length > 0 && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && (
+                  <p className="wcf-empty">No one&apos;s assigned to Whites/Reds yet — generate a suggestion above, or assign manually in Team Sheet.</p>
+                )}
+
+                {nextGame && (() => {
+                  const previewWhiteIds = suggestedTeams?.white ?? nextGrouped.white.map((b) => b.player_id);
+                  const previewRedIds = suggestedTeams?.red ?? nextGrouped.red.map((b) => b.player_id);
+                  if (previewWhiteIds.length === 0 && previewRedIds.length === 0) return null;
+                  const white = teamStats(previewWhiteIds);
+                  const red = teamStats(previewRedIds);
+                  const flags = fairnessFlags(white, red);
+                  const namesFor = (ids: string[]) => ids.map((id) => nextConfirmed.find((b) => b.player_id === id)?.player.display_name ?? "?");
+                  return (
+                    <>
+                      <div className="wcf-fairness-teams">
+                        {([["white", white, previewWhiteIds, cs.team_white_name, cs.team_white_color], ["red", red, previewRedIds, cs.team_red_name, cs.team_red_color]] as const).map(
+                          ([key, stats, ids, name, color]) => (
+                            <div key={key} className="wcf-fairness-card">
+                              <div className="wcf-fairness-card-head" style={{ color }}>{name}</div>
+                              {suggestedTeams && (
+                                <div className="wcf-fairness-preview-names">{namesFor(ids).join(", ")}</div>
+                              )}
+                              {(["fitness", "attack", "defence"] as const).map((metric) => (
+                                <div key={metric} className="wcf-fairness-metric">
+                                  <div className="wcf-fairness-metric-top">
+                                    <span>{metric[0].toUpperCase()}{metric.slice(1)}</span>
+                                    <span>{stats.rated ? stats[metric].toFixed(1) : "—"}</span>
+                                  </div>
+                                  <div className="wcf-fairness-track">
+                                    <div className="wcf-fairness-fill" style={{ width: `${(stats[metric] / 5) * 100}%`, background: color ?? undefined }} />
+                                  </div>
+                                </div>
+                              ))}
+                              <div className="wcf-fairness-positions">
+                                {POSITIONS.map((p) => (
+                                  <span key={p} className="wcf-fairness-pos-tag">{POSITION_LABEL[p]} · {stats.positions[p]}</span>
+                                ))}
+                              </div>
+                              <div className="wcf-fairness-rated-note">{stats.rated} of {stats.total} rated</div>
+                            </div>
+                          )
+                        )}
+                      </div>
+
+                      {flags.length === 0 ? (
+                        <p className="wcf-fairness-ok">✅ No notable imbalances found.</p>
+                      ) : (
+                        <div className="wcf-fairness-flags">
+                          {flags.map((f) => (
+                            <div key={f} className="wcf-fairness-flag">⚠️ {f}</div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </>
             )}
 
@@ -3289,6 +3387,13 @@ const css = `
 .wcf-fairness-ok{font-size:13px;color:var(--green);font-weight:700;text-align:center;padding:10px}
 .wcf-fairness-flags{display:flex;flex-direction:column;gap:8px}
 .wcf-fairness-flag{background:rgba(224,167,51,.14);border:1px solid rgba(224,167,51,.35);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--white)}
+.wcf-generate-teams{width:100%;background:var(--blue);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;margin-bottom:8px}
+.wcf-suggestion-actions{display:flex;gap:8px;margin-bottom:8px}
+.wcf-suggestion-actions .wcf-generate-teams{flex:1;margin-bottom:0;background:var(--panel2);color:var(--white)}
+.wcf-suggestion-actions .wcf-ghost{flex:1}
+.wcf-apply-teams{flex:1.4;background:var(--green);color:var(--bg);border:none;padding:12px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer}
+.wcf-suggestion-note{font-size:11px;color:var(--dim);line-height:1.5;margin:0 0 14px;text-align:center}
+.wcf-fairness-preview-names{font-size:11px;color:var(--dim);line-height:1.4;margin-bottom:10px}
 .wcf-lineup-group{margin-bottom:6px}
 .wcf-lineup-group-label{font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 2px 8px}
 
