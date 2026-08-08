@@ -762,3 +762,10 @@ create policy "audit_log_insert_admin" on public.audit_log for insert with check
 -- actions, but the attribution is still worth keeping on hand.
 alter table public.bookings add column confirmed_by uuid references public.profiles (id) on delete set null;
 alter table public.bookings add column confirmed_at timestamptz;
+
+-- Structured category on manual pot entries, so spend/income can actually
+-- be grouped reliably (e.g. for a future finances dashboard) instead of
+-- guessing from freeform description text. Existing rows default to
+-- 'other' since there's no way to infer their real category retroactively.
+alter table public.pot_entries add column category text not null default 'other'
+  check (category in ('pitch', 'socials', 'equipment', 'sponsorship', 'other'));

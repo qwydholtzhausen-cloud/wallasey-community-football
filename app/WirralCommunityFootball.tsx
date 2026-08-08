@@ -60,10 +60,20 @@ interface GameRow {
   bookings: BookingRow[];
 }
 
+type PotCategory = "pitch" | "socials" | "equipment" | "sponsorship" | "other";
+const POT_CATEGORY_LABEL: Record<PotCategory, string> = {
+  pitch: "Pitch hire",
+  socials: "Socials",
+  equipment: "Equipment",
+  sponsorship: "Sponsorship",
+  other: "Other",
+};
+
 interface PotEntry {
   id: string;
   amount: number;
   description: string;
+  category: PotCategory;
   created_at: string;
 }
 
@@ -356,6 +366,7 @@ function App({ session }: { session: Session }) {
   const [potAmount, setPotAmount] = useState("");
   const [potDescription, setPotDescription] = useState("");
   const [potEntryKind, setPotEntryKind] = useState<"add" | "deduct">("add");
+  const [potCategory, setPotCategory] = useState<PotCategory>("other");
   const [addingPotEntry, setAddingPotEntry] = useState(false);
   const [resultsMonth, setResultsMonth] = useState<string>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -408,7 +419,7 @@ function App({ session }: { session: Session }) {
   }, []);
 
   const loadPotEntries = useCallback(async () => {
-    const { data } = await supabase.from("pot_entries").select("id, amount, description, created_at").order("created_at", { ascending: false });
+    const { data } = await supabase.from("pot_entries").select("id, amount, description, category, created_at").order("created_at", { ascending: false });
     if (data) setPotEntries(data as PotEntry[]);
   }, []);
 
@@ -766,8 +777,8 @@ function App({ session }: { session: Session }) {
     await loadAwards();
   }
 
-  async function addPotEntry(amount: number, description: string) {
-    const { error } = await supabase.from("pot_entries").insert({ amount, description, created_by: myId });
+  async function addPotEntry(amount: number, description: string, category: PotCategory) {
+    const { error } = await supabase.from("pot_entries").insert({ amount, description, category, created_by: myId });
     if (error) return notifyError(error.message);
     await loadPotEntries();
   }
@@ -937,11 +948,13 @@ function App({ session }: { session: Session }) {
           date: g.date,
           amount,
           description: `${g.venue} · ${fmtDate(g.date)} — ${confirmedPaid} paid × £${g.price} − £${g.pitch_cost} pitch`,
+          category: "pitch" as PotCategory,
           kind: "auto" as const,
         };
       });
     const manualEntries = potEntries.map((e) => ({
       id: e.id,
+      category: e.category,
       date: e.created_at.slice(0, 10),
       amount: e.amount,
       description: e.description,
@@ -1685,11 +1698,12 @@ function App({ session }: { session: Session }) {
                         if (!magnitude || !potDescription.trim()) return;
                         const amount = potEntryKind === "deduct" ? -magnitude : magnitude;
                         setAddingPotEntry(true);
-                        await addPotEntry(amount, potDescription.trim());
+                        await addPotEntry(amount, potDescription.trim(), potCategory);
                         setAddingPotEntry(false);
                         setPotAmount("");
                         setPotDescription("");
                         setPotEntryKind("add");
+                        setPotCategory("other");
                       }}
                     >
                       <div className="wcf-pot-kind-toggle">
@@ -1708,6 +1722,11 @@ function App({ session }: { session: Session }) {
                           − Deduct money
                         </button>
                       </div>
+                      <select value={potCategory} onChange={(e) => setPotCategory(e.target.value as PotCategory)}>
+                        {(Object.keys(POT_CATEGORY_LABEL) as PotCategory[]).map((c) => (
+                          <option key={c} value={c}>{POT_CATEGORY_LABEL[c]}</option>
+                        ))}
+                      </select>
                       <input
                         type="number"
                         step="0.01"
@@ -1739,7 +1758,10 @@ function App({ session }: { session: Session }) {
                       <div key={entry.id} className="wcf-pot-row">
                         <div>
                           <div className="wcf-pot-row-desc">{entry.description}</div>
-                          <div className="wcf-pitch">{fmtDate(entry.date)}{entry.kind === "auto" ? " · auto" : ""}</div>
+                          <div className="wcf-pitch">
+                            {fmtDate(entry.date)}{entry.kind === "auto" ? " · auto" : ""}
+                            <span className="wcf-pot-cat-tag">{POT_CATEGORY_LABEL[entry.category]}</span>
+                          </div>
                         </div>
                         <span className={"wcf-pot-row-amount " + (entry.amount < 0 ? "neg" : "pos")}>
                           {entry.amount < 0 ? "−" : "+"}£{Math.abs(entry.amount).toFixed(2)}
@@ -2899,7 +2921,7 @@ const css = `
 .wcf-pot-total-amount.negative{color:var(--red-hi)}
 .wcf-pot-total-note{font-size:12px;color:var(--dim);line-height:1.5;margin:0;max-width:340px;margin-left:auto;margin-right:auto}
 .wcf-pot-add{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
-.wcf-pot-add input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
+.wcf-pot-add input,.wcf-pot-add select{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
 .wcf-pot-kind-toggle{display:flex;gap:8px}
 .wcf-pot-kind-toggle button{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--dim);padding:11px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer}
 .wcf-pot-kind-toggle button.active{background:rgba(51,169,87,.18);border-color:var(--green);color:var(--green)}
@@ -2910,6 +2932,7 @@ const css = `
 .wcf-pot-row{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px}
 .wcf-pot-row>div:first-child{flex:1;min-width:0}
 .wcf-pot-row-desc{font-weight:700;font-size:13px}
+.wcf-pot-cat-tag{display:inline-block;margin-left:7px;font-size:9.5px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;color:var(--dim);background:var(--panel2);padding:1px 7px;border-radius:20px}
 .wcf-pot-row-amount{font-family:var(--mono);font-weight:800;font-size:14px;flex:0 0 auto}
 .wcf-pot-row-amount.pos{color:var(--green)}
 .wcf-pot-row-amount.neg{color:var(--red-hi)}
