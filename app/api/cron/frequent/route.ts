@@ -25,6 +25,10 @@ interface GameRef {
   price: number;
 }
 
+interface GameRefWithKickoff extends GameRef {
+  kickoff: string;
+}
+
 function fmtDateLabel(date: string) {
   return new Date(date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
@@ -117,6 +121,37 @@ export async function GET(req: Request) {
     await sendPushToUsers([b.player_id], {
       title: "Payment needed",
       body: `You're booked for ${game.venue} on ${fmtDateLabel(game.date)} — pay £${game.price} ahead of kick-off.`,
+      url: "/",
+    });
+    await markNotified(key);
+  }
+
+  // --- Overdue reminder, once the game's finished if still unconfirmed ---
+  // A second, later nudge before the hard booking-block kicks in (that
+  // happens the day after the game - see has_overdue_payment() in SQL).
+  // Fires same-evening, well before that block, using the same "game's
+  // finished" cutoff as the rest of the app (kickoff + 90 min) - so it's
+  // a heads-up, not just a restatement of a block that's already active.
+  const { data: unconfirmedBookings } = await admin
+    .from("bookings")
+    .select("id, player_id, game:games(id, venue, date, kickoff, price)")
+    .neq("status", "confirmed")
+    .eq("waiting", false);
+
+  for (const b of unconfirmedBookings ?? []) {
+    const key = `overdue-${b.id}`;
+    if (notifiedKeys.has(key)) continue;
+
+    const game = (Array.isArray(b.game) ? b.game[0] : b.game) as GameRefWithKickoff | null;
+    if (!game) {
+      await markNotified(key);
+      continue;
+    }
+    if (toMs(kickoffCutoff(game.date, game.kickoff, 90)) > nowMs) continue;
+
+    await sendPushToUsers([b.player_id], {
+      title: "Still unpaid ⚠️",
+      body: `You still owe £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)} — pay now to avoid being blocked from booking your next game.`,
       url: "/",
     });
     await markNotified(key);

@@ -313,6 +313,14 @@ function App({ session }: { session: Session }) {
   const [pushStats, setPushStats] = useState<{ total: number; subscribed: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const [pushNudgeDismissed, setPushNudgeDismissed] = useState(true);
+  useEffect(() => {
+    setPushNudgeDismissed(localStorage.getItem("wcf-push-nudge-dismissed") === "true");
+  }, []);
+  function dismissPushNudge() {
+    localStorage.setItem("wcf-push-nudge-dismissed", "true");
+    setPushNudgeDismissed(true);
+  }
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
   const prevWaitingRef = useRef<Record<string, boolean>>({});
 
@@ -807,6 +815,12 @@ function App({ session }: { session: Session }) {
   );
   const iAmOverdue = myOverdueBookings.length > 0;
 
+  // Same "is push actually working on this device" derivation used in
+  // AccountPanel - the DB flag alone isn't enough proof (see the toggle
+  // fix), and permission is per-device anyway.
+  const myPushGranted = typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted";
+  const showPushNudge = !myPushGranted && !pushNudgeDismissed;
+
   function motmVotingOpen(g: GameRow) {
     return kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) > nowUk;
   }
@@ -1136,6 +1150,18 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
+            {showPushNudge && (
+              <div className="wcf-nudge-banner">
+                <div>
+                  <strong>🔔 Turn on notifications</strong>
+                  <p>Get kickoff reminders, payment nudges and spot alerts — never miss a game.</p>
+                </div>
+                <div className="wcf-nudge-actions">
+                  <button onClick={async () => { if (await enablePush()) dismissPushNudge(); }}>Enable</button>
+                  <button className="wcf-ghost" onClick={dismissPushNudge}>Not now</button>
+                </div>
+              </div>
+            )}
             {iAmOverdue && (
               <div className="wcf-overdue-banner">
                 <strong>Overdue payment</strong> — you still owe for{" "}
@@ -2591,6 +2617,12 @@ const css = `
 .wcf-overdue-banner{background:linear-gradient(135deg,rgba(228,42,54,.18),rgba(228,42,54,.06));border:1px solid rgba(228,42,54,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5;color:var(--white)}
 .wcf-overdue-banner strong{color:var(--red-hi)}
 .wcf-overdue-note{font-size:12px;color:var(--red-hi);font-weight:700;text-align:center;margin:0;flex:1}
+.wcf-nudge-banner{background:linear-gradient(135deg,rgba(46,116,204,.18),rgba(46,116,204,.06));border:1px solid rgba(46,116,204,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.wcf-nudge-banner strong{font-size:13px;color:var(--white)}
+.wcf-nudge-banner p{font-size:12px;color:var(--dim);margin:3px 0 0;line-height:1.4}
+.wcf-nudge-actions{display:flex;gap:8px;flex-shrink:0}
+.wcf-nudge-actions button{font-size:12px;font-weight:800;padding:8px 14px;border-radius:20px;border:none;background:var(--blue);color:#fff;cursor:pointer}
+.wcf-nudge-actions button.wcf-ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
 .wcf-overdue-row>div:first-child{flex:1;min-width:120px}
 .wcf-admin-game{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
 .wcf-admin-game-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;color:var(--white);padding:13px 14px;cursor:pointer;text-align:left}
