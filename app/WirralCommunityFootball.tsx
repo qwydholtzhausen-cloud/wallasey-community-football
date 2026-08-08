@@ -80,6 +80,14 @@ interface FeedReaction {
   user_id: string;
 }
 
+interface AuditLogEntry {
+  id: string;
+  action: string;
+  details: string | null;
+  created_at: string;
+  actor: { display_name: string } | null;
+}
+
 const FEED_REACTION_EMOJI = ["👍", "🔥"] as const;
 
 type FeedItem =
@@ -320,6 +328,8 @@ function App({ session }: { session: Session }) {
   const [hiddenFeedKeys, setHiddenFeedKeys] = useState<string[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [pushStats, setPushStats] = useState<{ total: number; subscribed: number } | null>(null);
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
+  const [showAuditLog, setShowAuditLog] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [pushNudgeDismissed, setPushNudgeDismissed] = useState(true);
@@ -546,6 +556,28 @@ function App({ session }: { session: Session }) {
     }
   }
 
+  // Best-effort, same reasoning as pushNotify - a logging failure shouldn't
+  // block or fail the actual admin action it's recording.
+  async function logAction(action: string, details: string) {
+    try {
+      await supabase.from("audit_log").insert({ actor_id: myId, action, details });
+    } catch (err) {
+      console.error("Audit log failed", action, err);
+    }
+  }
+  async function loadAuditLog() {
+    const { data } = await supabase
+      .from("audit_log")
+      .select("id, action, details, created_at, actor:profiles(display_name)")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (data) setAuditLog(data as unknown as AuditLogEntry[]);
+  }
+  async function toggleAuditLog() {
+    if (!showAuditLog) await loadAuditLog();
+    setShowAuditLog((v) => !v);
+  }
+
   async function enablePush() {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       notifyError("Push isn't supported in this browser");
@@ -640,6 +672,11 @@ function App({ session }: { session: Session }) {
   async function setBookingStatus(bookingId: string, status: PayStatus) {
     const { error } = await supabase.from("bookings").update({ status }).eq("id", bookingId);
     if (error) return notifyError(error.message);
+    if (status === "confirmed") {
+      const game = games.find((g) => g.bookings.some((b) => b.id === bookingId));
+      const booking = game?.bookings.find((b) => b.id === bookingId);
+      if (game && booking) logAction("Confirmed payment", `${booking.player.display_name} — ${game.venue}, ${fmtDate(game.date)}`);
+    }
   }
 
   async function addGame() {
@@ -674,12 +711,17 @@ function App({ session }: { session: Session }) {
     setEditingId(null);
     // First confirm of a draft fixture is what actually announces it -
     // later edits to an already-published fixture don't re-announce.
-    if (!wasPublished) pushNotify("notify-new-fixture", { gameId: id });
+    if (!wasPublished) {
+      pushNotify("notify-new-fixture", { gameId: id });
+      logAction("Posted fixture", `${rest.venue} — ${fmtDate(rest.date)}`);
+    }
   }
   async function deleteGame(id: string) {
+    const game = games.find((g) => g.id === id);
     const { error } = await supabase.from("games").delete().eq("id", id);
     if (error) return notifyError(error.message);
     await loadGames();
+    if (game) logAction("Deleted fixture", `${game.venue} — ${fmtDate(game.date)}`);
   }
   async function saveResult(gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) {
     const { error: scoreErr } = await supabase
@@ -784,9 +826,11 @@ function App({ session }: { session: Session }) {
     await Promise.all([loadProfile(), loadProfiles()]);
   }
   async function setRole(id: string, role: Role) {
+    const targetName = profiles.find((p) => p.id === id)?.display_name ?? "someone";
     const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
     if (error) return notifyError(error.message);
     await loadProfiles();
+    logAction("Changed role", `${targetName} → ${ROLE_LABEL[role]}`);
   }
   async function deleteProfile(id: string, name: string) {
     if (!confirm(`Permanently delete ${name}'s account? This removes their login and all their bookings. This can't be undone.`)) return;
@@ -801,6 +845,7 @@ function App({ session }: { session: Session }) {
       return;
     }
     await Promise.all([loadProfiles(), loadGames()]);
+    logAction("Deleted account", name);
   }
   async function addPlayer(email: string, displayName: string) {
     const res = await fetch("/api/admin/add-player", {
@@ -815,6 +860,7 @@ function App({ session }: { session: Session }) {
     }
     notifySuccess(`${displayName || email} can now sign in with that email`);
     await loadProfiles();
+    logAction("Added player", displayName || email);
     return true;
   }
   async function signOut() {
@@ -983,8 +1029,33 @@ function App({ session }: { session: Session }) {
       });
     }
 
+    // Every 5th appearance (5, 10, 15, 20...) - walked oldest to newest so
+    // the running count per player is accurate.
+    const chronPast = [...pastGames].sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff));
+    const appCounts: Record<string, number> = {};
+    for (const g of chronPast) {
+      for (const b of g.bookings.filter((bk) => !bk.waiting)) {
+        appCounts[b.player_id] = (appCounts[b.player_id] ?? 0) + 1;
+        const count = appCounts[b.player_id];
+        if (count % 5 === 0) {
+          items.push({
+            key: `apps-${b.player_id}-${count}`,
+            ts: new Date(kickoffCutoff(g.date, g.kickoff, 90)).getTime(),
+            kind: "derived",
+            icon: "🎖️",
+            tone: "amber",
+            text: (
+              <>
+                <strong>{b.player.display_name}</strong> hit {count} appearances!
+              </>
+            ),
+          });
+        }
+      }
+    }
+
     return items.sort((a, b) => b.ts - a.ts);
-  }, [clips, games, motmTallyByGame, potLedger, profiles, cs.team_white_name, cs.team_red_name, nowUk]);
+  }, [clips, games, pastGames, motmTallyByGame, potLedger, profiles, cs.team_white_name, cs.team_red_name, nowUk]);
 
   const visibleFeedItems = useMemo(() => {
     const kindMatch = feedItems.filter((item) => (feedView === "clips" ? item.kind === "clip" : item.kind === "derived"));
@@ -1372,8 +1443,8 @@ function App({ session }: { session: Session }) {
 
                 {isAdmin && editingLineup ? (
                   nextConfirmed.map((b) => (
-                    <div key={b.id} className="wcf-lineup-row">
-                      <span className="wcf-lineup-name">{b.player.display_name}</span>
+                    <div key={b.id} className={"wcf-lineup-row" + (b.player_id === myId ? " me-edit" : "")}>
+                      <span className="wcf-lineup-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
                       <div className="wcf-lineup-picks">
                         <button
                           style={b.team === "white" ? { background: cs.team_white_color, color: readableTextColor(cs.team_white_color), borderColor: cs.team_white_color } : undefined}
@@ -1478,7 +1549,10 @@ function App({ session }: { session: Session }) {
                 {playerStats.map((row, i) => (
                   <div key={row.id} className={"wcf-board-row " + (i === 0 ? "lead " : "") + (row.id === myId ? "me" : "")}>
                     <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
-                    <span className="wcf-board-name">{row.name}{row.id === myId ? " (you)" : ""}</span>
+                    <span className="wcf-board-name">
+                      {row.name}{row.id === myId ? " (you)" : ""}
+                      {row.apps >= 5 && <span className="wcf-apps-badge">🎖️ {Math.floor(row.apps / 5) * 5}</span>}
+                    </span>
                     <span className="wcf-board-count">{row.apps}</span>
                     <span className="wcf-board-count">{row.goals || "—"}</span>
                   </div>
@@ -1701,6 +1775,9 @@ function App({ session }: { session: Session }) {
             onDisablePush={disablePush}
             onSendTestPush={sendTestPush}
             pushStats={pushStats}
+            auditLog={auditLog}
+            showAuditLog={showAuditLog}
+            onToggleAuditLog={toggleAuditLog}
           />
         )}
       </main>
@@ -1739,12 +1816,18 @@ function AccountPanel({
   onDisablePush,
   onSendTestPush,
   pushStats,
+  auditLog,
+  showAuditLog,
+  onToggleAuditLog,
 }: {
   profile: Profile;
   email: string;
   isAdmin: boolean;
   isOwner: boolean;
   profiles: Profile[];
+  auditLog: AuditLogEntry[];
+  showAuditLog: boolean;
+  onToggleAuditLog: () => void;
   clubSettings: ClubSettings;
   pushStats: { total: number; subscribed: number } | null;
   awards: AwardRow[];
@@ -1944,6 +2027,30 @@ function AccountPanel({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="wcf-audit">
+          <button className="wcf-ghost wcf-roles-toggle" onClick={onToggleAuditLog}>
+            {showAuditLog ? "Hide activity log" : "View activity log"}
+          </button>
+          {showAuditLog && (
+            <>
+              {auditLog.length === 0 && <p className="wcf-empty">No activity logged yet.</p>}
+              {auditLog.map((entry) => (
+                <div key={entry.id} className="wcf-audit-row">
+                  <div className="wcf-audit-line">
+                    <strong>{entry.actor?.display_name ?? "Someone"}</strong> {entry.action.toLowerCase()}
+                    {entry.details ? ` — ${entry.details}` : ""}
+                  </div>
+                  <div className="wcf-audit-time">
+                    {new Date(entry.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
 
@@ -2754,6 +2861,7 @@ const css = `
 .wcf-rank-star{color:var(--green);display:grid;place-items:center}
 .wcf-rank-star svg{width:20px;height:20px;fill:var(--green);stroke:var(--green)}
 .wcf-board-name{flex:1;font-weight:800;font-size:14px}
+.wcf-apps-badge{display:inline-block;margin-left:7px;font-size:10px;font-weight:800;font-family:var(--mono);color:var(--amber);background:rgba(224,167,51,.14);border:1px solid rgba(224,167,51,.35);padding:1px 7px;border-radius:20px;vertical-align:middle}
 .wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue);width:44px;text-align:right}
 
 .wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
@@ -2762,6 +2870,7 @@ const css = `
 .wcf-lineup-head{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .wcf-lineup-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px;transition:box-shadow .2s}
 .wcf-lineup-row.me{border-color:transparent}
+.wcf-lineup-row.me-edit{background:rgba(46,116,204,.14);border-color:var(--blue)}
 .wcf-lineup-name{font-weight:700;font-size:14px}
 .wcf-lineup-picks{display:flex;gap:6px}
 .wcf-lineup-pick{background:transparent;border:1px solid var(--line);color:var(--dim);padding:7px 11px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
@@ -2860,6 +2969,11 @@ const css = `
 .wcf-lightbox-img{max-width:min(480px,100%);width:100%;border-radius:14px;box-shadow:0 20px 60px -20px rgba(0,0,0,.6)}
 .wcf-lightbox-close{position:fixed;top:16px;right:16px;width:38px;height:38px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-size:22px;line-height:1;cursor:pointer;z-index:101}
 .wcf-push-stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:12.5px;color:var(--dim);font-weight:600}
+.wcf-audit{margin-bottom:16px}
+.wcf-audit-row{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px}
+.wcf-audit-line{font-size:12.5px;color:var(--white);line-height:1.4}
+.wcf-audit-line strong{font-weight:800}
+.wcf-audit-time{font-size:10.5px;color:var(--dim);font-family:var(--mono);margin-top:3px}
 .wcf-roles{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .wcf-roles h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-roles-toggle{width:100%;margin-bottom:4px}

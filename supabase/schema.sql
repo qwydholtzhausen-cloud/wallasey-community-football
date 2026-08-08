@@ -734,3 +734,24 @@ alter table public.feed_hidden_items enable row level security;
 create policy "feed_hidden_items_select" on public.feed_hidden_items for select using (auth.role() = 'authenticated');
 create policy "feed_hidden_items_insert_admin" on public.feed_hidden_items for insert with check (public.is_admin());
 create policy "feed_hidden_items_delete_admin" on public.feed_hidden_items for delete using (public.is_admin());
+
+-- ─────────────────────────────────────────────────────────────────
+-- Admin activity log - who confirmed a payment, added/published a
+-- fixture, changed a role, etc. Useful once there's more than one
+-- admin/co-owner, so two people don't duplicate work or wonder what
+-- already happened. Immutable (no update/delete policy) and
+-- admin-only to read, since it can reference other players by name.
+-- ─────────────────────────────────────────────────────────────────
+
+create table public.audit_log (
+  id uuid primary key default gen_random_uuid(),
+  actor_id uuid references public.profiles (id) on delete set null,
+  action text not null,
+  details text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.audit_log enable row level security;
+
+create policy "audit_log_select_admin" on public.audit_log for select using (public.is_admin());
+create policy "audit_log_insert_admin" on public.audit_log for insert with check (public.is_admin());

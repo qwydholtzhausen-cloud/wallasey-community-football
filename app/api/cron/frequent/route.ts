@@ -55,8 +55,11 @@ export async function GET(req: Request) {
   }
 
   // --- Kickoff + team reminder, ~1hr before kickoff ---
-  const nowMs = toMs(nowInLondon());
-  const { data: games } = await admin.from("games").select("id, date, kickoff, venue, bookings(player_id, status, waiting, team)");
+  const nowUkStr = nowInLondon();
+  const nowMs = toMs(nowUkStr);
+  const { data: games } = await admin
+    .from("games")
+    .select("id, date, kickoff, venue, max_players, bookings(player_id, status, waiting, team)");
   const { data: settings } = await admin.from("club_settings").select("team_white_name, team_red_name").single();
   const whiteLabel = settings?.team_white_name || "Whites";
   const redLabel = settings?.team_red_name || "Reds";
@@ -152,6 +155,39 @@ export async function GET(req: Request) {
     await sendPushToUsers([b.player_id], {
       title: "Still unpaid ⚠️",
       body: `You still owe £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)} — pay now to avoid being blocked from booking your next game.`,
+      url: "/",
+    });
+    await markNotified(key);
+  }
+
+  // --- Game day: let non-booked players know spots remain ---
+  // A wider net than "last spot" (which only fires as the roster's about
+  // to fill) - for games that just aren't filling naturally, this reaches
+  // everyone who hasn't engaged with this fixture at all yet. Fires once,
+  // same day, once it's a sensible morning hour and before kickoff.
+  const todayDate = nowUkStr.slice(0, 10);
+  for (const g of games ?? []) {
+    const key = `spots-available-${g.id}`;
+    if (notifiedKeys.has(key)) continue;
+    if (g.date !== todayDate) continue;
+    if (nowUkStr.slice(11, 16) < "09:00") continue;
+    if (toMs(kickoffCutoff(g.date, g.kickoff, 0)) <= nowMs) continue;
+
+    const gameBookings = g.bookings as Booking[];
+    const takenSpots = gameBookings.filter((b) => !b.waiting).length;
+    const spotsLeft = g.max_players - takenSpots;
+    if (spotsLeft <= 0) {
+      await markNotified(key);
+      continue;
+    }
+
+    const bookedIds = new Set(gameBookings.map((b) => b.player_id));
+    const { data: everyone } = await admin.from("profiles").select("id").eq("push_opt_in", true);
+    const targetIds = (everyone ?? []).map((p) => p.id).filter((id) => !bookedIds.has(id));
+
+    await sendPushToUsers(targetIds, {
+      title: "Spots available today ⚽",
+      body: `${g.venue} today at ${g.kickoff} still has ${spotsLeft} spot${spotsLeft === 1 ? "" : "s"} — grab one before kickoff.`,
       url: "/",
     });
     await markNotified(key);
