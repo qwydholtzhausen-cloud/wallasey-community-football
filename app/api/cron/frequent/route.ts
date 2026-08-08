@@ -129,6 +129,50 @@ export async function GET(req: Request) {
     await markNotified(key);
   }
 
+  // --- Remove unpaid bookings on upcoming games after 7 days ---
+  // For fixtures posted well in advance (a month's worth at once, say),
+  // this reclaims a spot from someone who booked but never actually paid,
+  // rather than letting it sit held for weeks while someone who'd pay
+  // can't get in. Scoped to "unpaid" specifically, not "pending" -
+  // someone who's already tapped "I've paid" has taken action and
+  // shouldn't be punished for admin not having gotten to confirming it
+  // yet. Only touches games that haven't kicked off yet - once a game's
+  // played, the existing overdue reminder + booking-block flow takes
+  // over instead, which is a warning rather than a removal.
+  const { data: staleUnpaid } = await admin
+    .from("bookings")
+    .select("id, player_id, created_at, player:profiles!bookings_player_id_fkey(display_name), game:games(id, venue, date, kickoff, price)")
+    .eq("status", "unpaid")
+    .eq("waiting", false);
+
+  for (const b of staleUnpaid ?? []) {
+    const ageDays = (Date.now() - new Date(b.created_at).getTime()) / (24 * 60 * 60 * 1000);
+    if (ageDays < 7) continue;
+
+    const game = (Array.isArray(b.game) ? b.game[0] : b.game) as GameRefWithKickoff | null;
+    if (!game) continue;
+    if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= nowMs) continue; // already past - overdue flow below handles it instead
+
+    const player = Array.isArray(b.player) ? b.player[0] : b.player;
+
+    const { error: deleteErr } = await admin.from("bookings").delete().eq("id", b.id);
+    if (deleteErr) {
+      console.error("frequent cron: failed to remove stale unpaid booking", b.id, deleteErr.message);
+      continue;
+    }
+
+    await sendPushToUsers([b.player_id], {
+      title: "Removed from booking",
+      body: `You were removed from ${game.venue} on ${fmtDateLabel(game.date)} — no payment within 7 days of booking. Book again if you still want a spot.`,
+      url: "/",
+    });
+    await admin.from("audit_log").insert({
+      actor_id: null,
+      action: "Auto-removed unpaid booking",
+      details: `${player?.display_name ?? "Unknown player"} — ${game.venue}, ${fmtDateLabel(game.date)} (unpaid 7+ days)`,
+    });
+  }
+
   // --- Overdue reminder, once the game's finished if still unconfirmed ---
   // A second, later nudge before the hard booking-block kicks in (that
   // happens the day after the game - see has_overdue_payment() in SQL).
