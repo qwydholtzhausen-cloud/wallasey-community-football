@@ -166,6 +166,8 @@ interface ClubSettings {
   team_white_color: string;
   team_red_name: string;
   team_red_color: string;
+  default_venue: string;
+  default_kickoff: string;
 }
 
 interface AwardRow {
@@ -447,6 +449,8 @@ function App({ session }: { session: Session }) {
     team_white_color: "#EEF4FC",
     team_red_name: "Reds",
     team_red_color: "#E42A36",
+    default_venue: "New venue",
+    default_kickoff: "19:00",
   };
 
   const loadProfile = useCallback(async () => {
@@ -472,7 +476,7 @@ function App({ session }: { session: Session }) {
   const loadClubSettings = useCallback(async () => {
     const { data } = await supabase
       .from("club_settings")
-      .select("team_white_name, team_white_color, team_red_name, team_red_color")
+      .select("team_white_name, team_white_color, team_red_name, team_red_color, default_venue, default_kickoff")
       .single();
     if (data) setClubSettings(data as ClubSettings);
   }, []);
@@ -828,8 +832,8 @@ function App({ session }: { session: Session }) {
       .from("games")
       .insert({
         date: defaultNewGameDate(),
-        kickoff: "19:00",
-        venue: "New venue",
+        kickoff: cs.default_kickoff,
+        venue: cs.default_venue,
         pitch: "8-a-side",
         price: 5,
         max_players: MAX_SPOTS,
@@ -2712,6 +2716,14 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
         <label className="wcf-team-field color">
           Colour
           <input type="color" value={form.team_red_color} onChange={(e) => setForm({ ...form, team_red_color: e.target.value })} />
+        </label>
+        <label className="wcf-team-field wide">
+          Default venue for new fixtures
+          <input value={form.default_venue} onChange={(e) => setForm({ ...form, default_venue: e.target.value })} placeholder="e.g. Guinea Gap" />
+        </label>
+        <label className="wcf-team-field">
+          Default kickoff
+          <input type="time" value={form.default_kickoff} onChange={(e) => setForm({ ...form, default_kickoff: e.target.value })} />
         </label>
       </div>
 

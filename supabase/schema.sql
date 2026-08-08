@@ -813,3 +813,9 @@ alter table public.player_admin_ratings enable row level security;
 create policy "admin_ratings_select_admin" on public.player_admin_ratings for select using (public.is_admin());
 create policy "admin_ratings_insert_admin" on public.player_admin_ratings for insert with check (public.is_admin());
 create policy "admin_ratings_update_admin" on public.player_admin_ratings for update using (public.is_admin()) with check (public.is_admin());
+
+-- Default venue/kickoff for the "+ Fixture" button, editable in Club
+-- settings instead of always starting from the "New venue" placeholder
+-- and a hardcoded 19:00.
+alter table public.club_settings add column default_venue text not null default 'New venue';
+alter table public.club_settings add column default_kickoff text not null default '19:00';
