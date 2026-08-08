@@ -21,15 +21,19 @@ export async function POST(req: Request) {
 
   const { data: game } = await admin
     .from("games")
-    .select("id, date, venue, max_players, bookings(player_id, status, waiting)")
+    .select("id, date, venue, max_players, bookings(player_id, waiting)")
     .eq("id", gameId)
     .single();
   if (!game) return NextResponse.json({ error: "Game not found" }, { status: 404 });
 
-  const confirmed = game.bookings.filter((b) => !b.waiting && b.status === "confirmed");
+  // "Filled" means a physical spot taken, same definition used everywhere
+  // else in the app (the roster grid, the waiting-list trigger) - not
+  // gated on payment status, since most bookings sit unpaid/pending for a
+  // while and the game fills up on booking count long before that.
+  const takenSpots = game.bookings.filter((b) => !b.waiting);
   // Re-check server-side rather than trusting the caller's claim - only
   // fire on the exact moment a game hits one spot left, not every request.
-  if (confirmed.length !== game.max_players - 1) {
+  if (takenSpots.length !== game.max_players - 1) {
     return NextResponse.json({ ok: true, skipped: true });
   }
 

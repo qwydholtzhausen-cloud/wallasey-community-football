@@ -661,3 +661,24 @@ create policy "bookings_insert_own_or_admin" on public.bookings for insert with 
   (player_id = auth.uid() and not public.has_overdue_payment(auth.uid()))
   or public.is_admin()
 );
+
+-- ─────────────────────────────────────────────────────────────────
+-- Fixture draft/confirm - a new fixture is created unpublished with
+-- placeholder details, invisible to players, until an admin actually
+-- fills in the real venue/date/etc and hits "Confirm & post fixture".
+-- That first save is also what triggers the new-fixture push, instead
+-- of it firing instantly with today's date and "New venue".
+-- Default true so every existing fixture is unaffected by this change.
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.games add column published boolean not null default true;
+
+drop policy if exists "games_select" on public.games;
+create policy "games_select" on public.games for select using (published = true or public.is_admin());
+
+-- Pitch fee has gone from £55 to £50 - new default for future fixtures.
+-- Existing upcoming (not yet played) fixtures still at the old £55
+-- default are bumped down too; past games are left as the historical
+-- record of what was actually paid.
+alter table public.games alter column pitch_cost set default 50;
+update public.games set pitch_cost = 50 where pitch_cost = 55 and date >= current_date;

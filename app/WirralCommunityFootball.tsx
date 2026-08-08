@@ -55,6 +55,7 @@ interface GameRow {
   pitch_cost: number;
   team_white_score: number | null;
   team_red_score: number | null;
+  published: boolean;
   bookings: BookingRow[];
 }
 
@@ -359,7 +360,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, bookings(id, player_id, status, waiting, team, created_at, player:profiles(id, display_name, role))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, bookings(id, player_id, status, waiting, team, created_at, player:profiles(id, display_name, role))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -588,15 +589,21 @@ function App({ session }: { session: Session }) {
     // cron job 30 min later, only if still unpaid by then (see
     // api/cron/frequent). Firing it here would just nag someone who's
     // already looking at the Pay Now button.
-    const { error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: myId });
+    const { data, error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: myId }).select("waiting").single();
     if (error) {
       if (error.code === "42501") return notifyError("You have an overdue payment — speak to an admin to confirm it before booking again.");
       return notifyError(error.message);
     }
+    // "Last spot" is about the physical roster filling up, not payment
+    // status - checking here (right when a spot's actually taken) rather
+    // than on payment confirmation, which could happen long after the
+    // game's already full.
+    if (data && !data.waiting) pushNotify("notify-last-spot", { gameId });
   }
   async function addBooking(gameId: string, playerId: string) {
-    const { error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: playerId });
+    const { data, error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: playerId }).select("waiting").single();
     if (error) return notifyError(error.message);
+    if (data && !data.waiting) pushNotify("notify-last-spot", { gameId });
   }
   async function cancel(bookingId: string) {
     const { error } = await supabase.from("bookings").delete().eq("id", bookingId);
@@ -609,31 +616,41 @@ function App({ session }: { session: Session }) {
   async function setBookingStatus(bookingId: string, status: PayStatus) {
     const { error } = await supabase.from("bookings").update({ status }).eq("id", bookingId);
     if (error) return notifyError(error.message);
-    if (status === "confirmed") {
-      const game = games.find((g) => g.bookings.some((b) => b.id === bookingId));
-      if (game) pushNotify("notify-last-spot", { gameId: game.id });
-    }
   }
 
   async function addGame() {
+    // Created unpublished - only visible to admins until the first Save,
+    // which is when it actually becomes real (see saveGame). Avoids both
+    // players glimpsing a "New venue" placeholder and the new-fixture push
+    // firing with today's default date before anyone's actually set the
+    // real details.
     const { data, error } = await supabase
       .from("games")
-      .insert({ date: defaultNewGameDate(), kickoff: "19:00", venue: "New venue", pitch: "8-a-side", price: 5, max_players: MAX_SPOTS })
+      .insert({
+        date: defaultNewGameDate(),
+        kickoff: "19:00",
+        venue: "New venue",
+        pitch: "8-a-side",
+        price: 5,
+        max_players: MAX_SPOTS,
+        published: false,
+      })
       .select()
       .single();
     if (error) return notifyError(error.message);
     await loadGames();
-    if (data) {
-      setEditingId(data.id);
-      pushNotify("notify-new-fixture", { gameId: data.id });
-    }
+    if (data) setEditingId(data.id);
   }
   async function saveGame(id: string, patch: Partial<GameRow>) {
-    const { bookings: _bookings, ...rest } = patch as GameRow;
-    const { error } = await supabase.from("games").update(rest).eq("id", id);
+    const { bookings: _bookings, published: _published, ...rest } = patch as GameRow;
+    const wasPublished = games.find((g) => g.id === id)?.published;
+    const { error } = await supabase.from("games").update({ ...rest, published: true }).eq("id", id);
     if (error) return notifyError(error.message);
     await loadGames();
     setEditingId(null);
+    // First confirm of a draft fixture is what actually announces it -
+    // later edits to an already-published fixture don't re-announce.
+    if (!wasPublished) pushNotify("notify-new-fixture", { gameId: id });
   }
   async function deleteGame(id: string) {
     const { error } = await supabase.from("games").delete().eq("id", id);
@@ -1482,7 +1499,9 @@ function App({ session }: { session: Session }) {
               <>
                 <div className="wcf-pot-total">
                   <div className="wcf-pot-total-label">Community pot</div>
-                  <div className="wcf-pot-total-amount">£{potTotal.toFixed(2)}</div>
+                  <div className={"wcf-pot-total-amount" + (potTotal < 0 ? " negative" : "")}>
+                    {potTotal < 0 ? "−" : ""}£{Math.abs(potTotal).toFixed(2)}
+                  </div>
                   <p className="wcf-pot-total-note">
                     Built up from game surpluses (match fees vs pitch hire) plus socials, sponsorship and other contributions.
                     Goes towards equipment, socials and running the club.
@@ -2279,7 +2298,7 @@ function GameCard({
           <span className="wcf-kick-date">{fmtDate(game.date)}</span>
         </div>
         <div className="wcf-card-info">
-          <div className="wcf-venue">{game.venue}</div>
+          <div className="wcf-venue">{game.venue}{!game.published && <span className="wcf-draft-badge">Draft</span>}</div>
           <div className="wcf-pitch">{game.pitch} · £{game.price}</div>
         </div>
         <div className={"wcf-count " + (full ? "full" : "")}>
@@ -2431,7 +2450,9 @@ function GameCard({
               onChange={(e) => setForm({ ...form, max_players: Math.min(MAX_SPOTS, Number(e.target.value) || 0) })}
             />
           </label>
-          <button className="wcf-save" onClick={() => onSave(form)}>Save changes</button>
+          <button className="wcf-save" onClick={() => onSave(form)}>
+            {game.published ? "Save changes" : "Confirm & post fixture"}
+          </button>
         </div>
       )}
     </article>
@@ -2501,6 +2522,7 @@ const css = `
 .wcf-kick-date{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin-top:3px}
 .wcf-card-info{flex:1}
 .wcf-venue{font-weight:800;font-size:15px}
+.wcf-draft-badge{display:inline-block;margin-left:8px;background:rgba(224,167,51,.18);color:var(--amber);border:1px solid rgba(224,167,51,.4);font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;padding:2px 7px;border-radius:20px;vertical-align:middle}
 .wcf-pitch{font-size:12px;color:var(--dim);margin-top:2px;font-family:var(--mono)}
 .wcf-count{text-align:right}
 .wcf-count-n{display:block;font-family:var(--mono);font-weight:700;font-size:17px;color:var(--blue)}
@@ -2658,6 +2680,7 @@ const css = `
 .wcf-pot-total{background:linear-gradient(135deg,rgba(51,169,87,.16),rgba(46,116,204,.1));border:1px solid rgba(51,169,87,.35);border-radius:16px;padding:18px;margin-bottom:16px;text-align:center}
 .wcf-pot-total-label{font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim)}
 .wcf-pot-total-amount{font-family:var(--mono);font-weight:800;font-size:36px;color:var(--green);margin:4px 0 8px}
+.wcf-pot-total-amount.negative{color:var(--red-hi)}
 .wcf-pot-total-note{font-size:12px;color:var(--dim);line-height:1.5;margin:0;max-width:340px;margin-left:auto;margin-right:auto}
 .wcf-pot-add{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
 .wcf-pot-add input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
