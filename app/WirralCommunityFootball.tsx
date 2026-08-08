@@ -670,13 +670,13 @@ function App({ session }: { session: Session }) {
     if (error) notifyError(error.message);
   }
   async function setBookingStatus(bookingId: string, status: PayStatus) {
+    // Not logged to the audit log - happens up to ~16 times a week per
+    // fixture, and it's already visible live via the payment status dot on
+    // each booking and the Overdue section, so logging it too would just
+    // bury the genuinely rare, otherwise-invisible actions (role changes,
+    // fixture posts/deletes) under routine noise.
     const { error } = await supabase.from("bookings").update({ status }).eq("id", bookingId);
     if (error) return notifyError(error.message);
-    if (status === "confirmed") {
-      const game = games.find((g) => g.bookings.some((b) => b.id === bookingId));
-      const booking = game?.bookings.find((b) => b.id === bookingId);
-      if (game && booking) logAction("Confirmed payment", `${booking.player.display_name} — ${game.venue}, ${fmtDate(game.date)}`);
-    }
   }
 
   async function addGame() {
