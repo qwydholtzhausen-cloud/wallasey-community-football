@@ -1592,7 +1592,7 @@ function App({ session }: { session: Session }) {
     <>
       {toast && <div className={"wcf-toast " + toast.kind}>{toast.text}</div>}
       <header className="wcf-top">
-        <div className="wcf-brand">
+        <button className="wcf-brand" onClick={() => setTab("fixtures")} aria-label="Go to fixtures">
           <span className="wcf-logo">
             <img src="/logo.png" alt="Wirral Community Football crest" />
           </span>
@@ -1600,7 +1600,7 @@ function App({ session }: { session: Session }) {
             <div className="wcf-wordmark">WIRRAL</div>
             <div className="wcf-wordmark-sub">COMMUNITY FOOTBALL</div>
           </div>
-        </div>
+        </button>
         <button
           className={"wcf-role " + (isAdmin ? "admin" : "") + (tab === "account" ? " on" : "")}
           onClick={() => setTab(tab === "account" ? "fixtures" : "account")}
@@ -3404,7 +3404,7 @@ const css = `
 
 .wcf-top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
   padding:14px 16px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-.wcf-brand{display:flex;align-items:center;gap:11px}
+.wcf-brand{display:flex;align-items:center;gap:11px;background:none;border:none;padding:0;margin:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
 .wcf-logo{display:block;width:42px;height:42px;flex:0 0 auto;border-radius:11px;overflow:hidden;
   border:1px solid rgba(228,42,54,.4);box-shadow:0 2px 10px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.05)}
 .wcf-logo img{display:block;width:100%;height:100%;object-fit:cover;object-position:50% 43%}
