@@ -435,6 +435,34 @@ function App({ session }: { session: Session }) {
   const prevStatusRef = useRef<Record<string, PayStatus>>({});
   const prevWaitingRef = useRef<Record<string, boolean>>({});
 
+  // PWAs on a home screen commonly stay resident across many opens without
+  // ever doing a real network reload, so a device can keep running today's
+  // JS for weeks after several deploys - this compares the build this tab
+  // is actually running against whatever's live right now and prompts a
+  // manual refresh rather than leaving people silently stuck on old code.
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  useEffect(() => {
+    const myBuild = process.env.NEXT_PUBLIC_BUILD_SHA;
+    if (!myBuild) return; // local dev - nothing deployed to compare against
+    async function check() {
+      try {
+        const res = await fetch("/api/version", { cache: "no-store" });
+        const data = await res.json();
+        if (data.sha && data.sha !== myBuild) setUpdateAvailable(true);
+      } catch {
+        // offline or a blip - just try again next interval
+      }
+    }
+    check();
+    const interval = setInterval(check, 5 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   function notifyError(message: string) {
     setToast({ kind: "error", text: message });
   }
@@ -1609,6 +1637,12 @@ function App({ session }: { session: Session }) {
           {myProfile.display_name}
         </button>
       </header>
+
+      {updateAvailable && (
+        <button className="wcf-update-banner" onClick={() => window.location.reload()}>
+          🔄 New version available — tap to refresh
+        </button>
+      )}
 
       <main className="wcf-main">
         <div className="wcf-heading">
@@ -3501,6 +3535,7 @@ const css = `
 .wcf-overdue-banner{background:linear-gradient(135deg,rgba(228,42,54,.18),rgba(228,42,54,.06));border:1px solid rgba(228,42,54,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5;color:var(--white)}
 .wcf-overdue-banner strong{color:var(--red-hi)}
 .wcf-overdue-note{font-size:12px;color:var(--red-hi);font-weight:700;text-align:center;margin:0;flex:1}
+.wcf-update-banner{display:block;width:100%;background:var(--amber);color:#241a02;border:none;padding:10px 14px;font-size:12.5px;font-weight:800;text-align:center;cursor:pointer;font-family:var(--sans)}
 .wcf-nudge-banner{background:linear-gradient(135deg,rgba(46,116,204,.18),rgba(46,116,204,.06));border:1px solid rgba(46,116,204,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .wcf-nudge-banner strong{font-size:13px;color:var(--white)}
 .wcf-nudge-banner p{font-size:12px;color:var(--dim);margin:3px 0 0;line-height:1.4}
