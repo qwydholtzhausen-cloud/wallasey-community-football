@@ -3761,7 +3761,8 @@ const css = `
 .wcf-team-settings{display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:6px}
 .wcf-team-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700;min-width:0}
 .wcf-team-field.wide{grid-column:1/-1}
-.wcf-team-field input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans);text-transform:none;width:100%;min-width:0}
+.wcf-team-field input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans);text-transform:none;width:100%;max-width:100%;min-width:0;box-sizing:border-box;display:block}
+.wcf-team-field input[type="time"]{padding-right:4px}
 .wcf-team-field.color input{width:52px;padding:2px;height:38px;cursor:pointer}
 .wcf-team-field.narrow input{width:70px}
 .wcf-club-settings .wcf-save,.wcf-add-player .wcf-save{margin-top:10px}
