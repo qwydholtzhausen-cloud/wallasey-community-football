@@ -3344,6 +3344,7 @@ function GameCard({
 }) {
   const [form, setForm] = useState<GameRow>(game);
   const [showWaiting, setShowWaiting] = useState(false);
+  const [showRoster, setShowRoster] = useState(false);
 
   useEffect(() => setForm(game), [game, editing]);
 
@@ -3371,18 +3372,23 @@ function GameCard({
         </div>
       </div>
 
-      <div className="wcf-sheet">
-        {Array.from({ length: game.max_players }).map((_, i) => {
-          const b = confirmed[i];
-          return (
-            <div key={i} className={"wcf-slot " + (b ? "taken" : "")}>
-              <span className="wcf-slot-num">{i + 1}</span>
-              <span className="wcf-slot-name">{b ? b.player.display_name : "—"}</span>
-              {b && <span className={"wcf-pay-dot " + b.status} title={b.status} />}
-            </div>
-          );
-        })}
-      </div>
+      <button className="wcf-roster-toggle" onClick={() => setShowRoster((v) => !v)}>
+        {showRoster ? "▲ Hide players" : `▼ View players (${confirmed.length}/${game.max_players})`}
+      </button>
+      {showRoster && (
+        <div className="wcf-sheet">
+          {Array.from({ length: game.max_players }).map((_, i) => {
+            const b = confirmed[i];
+            return (
+              <div key={i} className={"wcf-slot " + (b ? "taken" : "")}>
+                <span className="wcf-slot-num">{i + 1}</span>
+                <span className="wcf-slot-name">{b ? b.player.display_name : "—"}</span>
+                {b && <span className={"wcf-pay-dot " + b.status} title={b.status} />}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {waitingList.length > 0 && (
         <div className="wcf-waiting">
@@ -3594,7 +3600,8 @@ const css = `
 .wcf-count.full .wcf-count-n{color:var(--dim)}
 .wcf-count-l{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px}
 
-.wcf-sheet{display:grid;grid-template-columns:repeat(2,1fr);gap:5px 10px;margin:14px 0;padding:12px;
+.wcf-roster-toggle{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--dim);padding:10px;border-radius:10px;font-weight:700;font-size:12px;cursor:pointer;margin-top:10px}
+.wcf-sheet{display:grid;grid-template-columns:repeat(2,1fr);gap:5px 10px;margin:10px 0 14px;padding:12px;
   background:var(--bg);border-radius:10px;border:1px solid var(--line)}
 .wcf-slot{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px}
 .wcf-slot-num{font-family:var(--mono);color:var(--dim);width:20px;text-align:center;font-size:11px;border:1px solid var(--line);border-radius:4px;padding:1px 0}
