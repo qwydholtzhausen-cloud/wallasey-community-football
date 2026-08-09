@@ -686,6 +686,7 @@ function App({ session }: { session: Session }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
   const [editingLineup, setEditingLineup] = useState(false);
+  const [teamDraft, setTeamDraft] = useState<Record<string, Team | null>>({});
   const [clipTitle, setClipTitle] = useState("");
   const [clipUrl, setClipUrl] = useState("");
   const [feedView, setFeedView] = useState<"feed" | "clips">("feed");
@@ -1215,6 +1216,26 @@ function App({ session }: { session: Session }) {
     if (error) notifyError(error.message);
   }
 
+  // Editing used to write straight to the DB on every tap, which meant
+  // players watching the same fixture saw someone flicker between White,
+  // Red and Unassigned mid-edit rather than the finished split. Now every
+  // tap only touches local draft state - nothing reaches other players
+  // until Save actually writes the (real) changes.
+  function startEditingLineup() {
+    const draft: Record<string, Team | null> = {};
+    nextConfirmed.forEach((b) => { draft[b.id] = b.team; });
+    setTeamDraft(draft);
+    setEditingLineup(true);
+  }
+  function cancelEditingLineup() {
+    setEditingLineup(false);
+  }
+  async function saveLineup() {
+    const changed = nextConfirmed.filter((b) => (teamDraft[b.id] ?? null) !== b.team);
+    await Promise.all(changed.map((b) => setTeam(b.id, teamDraft[b.id] ?? null)));
+    setEditingLineup(false);
+  }
+
   async function copyLineup() {
     if (!nextGame) return;
     const names = (group: BookingRow[]) => group.map((b) => b.player.display_name);
@@ -1740,6 +1761,17 @@ function App({ session }: { session: Session }) {
       unassigned: nextConfirmed.filter((b) => !b.team),
     }),
     [nextConfirmed]
+  );
+  // Same grouping as above but reading the local edit draft instead of the
+  // saved team - lets the Team Sheet stay grouped-by-team (matching what
+  // players see) even while an admin's mid-edit.
+  const editGrouped = useMemo(
+    () => ({
+      white: nextConfirmed.filter((b) => teamDraft[b.id] === "white"),
+      red: nextConfirmed.filter((b) => teamDraft[b.id] === "red"),
+      unassigned: nextConfirmed.filter((b) => !teamDraft[b.id]),
+    }),
+    [nextConfirmed, teamDraft]
   );
 
   // Admin rating wins if one exists; otherwise fall back to the player's
@@ -2342,41 +2374,25 @@ function App({ session }: { session: Session }) {
                   </div>
                   {isAdmin && (
                     <div className="wcf-lineup-head-actions">
-                      {(nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
+                      {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
                         <button className="wcf-ghost" onClick={copyLineup}>📋 Copy for WhatsApp</button>
                       )}
-                      <button className="wcf-ghost" onClick={() => setEditingLineup((v) => !v)}>
-                        {editingLineup ? "Lock in" : "Edit line-up"}
-                      </button>
+                      {editingLineup ? (
+                        <>
+                          <button className="wcf-ghost" onClick={cancelEditingLineup}>Cancel</button>
+                          <button className="wcf-ghost" onClick={saveLineup}>Save</button>
+                        </>
+                      ) : (
+                        <button className="wcf-ghost" onClick={startEditingLineup}>Edit line-up</button>
+                      )}
                     </div>
                   )}
                 </div>
                 {nextConfirmed.length === 0 && <p className="wcf-empty">No one&apos;s booked in yet.</p>}
 
-                {isAdmin && editingLineup ? (
-                  nextConfirmed.map((b) => (
-                    <div key={b.id} className={"wcf-lineup-row" + (b.player_id === myId ? " me-edit" : "")}>
-                      <span className="wcf-lineup-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
-                      <div className="wcf-lineup-picks">
-                        <button
-                          style={b.team === "white" ? { background: cs.team_white_color, color: readableTextColor(cs.team_white_color), borderColor: cs.team_white_color } : undefined}
-                          className="wcf-lineup-pick"
-                          onClick={() => setTeam(b.id, b.team === "white" ? null : "white")}
-                        >
-                          {cs.team_white_name}
-                        </button>
-                        <button
-                          style={b.team === "red" ? { background: cs.team_red_color, color: readableTextColor(cs.team_red_color), borderColor: cs.team_red_color } : undefined}
-                          className="wcf-lineup-pick"
-                          onClick={() => setTeam(b.id, b.team === "red" ? null : "red")}
-                        >
-                          {cs.team_red_name}
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  ([["white", nextGrouped.white, cs.team_white_name, cs.team_white_color], ["red", nextGrouped.red, cs.team_red_name, cs.team_red_color], ["unassigned", nextGrouped.unassigned, "Unassigned", null]] as const).map(
+                {(() => {
+                  const displayGrouped = isAdmin && editingLineup ? editGrouped : nextGrouped;
+                  return ([["white", displayGrouped.white, cs.team_white_name, cs.team_white_color], ["red", displayGrouped.red, cs.team_red_name, cs.team_red_color], ["unassigned", displayGrouped.unassigned, "Unassigned", null]] as const).map(
                     ([key, group, name, color]) =>
                       group.length > 0 && (
                         <div key={key} className="wcf-lineup-group">
@@ -2387,22 +2403,42 @@ function App({ session }: { session: Session }) {
                           {group.map((b) => (
                             <div
                               key={b.id}
-                              className={"wcf-lineup-row" + (b.player_id === myId ? " me" : "")}
-                              style={{
+                              className={"wcf-lineup-row" + (b.player_id === myId ? (editingLineup ? " me-edit" : " me") : "")}
+                              style={!editingLineup ? {
                                 borderLeft: color ? `3px solid ${color}` : undefined,
                                 boxShadow: b.player_id === myId && color ? `0 0 0 1px ${color}, 0 0 14px ${color}99` : undefined,
-                              }}
+                              } : undefined}
                             >
-                              <span className="wcf-lineup-avatar" style={color ? { background: `${color}2e`, color } : undefined}>
-                                {b.player.display_name[0]?.toUpperCase()}
-                              </span>
+                              {!editingLineup && (
+                                <span className="wcf-lineup-avatar" style={color ? { background: `${color}2e`, color } : undefined}>
+                                  {b.player.display_name[0]?.toUpperCase()}
+                                </span>
+                              )}
                               <span className="wcf-lineup-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
+                              {isAdmin && editingLineup && (
+                                <div className="wcf-lineup-picks">
+                                  <button
+                                    style={teamDraft[b.id] === "white" ? { background: cs.team_white_color, color: readableTextColor(cs.team_white_color), borderColor: cs.team_white_color } : undefined}
+                                    className="wcf-lineup-pick"
+                                    onClick={() => setTeamDraft((d) => ({ ...d, [b.id]: d[b.id] === "white" ? null : "white" }))}
+                                  >
+                                    {cs.team_white_name}
+                                  </button>
+                                  <button
+                                    style={teamDraft[b.id] === "red" ? { background: cs.team_red_color, color: readableTextColor(cs.team_red_color), borderColor: cs.team_red_color } : undefined}
+                                    className="wcf-lineup-pick"
+                                    onClick={() => setTeamDraft((d) => ({ ...d, [b.id]: d[b.id] === "red" ? null : "red" }))}
+                                  >
+                                    {cs.team_red_name}
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
                       )
-                  )
-                )}
+                  );
+                })()}
               </>
             )}
               </>
