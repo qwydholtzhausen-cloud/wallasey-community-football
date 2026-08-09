@@ -2375,19 +2375,23 @@ function App({ session }: { session: Session }) {
                     ([key, group, name, color]) =>
                       group.length > 0 && (
                         <div key={key} className="wcf-lineup-group">
-                          <div className="wcf-lineup-group-label">{name} · {group.length}</div>
+                          <div className="wcf-lineup-group-label">
+                            {color && <span className="wcf-lineup-group-dot" style={{ background: color }} />}
+                            {name} · {group.length}
+                          </div>
                           {group.map((b) => (
                             <div
                               key={b.id}
                               className={"wcf-lineup-row" + (b.player_id === myId ? " me" : "")}
-                              style={b.player_id === myId && color ? { boxShadow: `0 0 0 1px ${color}, 0 0 14px ${color}99` } : undefined}
+                              style={{
+                                borderLeft: color ? `3px solid ${color}` : undefined,
+                                boxShadow: b.player_id === myId && color ? `0 0 0 1px ${color}, 0 0 14px ${color}99` : undefined,
+                              }}
                             >
+                              <span className="wcf-lineup-avatar" style={color ? { background: `${color}2e`, color } : undefined}>
+                                {b.player.display_name[0]?.toUpperCase()}
+                              </span>
                               <span className="wcf-lineup-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
-                              {color && (
-                                <span className="wcf-lineup-badge" style={{ background: color, color: readableTextColor(color) }}>
-                                  {name}
-                                </span>
-                              )}
                             </div>
                           ))}
                         </div>
@@ -3433,10 +3437,11 @@ function AdminConsole({
   const shared = { goalRows, cs, profiles, expandedId, onToggleExpand, onSetStatus, onRemoveBooking, onDeleteGame, onSaveResult, onAddBooking };
   return (
     <>
-      <h3 className="wcf-admin-section-head">Overdue</h3>
+      <h3 className="wcf-admin-section-head">⚠️ Overdue</h3>
       {overdue.length === 0 && <p className="wcf-empty small">Nothing overdue — everyone's paid up.</p>}
       {overdue.map(({ booking: b, game: g }) => (
         <div key={b.id} className="wcf-overdue-row">
+          <span className="wcf-avatar">{b.player.display_name[0]?.toUpperCase()}</span>
           <div>
             <div className="wcf-admin-player-name">{b.player.display_name}</div>
             <div className="wcf-pitch">{g.venue} · {fmtDate(g.date)} · £{g.price}</div>
@@ -3455,12 +3460,12 @@ function AdminConsole({
         </div>
       ))}
 
-      <h3 className="wcf-admin-section-head">Upcoming</h3>
+      <h3 className="wcf-admin-section-head">📅 Upcoming</h3>
       {upcoming.length === 0 && <p className="wcf-empty small">No upcoming fixtures.</p>}
       {upcoming.map((g) => (
         <AdminGameRow key={g.id} game={g} past={false} {...shared} />
       ))}
-      <h3 className="wcf-admin-section-head">Previous</h3>
+      <h3 className="wcf-admin-section-head">🏁 Previous</h3>
       {previous.length === 0 && <p className="wcf-empty small">No past fixtures yet.</p>}
       {previous.map((g) => (
         <AdminGameRow key={g.id} game={g} past {...shared} />
@@ -3539,22 +3544,29 @@ function AdminGameRow({
           <span className="wcf-admin-game-venue">{game.venue}</span>
           <span className="wcf-admin-game-date">{fmtDate(game.date)} · {game.kickoff}</span>
         </span>
-        <span className="wcf-admin-game-count">{confirmed.length}/{game.max_players}</span>
+        <span className="wcf-admin-game-count">
+          {confirmed.length >= game.max_players && <span className="wcf-admin-full-dot" />}
+          {confirmed.length}/{game.max_players}
+        </span>
       </button>
       {expanded && (
         <div className="wcf-admin-game-body">
           {past && (
-            <div className="wcf-admin-score">
-              <span>{cs.team_white_name}</span>
-              <input type="number" min={0} value={whiteScore} onChange={(e) => setWhiteScore(e.target.value)} />
-              <span className="wcf-admin-score-dash">–</span>
-              <input type="number" min={0} value={redScore} onChange={(e) => setRedScore(e.target.value)} />
-              <span>{cs.team_red_name}</span>
+            <div className="wcf-admin-score-card">
+              <div className="wcf-admin-score-eyebrow">Enter result</div>
+              <div className="wcf-admin-score">
+                <span style={{ color: cs.team_white_color }}>{cs.team_white_name.toUpperCase()}</span>
+                <input type="number" min={0} value={whiteScore} onChange={(e) => setWhiteScore(e.target.value)} />
+                <span className="wcf-admin-score-dash">–</span>
+                <input type="number" min={0} value={redScore} onChange={(e) => setRedScore(e.target.value)} />
+                <span style={{ color: cs.team_red_color }}>{cs.team_red_name.toUpperCase()}</span>
+              </div>
             </div>
           )}
           {confirmed.length === 0 && <p className="wcf-empty small">No one booked in.</p>}
           {confirmed.map((b) => (
             <div key={b.id} className="wcf-admin-player-row">
+              <span className="wcf-avatar">{b.player.display_name[0]?.toUpperCase()}</span>
               <span className="wcf-admin-player-name">
                 {b.player.display_name}
                 {b.status === "confirmed" && b.confirmer && <span className="wcf-confirmed-by">by {b.confirmer.display_name}</span>}
@@ -4007,11 +4019,14 @@ const css = `
 .wcf-admin-game-info{display:flex;flex-direction:column;gap:2px}
 .wcf-admin-game-venue{font-weight:800;font-size:14px}
 .wcf-admin-game-date{font-size:11px;color:var(--dim);font-family:var(--mono)}
-.wcf-admin-game-count{font-family:var(--mono);font-weight:700;color:var(--blue);flex:0 0 auto}
+.wcf-admin-game-count{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-weight:700;color:var(--blue);flex:0 0 auto}
+.wcf-admin-full-dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
 .wcf-admin-game-body{padding:0 12px 12px;border-top:1px solid var(--line)}
-.wcf-admin-score{display:flex;align-items:center;justify-content:center;gap:9px;padding:12px 0;font-size:12px;font-weight:800}
-.wcf-admin-score input{width:44px;text-align:center;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:6px;border-radius:7px;font-family:var(--mono);font-size:13px}
-.wcf-admin-score-dash{color:var(--dim)}
+.wcf-admin-score-card{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px;text-align:center;margin:12px 0}
+.wcf-admin-score-eyebrow{font-size:9.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:10px}
+.wcf-admin-score{display:flex;align-items:center;justify-content:center;gap:10px;font-size:11.5px;font-weight:800}
+.wcf-admin-score input{width:50px;text-align:center;background:var(--panel2);border:1px solid var(--line);color:var(--white);padding:8px 4px;border-radius:8px;font-family:var(--mono);font-size:18px;font-weight:800}
+.wcf-admin-score-dash{color:var(--dim);font-family:var(--mono)}
 .wcf-edit-subhead{margin:14px 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--amber)}
 .wcf-admin-player-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .wcf-admin-player-row:last-child{border-bottom:none}
@@ -4087,13 +4102,13 @@ const css = `
 
 .wcf-lineup-head{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .wcf-lineup-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-.wcf-lineup-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px;transition:box-shadow .2s}
+.wcf-lineup-row{display:flex;align-items:center;gap:11px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:9px;transition:box-shadow .2s}
 .wcf-lineup-row.me{border-color:transparent}
 .wcf-lineup-row.me-edit{background:rgba(46,116,204,.14);border-color:var(--blue)}
-.wcf-lineup-name{font-weight:700;font-size:14px}
+.wcf-lineup-avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;flex:0 0 auto;background:var(--panel2);color:var(--dim)}
+.wcf-lineup-name{font-weight:700;font-size:14px;flex:1;min-width:0}
 .wcf-lineup-picks{display:flex;gap:6px}
 .wcf-lineup-pick{background:transparent;border:1px solid var(--line);color:var(--dim);padding:7px 11px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
-.wcf-lineup-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
 .wcf-ratings-table{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .wcf-ratings-table h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-ratings-rows{display:flex;flex-direction:column;gap:2px}
@@ -4128,7 +4143,8 @@ const css = `
 .wcf-suggestion-note{font-size:11px;color:var(--dim);line-height:1.5;margin:0 0 14px;text-align:center}
 .wcf-fairness-preview-names{font-size:11px;color:var(--dim);line-height:1.4;margin-bottom:10px}
 .wcf-lineup-group{margin-bottom:6px}
-.wcf-lineup-group-label{font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 2px 8px}
+.wcf-lineup-group-label{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 2px 8px}
+.wcf-lineup-group-dot{width:7px;height:7px;border-radius:50%}
 
 .wcf-shoutout{background:linear-gradient(135deg,rgba(228,42,54,.16),rgba(51,169,87,.1));border:1px solid rgba(228,42,54,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
 .wcf-potm{background:linear-gradient(135deg,rgba(224,167,51,.2),rgba(224,167,51,.06));border-color:rgba(224,167,51,.4)}
