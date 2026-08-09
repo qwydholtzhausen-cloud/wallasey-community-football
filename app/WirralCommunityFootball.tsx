@@ -1528,7 +1528,12 @@ function App({ session }: { session: Session }) {
         tone: "blue",
         text: (
           <>
-            Full time: <strong>{cs.team_white_name} {g.team_white_score}–{g.team_red_score} {cs.team_red_name}</strong>
+            Full time
+            <div className="wcf-feed-score-chip">
+              <span style={{ color: cs.team_white_color }}>{g.team_white_score}</span>
+              <span className="wcf-feed-score-dash">–</span>
+              <span style={{ color: cs.team_red_color }}>{g.team_red_score}</span>
+            </div>
           </>
         ),
       });
@@ -4070,6 +4075,8 @@ const css = `
 .wcf-feed-body{flex:1;min-width:0}
 .wcf-feed-text{font-size:13px;color:var(--white);line-height:1.4}
 .wcf-feed-date{font-size:10.5px;color:var(--dim);font-family:var(--mono);margin-top:3px}
+.wcf-feed-score-chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-weight:800;font-size:13px;padding:3px 9px;border-radius:20px;background:var(--panel2);margin-top:4px}
+.wcf-feed-score-dash{color:var(--dim);font-weight:400}
 .wcf-feed-archive-btn{margin-top:8px;font-size:11px;font-weight:800;padding:5px 11px;border-radius:20px;background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer}
 .wcf-feed-archive-btn:hover{border-color:var(--red-hi);color:var(--red-hi)}
 .wcf-archive-toggle{font-size:11.5px;padding:7px 12px;margin-bottom:12px}
