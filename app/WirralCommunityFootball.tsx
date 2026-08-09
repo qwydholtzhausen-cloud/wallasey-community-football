@@ -239,6 +239,191 @@ function youtubeVideoId(url: string): string | null {
   return null;
 }
 
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// Draws the shareable post-match result card. Sizing verified against
+// several scorer-count and no-scorer/no-MOTM cases in a standalone test
+// (scratchpad, not part of the app) before wiring in, since canvas text
+// layout bugs are easy to get wrong and don't show up until rendered.
+async function drawResultCard(opts: {
+  venue: string;
+  dateLabel: string;
+  whiteName: string;
+  redName: string;
+  whiteColor: string;
+  redColor: string;
+  whiteScore: number;
+  redScore: number;
+  whiteScorers: { name: string; goals: number }[];
+  redScorers: { name: string; goals: number }[];
+  motmWinner: string | null;
+}): Promise<Blob> {
+  const W = 1080;
+  const H = 1350;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas isn't supported on this device");
+
+  ctx.fillStyle = "#0A1A34";
+  ctx.fillRect(0, 0, W, H);
+  const grad = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, W * 0.75);
+  grad.addColorStop(0, "rgba(228,42,54,0.20)");
+  grad.addColorStop(1, "rgba(228,42,54,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H * 0.55);
+
+  const pad = 64;
+
+  try {
+    const crest = await loadImage("/logo.png");
+    const crestSize = 78;
+    ctx.save();
+    roundRectPath(ctx, pad, pad, crestSize, crestSize, 20);
+    ctx.clip();
+    ctx.drawImage(crest, pad, pad, crestSize, crestSize);
+    ctx.restore();
+  } catch {
+    // Crest failed to load (offline etc.) - card still works without it.
+  }
+
+  ctx.textBaseline = "top";
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#EEF4FC";
+  ctx.font = "800 32px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillText("WIRRAL", pad + 96, pad + 8);
+  ctx.fillStyle = "#E42A36";
+  ctx.font = "800 16px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillText("C O M M U N I T Y   F O O T B A L L", pad + 96, pad + 48);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#8FA6C8";
+  ctx.font = "800 24px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillText("F U L L   T I M E", W / 2, 300);
+
+  const scoreY = 350;
+  const colW = 260;
+  ctx.textBaseline = "top";
+  ctx.font = "800 30px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillStyle = "#D9E4F5";
+  ctx.fillText(opts.whiteName.toUpperCase(), W / 2 - colW, scoreY);
+  ctx.fillStyle = "#F0616A";
+  ctx.fillText(opts.redName.toUpperCase(), W / 2 + colW, scoreY);
+
+  ctx.textBaseline = "alphabetic";
+  ctx.font = "800 150px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.fillStyle = opts.whiteColor;
+  ctx.fillText(String(opts.whiteScore), W / 2 - colW, scoreY + 175);
+  ctx.fillStyle = opts.redColor;
+  ctx.fillText(String(opts.redScore), W / 2 + colW, scoreY + 175);
+  ctx.strokeStyle = "#8FA6C8";
+  ctx.lineWidth = 8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 22, scoreY + 130);
+  ctx.lineTo(W / 2 + 22, scoreY + 130);
+  ctx.stroke();
+
+  ctx.textBaseline = "top";
+  ctx.font = "500 24px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillStyle = "#8FA6C8";
+  ctx.fillText(`${opts.venue} · ${opts.dateLabel}`, W / 2, scoreY + 200);
+
+  ctx.strokeStyle = "rgba(200,218,245,0.13)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(pad, scoreY + 260);
+  ctx.lineTo(W - pad, scoreY + 260);
+  ctx.stroke();
+
+  ctx.textAlign = "left";
+  ctx.font = "800 20px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillStyle = "#8FA6C8";
+  ctx.fillText("⚽  GOALS", pad, scoreY + 300);
+
+  const rowsY = scoreY + 350;
+  const rowH = 42;
+  const maxRows = Math.max(opts.whiteScorers.length, opts.redScorers.length, 1);
+  opts.whiteScorers.forEach((s, i) => {
+    ctx.font = "600 24px -apple-system, Helvetica, Arial, sans-serif";
+    ctx.fillStyle = "#EEF4FC";
+    ctx.textAlign = "left";
+    ctx.fillText(s.name, pad, rowsY + i * rowH);
+    ctx.font = "700 24px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = "#8FA6C8";
+    ctx.textAlign = "right";
+    ctx.fillText(String(s.goals), pad + 400, rowsY + i * rowH);
+  });
+  opts.redScorers.forEach((s, i) => {
+    ctx.font = "600 24px -apple-system, Helvetica, Arial, sans-serif";
+    ctx.fillStyle = "#EEF4FC";
+    ctx.textAlign = "left";
+    ctx.fillText(s.name, W / 2 + 30, rowsY + i * rowH);
+    ctx.font = "700 24px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = "#8FA6C8";
+    ctx.textAlign = "right";
+    ctx.fillText(String(s.goals), W - pad, rowsY + i * rowH);
+  });
+
+  if (opts.motmWinner) {
+    let motmY = rowsY + maxRows * rowH + 70;
+    motmY = Math.max(motmY, scoreY + 500);
+    motmY = Math.min(motmY, H - 210);
+
+    roundRectPath(ctx, pad, motmY, W - pad * 2, 110, 18);
+    ctx.fillStyle = "rgba(224,167,51,0.12)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(224,167,51,0.35)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = "40px -apple-system, Helvetica, Arial, sans-serif";
+    ctx.fillStyle = "#E0A733";
+    ctx.fillText("🏆", pad + 24, motmY + 30);
+
+    ctx.font = "800 15px -apple-system, Helvetica, Arial, sans-serif";
+    ctx.fillStyle = "#E0A733";
+    ctx.fillText("M A N   O F   T H E   M A T C H", pad + 100, motmY + 26);
+
+    ctx.font = "800 28px -apple-system, Helvetica, Arial, sans-serif";
+    ctx.fillStyle = "#EEF4FC";
+    ctx.fillText(opts.motmWinner, pad + 100, motmY + 54);
+  }
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.font = "800 15px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillStyle = "#8FA6C8";
+  ctx.fillText("W I R R A L C O M M U N I T Y F O O T B A L L", W / 2, H - 44);
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Couldn't generate the image"));
+    }, "image/png");
+  });
+}
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -497,6 +682,7 @@ function App({ session }: { session: Session }) {
   const [potCategory, setPotCategory] = useState<PotCategory>("other");
   const [addingPotEntry, setAddingPotEntry] = useState(false);
   const [resultsMonth, setResultsMonth] = useState<string>("all");
+  const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
   const [editingLineup, setEditingLineup] = useState(false);
@@ -1043,6 +1229,56 @@ function App({ session }: { session: Session }) {
       notifySuccess("Lineup copied — paste it into WhatsApp");
     } catch {
       notifyError("Couldn't copy — your browser may be blocking clipboard access");
+    }
+  }
+
+  // Admin-only, by design - keeps this as an official/curated post like the
+  // WhatsApp lineup button, rather than something every player can trigger.
+  async function shareResult(game: GameRow) {
+    const scorers = goalRows.filter((r) => r.game_id === game.id && r.goals > 0);
+    const teamOf = (playerId: string) => game.bookings.find((b) => b.player_id === playerId)?.team;
+    const whiteScorers = scorers.filter((r) => teamOf(r.player_id) === "white").map((r) => ({ name: r.player.display_name, goals: r.goals }));
+    const redScorers = scorers.filter((r) => teamOf(r.player_id) === "red").map((r) => ({ name: r.player.display_name, goals: r.goals }));
+
+    // Same reveal rule as the in-app MOTM display - never share a winner
+    // before voting's actually closed.
+    const candidates = game.bookings.filter((b) => !b.waiting);
+    const tally = motmTallyByGame[game.id] ?? {};
+    const ranked = candidates
+      .map((c) => ({ name: c.player.display_name, votes: tally[c.player_id] ?? 0 }))
+      .sort((a, b) => b.votes - a.votes);
+    const motmWinner = !motmVotingOpen(game) && ranked[0]?.votes > 0 ? ranked[0].name : null;
+
+    try {
+      const blob = await drawResultCard({
+        venue: game.venue,
+        dateLabel: fmtDate(game.date),
+        whiteName: cs.team_white_name,
+        redName: cs.team_red_name,
+        whiteColor: cs.team_white_color,
+        redColor: cs.team_red_color,
+        whiteScore: game.team_white_score ?? 0,
+        redScore: game.team_red_score ?? 0,
+        whiteScorers,
+        redScorers,
+        motmWinner,
+      });
+      const file = new File([blob], `${game.venue.replace(/\s+/g, "-")}-${game.date}.png`, { type: "image/png" });
+
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file] });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name;
+        a.click();
+        URL.revokeObjectURL(url);
+        notifySuccess("Image downloaded");
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return; // user backed out of the share sheet
+      notifyError(err instanceof Error ? err.message : "Couldn't generate the image");
     }
   }
 
@@ -2262,6 +2498,9 @@ function App({ session }: { session: Session }) {
                 {filteredResults.length === 0 && <p className="wcf-empty">No results yet.</p>}
                 {filteredResults.map((g) => {
                   const scorers = goalRows.filter((r) => r.game_id === g.id && r.goals > 0).sort((a, b) => b.goals - a.goals);
+                  const teamOf = (playerId: string) => g.bookings.find((b) => b.player_id === playerId)?.team;
+                  const whiteScorers = scorers.filter((s) => teamOf(s.player_id) === "white");
+                  const redScorers = scorers.filter((s) => teamOf(s.player_id) === "red");
                   const hasScore = g.team_white_score != null && g.team_red_score != null;
                   // Who actually played, not who's been payment-confirmed -
                   // those often lag behind by days, and voting closes hours
@@ -2275,65 +2514,97 @@ function App({ session }: { session: Session }) {
                     .map((c) => ({ candidate: c, votes: tally[c.player_id] ?? 0 }))
                     .sort((a, b) => b.votes - a.votes);
                   const topVotes = ranked[0]?.votes ?? 0;
+                  const expanded = expandedResultId === g.id;
                   return (
                     <article key={g.id} className="wcf-result">
-                      <div className="wcf-result-head">
-                        <div>
-                          <div className="wcf-venue">{g.venue}</div>
-                          <div className="wcf-pitch">{fmtDate(g.date)}</div>
-                        </div>
-                        {hasScore && (
-                          <div className="wcf-result-score">
-                            <span style={{ color: cs.team_white_color }}>{g.team_white_score}</span>
-                            <span className="wcf-result-dash">–</span>
-                            <span style={{ color: cs.team_red_color }}>{g.team_red_score}</span>
+                      <button className="wcf-result-toggle" onClick={() => setExpandedResultId(expanded ? null : g.id)}>
+                        <div className="wcf-result-head">
+                          <div>
+                            <div className="wcf-venue">{g.venue}</div>
+                            <div className="wcf-pitch">{fmtDate(g.date)}</div>
                           </div>
-                        )}
-                      </div>
-                      {scorers.length > 0 && (
-                        <div className="wcf-result-scorers">
-                          {scorers.map((s) => (
-                            <span key={s.id} className="wcf-result-scorer">{s.player.display_name} {s.goals > 1 ? `×${s.goals}` : ""}</span>
-                          ))}
+                          {hasScore && (
+                            <div className="wcf-result-score">
+                              <span style={{ color: cs.team_white_color }}>{g.team_white_score}</span>
+                              <span className="wcf-result-dash">–</span>
+                              <span style={{ color: cs.team_red_color }}>{g.team_red_score}</span>
+                            </div>
+                          )}
                         </div>
-                      )}
+                        <div className="wcf-result-chevron">{expanded ? "▲ Hide details" : "▼ Tap for scorers & MOTM"}</div>
+                      </button>
 
-                      {hasScore && candidates.length > 0 && votingOpen && (
-                        <div className="wcf-motm">
-                          <div className="wcf-motm-label">Vote Man of the Match · results hidden until voting closes</div>
-                          <div className="wcf-motm-candidates">
-                            {candidates.map((c) => (
-                              <button
-                                key={c.id}
-                                className={"wcf-motm-vote" + (myVote === c.player_id ? " voted" : "")}
-                                onClick={() => castMotmVote(g.id, c.player_id)}
-                              >
-                                {c.player.display_name}{myVote === c.player_id ? " ✓" : ""}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {hasScore && !votingOpen && totalVotes > 0 && (
-                        <div className="wcf-motm wcf-motm-closed">
-                          <div className="wcf-motm-winner">
-                            🏆 Man of the Match — <strong>{ranked[0].candidate.player.display_name}</strong>
-                          </div>
-                          {ranked.filter((r) => r.votes > 0).map((r) => (
-                            <div key={r.candidate.id} className="wcf-motm-bar-row">
-                              <div className="wcf-motm-bar-top">
-                                <span className={r.votes === topVotes ? "winner" : ""}>{r.candidate.player.display_name}</span>
-                                <span className="wcf-motm-count">{r.votes}</span>
+                      {expanded && (
+                        <div className="wcf-result-detail">
+                          {scorers.length > 0 && (
+                            <>
+                              <div className="wcf-result-section-label">⚽ Goals</div>
+                              <div className="wcf-result-goals">
+                                <div className="wcf-result-goals-col">
+                                  {whiteScorers.map((s) => (
+                                    <div key={s.id} className="wcf-result-goal-row">
+                                      <span>{s.player.display_name}</span>
+                                      <b>{s.goals}</b>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="wcf-result-goals-col">
+                                  {redScorers.map((s) => (
+                                    <div key={s.id} className="wcf-result-goal-row">
+                                      <span>{s.player.display_name}</span>
+                                      <b>{s.goals}</b>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                              <div className="wcf-motm-bar-track">
-                                <div
-                                  className={"wcf-motm-bar-fill" + (r.votes === topVotes ? " winner" : "")}
-                                  style={{ width: `${Math.max(6, (r.votes / topVotes) * 100)}%` }}
-                                />
+                            </>
+                          )}
+
+                          {hasScore && candidates.length > 0 && votingOpen && (
+                            <div className="wcf-motm">
+                              <div className="wcf-motm-label">Vote Man of the Match · results hidden until voting closes</div>
+                              <div className="wcf-motm-candidates">
+                                {candidates.map((c) => (
+                                  <button
+                                    key={c.id}
+                                    className={"wcf-motm-vote" + (myVote === c.player_id ? " voted" : "")}
+                                    onClick={() => castMotmVote(g.id, c.player_id)}
+                                  >
+                                    {c.player.display_name}{myVote === c.player_id ? " ✓" : ""}
+                                  </button>
+                                ))}
                               </div>
                             </div>
-                          ))}
+                          )}
+
+                          {hasScore && !votingOpen && totalVotes > 0 && (
+                            <div className="wcf-motm wcf-motm-closed">
+                              <div className="wcf-motm-winner">
+                                🏆 Man of the Match — <strong>{ranked[0].candidate.player.display_name}</strong>
+                              </div>
+                              {ranked.filter((r) => r.votes > 0).map((r) => (
+                                <div key={r.candidate.id} className="wcf-motm-bar-row">
+                                  <div className="wcf-motm-bar-top">
+                                    <span className={r.votes === topVotes ? "winner" : ""}>{r.candidate.player.display_name}</span>
+                                    <span className="wcf-motm-count">{r.votes}</span>
+                                  </div>
+                                  <div className="wcf-motm-bar-track">
+                                    <div
+                                      className={"wcf-motm-bar-fill" + (r.votes === topVotes ? " winner" : "")}
+                                      style={{ width: `${Math.max(6, (r.votes / topVotes) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {isAdmin && hasScore && (
+                            <div className="wcf-result-share">
+                              <button className="wcf-result-share-btn" onClick={() => shareResult(g)}>📤 Share result</button>
+                              <span className="wcf-result-admin-tag">Admin only</span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </article>
@@ -3918,11 +4189,20 @@ const css = `
 
 .wcf-month-filter{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans);margin-bottom:14px}
 .wcf-result{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:11px}
+.wcf-result-toggle{display:block;width:100%;background:none;border:none;padding:0;margin:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
 .wcf-result-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .wcf-result-score{font-family:var(--mono);font-weight:800;font-size:18px;display:flex;align-items:center;gap:6px}
 .wcf-result-dash{color:var(--dim);font-weight:400}
-.wcf-result-scorers{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
-.wcf-result-scorer{font-size:12px;color:var(--dim)}
+.wcf-result-chevron{font-size:11px;font-weight:700;color:var(--dim);margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
+.wcf-result-detail{margin-top:2px}
+.wcf-result-section-label{font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--dim);margin:12px 0 8px}
+.wcf-result-goals{display:flex;gap:16px}
+.wcf-result-goals-col{flex:1;min-width:0}
+.wcf-result-goal-row{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:3px 0}
+.wcf-result-goal-row b{font-family:var(--mono);color:var(--dim);font-weight:700}
+.wcf-result-share{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.wcf-result-share-btn{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-weight:800;font-size:12.5px;padding:10px;border-radius:10px;cursor:pointer}
+.wcf-result-admin-tag{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 8px;border-radius:20px;background:rgba(228,42,54,.16);color:var(--red-hi);white-space:nowrap}
 .wcf-motm{margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
 .wcf-motm-label{font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
 .wcf-motm-candidates{display:flex;flex-wrap:wrap;gap:6px}
