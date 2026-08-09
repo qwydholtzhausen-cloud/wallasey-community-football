@@ -220,6 +220,25 @@ function fmtFeedDate(ts: number) {
   return new Date(ts).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
+// Real thumbnail instead of a bare link/placeholder - YouTube serves these
+// straight off img.youtube.com by video ID, no API call or key needed.
+// hqdefault is used (not maxresdefault) since it's reliably generated for
+// every video, where the higher-res ones sometimes aren't.
+function youtubeVideoId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.hostname === "youtu.be") return u.pathname.slice(1).split("/")[0] || null;
+    if (u.hostname.includes("youtube.com")) {
+      if (u.pathname === "/watch") return u.searchParams.get("v");
+      const match = u.pathname.match(/^\/(?:shorts|embed)\/([^/?]+)/);
+      if (match) return match[1];
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -1876,11 +1895,19 @@ function App({ session }: { session: Session }) {
 
               if (item.kind === "clip") {
                 const c = item.clip;
+                const videoId = c.video_url ? youtubeVideoId(c.video_url) : null;
                 return (
                   <article key={item.key} className="wcf-clip">
                     {c.video_url ? (
                       <a className="wcf-clip-thumb" href={c.video_url} target="_blank" rel="noreferrer">
-                        <span>▶</span>
+                        {videoId ? (
+                          <>
+                            <img src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`} alt="" loading="lazy" />
+                            <span className="wcf-clip-play">▶</span>
+                          </>
+                        ) : (
+                          <span>▶</span>
+                        )}
                       </a>
                     ) : (
                       <div className="wcf-clip-thumb">
@@ -3735,7 +3762,9 @@ const css = `
 .wcf-clip-form button{background:var(--red);color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;cursor:pointer}
 .wcf-clip-form button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-clip{display:flex;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:12px;align-items:flex-start}
-.wcf-clip-thumb{width:74px;height:52px;border-radius:9px;flex:0 0 auto;background:linear-gradient(135deg,var(--panel2),var(--bg));display:grid;place-items:center;color:var(--red-hi);font-size:16px;border:1px solid var(--line)}
+.wcf-clip-thumb{width:74px;height:52px;border-radius:9px;flex:0 0 auto;background:linear-gradient(135deg,var(--panel2),var(--bg));display:grid;place-items:center;color:var(--red-hi);font-size:16px;border:1px solid var(--line);position:relative;overflow:hidden}
+.wcf-clip-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.wcf-clip-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(4,9,20,.28);color:#fff;font-size:14px;text-shadow:0 1px 4px rgba(0,0,0,.6)}
 .wcf-clip-body{flex:1;min-width:0}
 .wcf-clip-title{font-weight:800;font-size:14px}
 .wcf-clip-sub{font-size:11px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
