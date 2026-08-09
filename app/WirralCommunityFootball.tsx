@@ -1409,10 +1409,26 @@ function App({ session }: { session: Session }) {
     };
   }, [pastGames, motmTallyByGame, nowUk]);
 
+  // Seasons run calendar-year, not the traditional Aug-May football season -
+  // Season 1 is 2026 (the club's founding year), Season 2 starts 1 Jan
+  // 2027. Stats default to the current season ("archived" in the sense of
+  // not being the default view) but every past season stays picklable via
+  // the selector below, rather than actually deleting old data.
+  const SEASON_EPOCH_YEAR = 2026;
+  const currentSeasonYear = Number(nowUk.slice(0, 4));
+  const [statsSeasonYear, setStatsSeasonYear] = useState<number | null>(null);
+  const activeStatsYear = statsSeasonYear ?? currentSeasonYear;
+  const seasonYears = useMemo(() => {
+    const set = new Set(pastGames.map((g) => Number(g.date.slice(0, 4))));
+    set.add(currentSeasonYear);
+    return Array.from(set).sort((a, b) => b - a);
+  }, [pastGames, currentSeasonYear]);
+
   const playerStats = useMemo(() => {
     const tally: Record<string, { name: string; apps: number; goals: number }> = {};
-    const pastGameIds = new Set(pastGames.map((g) => g.id));
-    pastGames.forEach((g) =>
+    const seasonGames = pastGames.filter((g) => g.date.slice(0, 4) === String(activeStatsYear));
+    const pastGameIds = new Set(seasonGames.map((g) => g.id));
+    seasonGames.forEach((g) =>
       g.bookings
         .filter((b) => !b.waiting)
         .forEach((b) => {
@@ -1431,7 +1447,7 @@ function App({ session }: { session: Session }) {
     return Object.entries(tally)
       .map(([id, row]) => ({ id, ...row }))
       .sort((a, b) => b.apps - a.apps);
-  }, [pastGames, goalRows]);
+  }, [pastGames, goalRows, activeStatsYear]);
 
   const nextGame = upcomingGames[0];
   const nextConfirmed = useMemo(
@@ -2121,6 +2137,17 @@ function App({ session }: { session: Session }) {
 
             {resultsView === "table" && (
               <div className="wcf-board">
+                <select
+                  className="wcf-month-filter"
+                  value={activeStatsYear}
+                  onChange={(e) => setStatsSeasonYear(Number(e.target.value))}
+                >
+                  {seasonYears.map((y) => (
+                    <option key={y} value={y}>
+                      Season {y - SEASON_EPOCH_YEAR + 1} ({y}){y === currentSeasonYear ? " — current" : ""}
+                    </option>
+                  ))}
+                </select>
                 <p className="wcf-board-note">Confirmed spots across upcoming fixtures, plus goals logged by admins. Sorted by appearances.</p>
                 <div className="wcf-board-row wcf-board-header">
                   <span className="wcf-rank" />
