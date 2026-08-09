@@ -1491,6 +1491,29 @@ function App({ session }: { session: Session }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextGrouped, ratingByPlayer]);
 
+  // At-a-glance ratings for whoever's actually confirmed for the next game
+  // - previously the only way to see a rating was opening it one player at
+  // a time from Manage roles, which made manual team-picking impractical.
+  const nextConfirmedRatings = useMemo(() => {
+    return nextConfirmed
+      .map((b) => {
+        const admin = adminRatings.find((r) => r.player_id === b.player_id);
+        const self = selfRatings.find((r) => r.player_id === b.player_id);
+        const effective = admin ?? self ?? null;
+        return {
+          id: b.player_id,
+          name: b.player.display_name,
+          source: admin ? ("admin" as const) : self ? ("self" as const) : ("unrated" as const),
+          position: effective?.position ?? null,
+          fitness: effective?.fitness ?? null,
+          attack: effective?.attack ?? null,
+          defence: effective?.defence ?? null,
+          overall: effective ? (effective.fitness + effective.attack + effective.defence) / 3 : null,
+        };
+      })
+      .sort((a, b) => (b.overall ?? -1) - (a.overall ?? -1));
+  }, [nextConfirmed, adminRatings, selfRatings]);
+
   // Unrated players default to a neutral 3 rather than 0, so a handful of
   // unrated players don't get treated as "worst on the pitch" and all
   // dumped on one team - they just don't move the needle either way.
@@ -1504,16 +1527,33 @@ function App({ session }: { session: Session }) {
       const r = ratingByPlayer[b.player_id];
       return { id: b.player_id, overall: r ? (r.fitness + r.attack + r.defence) / 3 : 3, position: r?.position ?? null };
     });
-    const keepers = players.filter((p) => p.position === "keeper").sort((a, b) => b.overall - a.overall);
-    const others = players.filter((p) => p.position !== "keeper").sort((a, b) => b.overall - a.overall);
+
+    // A small random jitter (sort-only, never affects the real balance
+    // totals below) plus a shuffled starting order means re-generating
+    // gives a genuinely different, still roughly-balanced split each time
+    // instead of the same one on repeat - so an admin who doesn't like the
+    // first suggestion can just tap it again for another option.
+    const shuffled = [...players];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const ranked = shuffled
+      .map((p) => ({ ...p, sortKey: p.overall + (Math.random() - 0.5) * 0.6 }))
+      .sort((a, b) => b.sortKey - a.sortKey);
+
+    const keepers = ranked.filter((p) => p.position === "keeper");
+    const others = ranked.filter((p) => p.position !== "keeper");
 
     const white: string[] = [];
     const red: string[] = [];
     let whiteTotal = 0;
     let redTotal = 0;
 
+    const keeperStartsWhite = Math.random() < 0.5;
     keepers.forEach((k, i) => {
-      if (i % 2 === 0) { white.push(k.id); whiteTotal += k.overall; }
+      const onWhite = keeperStartsWhite ? i % 2 === 0 : i % 2 === 1;
+      if (onWhite) { white.push(k.id); whiteTotal += k.overall; }
       else { red.push(k.id); redTotal += k.overall; }
     });
 
@@ -1521,8 +1561,11 @@ function App({ session }: { session: Session }) {
       const sizeDiff = white.length - red.length;
       if (sizeDiff >= 2) { red.push(p.id); redTotal += p.overall; }
       else if (sizeDiff <= -2) { white.push(p.id); whiteTotal += p.overall; }
-      else if (whiteTotal <= redTotal) { white.push(p.id); whiteTotal += p.overall; }
-      else { red.push(p.id); redTotal += p.overall; }
+      else if (whiteTotal === redTotal ? Math.random() < 0.5 : whiteTotal < redTotal) {
+        white.push(p.id); whiteTotal += p.overall;
+      } else {
+        red.push(p.id); redTotal += p.overall;
+      }
     });
 
     return { white, red };
@@ -1847,6 +1890,32 @@ function App({ session }: { session: Session }) {
             {lineupView === "fairness" && isAdmin && (
               <>
                 {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
+
+                {nextGame && nextConfirmedRatings.length > 0 && (
+                  <div className="wcf-ratings-table">
+                    <h4>Player ratings</h4>
+                    <div className="wcf-ratings-rows">
+                      {nextConfirmedRatings.map((r) => (
+                        <div key={r.id} className="wcf-ratings-row">
+                          <div className="wcf-ratings-name">
+                            {r.name}
+                            {r.position && <span className="wcf-ratings-pos">{POSITION_LABEL[r.position]}</span>}
+                          </div>
+                          {r.source === "unrated" ? (
+                            <span className="wcf-ratings-unrated">Unrated</span>
+                          ) : (
+                            <div className="wcf-ratings-stats">
+                              <span>F {r.fitness}</span>
+                              <span>A {r.attack}</span>
+                              <span>D {r.defence}</span>
+                              <span className={"wcf-ratings-source " + r.source}>{r.source === "admin" ? "Admin" : "Self"}</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {nextGame && nextConfirmed.length > 0 && (
                   <>
@@ -3632,6 +3701,18 @@ const css = `
 .wcf-lineup-picks{display:flex;gap:6px}
 .wcf-lineup-pick{background:transparent;border:1px solid var(--line);color:var(--dim);padding:7px 11px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
 .wcf-lineup-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
+.wcf-ratings-table{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
+.wcf-ratings-table h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.wcf-ratings-rows{display:flex;flex-direction:column;gap:2px}
+.wcf-ratings-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.wcf-ratings-row:last-child{border-bottom:none}
+.wcf-ratings-name{font-size:13px;font-weight:700;display:flex;align-items:center;gap:7px;min-width:0}
+.wcf-ratings-pos{font-size:9.5px;font-weight:700;color:var(--dim);background:var(--panel2);padding:2px 7px;border-radius:20px;text-transform:uppercase}
+.wcf-ratings-unrated{font-size:11px;color:var(--dim);font-style:italic}
+.wcf-ratings-stats{display:flex;align-items:center;gap:8px;font-size:11px;font-family:var(--mono);color:var(--dim);flex-shrink:0}
+.wcf-ratings-source{font-family:var(--sans);font-weight:800;font-size:9.5px;text-transform:uppercase;padding:2px 7px;border-radius:20px}
+.wcf-ratings-source.admin{background:rgba(224,167,51,.18);color:var(--amber)}
+.wcf-ratings-source.self{background:var(--panel2);color:var(--dim)}
 .wcf-fairness-teams{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
 .wcf-fairness-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
 .wcf-fairness-card-head{font-weight:800;font-size:13px;margin-bottom:10px}
