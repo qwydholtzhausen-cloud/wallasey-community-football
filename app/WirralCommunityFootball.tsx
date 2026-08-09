@@ -1010,6 +1010,23 @@ function App({ session }: { session: Session }) {
     if (error) notifyError(error.message);
   }
 
+  async function copyLineup() {
+    if (!nextGame) return;
+    const names = (group: BookingRow[]) => group.map((b) => b.player.display_name);
+    const section = (teamName: string, group: BookingRow[]) =>
+      `${teamName}\n` + (names(group).map((n, i) => `${i + 1}. ${n}`).join("\n") || "—");
+    const text =
+      `⚽ ${nextGame.venue} — ${fmtDate(nextGame.date)}, ${nextGame.kickoff}\n\n` +
+      `${section(`🔴 ${cs.team_red_name}`, nextGrouped.red)}\n\n` +
+      `${section(`⚪ ${cs.team_white_name}`, nextGrouped.white)}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      notifySuccess("Lineup copied — paste it into WhatsApp");
+    } catch {
+      notifyError("Couldn't copy — your browser may be blocking clipboard access");
+    }
+  }
+
   async function applySuggestedTeams() {
     if (!suggestedTeams) return;
     const bookingIdByPlayer = new Map(nextConfirmed.map((b) => [b.player_id, b.id]));
@@ -2027,9 +2044,14 @@ function App({ session }: { session: Session }) {
                     <div className="wcf-pitch">{fmtDate(nextGame.date)} · {nextGame.kickoff}</div>
                   </div>
                   {isAdmin && (
-                    <button className="wcf-ghost" onClick={() => setEditingLineup((v) => !v)}>
-                      {editingLineup ? "Lock in" : "Edit line-up"}
-                    </button>
+                    <div className="wcf-lineup-head-actions">
+                      {(nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
+                        <button className="wcf-ghost" onClick={copyLineup}>📋 Copy for WhatsApp</button>
+                      )}
+                      <button className="wcf-ghost" onClick={() => setEditingLineup((v) => !v)}>
+                        {editingLineup ? "Lock in" : "Edit line-up"}
+                      </button>
+                    </div>
                   )}
                 </div>
                 {nextConfirmed.length === 0 && <p className="wcf-empty">No one&apos;s booked in yet.</p>}
@@ -3721,6 +3743,7 @@ const css = `
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
 
 .wcf-lineup-head{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
+.wcf-lineup-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .wcf-lineup-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px;transition:box-shadow .2s}
 .wcf-lineup-row.me{border-color:transparent}
 .wcf-lineup-row.me-edit{background:rgba(46,116,204,.14);border-color:var(--blue)}
