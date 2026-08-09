@@ -1869,15 +1869,24 @@ function App({ session }: { session: Session }) {
     return rows.sort((a, b) => b.game.date.localeCompare(a.game.date));
   }, [pastGames]);
 
+  // Scores only shows games the admin's actually entered a result for -
+  // a finished-but-unscored game sitting there blank would just confuse
+  // players ("why is this here with nothing in it?"). Admins still see
+  // every finished game needing a score via the Admin tab's own list.
+  const scoredPastGames = useMemo(
+    () => pastGames.filter((g) => g.team_white_score != null && g.team_red_score != null),
+    [pastGames]
+  );
+
   const resultsMonths = useMemo(() => {
     const set = new Set<string>();
-    pastGames.forEach((g) => set.add(g.date.slice(0, 7)));
+    scoredPastGames.forEach((g) => set.add(g.date.slice(0, 7)));
     return Array.from(set).sort((a, b) => b.localeCompare(a));
-  }, [pastGames]);
+  }, [scoredPastGames]);
 
   const filteredResults = useMemo(
-    () => (resultsMonth === "all" ? pastGames : pastGames.filter((g) => g.date.slice(0, 7) === resultsMonth)),
-    [pastGames, resultsMonth]
+    () => (resultsMonth === "all" ? scoredPastGames : scoredPastGames.filter((g) => g.date.slice(0, 7) === resultsMonth)),
+    [scoredPastGames, resultsMonth]
   );
 
   const headToHead = useMemo(() => {
@@ -2501,7 +2510,6 @@ function App({ session }: { session: Session }) {
                   const teamOf = (playerId: string) => g.bookings.find((b) => b.player_id === playerId)?.team;
                   const whiteScorers = scorers.filter((s) => teamOf(s.player_id) === "white");
                   const redScorers = scorers.filter((s) => teamOf(s.player_id) === "red");
-                  const hasScore = g.team_white_score != null && g.team_red_score != null;
                   // Who actually played, not who's been payment-confirmed -
                   // those often lag behind by days, and voting closes hours
                   // after kickoff.
@@ -2523,13 +2531,11 @@ function App({ session }: { session: Session }) {
                             <div className="wcf-venue">{g.venue}</div>
                             <div className="wcf-pitch">{fmtDate(g.date)}</div>
                           </div>
-                          {hasScore && (
-                            <div className="wcf-result-score">
-                              <span style={{ color: cs.team_white_color }}>{g.team_white_score}</span>
-                              <span className="wcf-result-dash">–</span>
-                              <span style={{ color: cs.team_red_color }}>{g.team_red_score}</span>
-                            </div>
-                          )}
+                          <div className="wcf-result-score">
+                            <span style={{ color: cs.team_white_color }}>{g.team_white_score}</span>
+                            <span className="wcf-result-dash">–</span>
+                            <span style={{ color: cs.team_red_color }}>{g.team_red_score}</span>
+                          </div>
                         </div>
                         <div className="wcf-result-chevron">{expanded ? "▲ Hide details" : "▼ Tap for scorers & MOTM"}</div>
                       </button>
@@ -2560,7 +2566,7 @@ function App({ session }: { session: Session }) {
                             </>
                           )}
 
-                          {hasScore && candidates.length > 0 && votingOpen && (
+                          {candidates.length > 0 && votingOpen && (
                             <div className="wcf-motm">
                               <div className="wcf-motm-label">Vote Man of the Match · results hidden until voting closes</div>
                               <div className="wcf-motm-candidates">
@@ -2577,7 +2583,7 @@ function App({ session }: { session: Session }) {
                             </div>
                           )}
 
-                          {hasScore && !votingOpen && totalVotes > 0 && (
+                          {!votingOpen && totalVotes > 0 && (
                             <div className="wcf-motm wcf-motm-closed">
                               <div className="wcf-motm-winner">
                                 🏆 Man of the Match — <strong>{ranked[0].candidate.player.display_name}</strong>
@@ -2599,7 +2605,7 @@ function App({ session }: { session: Session }) {
                             </div>
                           )}
 
-                          {isAdmin && hasScore && (
+                          {isAdmin && (
                             <div className="wcf-result-share">
                               <button className="wcf-result-share-btn" onClick={() => shareResult(g)}>📤 Share result</button>
                               <span className="wcf-result-admin-tag">Admin only</span>

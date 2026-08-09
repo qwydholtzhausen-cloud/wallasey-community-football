@@ -59,7 +59,7 @@ export async function GET(req: Request) {
   const nowMs = toMs(nowUkStr);
   const { data: games } = await admin
     .from("games")
-    .select("id, date, kickoff, venue, max_players, bookings(player_id, status, waiting, team)");
+    .select("id, date, kickoff, venue, max_players, team_white_score, team_red_score, bookings(player_id, status, waiting, team)");
   const { data: settings } = await admin.from("club_settings").select("team_white_name, team_red_name").single();
   const whiteLabel = settings?.team_white_name || "Whites";
   const redLabel = settings?.team_red_name || "Reds";
@@ -219,6 +219,34 @@ export async function GET(req: Request) {
     await sendPushToUsers([b.player_id], {
       title: "Still unpaid ⚠️",
       body: `You still owe £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)} — pay now to avoid being blocked from booking your next game.`,
+      url: "/",
+    });
+    await markNotified(key);
+  }
+
+  // --- Score-entry reminder, once the game's finished if no result yet ---
+  // MOTM voting closes 5 hours after kickoff regardless of whether a score
+  // has been entered - the player-facing voting UI only shows once a
+  // result's in, so an admin being slow here can quietly cost the whole
+  // MOTM window for that game. Nudges every admin as soon as the game's
+  // confirmed over (kickoff + 90min, same cutoff as everywhere else),
+  // giving the full ~3.5hr runway to MOTM's actual deadline.
+  for (const g of games ?? []) {
+    const key = `score-reminder-${g.id}`;
+    if (notifiedKeys.has(key)) continue;
+    if (toMs(kickoffCutoff(g.date, g.kickoff, 90)) > nowMs) continue;
+    if (g.team_white_score != null && g.team_red_score != null) continue;
+
+    const { data: admins } = await admin.from("profiles").select("id").in("role", ["admin", "co-owner", "owner"]);
+    const adminIds = (admins ?? []).map((p) => p.id);
+    if (adminIds.length === 0) {
+      await markNotified(key);
+      continue;
+    }
+
+    await sendPushToUsers(adminIds, {
+      title: "Score needed 📋",
+      body: `${g.venue} on ${fmtDateLabel(g.date)} has finished — enter the result so MOTM voting can open.`,
       url: "/",
     });
     await markNotified(key);
