@@ -1643,6 +1643,26 @@ function App({ session }: { session: Session }) {
     return { white, red };
   }, [pastGames]);
 
+  // For banter - a running win streak, purely derived from the same
+  // scored games as headToHead. pastGames is already sorted most-recent
+  // first, so this is just "how many games in a row does the same side
+  // keep winning, counting from the most recent." A draw (or fewer than 2
+  // in a row) means nothing to brag about, so it shows nothing.
+  const rivalryStreak = useMemo(() => {
+    const scored = pastGames.filter((g) => g.team_white_score != null && g.team_red_score != null);
+    if (scored.length === 0) return null;
+    const winnerOf = (g: GameRow): Team | null =>
+      g.team_white_score! > g.team_red_score! ? "white" : g.team_red_score! > g.team_white_score! ? "red" : null;
+    const streakWinner = winnerOf(scored[0]);
+    if (!streakWinner) return null;
+    let count = 0;
+    for (const g of scored) {
+      if (winnerOf(g) === streakWinner) count++;
+      else break;
+    }
+    return count >= 2 ? { winner: streakWinner, count } : null;
+  }, [pastGames]);
+
   // Private per-player record - computed from the same past-games data as
   // headToHead above rather than stored anywhere, so it's always in sync
   // and (per the user's request) never has to be back-filled or migrated.
@@ -2134,6 +2154,16 @@ function App({ session }: { session: Session }) {
                     {a.note ? ` · ${a.note}` : ""}
                   </div>
                 ))}
+
+                {rivalryStreak && (
+                  <div
+                    className="wcf-streak"
+                    style={{ borderColor: rivalryStreak.winner === "white" ? cs.team_white_color : cs.team_red_color }}
+                  >
+                    🔥 <strong>{rivalryStreak.winner === "white" ? cs.team_white_name : cs.team_red_name}</strong> have won{" "}
+                    {rivalryStreak.count} in a row
+                  </div>
+                )}
 
                 {(headToHead.white.played > 0 || headToHead.red.played > 0) && (
                   <div className="wcf-h2h">
@@ -3845,6 +3875,8 @@ const css = `
 .wcf-pot-row-amount{font-family:var(--mono);font-weight:800;font-size:14px;flex:0 0 auto}
 .wcf-pot-row-amount.pos{color:var(--green)}
 .wcf-pot-row-amount.neg{color:var(--red-hi)}
+.wcf-streak{background:var(--panel);border:1px solid var(--line);border-left:3px solid;border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
+.wcf-streak strong{color:var(--white)}
 .wcf-h2h{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .wcf-h2h-title{font-weight:800;font-size:13px;margin-bottom:10px}
 .wcf-h2h-row{display:grid;grid-template-columns:1fr repeat(5,28px);align-items:center;font-size:12px;padding:6px 0;border-bottom:1px solid var(--line)}
