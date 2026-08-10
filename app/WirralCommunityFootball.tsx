@@ -1526,7 +1526,7 @@ function App({ session }: { session: Session }) {
   const [hourlyWeather, setHourlyWeather] = useState<{ time: string[]; temp: number[]; code: number[] } | null>(null);
   useEffect(() => {
     fetch(
-      "https://api.open-meteo.com/v1/forecast?latitude=53.43&longitude=-3.06&hourly=temperature_2m,weathercode&forecast_days=7&timezone=Europe%2FLondon"
+      "https://api.open-meteo.com/v1/forecast?latitude=53.43&longitude=-3.06&hourly=temperature_2m,weathercode&forecast_days=8&timezone=Europe%2FLondon"
     )
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
