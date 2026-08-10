@@ -843,3 +843,9 @@ where not exists (select 1 from public.push_subscriptions s where s.user_id = p.
 update public.profiles p
 set push_opt_in = true
 where exists (select 1 from public.push_subscriptions s where s.user_id = p.id);
+
+-- Tracks when the "fixture update" WhatsApp digest was last generated, so
+-- the digest can report "N bookings since the last update" and which
+-- fixtures moved the most - reusing the same admin-copies-formatted-text
+-- pattern as the lineup WhatsApp button, not a new messaging integration.
+alter table public.club_settings add column last_fixture_update_at timestamptz;

@@ -171,6 +171,7 @@ interface ClubSettings {
   default_price: number;
   default_pitch: string;
   default_max_players: number;
+  last_fixture_update_at: string | null;
 }
 
 interface AwardRow {
@@ -711,6 +712,7 @@ function App({ session }: { session: Session }) {
     default_price: 5,
     default_pitch: "8-a-side",
     default_max_players: MAX_SPOTS,
+    last_fixture_update_at: null,
   };
 
   const loadProfile = useCallback(async () => {
@@ -737,7 +739,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("club_settings")
       .select(
-        "team_white_name, team_white_color, team_red_name, team_red_color, default_venue, default_kickoff, default_price, default_pitch, default_max_players"
+        "team_white_name, team_white_color, team_red_name, team_red_color, default_venue, default_kickoff, default_price, default_pitch, default_max_players, last_fixture_update_at"
       )
       .single();
     if (data) setClubSettings(data as ClubSettings);
@@ -1256,6 +1258,90 @@ function App({ session }: { session: Session }) {
     try {
       await navigator.clipboard.writeText(text);
       notifySuccess("Lineup copied — paste it into WhatsApp");
+    } catch {
+      notifyError("Couldn't copy — your browser may be blocking clipboard access");
+    }
+  }
+
+  // Formats the same "Fixture Updates" digest admins were already typing
+  // out by hand for WhatsApp - grouped by month, fullness per fixture, plus
+  // a "N bookings since the last update" line worked out from real
+  // booking created_at timestamps against club_settings.last_fixture_
+  // update_at (not a diff of counts, which cancellations could throw off).
+  // Real emoji, not :shortcode: text - those don't render in WhatsApp.
+  function ordinal(n: number) {
+    const v = n % 100;
+    if (v >= 11 && v <= 13) return `${n}th`;
+    switch (n % 10) {
+      case 1: return `${n}st`;
+      case 2: return `${n}nd`;
+      case 3: return `${n}rd`;
+      default: return `${n}th`;
+    }
+  }
+  async function copyFixtureUpdate() {
+    const published = upcomingGames.filter((g) => g.published);
+    if (published.length === 0) return notifyError("No published upcoming fixtures to report on");
+
+    const lastUpdateMs = cs.last_fixture_update_at ? new Date(cs.last_fixture_update_at).getTime() : null;
+    let newBookingsCount = 0;
+    const movementByGame: Record<string, number> = {};
+    if (lastUpdateMs) {
+      published.forEach((g) => {
+        const newOnes = g.bookings.filter((b) => !b.waiting && new Date(b.created_at).getTime() > lastUpdateMs).length;
+        if (newOnes > 0) {
+          movementByGame[g.id] = newOnes;
+          newBookingsCount += newOnes;
+        }
+      });
+    }
+
+    const fmtLine = (g: GameRow, i: number) => {
+      const d = new Date(g.date + "T00:00:00");
+      const weekday = d.toLocaleDateString("en-GB", { weekday: "long" });
+      const month = d.toLocaleDateString("en-GB", { month: "long" });
+      const spotsLeft = g.max_players - g.bookings.filter((b) => !b.waiting).length;
+      const status = spotsLeft <= 0 ? "❌FULL❌" : `✅${spotsLeft} Spots Left✅`;
+      return `${i}. ${weekday} ${ordinal(d.getDate())} ${month} ${status}.`;
+    };
+
+    const byMonth: Record<string, GameRow[]> = {};
+    published.forEach((g) => {
+      const key = g.date.slice(0, 7);
+      (byMonth[key] ??= []).push(g);
+    });
+    const sections = Object.keys(byMonth)
+      .sort()
+      .map((key) => {
+        const label = new Date(key + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+        return `${label}\n\n${byMonth[key].map((g, i) => fmtLine(g, i + 1)).join("\n")}`;
+      });
+
+    let movementLine = "";
+    if (newBookingsCount > 0) {
+      const dateLabels = Object.entries(movementByGame)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4)
+        .map(([gameId]) => published.find((g) => g.id === gameId)!)
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map((g) => {
+          const d = new Date(g.date + "T00:00:00");
+          return `${ordinal(d.getDate())} ${d.toLocaleDateString("en-GB", { month: "long" })}`;
+        });
+      const joined =
+        dateLabels.length > 1 ? `${dateLabels.slice(0, -1).join(", ")} and ${dateLabels[dateLabels.length - 1]}` : dateLabels[0];
+      movementLine = `📢 ${newBookingsCount} booking${newBookingsCount === 1 ? "" : "s"} since the last update, with the biggest movement across ${joined}. 📢\n\n`;
+    }
+
+    const text = `⭐Wirral Community Football⭐\n\nFixture Updates:\n\n${movementLine}Get booked on lads:\n\n${sections.join("\n\n\n")}`;
+
+    if (!confirm('Copy the fixture update? This resets the "since last update" count for next time.')) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      const { error } = await supabase.from("club_settings").update({ last_fixture_update_at: new Date().toISOString() }).eq("id", true);
+      if (error) return notifyError(error.message);
+      await loadClubSettings();
+      notifySuccess("Fixture update copied — paste it into WhatsApp");
     } catch {
       notifyError("Couldn't copy — your browser may be blocking clipboard access");
     }
@@ -2126,7 +2212,10 @@ function App({ session }: { session: Session }) {
             )}
           </div>
           {tab === "fixtures" && isAdmin && (
-            <button className="wcf-addbtn" onClick={() => { if (confirm("Add a new fixture?")) addGame(); }}>+ Fixture</button>
+            <div className="wcf-heading-actions">
+              <button className="wcf-addbtn ghost" onClick={copyFixtureUpdate} title="Copy a WhatsApp fixture update">📋 Update</button>
+              <button className="wcf-addbtn" onClick={() => { if (confirm("Add a new fixture?")) addGame(); }}>+ Fixture</button>
+            </div>
           )}
         </div>
 
@@ -4153,7 +4242,9 @@ const css = `
 .wcf-countdown-line b{color:var(--white);font-family:var(--mono);font-weight:700}
 .wcf-countdown-line.soon{color:var(--green)}
 .wcf-countdown-line.soon b{color:var(--green)}
-.wcf-addbtn{background:var(--red);color:#fff;border:none;padding:7px 13px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;flex:0 0 auto}
+.wcf-heading-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.wcf-addbtn{background:var(--red);color:#fff;border:none;padding:7px 13px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;flex:0 0 auto;white-space:nowrap}
+.wcf-addbtn.ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
 .wcf-empty{color:var(--dim);text-align:center;padding:40px 0;font-size:14px}
 .wcf-empty.small{padding:8px 0;font-size:12px}
 
