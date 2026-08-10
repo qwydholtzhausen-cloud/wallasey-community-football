@@ -221,6 +221,23 @@ function fmtDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
 
+// Open-Meteo's WMO weather codes, collapsed to one emoji each. Deliberately
+// not colour-coded by severity (no alarming red for rain) - this sits on
+// the public browsing list before anyone's booked, and shouldn't read as a
+// warning talking someone out of a spot.
+function weatherIcon(code: number): string {
+  if (code === 0) return "☀️";
+  if (code <= 2) return "🌤️";
+  if (code === 3) return "☁️";
+  if (code === 45 || code === 48) return "🌫️";
+  if (code <= 57) return "🌦️";
+  if (code <= 67) return "🌧️";
+  if (code <= 77) return "❄️";
+  if (code <= 82) return "🌦️";
+  if (code <= 86) return "❄️";
+  return "⛈️";
+}
+
 // Feed items are dated historical facts, not live status - without a
 // visible date, something like "Pot passed £50" reads as a claim about
 // right now rather than a moment that happened and may since have moved.
@@ -1500,6 +1517,43 @@ function App({ session }: { session: Session }) {
     return () => clearInterval(id);
   }, []);
 
+  // One fixed coordinate for the whole club rather than geocoding each
+  // venue - they're all a few miles apart in Wirral, which doesn't move
+  // a forecast meaningfully. Open-Meteo needs no key and allows direct
+  // browser calls. Fetched once per session (forecasts don't shift
+  // minute to minute) - a failure just means no chips show, not an error
+  // worth surfacing for a nice-to-have.
+  const [hourlyWeather, setHourlyWeather] = useState<{ time: string[]; temp: number[]; code: number[] } | null>(null);
+  useEffect(() => {
+    fetch(
+      "https://api.open-meteo.com/v1/forecast?latitude=53.43&longitude=-3.06&hourly=temperature_2m,weathercode&forecast_days=7&timezone=Europe%2FLondon"
+    )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.hourly?.time) {
+          setHourlyWeather({ time: data.hourly.time, temp: data.hourly.temperature_2m, code: data.hourly.weathercode });
+        }
+      })
+      .catch(() => {});
+  }, []);
+  function weatherFor(date: string, kickoff: string) {
+    if (!hourlyWeather) return null;
+    const targetMs = new Date(`${date}T${kickoff}`).getTime();
+    let bestIdx = -1;
+    let bestDiff = Infinity;
+    hourlyWeather.time.forEach((t, i) => {
+      const diff = Math.abs(new Date(t).getTime() - targetMs);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestIdx = i;
+      }
+    });
+    // More than 90 min off whatever the API actually covers isn't a
+    // trustworthy match for that kickoff - better to show nothing.
+    if (bestIdx === -1 || bestDiff > 90 * 60 * 1000) return null;
+    return { code: hourlyWeather.code[bestIdx], temp: Math.round(hourlyWeather.temp[bestIdx]) };
+  }
+
   const nowUk = nowInLondon();
   const upcomingGames = useMemo(
     () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) > nowUk).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)),
@@ -2276,6 +2330,7 @@ function App({ session }: { session: Session }) {
                 onSave={(patch) => saveGame(g.id, patch)}
                 onDelete={() => deleteGame(g.id)}
                 onOpenPlayerCard={setPlayerCardId}
+                weather={weatherFor(g.date, g.kickoff)}
               />
             ))}
           </>
@@ -3980,6 +4035,7 @@ function GameCard({
   onSave,
   onDelete,
   onOpenPlayerCard,
+  weather,
 }: {
   game: GameRow;
   myId: string;
@@ -3993,6 +4049,7 @@ function GameCard({
   onSave: (patch: Partial<GameRow>) => void;
   onDelete: () => void;
   onOpenPlayerCard: (playerId: string) => void;
+  weather: { code: number; temp: number } | null;
 }) {
   const [form, setForm] = useState<GameRow>(game);
   const [showWaiting, setShowWaiting] = useState(false);
@@ -4021,7 +4078,10 @@ function GameCard({
         </div>
         <div className="wcf-card-info">
           <div className="wcf-venue">{game.venue}{!game.published && <span className="wcf-draft-badge">Draft</span>}</div>
-          <div className="wcf-pitch">{game.pitch} · £{game.price}</div>
+          <div className="wcf-pitch-row">
+            <span className="wcf-pitch">{game.pitch} · £{game.price}</span>
+            {weather && <span className="wcf-wx-chip">{weatherIcon(weather.code)} {weather.temp}°C</span>}
+          </div>
         </div>
         <div className={"wcf-count " + fullness}>
           <span className="wcf-count-n">{confirmed.length}/{game.max_players}</span>
@@ -4262,6 +4322,9 @@ const css = `
 .wcf-venue{font-weight:800;font-size:15px}
 .wcf-draft-badge{display:inline-block;margin-left:8px;background:rgba(224,167,51,.18);color:var(--amber);border:1px solid rgba(224,167,51,.4);font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;padding:2px 7px;border-radius:20px;vertical-align:middle}
 .wcf-pitch{font-size:12px;color:var(--dim);margin-top:2px;font-family:var(--mono)}
+.wcf-pitch-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:2px}
+.wcf-pitch-row .wcf-pitch{margin-top:0}
+.wcf-wx-chip{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:20px;background:var(--panel2);color:var(--dim)}
 .wcf-count{text-align:right}
 .wcf-count-n{display:block;font-family:var(--mono);font-weight:700;font-size:17px;color:var(--green)}
 .wcf-count.busy .wcf-count-n{color:var(--amber)}
