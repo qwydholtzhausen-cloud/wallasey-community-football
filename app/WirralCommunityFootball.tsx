@@ -209,6 +209,13 @@ interface GoalRow {
   player: Profile;
 }
 
+// Same "pretend UTC" trick the cron routes use (see lib/time.ts) - needed
+// here for actual millisecond arithmetic, where the rest of the client only
+// ever needed string comparison against nowInLondon()'s output.
+function toMs(pseudoUtc: string) {
+  return new Date(pseudoUtc + ":00Z").getTime();
+}
+
 function fmtDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
@@ -1393,11 +1400,36 @@ function App({ session }: { session: Session }) {
     await supabase.auth.signOut();
   }
 
+  // Forces a re-render every 30s purely so the countdown line below stays
+  // live - nowUk itself is just nowInLondon() called fresh each render, so
+  // it naturally reflects the current time once something triggers a
+  // render; this is that trigger.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => forceTick((n) => n + 1), 30000);
+    return () => clearInterval(id);
+  }, []);
+
   const nowUk = nowInLondon();
   const upcomingGames = useMemo(
     () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) > nowUk).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)),
     [games, nowUk]
   );
+  // Deliberately quiet - small text under the heading, not a banner. Only
+  // the soonest published fixture (drafts don't count, even for admins
+  // previewing one), and only down to the minute - the existing "kickoff
+  // in 1 hour" push already owns second-by-second urgency.
+  const nextFixtureForCountdown = upcomingGames.find((g) => g.published);
+  const fixtureCountdown = useMemo(() => {
+    if (!nextFixtureForCountdown) return null;
+    const diffMs = toMs(kickoffCutoff(nextFixtureForCountdown.date, nextFixtureForCountdown.kickoff, 0)) - toMs(nowUk);
+    if (diffMs <= 0) return { text: "Kicking off now ⚽", soon: true };
+    const totalMin = Math.floor(diffMs / 60000);
+    const d = Math.floor(totalMin / 1440);
+    const h = Math.floor((totalMin % 1440) / 60);
+    const m = totalMin % 60;
+    return { text: d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`, soon: totalMin < 60 };
+  }, [nextFixtureForCountdown, nowUk]);
   const pastGames = useMemo(
     () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
     [games, nowUk]
@@ -2043,7 +2075,14 @@ function App({ session }: { session: Session }) {
 
       <main className="wcf-main">
         <div className="wcf-heading">
-          <h2>{heading}</h2>
+          <div>
+            <h2>{heading}</h2>
+            {tab === "fixtures" && fixtureCountdown && nextFixtureForCountdown && (
+              <div className={"wcf-countdown-line" + (fixtureCountdown.soon ? " soon" : "")}>
+                ⏱ {nextFixtureForCountdown.venue} in <b>{fixtureCountdown.text}</b>
+              </div>
+            )}
+          </div>
           {tab === "fixtures" && isAdmin && (
             <button className="wcf-addbtn" onClick={() => { if (confirm("Add a new fixture?")) addGame(); }}>+ Fixture</button>
           )}
@@ -3965,9 +4004,13 @@ const css = `
 .wcf-role.on{color:#fff;border-color:var(--red)}
 
 .wcf-main{flex:1;padding:14px 14px 92px;overflow-y:auto}
-.wcf-heading{display:flex;align-items:center;justify-content:space-between;margin:4px 2px 14px}
+.wcf-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin:4px 2px 14px}
 .wcf-heading h2{margin:0;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim)}
-.wcf-addbtn{background:var(--red);color:#fff;border:none;padding:7px 13px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer}
+.wcf-countdown-line{font-size:11px;color:var(--dim);margin-top:5px;font-variant-numeric:tabular-nums}
+.wcf-countdown-line b{color:var(--white);font-family:var(--mono);font-weight:700}
+.wcf-countdown-line.soon{color:var(--green)}
+.wcf-countdown-line.soon b{color:var(--green)}
+.wcf-addbtn{background:var(--red);color:#fff;border:none;padding:7px 13px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;flex:0 0 auto}
 .wcf-empty{color:var(--dim);text-align:center;padding:40px 0;font-size:14px}
 .wcf-empty.small{padding:8px 0;font-size:12px}
 
