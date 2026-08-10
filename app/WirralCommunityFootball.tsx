@@ -1296,13 +1296,17 @@ function App({ session }: { session: Session }) {
       });
     }
 
-    const fmtLine = (g: GameRow, i: number) => {
+    // WhatsApp actually renders *bold* - leaning on that for real visual
+    // hierarchy (month headers, FULL) instead of doubled-up emoji brackets,
+    // and short weekday/day/month reads faster on a phone than spelling
+    // every date out in full.
+    const fmtLine = (g: GameRow) => {
       const d = new Date(g.date + "T00:00:00");
-      const weekday = d.toLocaleDateString("en-GB", { weekday: "long" });
-      const month = d.toLocaleDateString("en-GB", { month: "long" });
+      const weekday = d.toLocaleDateString("en-GB", { weekday: "short" });
+      const month = d.toLocaleDateString("en-GB", { month: "short" });
       const spotsLeft = g.max_players - g.bookings.filter((b) => !b.waiting).length;
-      const status = spotsLeft <= 0 ? "❌FULL❌" : `✅${spotsLeft} Spots Left✅`;
-      return `${i}. ${weekday} ${ordinal(d.getDate())} ${month} ${status}.`;
+      const status = spotsLeft <= 0 ? "*FULL*" : `✅ ${spotsLeft} spots left`;
+      return `${weekday} ${d.getDate()} ${month} — ${status}`;
     };
 
     const byMonth: Record<string, GameRow[]> = {};
@@ -1314,7 +1318,7 @@ function App({ session }: { session: Session }) {
       .sort()
       .map((key) => {
         const label = new Date(key + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
-        return `${label}\n\n${byMonth[key].map((g, i) => fmtLine(g, i + 1)).join("\n")}`;
+        return `*${label}*\n${byMonth[key].map((g) => fmtLine(g)).join("\n")}`;
       });
 
     let movementLine = "";
@@ -1326,14 +1330,13 @@ function App({ session }: { session: Session }) {
         .sort((a, b) => a.date.localeCompare(b.date))
         .map((g) => {
           const d = new Date(g.date + "T00:00:00");
-          return `${ordinal(d.getDate())} ${d.toLocaleDateString("en-GB", { month: "long" })}`;
+          return `${ordinal(d.getDate())} ${d.toLocaleDateString("en-GB", { month: "short" })}`;
         });
-      const joined =
-        dateLabels.length > 1 ? `${dateLabels.slice(0, -1).join(", ")} and ${dateLabels[dateLabels.length - 1]}` : dateLabels[0];
-      movementLine = `📢 ${newBookingsCount} booking${newBookingsCount === 1 ? "" : "s"} since the last update, with the biggest movement across ${joined}. 📢\n\n`;
+      const joined = dateLabels.length > 1 ? `${dateLabels.slice(0, -1).join(", ")} & ${dateLabels[dateLabels.length - 1]}` : dateLabels[0];
+      movementLine = `📢 ${newBookingsCount} booking${newBookingsCount === 1 ? "" : "s"} since the last update — biggest movement on ${joined} 📢\n\n`;
     }
 
-    const text = `⭐Wirral Community Football⭐\n\nFixture Updates:\n\n${movementLine}Get booked on lads:\n\n${sections.join("\n\n\n")}`;
+    const text = `*⭐ Wirral Community Football ⭐*\n*Fixture Updates*\n\n${movementLine}Get booked on lads 👇\n\n${sections.join("\n\n")}`;
 
     if (!confirm('Copy the fixture update? This resets the "since last update" count for next time.')) return;
     try {
