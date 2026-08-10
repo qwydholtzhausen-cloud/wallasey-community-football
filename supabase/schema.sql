@@ -849,3 +849,13 @@ where exists (select 1 from public.push_subscriptions s where s.user_id = p.id);
 -- fixtures moved the most - reusing the same admin-copies-formatted-text
 -- pattern as the lineup WhatsApp button, not a new messaging integration.
 alter table public.club_settings add column last_fixture_update_at timestamptz;
+
+-- Whichever method actually produced a game's saved Team Sheet
+-- ("generated" via Apply this split, "manual" via Edit line-up -> Save,
+-- including a generated split that got hand-tweaked afterward, since
+-- that's what players actually played), plus its balance score at the
+-- moment it was saved. Lets the club see, once results are in, whether
+-- generated splits really do produce closer games than picking by eye -
+-- see the balance-history feature.
+alter table public.games add column team_method text check (team_method in ('generated', 'manual'));
+alter table public.games add column team_balance_score int;

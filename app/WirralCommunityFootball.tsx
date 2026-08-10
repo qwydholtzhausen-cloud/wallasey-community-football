@@ -101,6 +101,8 @@ interface GameRow {
   team_white_score: number | null;
   team_red_score: number | null;
   published: boolean;
+  team_method: "generated" | "manual" | null;
+  team_balance_score: number | null;
   bookings: BookingRow[];
 }
 
@@ -746,7 +748,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, bookings(id, player_id, status, waiting, team, created_at, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, bookings(id, player_id, status, waiting, team, created_at, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -1260,7 +1262,14 @@ function App({ session }: { session: Session }) {
   async function saveLineup() {
     const changed = nextConfirmed.filter((b) => (teamDraft[b.id] ?? null) !== b.team);
     await Promise.all(changed.map((b) => setTeam(b.id, teamDraft[b.id] ?? null)));
+    if (nextGame) {
+      const whiteIds = nextConfirmed.filter((b) => teamDraft[b.id] === "white").map((b) => b.player_id);
+      const redIds = nextConfirmed.filter((b) => teamDraft[b.id] === "red").map((b) => b.player_id);
+      const score = balanceScore(teamStats(whiteIds), teamStats(redIds));
+      await supabase.from("games").update({ team_method: "manual", team_balance_score: score }).eq("id", nextGame.id);
+    }
     setEditingLineup(false);
+    await loadGames();
   }
 
   async function copyLineup() {
@@ -1418,7 +1427,7 @@ function App({ session }: { session: Session }) {
   }
 
   async function applySuggestedTeams() {
-    if (!suggestedTeams) return;
+    if (!suggestedTeams || !nextGame) return;
     const bookingIdByPlayer = new Map(nextConfirmed.map((b) => [b.player_id, b.id]));
     await Promise.all(
       [...suggestedTeams.white.map((id) => [id, "white"] as const), ...suggestedTeams.red.map((id) => [id, "red"] as const)].map(
@@ -1428,6 +1437,8 @@ function App({ session }: { session: Session }) {
         }
       )
     );
+    const score = balanceScore(teamStats(suggestedTeams.white), teamStats(suggestedTeams.red));
+    await supabase.from("games").update({ team_method: "generated", team_balance_score: score }).eq("id", nextGame.id);
     setSuggestedTeams(null);
     await loadGames();
     notifySuccess("Applied the suggested split — tweak any individual player in Team Sheet if needed");
@@ -1994,6 +2005,16 @@ function App({ session }: { session: Session }) {
     for (const r of ratings) positions[r.position]++;
     return { fitness: avg("fitness"), attack: avg("attack"), defence: avg("defence"), positions, rated: ratings.length, total: playerIds.length };
   }
+  // Same fitness/attack/defence gaps the flags already warn about, turned
+  // into one 0-100% number so two splits can be compared at a glance, and
+  // so it's simple enough to store alongside a game and track over time.
+  // Null when there's not enough rating data on either side to mean
+  // anything - matches fairnessFlags' own guard for the same reason.
+  function balanceScore(white: ReturnType<typeof teamStats>, red: ReturnType<typeof teamStats>): number | null {
+    if (white.rated === 0 || red.rated === 0) return null;
+    const gap = Math.abs(white.fitness - red.fitness) + Math.abs(white.attack - red.attack) + Math.abs(white.defence - red.defence);
+    return Math.max(0, Math.round(100 * (1 - gap / 15)));
+  }
   function fairnessFlags(white: ReturnType<typeof teamStats>, red: ReturnType<typeof teamStats>) {
     const flags: string[] = [];
     if (white.rated > 0 && red.rated > 0) {
@@ -2016,6 +2037,31 @@ function App({ session }: { session: Session }) {
     return { white, red, flags: fairnessFlags(white, red) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextGrouped, ratingByPlayer]);
+
+  // Pre-game balance score is just a prediction - this is the actual test,
+  // tracking whichever method produced a game's saved teams against how
+  // close the real result turned out. Only games saved since this shipped
+  // have a method logged, so older ones are silently skipped rather than
+  // showing an "unknown" row.
+  const balanceHistory = useMemo(() => {
+    const logged = pastGames.filter((g) => g.team_method && g.team_white_score != null && g.team_red_score != null);
+    const rows = logged.slice(0, 10).map((g) => ({
+      id: g.id,
+      venue: g.venue,
+      date: g.date,
+      method: g.team_method as "generated" | "manual",
+      whiteScore: g.team_white_score as number,
+      redScore: g.team_red_score as number,
+      margin: Math.abs((g.team_white_score as number) - (g.team_red_score as number)),
+    }));
+    const avgMargin = (method: "generated" | "manual") => {
+      const subset = logged.filter((g) => g.team_method === method);
+      if (subset.length === 0) return null;
+      const total = subset.reduce((sum, g) => sum + Math.abs((g.team_white_score as number) - (g.team_red_score as number)), 0);
+      return total / subset.length;
+    };
+    return { rows, avgGenerated: avgMargin("generated"), avgManual: avgMargin("manual") };
+  }, [pastGames]);
 
   // At-a-glance ratings for whoever's actually confirmed for the next game
   // - previously the only way to see a rating was opening it one player at
@@ -2536,6 +2582,41 @@ function App({ session }: { session: Session }) {
                   <p className="wcf-empty">No one&apos;s assigned to Whites/Reds yet — generate a suggestion above, or assign manually in Team Sheet.</p>
                 )}
 
+                {nextGame && suggestedTeams && (() => {
+                  const currentScore = balanceScore(teamFairness.white, teamFairness.red);
+                  const suggestedScore = balanceScore(teamStats(suggestedTeams.white), teamStats(suggestedTeams.red));
+                  if (currentScore === null && suggestedScore === null) return null;
+                  const diff = currentScore !== null && suggestedScore !== null ? suggestedScore - currentScore : null;
+                  const badgeClass = (s: number) => (s >= 85 ? "high" : s >= 60 ? "mid" : "low");
+                  return (
+                    <div className="wcf-balance-compare">
+                      <div className="wcf-balance-row">
+                        <span>Current Team Sheet</span>
+                        {currentScore !== null ? (
+                          <span className={"wcf-balance-badge " + badgeClass(currentScore)}>⚖️ {currentScore}%</span>
+                        ) : (
+                          <span className="wcf-balance-badge none">Not enough ratings</span>
+                        )}
+                      </div>
+                      <div className="wcf-balance-row">
+                        <span>Suggested Split</span>
+                        {suggestedScore !== null ? (
+                          <span className={"wcf-balance-badge " + badgeClass(suggestedScore)}>⚖️ {suggestedScore}%</span>
+                        ) : (
+                          <span className="wcf-balance-badge none">Not enough ratings</span>
+                        )}
+                      </div>
+                      {diff !== null && Math.abs(diff) >= 3 && (
+                        <p className="wcf-balance-verdict">
+                          {diff > 0
+                            ? `The suggested split is ${diff}% more balanced than the current Team Sheet.`
+                            : `Your current Team Sheet is already ${-diff}% more balanced than this suggestion.`}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {nextGame && (() => {
                   const previewWhiteIds = suggestedTeams?.white ?? nextGrouped.white.map((b) => b.player_id);
                   const previewRedIds = suggestedTeams?.red ?? nextGrouped.red.map((b) => b.player_id);
@@ -2588,6 +2669,37 @@ function App({ session }: { session: Session }) {
                     </>
                   );
                 })()}
+
+                {balanceHistory.rows.length > 0 && (
+                  <div className="wcf-balance-log">
+                    <h4>Balance history</h4>
+                    <div className="wcf-balance-log-row wcf-balance-log-header">
+                      <span>Fixture</span><span>Method</span><span>Result</span><span>Margin</span>
+                    </div>
+                    {balanceHistory.rows.map((r) => (
+                      <div key={r.id} className="wcf-balance-log-row">
+                        <div className="wcf-balance-log-venue">{r.venue}<span>{fmtDate(r.date)}</span></div>
+                        <span className={"wcf-balance-log-method " + r.method}>{r.method}</span>
+                        <span className="wcf-balance-log-result">{r.whiteScore}–{r.redScore}</span>
+                        <span className="wcf-balance-log-margin" style={{ color: r.margin <= 2 ? "var(--green)" : r.margin >= 5 ? "var(--red-hi)" : "var(--white)" }}>
+                          {r.margin}
+                        </span>
+                      </div>
+                    ))}
+                    {(balanceHistory.avgGenerated !== null || balanceHistory.avgManual !== null) && (
+                      <div className="wcf-balance-avg-row">
+                        <div className="wcf-balance-avg-card">
+                          <b style={{ color: "#7CAEF0" }}>{balanceHistory.avgGenerated !== null ? balanceHistory.avgGenerated.toFixed(1) : "—"}</b>
+                          <span>Avg margin · Generated</span>
+                        </div>
+                        <div className="wcf-balance-avg-card">
+                          <b style={{ color: "var(--dim)" }}>{balanceHistory.avgManual !== null ? balanceHistory.avgManual.toFixed(1) : "—"}</b>
+                          <span>Avg margin · Manual</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
 
@@ -4522,6 +4634,31 @@ const css = `
 .wcf-fairness-pos-tag{font-size:9.5px;font-weight:700;color:var(--dim);background:var(--panel2);padding:2px 7px;border-radius:20px}
 .wcf-fairness-rated-note{font-size:10px;color:var(--dim);margin-top:8px;font-family:var(--mono)}
 .wcf-fairness-ok{font-size:13px;color:var(--green);font-weight:700;text-align:center;padding:10px}
+.wcf-balance-compare{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
+.wcf-balance-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:700}
+.wcf-balance-badge{font-family:var(--mono);font-weight:800;font-size:11.5px;padding:3px 10px;border-radius:20px}
+.wcf-balance-badge.high{background:rgba(51,169,87,.16);color:var(--green)}
+.wcf-balance-badge.mid{background:rgba(224,167,51,.16);color:var(--amber)}
+.wcf-balance-badge.low{background:rgba(228,42,54,.16);color:var(--red-hi)}
+.wcf-balance-badge.none{font-family:var(--sans);font-weight:600;font-size:10.5px;color:var(--dim);background:var(--panel2)}
+.wcf-balance-verdict{margin:8px 0 0;padding-top:8px;border-top:1px solid var(--line);font-size:12px;color:var(--dim);text-align:center}
+.wcf-balance-log{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:8px 14px 12px;margin-bottom:14px}
+.wcf-balance-log h4{margin:8px 2px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim)}
+.wcf-balance-log-row{display:grid;grid-template-columns:1fr 74px 46px 42px;align-items:center;gap:6px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px}
+.wcf-balance-log-row:last-child{border-bottom:none}
+.wcf-balance-log-header{color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.04em;font-weight:800;padding-bottom:6px}
+.wcf-balance-log-header span:not(:first-child){text-align:right}
+.wcf-balance-log-venue{font-weight:700}
+.wcf-balance-log-venue span{display:block;font-size:10px;color:var(--dim);font-weight:600;margin-top:1px}
+.wcf-balance-log-method{font-size:9px;font-weight:800;text-transform:uppercase;padding:3px 6px;border-radius:20px;text-align:center}
+.wcf-balance-log-method.generated{background:rgba(46,116,204,.16);color:#7CAEF0}
+.wcf-balance-log-method.manual{background:var(--panel2);color:var(--dim)}
+.wcf-balance-log-result{font-family:var(--mono);font-weight:700;text-align:right;color:var(--dim);font-size:11px}
+.wcf-balance-log-margin{font-family:var(--mono);font-weight:800;text-align:right}
+.wcf-balance-avg-row{display:flex;gap:10px;margin-top:10px}
+.wcf-balance-avg-card{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}
+.wcf-balance-avg-card b{display:block;font-family:var(--mono);font-size:19px;font-weight:800}
+.wcf-balance-avg-card span{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em;margin-top:2px;display:block}
 .wcf-fairness-flags{display:flex;flex-direction:column;gap:8px}
 .wcf-fairness-flag{background:rgba(224,167,51,.14);border:1px solid rgba(224,167,51,.35);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--white)}
 .wcf-generate-teams{width:100%;background:var(--blue);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;margin-bottom:8px}
