@@ -4216,7 +4216,7 @@ const css = `
 .wcf-toast{position:sticky;top:0;z-index:6;background:var(--green);color:#04140a;font-weight:800;font-size:13px;text-align:center;padding:10px 14px}
 .wcf-toast.error{background:var(--red);color:#fff}
 
-.wcf-card-actions{display:flex;align-items:center;gap:10px}
+.wcf-card-actions{display:flex;align-items:center;gap:10px;margin-top:12px}
 .wcf-book{flex:1;background:var(--red);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;letter-spacing:.4px;cursor:pointer;transition:.15s}
 .wcf-book:hover{background:var(--red-hi)}
 .wcf-book.cancel{background:transparent;color:var(--white);border:1px solid var(--line)}
