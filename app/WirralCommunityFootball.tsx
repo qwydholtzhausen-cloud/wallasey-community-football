@@ -2469,6 +2469,7 @@ function App({ session }: { session: Session }) {
             onDeleteGame={deleteGame}
             onSaveResult={saveResult}
             onAddBooking={addBooking}
+            onGoToLineup={() => { setTab("lineup"); setLineupView("fairness"); }}
           />
         )}
 
@@ -3980,6 +3981,7 @@ function AdminConsole({
   onDeleteGame,
   onSaveResult,
   onAddBooking,
+  onGoToLineup,
 }: {
   upcoming: GameRow[];
   previous: GameRow[];
@@ -3994,10 +3996,63 @@ function AdminConsole({
   onDeleteGame: (gameId: string) => void;
   onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
+  onGoToLineup: () => void;
 }) {
   const shared = { goalRows, cs, profiles, expandedId, onToggleExpand, onSetStatus, onRemoveBooking, onDeleteGame, onSaveResult, onAddBooking };
+
+  // Every number here is already sitting in props passed down from
+  // elsewhere - this doesn't compute anything new, just gathers what's
+  // scattered across Admin/Line-up/Results into one glance at the top.
+  const unscored = previous.filter((g) => g.team_white_score == null || g.team_red_score == null);
+  const drafts = [...upcoming, ...previous].filter((g) => !g.published);
+  const pendingApproval = upcoming.flatMap((g) =>
+    g.bookings.filter((b) => !b.waiting && b.status !== "confirmed").map((b) => ({ booking: b, game: g }))
+  );
+  const nextGame = upcoming[0];
+  const nextConfirmed = nextGame ? nextGame.bookings.filter((b) => !b.waiting) : [];
+  const nextUnassigned = nextConfirmed.filter((b) => !b.team).length;
+  const teamsSet = !nextGame || nextConfirmed.length === 0 || nextUnassigned === 0;
+
+  const namesList = (items: string[], max = 3) =>
+    items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} +${items.length - max} more`;
+
   return (
     <>
+      <h3 className="wcf-admin-section-head">📋 At a glance</h3>
+      <div className="wcf-dash-grid">
+        <div className={"wcf-dash-card " + (unscored.length === 0 ? "clear" : "amber")}>
+          <div className="wcf-dash-icon">⚠️</div>
+          <div className="wcf-dash-num">{unscored.length === 0 ? "✅" : unscored.length}</div>
+          <div className="wcf-dash-label">{unscored.length === 0 ? "Scores up to date" : "Need a score"}</div>
+          {unscored.length > 0 && <div className="wcf-dash-sub">{namesList(unscored.map((g) => fmtDate(g.date)))}</div>}
+        </div>
+        <div className={"wcf-dash-card " + (overdue.length === 0 ? "clear" : "red")}>
+          <div className="wcf-dash-icon">💷</div>
+          <div className="wcf-dash-num">{overdue.length === 0 ? "✅" : overdue.length}</div>
+          <div className="wcf-dash-label">{overdue.length === 0 ? "Nothing overdue" : "Overdue"}</div>
+          {overdue.length > 0 && <div className="wcf-dash-sub">{namesList(overdue.map((o) => o.booking.player.display_name))}</div>}
+        </div>
+        <div className={"wcf-dash-card " + (pendingApproval.length === 0 ? "clear" : "blue")}>
+          <div className="wcf-dash-icon">⏳</div>
+          <div className="wcf-dash-num">{pendingApproval.length === 0 ? "✅" : pendingApproval.length}</div>
+          <div className="wcf-dash-label">{pendingApproval.length === 0 ? "All approved" : "Awaiting approval"}</div>
+          {pendingApproval.length > 0 && <div className="wcf-dash-sub">{namesList(pendingApproval.map((p) => p.booking.player.display_name))}</div>}
+        </div>
+        <div className={"wcf-dash-card " + (drafts.length === 0 ? "clear" : "dim")}>
+          <div className="wcf-dash-icon">📝</div>
+          <div className="wcf-dash-num">{drafts.length === 0 ? "✅" : drafts.length}</div>
+          <div className="wcf-dash-label">{drafts.length === 0 ? "No drafts" : drafts.length === 1 ? "Draft fixture" : "Draft fixtures"}</div>
+          {drafts.length > 0 && <div className="wcf-dash-sub">{namesList(drafts.map((g) => g.venue))}</div>}
+        </div>
+        <button className={"wcf-dash-card wide " + (teamsSet ? "clear" : "amber")} onClick={onGoToLineup}>
+          <div className="wcf-dash-icon">⚖️</div>
+          <div className="wcf-dash-body">
+            <div className="wcf-dash-num small">{teamsSet ? "Teams are set" : "Teams not set"}</div>
+            {nextGame && <div className="wcf-dash-sub">{nextGame.venue}, {fmtDate(nextGame.date)}{!teamsSet ? ` — ${nextUnassigned} unassigned` : ""}</div>}
+          </div>
+        </button>
+      </div>
+
       <h3 className="wcf-admin-section-head">⚠️ Overdue</h3>
       {overdue.length === 0 && <p className="wcf-empty small">Nothing overdue — everyone's paid up.</p>}
       {overdue.map(({ booking: b, game: g }) => (
@@ -4590,6 +4645,26 @@ const css = `
 .wcf-save{grid-column:1/-1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
 .wcf-admin-section-head{margin:18px 2px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-admin-section-head:first-child{margin-top:4px}
+.wcf-dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:6px}
+.wcf-dash-card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:12px;padding:12px 13px;text-align:left}
+.wcf-dash-card.wide{grid-column:1/-1;display:flex;align-items:center;gap:12px;width:100%;font:inherit;color:inherit;cursor:pointer}
+.wcf-dash-card.amber{border-left-color:var(--amber)}
+.wcf-dash-card.red{border-left-color:var(--red-hi)}
+.wcf-dash-card.blue{border-left-color:var(--blue)}
+.wcf-dash-card.dim{border-left-color:var(--dim)}
+.wcf-dash-card.clear{border-left-color:var(--green)}
+.wcf-dash-icon{font-size:16px}
+.wcf-dash-num{font-family:var(--mono);font-size:24px;font-weight:800;line-height:1;margin-top:6px}
+.wcf-dash-num.small{font-size:15px;margin-top:0}
+.wcf-dash-card.clear .wcf-dash-num{color:var(--green);font-size:16px}
+.wcf-dash-card.amber .wcf-dash-num{color:var(--amber)}
+.wcf-dash-card.red .wcf-dash-num{color:var(--red-hi)}
+.wcf-dash-card.blue .wcf-dash-num{color:#7CAEF0}
+.wcf-dash-card.dim .wcf-dash-num{color:var(--dim)}
+.wcf-dash-label{font-size:10.5px;color:var(--dim);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-top:3px}
+.wcf-dash-sub{font-size:11px;color:var(--dim);margin-top:5px;line-height:1.4}
+.wcf-dash-card.wide .wcf-dash-body{flex:1;min-width:0}
+.wcf-dash-card.wide .wcf-dash-sub{margin-top:2px}
 .wcf-overdue-row{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid rgba(228,42,54,.35);border-radius:12px;padding:11px 13px;margin-bottom:9px;flex-wrap:wrap}
 .wcf-overdue-banner{background:linear-gradient(135deg,rgba(228,42,54,.18),rgba(228,42,54,.06));border:1px solid rgba(228,42,54,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5;color:var(--white)}
 .wcf-overdue-banner strong{color:var(--red-hi)}
