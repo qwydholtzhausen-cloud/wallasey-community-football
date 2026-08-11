@@ -859,3 +859,20 @@ alter table public.club_settings add column last_fixture_update_at timestamptz;
 -- see the balance-history feature.
 alter table public.games add column team_method text check (team_method in ('generated', 'manual'));
 alter table public.games add column team_balance_score int;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Award media (image/video upload on admin-created awards). Images are
+-- compressed client-side before upload; video has a client-side size cap
+-- - both deliberate given the free tier's 1GB total / 50MB per-file
+-- limits. Bucket is public (read) since award media is just celebratory
+-- club content, no sensitivity - write/delete restricted to admins.
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.awards add column image_url text;
+alter table public.awards add column video_url text;
+
+insert into storage.buckets (id, name, public) values ('award-media', 'award-media', true);
+
+create policy "award_media_read" on storage.objects for select using (bucket_id = 'award-media');
+create policy "award_media_admin_insert" on storage.objects for insert with check (bucket_id = 'award-media' and public.is_admin());
+create policy "award_media_admin_delete" on storage.objects for delete using (bucket_id = 'award-media' and public.is_admin());

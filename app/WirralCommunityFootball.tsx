@@ -10,6 +10,11 @@ import { MOTM_VOTE_WINDOW_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey 
 const PAYMENT_LINK = process.env.NEXT_PUBLIC_PAYMENT_LINK || "";
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "";
 const MAX_SPOTS = 16;
+// Free-tier Supabase storage is 1GB total / 50MB per file - images get
+// compressed client-side so dozens of them barely register, video doesn't
+// compress the same way so it gets a hard cap instead, well under the
+// per-file limit and mindful of the total budget.
+const MAX_AWARD_VIDEO_MB = 25;
 
 type Role = "player" | "admin" | "co-owner" | "owner";
 type PayStatus = "unpaid" | "pending" | "confirmed";
@@ -181,6 +186,8 @@ interface AwardRow {
   title: string;
   value: string;
   note: string | null;
+  image_url: string | null;
+  video_url: string | null;
 }
 
 // Picks black or white text so admin-chosen team colours stay readable
@@ -272,6 +279,34 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onload = () => resolve(img);
     img.onerror = reject;
     img.src = src;
+  });
+}
+
+// Resizes+re-encodes a photo (typically a phone camera shot, often several
+// MB) down to something that barely registers against a 1GB storage
+// budget - a few thousand of these would still fit comfortably.
+function compressImage(file: File, maxDim = 1600, quality = 0.82): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      URL.revokeObjectURL(url);
+      if (!ctx) return reject(new Error("Canvas isn't supported on this device"));
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Couldn't process the image"))), "image/jpeg", quality);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Couldn't read that image"));
+    };
+    img.src = url;
   });
 }
 
@@ -765,7 +800,7 @@ function App({ session }: { session: Session }) {
   }, []);
 
   const loadAwards = useCallback(async () => {
-    const { data } = await supabase.from("awards").select("id, title, value, note").order("created_at", { ascending: true });
+    const { data } = await supabase.from("awards").select("id, title, value, note, image_url, video_url").order("created_at", { ascending: true });
     if (data) setAwards(data as AwardRow[]);
   }, []);
 
@@ -1173,14 +1208,51 @@ function App({ session }: { session: Session }) {
     notifySuccess("Club settings saved");
   }
 
-  async function addAward(title: string, value: string, note: string) {
-    const { error } = await supabase.from("awards").insert({ title, value, note: note || null });
+  async function addAward(title: string, value: string, note: string, imageFile: File | null, videoFile: File | null) {
+    let image_url: string | null = null;
+    let video_url: string | null = null;
+
+    if (imageFile) {
+      try {
+        const compressed = await compressImage(imageFile);
+        const path = `${crypto.randomUUID()}.jpg`;
+        const { error: upErr } = await supabase.storage.from("award-media").upload(path, compressed, { contentType: "image/jpeg" });
+        if (upErr) return notifyError(upErr.message);
+        image_url = supabase.storage.from("award-media").getPublicUrl(path).data.publicUrl;
+      } catch (err) {
+        return notifyError(err instanceof Error ? err.message : "Couldn't process the image");
+      }
+    }
+
+    if (videoFile) {
+      if (videoFile.size > MAX_AWARD_VIDEO_MB * 1024 * 1024) {
+        return notifyError(`Video must be under ${MAX_AWARD_VIDEO_MB}MB to keep storage usage reasonable`);
+      }
+      const ext = videoFile.name.split(".").pop() || "mp4";
+      const path = `${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("award-media").upload(path, videoFile, { contentType: videoFile.type || "video/mp4" });
+      if (upErr) return notifyError(upErr.message);
+      video_url = supabase.storage.from("award-media").getPublicUrl(path).data.publicUrl;
+    }
+
+    const { error } = await supabase.from("awards").insert({ title, value, note: note || null, image_url, video_url });
     if (error) return notifyError(error.message);
     await loadAwards();
   }
+  // Storage path is just whatever comes after the bucket name in the
+  // public URL - the same string upload() was originally given.
+  function storagePathFromUrl(url: string, bucket: string) {
+    return url.split(`/${bucket}/`)[1] ?? null;
+  }
   async function deleteAward(id: string) {
+    const award = awards.find((a) => a.id === id);
     const { error } = await supabase.from("awards").delete().eq("id", id);
     if (error) return notifyError(error.message);
+    const paths = [award?.image_url, award?.video_url]
+      .filter((u): u is string => !!u)
+      .map((u) => storagePathFromUrl(u, "award-media"))
+      .filter((p): p is string => !!p);
+    if (paths.length > 0) await supabase.storage.from("award-media").remove(paths);
     await loadAwards();
   }
 
@@ -2816,6 +2888,8 @@ function App({ session }: { session: Session }) {
                   <div key={a.id} className="wcf-shoutout">
                     {a.title} — <strong>{a.value}</strong>
                     {a.note ? ` · ${a.note}` : ""}
+                    {a.image_url && <img className="wcf-award-media" src={a.image_url} alt={a.title} loading="lazy" />}
+                    {a.video_url && <video className="wcf-award-media" src={a.video_url} controls preload="metadata" />}
                   </div>
                 ))}
 
@@ -3392,7 +3466,7 @@ function AccountPanel({
   onAddPlayer: (email: string, displayName: string) => Promise<boolean>;
   onGenerateLoginCode: (email: string) => Promise<string | null>;
   onSaveClubSettings: (patch: Partial<ClubSettings>) => void;
-  onAddAward: (title: string, value: string, note: string) => Promise<void>;
+  onAddAward: (title: string, value: string, note: string, imageFile: File | null, videoFile: File | null) => Promise<void>;
   onDeleteAward: (id: string) => void;
   onSignOut: () => void;
   onEnablePush: () => Promise<boolean>;
@@ -3818,22 +3892,26 @@ function AwardsForm({
   onDelete,
 }: {
   awards: AwardRow[];
-  onAdd: (title: string, value: string, note: string) => Promise<void>;
+  onAdd: (title: string, value: string, note: string, imageFile: File | null, videoFile: File | null) => Promise<void>;
   onDelete: (id: string) => void;
 }) {
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");
   const [note, setNote] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
   const [adding, setAdding] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setAdding(true);
-    await onAdd(title.trim(), value.trim(), note.trim());
+    await onAdd(title.trim(), value.trim(), note.trim(), imageFile, videoFile);
     setAdding(false);
     setTitle("");
     setValue("");
     setNote("");
+    setImageFile(null);
+    setVideoFile(null);
   }
 
   return (
@@ -3842,10 +3920,14 @@ function AwardsForm({
 
       {awards.map((a) => (
         <div key={a.id} className="wcf-award-row">
-          <span>{a.title} — <strong>{a.value}</strong>{a.note ? ` · ${a.note}` : ""}</span>
+          <span>
+            {a.title} — <strong>{a.value}</strong>{a.note ? ` · ${a.note}` : ""}
+            {a.image_url && <span className="wcf-award-media-tag">📷</span>}
+            {a.video_url && <span className="wcf-award-media-tag">🎥</span>}
+          </span>
           <button
             className="wcf-admin-remove"
-            onClick={() => { if (confirm(`Remove "${a.title}"?`)) onDelete(a.id); }}
+            onClick={() => { if (confirm(`Remove "${a.title}"? This also deletes any photo/video attached.`)) onDelete(a.id); }}
             aria-label="Remove award"
           >
             ×
@@ -3866,6 +3948,14 @@ function AwardsForm({
           <label className="wcf-team-field wide">
             Note (optional)
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. voted by the squad" />
+          </label>
+          <label className="wcf-team-field wide">
+            Photo (optional)
+            <input type="file" accept="image/*" onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
+          </label>
+          <label className="wcf-team-field wide">
+            Video (optional, under {MAX_AWARD_VIDEO_MB}MB)
+            <input type="file" accept="video/*" onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)} />
           </label>
         </div>
         <button className="wcf-save" type="submit" disabled={adding || !title.trim() || !value.trim()}>
@@ -4673,6 +4763,8 @@ const css = `
 .wcf-lineup-group-dot{width:7px;height:7px;border-radius:50%}
 
 .wcf-shoutout{background:linear-gradient(135deg,rgba(228,42,54,.16),rgba(51,169,87,.1));border:1px solid rgba(228,42,54,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
+.wcf-award-media{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:10px;margin-top:10px}
+.wcf-award-media-tag{margin-left:6px;font-size:12px;vertical-align:middle}
 .wcf-potm{background:linear-gradient(135deg,rgba(224,167,51,.2),rgba(224,167,51,.06));border-color:rgba(224,167,51,.4)}
 
 .wcf-pot-total{background:linear-gradient(135deg,rgba(51,169,87,.16),rgba(46,116,204,.1));border:1px solid rgba(51,169,87,.35);border-radius:16px;padding:18px;margin-bottom:16px;text-align:center}
