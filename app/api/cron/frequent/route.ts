@@ -159,13 +159,22 @@ export async function GET(req: Request) {
     if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= nowMs) continue; // already past - overdue flow below handles it instead
 
     if (ageDays < 7) {
-      // Day-5 warning - notification only, no delete.
+      // Day-5 warning - notification only, no delete. Also drops a copy
+      // into the in-app inbox (sender_id null - system-generated, not
+      // from a specific admin) so it's still visible with a read receipt
+      // to players who don't have push working, which is exactly the gap
+      // the inbox exists to cover.
       const key = `pre-removal-${b.id}`;
       if (notifiedKeys.has(key)) continue;
       await sendPushToUsers([b.player_id], {
         title: "You'll lose this spot soon ⚠️",
         body: `You'll be removed from ${game.venue} on ${fmtDateLabel(game.date)} in 2 days unless you pay — pay now to keep your spot.`,
         url: "/",
+      });
+      await admin.from("admin_messages").insert({
+        recipient_id: b.player_id,
+        sender_id: null,
+        message: `You're still down as owing £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)}. You'll be removed from the game in 2 days unless you pay — sort it when you get a sec.`,
       });
       await markNotified(key);
       continue;
