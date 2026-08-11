@@ -210,6 +210,15 @@ interface ClipRow {
   submitter: Profile | null;
 }
 
+interface AdminMessage {
+  id: string;
+  recipient_id: string;
+  sender_id: string | null;
+  message: string;
+  created_at: string;
+  read_at: string | null;
+  recipient: { display_name: string } | null;
+}
 
 interface GoalRow {
   id: string;
@@ -228,6 +237,10 @@ function toMs(pseudoUtc: string) {
 
 function fmtDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+function fmtDateTime(iso: string) {
+  return new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 // Open-Meteo's WMO weather codes, collapsed to one emoji each. Deliberately
@@ -663,6 +676,7 @@ function App({ session }: { session: Session }) {
   const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
   const [clubSettings, setClubSettings] = useState<ClubSettings | null>(null);
   const [awards, setAwards] = useState<AwardRow[]>([]);
+  const [adminMessages, setAdminMessages] = useState<AdminMessage[]>([]);
   const [potEntries, setPotEntries] = useState<PotEntry[]>([]);
   const [motmVotes, setMotmVotes] = useState<MotmVote[]>([]);
   const [feedReactions, setFeedReactions] = useState<FeedReaction[]>([]);
@@ -804,6 +818,17 @@ function App({ session }: { session: Session }) {
     if (data) setAwards(data as AwardRow[]);
   }, []);
 
+  // RLS scopes the result: a player only ever gets their own messages,
+  // an admin gets everything - so this one query serves both the
+  // player inbox view and the admin sent-log view.
+  const loadAdminMessages = useCallback(async () => {
+    const { data } = await supabase
+      .from("admin_messages")
+      .select("id, recipient_id, sender_id, message, created_at, read_at, recipient:profiles!admin_messages_recipient_id_fkey(display_name)")
+      .order("created_at", { ascending: false });
+    if (data) setAdminMessages(data as unknown as AdminMessage[]);
+  }, []);
+
   const loadPotEntries = useCallback(async () => {
     const { data } = await supabase.from("pot_entries").select("id, amount, description, category, created_at").order("created_at", { ascending: false });
     if (data) setPotEntries(data as PotEntry[]);
@@ -869,6 +894,7 @@ function App({ session }: { session: Session }) {
         loadHiddenFeedItems(),
         loadSelfRatings(),
         loadAdminRatings(),
+        loadAdminMessages(),
       ]),
     [
       loadProfile,
@@ -884,6 +910,7 @@ function App({ session }: { session: Session }) {
       loadHiddenFeedItems,
       loadSelfRatings,
       loadAdminRatings,
+      loadAdminMessages,
     ]
   );
 
@@ -1028,6 +1055,25 @@ function App({ session }: { session: Session }) {
     notifySuccess("Rating saved");
     logAction("Rated player", profiles.find((p) => p.id === playerId)?.display_name ?? "someone");
     await loadAdminRatings();
+  }
+
+  async function sendAdminMessage(recipientId: string, message: string) {
+    const { data, error } = await supabase
+      .from("admin_messages")
+      .insert({ recipient_id: recipientId, sender_id: myId, message })
+      .select("id")
+      .single();
+    if (error) return notifyError(error.message);
+    await loadAdminMessages();
+    logAction("Sent message", profiles.find((p) => p.id === recipientId)?.display_name ?? "someone");
+    if (data) await pushNotify("notify-admin-message", { messageId: data.id });
+    notifySuccess("Message sent");
+  }
+
+  async function markMessageRead(id: string) {
+    const { error } = await supabase.from("admin_messages").update({ read_at: new Date().toISOString() }).eq("id", id);
+    if (error) return notifyError(error.message);
+    await loadAdminMessages();
   }
 
   async function enablePush() {
@@ -1674,6 +1720,11 @@ function App({ session }: { session: Session }) {
     [pastGames, myId]
   );
   const iAmOverdue = myOverdueBookings.length > 0;
+
+  const myUnreadMessages = useMemo(
+    () => adminMessages.filter((m) => m.recipient_id === myId && !m.read_at),
+    [adminMessages, myId]
+  );
 
   // Same "is push actually working on this device" derivation used in
   // AccountPanel - the DB flag alone isn't enough proof (see the toggle
@@ -2367,6 +2418,7 @@ function App({ session }: { session: Session }) {
         >
           <span className="dot" />
           {myProfile.display_name}
+          {myUnreadMessages.length > 0 && <span className="wcf-role-unread">{myUnreadMessages.length}</span>}
         </button>
       </header>
 
@@ -2470,6 +2522,8 @@ function App({ session }: { session: Session }) {
             onSaveResult={saveResult}
             onAddBooking={addBooking}
             onGoToLineup={() => { setTab("lineup"); setLineupView("fairness"); }}
+            messages={adminMessages}
+            onSendMessage={sendAdminMessage}
           />
         )}
 
@@ -3334,6 +3388,8 @@ function App({ session }: { session: Session }) {
             ratingPlayerId={ratingPlayerId}
             onToggleRatingPlayer={(id) => setRatingPlayerId((cur) => (cur === id ? null : id))}
             myRecord={myRecord}
+            messages={adminMessages}
+            onMarkMessageRead={markMessageRead}
           />
         )}
       </main>
@@ -3442,6 +3498,8 @@ function AccountPanel({
   ratingPlayerId,
   onToggleRatingPlayer,
   myRecord,
+  messages,
+  onMarkMessageRead,
 }: {
   profile: Profile;
   email: string;
@@ -3473,8 +3531,12 @@ function AccountPanel({
   onEnablePush: () => Promise<boolean>;
   onDisablePush: () => Promise<void>;
   onSendTestPush: () => Promise<void>;
+  messages: AdminMessage[];
+  onMarkMessageRead: (id: string) => void;
 }) {
   const [name, setName] = useState(profile.display_name);
+  const myMessages = messages.filter((m) => m.recipient_id === profile.id);
+  const unreadMessages = myMessages.filter((m) => !m.read_at);
   const [showRoles, setShowRoles] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [openGuide, setOpenGuide] = useState<"install" | "notifications" | null>(null);
@@ -3497,6 +3559,26 @@ function AccountPanel({
         </div>
         <span className={"wcf-role-badge " + profile.role}>{ROLE_LABEL[profile.role]}</span>
       </div>
+
+      {myMessages.length > 0 && (
+        <div className="wcf-inbox">
+          <div className="wcf-inbox-head">
+            <h4>✉️ Messages</h4>
+            {unreadMessages.length > 0 && <span className="wcf-inbox-unread-pill">{unreadMessages.length}</span>}
+          </div>
+          {myMessages.map((m) => (
+            <div key={m.id} className={"wcf-msg-card " + (m.read_at ? "" : "unread")}>
+              <div className="wcf-msg-from">From an admin · {fmtDateTime(m.created_at)}</div>
+              <div className="wcf-msg-text">{m.message}</div>
+              {m.read_at ? (
+                <p className="wcf-msg-read-note">Marked as read</p>
+              ) : (
+                <button className="wcf-msg-ack" onClick={() => onMarkMessageRead(m.id)}>Got it 👍 Mark as read</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       <label className="wcf-account-field">
         Display name
@@ -3982,6 +4064,8 @@ function AdminConsole({
   onSaveResult,
   onAddBooking,
   onGoToLineup,
+  messages,
+  onSendMessage,
 }: {
   upcoming: GameRow[];
   previous: GameRow[];
@@ -3997,6 +4081,8 @@ function AdminConsole({
   onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onGoToLineup: () => void;
+  messages: AdminMessage[];
+  onSendMessage: (recipientId: string, message: string) => Promise<void>;
 }) {
   const shared = { goalRows, cs, profiles, expandedId, onToggleExpand, onSetStatus, onRemoveBooking, onDeleteGame, onSaveResult, onAddBooking };
 
@@ -4015,6 +4101,24 @@ function AdminConsole({
 
   const namesList = (items: string[], max = 3) =>
     items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} +${items.length - max} more`;
+
+  const [composeTo, setComposeTo] = useState("");
+  const [composeText, setComposeText] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
+
+  function startMessage(playerId: string, template: string) {
+    setComposeTo(playerId);
+    setComposeText(template);
+  }
+
+  async function sendMessage() {
+    if (!composeTo || !composeText.trim()) return;
+    setSendingMessage(true);
+    await onSendMessage(composeTo, composeText.trim());
+    setSendingMessage(false);
+    setComposeTo("");
+    setComposeText("");
+  }
 
   return (
     <>
@@ -4053,6 +4157,42 @@ function AdminConsole({
         </button>
       </div>
 
+      <h3 className="wcf-admin-section-head">✉️ Messages</h3>
+      <div className="wcf-msg-compose">
+        <select value={composeTo} onChange={(e) => setComposeTo(e.target.value)}>
+          <option value="">Choose a player…</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>{p.display_name}</option>
+          ))}
+        </select>
+        <textarea
+          className="wcf-msg-compose-box"
+          placeholder="Write a message…"
+          value={composeText}
+          onChange={(e) => setComposeText(e.target.value)}
+        />
+        <button className="wcf-msg-compose-send" disabled={!composeTo || !composeText.trim() || sendingMessage} onClick={sendMessage}>
+          {sendingMessage ? "Sending…" : "Send & notify"}
+        </button>
+      </div>
+      {messages.length > 0 && (
+        <div className="wcf-msg-log">
+          <h4>Sent messages</h4>
+          {messages.map((m) => (
+            <div key={m.id} className="wcf-msg-log-row">
+              <span className="wcf-avatar">{(m.recipient?.display_name ?? "?")[0]?.toUpperCase()}</span>
+              <div className="wcf-msg-log-body">
+                <div className="wcf-msg-log-name">{m.recipient?.display_name ?? "Unknown"}</div>
+                <div className="wcf-msg-log-text">{m.message}</div>
+              </div>
+              <span className={"wcf-msg-log-status " + (m.read_at ? "read" : "unread")}>
+                {m.read_at ? `Read · ${fmtDateTime(m.read_at)}` : "Unread"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <h3 className="wcf-admin-section-head">⚠️ Overdue</h3>
       {overdue.length === 0 && <p className="wcf-empty small">Nothing overdue — everyone's paid up.</p>}
       {overdue.map(({ booking: b, game: g }) => (
@@ -4066,6 +4206,18 @@ function AdminConsole({
             <StatusBadge status={b.status} />
             <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Approve</button>
           </div>
+          <button
+            className="wcf-admin-message-btn"
+            onClick={() =>
+              startMessage(
+                b.player_id,
+                `Hey ${b.player.display_name.split(" ")[0]} — you're still down as owing £${g.price} for the ${g.venue} game on ${fmtDate(g.date)}. Can you sort it when you get a sec?`
+              )
+            }
+            aria-label="Message about payment"
+          >
+            ✉️
+          </button>
           <button
             className="wcf-admin-remove"
             onClick={() => { if (confirm(`Remove ${b.player.display_name} from this game?`)) onRemoveBooking(b.id); }}
@@ -4705,6 +4857,23 @@ const css = `
 .wcf-admin-goals span{width:16px;text-align:center}
 .wcf-admin-remove{background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;line-height:1;padding:0 2px}
 .wcf-admin-remove:hover{color:var(--red-hi)}
+.wcf-admin-message-btn{background:none;border:none;color:var(--dim);font-size:15px;cursor:pointer;line-height:1;padding:0 2px}
+.wcf-admin-message-btn:hover{color:var(--blue)}
+.wcf-msg-compose{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 13px;margin-bottom:12px;display:flex;flex-direction:column;gap:9px}
+.wcf-msg-compose select{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:12.5px;font-family:var(--sans)}
+.wcf-msg-compose-box{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;color:var(--white);font-size:13px;font-family:var(--sans);min-height:64px;resize:vertical}
+.wcf-msg-compose-send{background:var(--red);color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer}
+.wcf-msg-compose-send:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
+.wcf-msg-log{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:4px 13px 2px;margin-bottom:14px}
+.wcf-msg-log h4{margin:10px 0 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.wcf-msg-log-row{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.wcf-msg-log-row:last-child{border-bottom:none}
+.wcf-msg-log-body{flex:1;min-width:0}
+.wcf-msg-log-name{font-size:12.5px;font-weight:700}
+.wcf-msg-log-text{font-size:11.5px;color:var(--dim);margin-top:1px;line-height:1.4}
+.wcf-msg-log-status{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;padding:3px 8px;border-radius:20px;flex:0 0 auto;white-space:nowrap}
+.wcf-msg-log-status.read{background:rgba(51,169,87,.16);color:var(--green)}
+.wcf-msg-log-status.unread{background:rgba(224,167,51,.16);color:var(--amber)}
 .wcf-admin-delete-game{width:100%;background:transparent;border:1px dashed rgba(228,42,54,.4);color:var(--red-hi);padding:10px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer;margin-top:10px}
 .wcf-admin-game-body > .wcf-save{width:100%;margin:12px 0}
 .wcf-admin-game-body > .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
@@ -4955,6 +5124,18 @@ const css = `
 .wcf-role-badge.co-owner{color:var(--blue);border:1px solid rgba(46,116,204,.4)}
 .wcf-role-badge.owner{color:var(--red-hi);border:1px solid rgba(228,42,54,.4)}
 .wcf-role-badge.small{margin-left:4px;padding:2px 7px;font-size:9px}
+.wcf-inbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 13px}
+.wcf-inbox-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.wcf-inbox-head h4{margin:0;font-size:13px;font-weight:800}
+.wcf-inbox-unread-pill{background:var(--red);color:#fff;font-family:var(--mono);font-weight:800;font-size:11px;padding:2px 9px;border-radius:20px}
+.wcf-msg-card{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 13px}
+.wcf-msg-card + .wcf-msg-card{margin-top:9px}
+.wcf-msg-card.unread{border-color:rgba(228,42,54,.4);background:linear-gradient(135deg,rgba(228,42,54,.1),var(--bg))}
+.wcf-msg-from{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
+.wcf-msg-text{font-size:13.5px;line-height:1.5;margin:6px 0 10px;color:var(--white)}
+.wcf-msg-ack{width:100%;background:var(--green);color:#04140a;border:none;padding:10px;border-radius:9px;font-weight:800;font-size:12.5px;cursor:pointer}
+.wcf-msg-read-note{font-size:11px;color:var(--dim);text-align:center;margin:0}
+.wcf-role-unread{background:var(--red);color:#fff;font-family:var(--mono);font-weight:800;font-size:10px;padding:1px 6px;border-radius:20px;flex:0 0 auto}
 .wcf-account-field{display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-account-rename{display:flex;gap:8px}
 .wcf-account-rename input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:10px;border-radius:9px;font-size:13px;font-family:var(--sans);text-transform:none}

@@ -876,3 +876,27 @@ insert into storage.buckets (id, name, public) values ('award-media', 'award-med
 create policy "award_media_read" on storage.objects for select using (bucket_id = 'award-media');
 create policy "award_media_admin_insert" on storage.objects for insert with check (bucket_id = 'award-media' and public.is_admin());
 create policy "award_media_admin_delete" on storage.objects for delete using (bucket_id = 'award-media' and public.is_admin());
+
+-- ─────────────────────────────────────────────────────────────────
+-- Direct message inbox. One-way admin -> player nudges (payment
+-- reminders etc) for players who joined online and aren't reachable
+-- via the club WhatsApp group. Deliberately not a chat - recipients
+-- can only read + mark their own rows read, never insert or reply.
+-- ─────────────────────────────────────────────────────────────────
+
+create table public.admin_messages (
+  id uuid primary key default gen_random_uuid(),
+  recipient_id uuid not null references public.profiles(id) on delete cascade,
+  sender_id uuid references public.profiles(id) on delete set null,
+  message text not null,
+  created_at timestamptz not null default now(),
+  read_at timestamptz
+);
+
+alter table public.admin_messages enable row level security;
+
+create policy "admin_messages_select" on public.admin_messages for select using (recipient_id = auth.uid() or public.is_admin());
+create policy "admin_messages_insert_admin" on public.admin_messages for insert with check (public.is_admin());
+create policy "admin_messages_update_own_read" on public.admin_messages for update
+  using (recipient_id = auth.uid())
+  with check (recipient_id = auth.uid());
