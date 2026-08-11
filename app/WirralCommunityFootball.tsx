@@ -4106,6 +4106,18 @@ function AdminConsole({
   const [composeText, setComposeText] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
 
+  // Unread ones always show regardless of age - they're the ones that
+  // actually need attention. Read ones older than this fall behind
+  // "Show older" so the log doesn't just grow forever as more reminders
+  // go out week over week.
+  const RECENT_MESSAGE_DAYS = 30;
+  const [showOlderMessages, setShowOlderMessages] = useState(false);
+  const messageCutoff = Date.now() - RECENT_MESSAGE_DAYS * 24 * 60 * 60 * 1000;
+  const visibleMessages = showOlderMessages
+    ? messages
+    : messages.filter((m) => !m.read_at || new Date(m.created_at).getTime() >= messageCutoff);
+  const olderMessageCount = messages.length - visibleMessages.length;
+
   function startMessage(playerId: string, template: string) {
     setComposeTo(playerId);
     setComposeText(template);
@@ -4178,7 +4190,7 @@ function AdminConsole({
       {messages.length > 0 && (
         <div className="wcf-msg-log">
           <h4>Sent messages</h4>
-          {messages.map((m) => (
+          {visibleMessages.map((m) => (
             <div key={m.id} className="wcf-msg-log-row">
               <span className="wcf-avatar">{(m.recipient?.display_name ?? "?")[0]?.toUpperCase()}</span>
               <div className="wcf-msg-log-body">
@@ -4190,6 +4202,11 @@ function AdminConsole({
               </span>
             </div>
           ))}
+          {!showOlderMessages && olderMessageCount > 0 && (
+            <button className="wcf-msg-log-more" onClick={() => setShowOlderMessages(true)}>
+              Show {olderMessageCount} older
+            </button>
+          )}
         </div>
       )}
 
@@ -4874,6 +4891,8 @@ const css = `
 .wcf-msg-log-status{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;padding:3px 8px;border-radius:20px;flex:0 0 auto;white-space:nowrap}
 .wcf-msg-log-status.read{background:rgba(51,169,87,.16);color:var(--green)}
 .wcf-msg-log-status.unread{background:rgba(224,167,51,.16);color:var(--amber)}
+.wcf-msg-log-more{width:100%;background:none;border:none;color:var(--dim);font-size:11.5px;font-weight:700;padding:10px 0;cursor:pointer;text-align:center}
+.wcf-msg-log-more:hover{color:var(--white)}
 .wcf-admin-delete-game{width:100%;background:transparent;border:1px dashed rgba(228,42,54,.4);color:var(--red-hi);padding:10px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer;margin-top:10px}
 .wcf-admin-game-body > .wcf-save{width:100%;margin:12px 0}
 .wcf-admin-game-body > .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
