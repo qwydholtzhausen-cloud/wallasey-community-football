@@ -294,5 +294,31 @@ export async function GET(req: Request) {
     await markNotified(key);
   }
 
+  // --- Welcome message for new players, via inbox + push ---
+  // Not time-window-gated like the reminders above - fires the first
+  // frequent-cron run after a profile exists, whether it came from
+  // self-signup or an admin-invited add. Goes through the inbox (not
+  // just a push) since this is exactly the audience the inbox was
+  // built for: people who joined online with no other channel to reach
+  // them, who'd otherwise get no orientation to the club at all.
+  const { data: allProfiles } = await admin.from("profiles").select("id, display_name");
+  for (const p of allProfiles ?? []) {
+    const key = `welcome-${p.id}`;
+    if (notifiedKeys.has(key)) continue;
+
+    const firstName = p.display_name.split(" ")[0];
+    await admin.from("admin_messages").insert({
+      recipient_id: p.id,
+      sender_id: null,
+      message: `Welcome to Wirral Community Football, ${firstName}! 👋 Head to Fixtures to browse upcoming games and grab a spot — payment details show up once you're booked. Worth turning on notifications in Account too, so you don't miss spots opening up or payment reminders. See you on the pitch!`,
+    });
+    await sendPushToUsers([p.id], {
+      title: "Welcome to the club! ⚽",
+      body: "Head to Fixtures to grab a spot on the next game.",
+      url: "/",
+    });
+    await markNotified(key);
+  }
+
   return NextResponse.json({ ok: true });
 }
