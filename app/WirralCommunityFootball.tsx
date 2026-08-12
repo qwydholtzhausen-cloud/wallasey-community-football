@@ -698,6 +698,7 @@ function App({ session }: { session: Session }) {
   const [selfRatings, setSelfRatings] = useState<PlayerRating[]>([]);
   const [adminRatings, setAdminRatings] = useState<PlayerRating[]>([]);
   const [lineupView, setLineupView] = useState<"sheet" | "fairness" | "predict">("sheet");
+  const [predictView, setPredictView] = useState<string>("season");
   const [suggestedTeams, setSuggestedTeams] = useState<{ white: string[]; red: string[] } | null>(null);
   const [ratingPlayerId, setRatingPlayerId] = useState<string | null>(null);
   const [showAuditLog, setShowAuditLog] = useState(false);
@@ -2383,20 +2384,15 @@ function App({ session }: { session: Session }) {
     [scoredPredictionInputs, currentSeasonYear]
   );
 
-  // Same "reveal once the month's fully over" cadence as Player of the
-  // Month above, reusing the same previousMonthKey helper - the free-game
-  // prize is for a *completed* month, not a running mid-month lead that
-  // could still change.
-  const predictionMonthlyWinner = useMemo(() => {
-    const monthKey = previousMonthKey(nowUk);
-    const monthly = buildMonthlyLeaderboards(scoredPredictionInputs.filter((p) => p.gameDate.slice(0, 7) === monthKey));
-    const leaders = topScorers(monthly[monthKey] ?? []);
-    if (leaders.length === 0) return null;
-    return {
-      monthLabel: new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
-      leaders,
-    };
-  }, [scoredPredictionInputs, nowUk]);
+  // Every month that's ever had a scored prediction, not just the most
+  // recently completed one - lets an admin browse back rather than only
+  // ever seeing whoever won last month.
+  const predictionMonthlyLeaderboards = useMemo(() => buildMonthlyLeaderboards(scoredPredictionInputs), [scoredPredictionInputs]);
+  const predictionMonths = useMemo(
+    () => Object.keys(predictionMonthlyLeaderboards).sort((a, b) => b.localeCompare(a)),
+    [predictionMonthlyLeaderboards]
+  );
+  const currentMonthKey = nowUk.slice(0, 7);
 
   const resultsMonths = useMemo(() => {
     const set = new Set<string>();
@@ -3077,34 +3073,62 @@ function App({ session }: { session: Session }) {
 
             {lineupView === "predict" && (
               <>
-                {predictionMonthlyWinner && (
-                  <div className="wcf-shoutout wcf-potm">
-                    🏆 {predictionMonthlyWinner.monthLabel} winner —{" "}
-                    <strong>{predictionMonthlyWinner.leaders.map((l) => l.playerName).join(" & ")}</strong>: free game this month!
-                  </div>
-                )}
-                <div className="wcf-lb-prize">🏆 Top 3 at the end of the season win prizes from the pot.</div>
-                <div className="wcf-lb-key">3 pts exact score · 1 pt correct result · booked players only</div>
-                {predictionSeasonLeaderboard.length === 0 && <p className="wcf-empty">No predictions scored yet this season.</p>}
-                {predictionSeasonLeaderboard.length > 0 && (
-                  <div className="wcf-lb">
-                    {predictionSeasonLeaderboard.map((row, i) => {
-                      const inPrizes = i < 3 && row.points > 0;
-                      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
-                      return (
-                        <div key={row.playerId} className={"wcf-lb-row" + (row.playerId === myId ? " me" : "")}>
-                          <span className={"wcf-lb-rank" + (inPrizes ? " top" : "")}>{inPrizes ? medal : i + 1}</span>
-                          <span className="wcf-avatar">{row.playerName[0]?.toUpperCase()}</span>
-                          <div className="wcf-lb-body">
-                            <div className="wcf-lb-name">{row.playerName}{row.playerId === myId ? " (you)" : ""}</div>
-                            <div className="wcf-lb-sub">{row.exactCount} exact score{row.exactCount === 1 ? "" : "s"}</div>
-                          </div>
-                          <span className="wcf-lb-pts">{row.points}</span>
+                <select className="wcf-month-filter" value={predictView} onChange={(e) => setPredictView(e.target.value)}>
+                  <option value="season">Overall (this season)</option>
+                  {predictionMonths.map((m) => (
+                    <option key={m} value={m}>
+                      {new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
+                    </option>
+                  ))}
+                </select>
+
+                {(() => {
+                  const isSeason = predictView === "season";
+                  const board = isSeason ? predictionSeasonLeaderboard : predictionMonthlyLeaderboards[predictView] ?? [];
+                  const isCurrentMonth = !isSeason && predictView === currentMonthKey;
+                  // The free-game prize is for a *completed* month, not a
+                  // running mid-month lead that could still change - same
+                  // "reveal once it's over" cadence as Player of the Month.
+                  const leaders = !isSeason && !isCurrentMonth ? topScorers(board) : [];
+                  const monthLabel = !isSeason
+                    ? new Date(predictView + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })
+                    : "";
+
+                  return (
+                    <>
+                      {isSeason && <div className="wcf-lb-prize">🏆 Top 3 at the end of the season win prizes from the pot.</div>}
+                      {!isSeason && isCurrentMonth && (
+                        <div className="wcf-lb-prize">🏃 {monthLabel} is still in progress — standings so far, not final.</div>
+                      )}
+                      {!isSeason && !isCurrentMonth && leaders.length > 0 && (
+                        <div className="wcf-shoutout wcf-potm">
+                          🏆 {monthLabel} winner — <strong>{leaders.map((l) => l.playerName).join(" & ")}</strong>: free game this month!
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                      )}
+                      <div className="wcf-lb-key">3 pts exact score · 1 pt correct result · booked players only</div>
+                      {board.length === 0 && <p className="wcf-empty">No predictions scored yet {isSeason ? "this season" : "this month"}.</p>}
+                      {board.length > 0 && (
+                        <div className="wcf-lb">
+                          {board.map((row, i) => {
+                            const inPrizes = isSeason && i < 3 && row.points > 0;
+                            const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
+                            return (
+                              <div key={row.playerId} className={"wcf-lb-row" + (row.playerId === myId ? " me" : "")}>
+                                <span className={"wcf-lb-rank" + (inPrizes ? " top" : "")}>{inPrizes ? medal : i + 1}</span>
+                                <span className="wcf-avatar">{row.playerName[0]?.toUpperCase()}</span>
+                                <div className="wcf-lb-body">
+                                  <div className="wcf-lb-name">{row.playerName}{row.playerId === myId ? " (you)" : ""}</div>
+                                  <div className="wcf-lb-sub">{row.exactCount} exact score{row.exactCount === 1 ? "" : "s"}</div>
+                                </div>
+                                <span className="wcf-lb-pts">{row.points}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </>
             )}
           </>
