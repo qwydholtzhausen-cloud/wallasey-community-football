@@ -1895,7 +1895,7 @@ function App({ session }: { session: Session }) {
       if (g.team_white_score == null || g.team_red_score == null) continue;
       items.push({
         key: `game-${g.id}-fulltime`,
-        ts: new Date(kickoffCutoff(g.date, g.kickoff, 90)).getTime(),
+        ts: toMs(kickoffCutoff(g.date, g.kickoff, 90)),
         kind: "derived",
         icon: "⚽",
         tone: "blue",
@@ -1919,7 +1919,7 @@ function App({ session }: { session: Session }) {
         if (winner) {
           items.push({
             key: `motm-${g.id}`,
-            ts: new Date(kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES)).getTime(),
+            ts: toMs(kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES)),
             kind: "derived",
             icon: "🏆",
             tone: "amber",
@@ -1942,7 +1942,7 @@ function App({ session }: { session: Session }) {
       for (let t = Math.floor(before / 50 + 1) * 50; t > before && t <= running; t += 50) {
         items.push({
           key: `pot-${t}`,
-          ts: new Date(e.date + "T12:00:00").getTime(),
+          ts: toMs(e.date + "T12:00"),
           kind: "derived",
           icon: "💰",
           tone: "green",
@@ -1982,7 +1982,7 @@ function App({ session }: { session: Session }) {
         if (count % 5 === 0) {
           items.push({
             key: `apps-${b.player_id}-${count}`,
-            ts: new Date(kickoffCutoff(g.date, g.kickoff, 90)).getTime(),
+            ts: toMs(kickoffCutoff(g.date, g.kickoff, 90)),
             kind: "derived",
             icon: "🎖️",
             tone: "amber",
@@ -2444,16 +2444,26 @@ function App({ session }: { session: Session }) {
   }, [myId]);
   useEffect(() => {
     if (tab !== "feed" && tab !== "results" && tab !== "lineup") return;
-    const now = Date.now();
+    // toMs(nowUk), not Date.now() - the events being compared against
+    // (kickoffCutoff-derived timestamps below) live on the app's
+    // "pretend UTC" wall-clock axis, not real epoch time. Comparing a
+    // real Date.now() against a pretend-axis value could read as
+    // permanently in the future during BST, leaving the dot stuck lit -
+    // this keeps everything on the same axis.
+    const now = toMs(nowUk);
     localStorage.setItem(`wcf-lastseen-${tab}-${myId}`, String(now));
     setLastSeen((s) => ({ ...s, [tab]: now }));
-  }, [tab, myId]);
+  }, [tab, myId, nowUk]);
 
   const latestFeedTs = feedItems.reduce((max, item) => Math.max(max, item.ts), 0);
   // Games don't store a "scored at" moment, so the finished-cutoff (same
   // kickoff+90min line used everywhere else to mean "this game is over")
   // stands in as a close-enough proxy for "when this result became real."
   const latestResultsTs = scoredPastGames[0] ? toMs(kickoffCutoff(scoredPastGames[0].date, scoredPastGames[0].kickoff, 90)) : 0;
+  // team_set_at is a real Postgres timestamptz (true epoch, unlike the
+  // pretend-axis values above) - comparing it against a pretend-axis
+  // lastSeen is safe in the "clears a little early" direction (at most
+  // an hour, BST vs GMT), never the "stuck" direction.
   const latestLineupTs = nextGame?.team_set_at ? new Date(nextGame.team_set_at).getTime() : 0;
   const hasNew: Record<string, boolean> = {
     fixtures: false,
