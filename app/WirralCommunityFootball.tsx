@@ -3060,6 +3060,16 @@ function App({ session }: { session: Session }) {
                     onSave={savePrediction}
                   />
                 )}
+                {!editingLineup && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && nextConfirmed.length > 0 && (
+                  <div className="wcf-predict">
+                    <div className="wcf-predict-gate">
+                      <div className="wcf-predict-gate-icon">🔮</div>
+                      <div className="wcf-predict-gate-text">
+                        <b>Predictions open once teams are posted</b> for this game — check back here nearer kickoff.
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
               </>
@@ -3073,22 +3083,26 @@ function App({ session }: { session: Session }) {
                     <strong>{predictionMonthlyWinner.leaders.map((l) => l.playerName).join(" & ")}</strong>: free game this month!
                   </div>
                 )}
-                <div className="wcf-lb-prize">🏆 Top of the table at the end of the season wins a prize from the pot.</div>
+                <div className="wcf-lb-prize">🏆 Top 3 at the end of the season win prizes from the pot.</div>
                 <div className="wcf-lb-key">3 pts exact score · 1 pt correct result · booked players only</div>
                 {predictionSeasonLeaderboard.length === 0 && <p className="wcf-empty">No predictions scored yet this season.</p>}
                 {predictionSeasonLeaderboard.length > 0 && (
                   <div className="wcf-lb">
-                    {predictionSeasonLeaderboard.map((row, i) => (
-                      <div key={row.playerId} className={"wcf-lb-row" + (row.playerId === myId ? " me" : "")}>
-                        <span className={"wcf-lb-rank" + (i < 3 && row.points > 0 ? " top" : "")}>{i + 1}</span>
-                        <span className="wcf-avatar">{row.playerName[0]?.toUpperCase()}</span>
-                        <div className="wcf-lb-body">
-                          <div className="wcf-lb-name">{row.playerName}{row.playerId === myId ? " (you)" : ""}</div>
-                          <div className="wcf-lb-sub">{row.exactCount} exact score{row.exactCount === 1 ? "" : "s"}</div>
+                    {predictionSeasonLeaderboard.map((row, i) => {
+                      const inPrizes = i < 3 && row.points > 0;
+                      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
+                      return (
+                        <div key={row.playerId} className={"wcf-lb-row" + (row.playerId === myId ? " me" : "")}>
+                          <span className={"wcf-lb-rank" + (inPrizes ? " top" : "")}>{inPrizes ? medal : i + 1}</span>
+                          <span className="wcf-avatar">{row.playerName[0]?.toUpperCase()}</span>
+                          <div className="wcf-lb-body">
+                            <div className="wcf-lb-name">{row.playerName}{row.playerId === myId ? " (you)" : ""}</div>
+                            <div className="wcf-lb-sub">{row.exactCount} exact score{row.exactCount === 1 ? "" : "s"}</div>
+                          </div>
+                          <span className="wcf-lb-pts">{row.points}</span>
                         </div>
-                        <span className="wcf-lb-pts">{row.points}</span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </>
@@ -4363,7 +4377,7 @@ function PredictPanel({
         <span className="wcf-predict-sub">Closes at kickoff</span>
       </div>
       <p className="wcf-predict-prize">
-        Now you know the sides — guess the final score. Top of the season leaderboard wins a prize from the pot; each calendar month&apos;s winner gets a free game.
+        Now you know the sides — guess the final score. Top 3 on the season leaderboard win prizes from the pot; each calendar month&apos;s winner gets a free game.
       </p>
       <div className="wcf-predict-score">
         <div className="wcf-predict-team">
