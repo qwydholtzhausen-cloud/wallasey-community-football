@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
 import { MOTM_VOTE_WINDOW_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey } from "../lib/time";
+import { predictionPoints, buildLeaderboard, buildMonthlyLeaderboards, topScorers, type ScoredPrediction } from "../lib/predictions";
 
 // The payment link is just config, not baked into booking logic (statuses
 // below), so swapping providers later only touches this one env var.
@@ -152,6 +153,15 @@ interface FeedReaction {
   item_key: string;
   emoji: string;
   user_id: string;
+}
+
+interface ScorePrediction {
+  id: string;
+  game_id: string;
+  player_id: string;
+  predicted_white: number;
+  predicted_red: number;
+  player: { display_name: string } | null;
 }
 
 interface AuditLogEntry {
@@ -679,6 +689,7 @@ function App({ session }: { session: Session }) {
   const [adminMessages, setAdminMessages] = useState<AdminMessage[]>([]);
   const [potEntries, setPotEntries] = useState<PotEntry[]>([]);
   const [motmVotes, setMotmVotes] = useState<MotmVote[]>([]);
+  const [scorePredictions, setScorePredictions] = useState<ScorePrediction[]>([]);
   const [feedReactions, setFeedReactions] = useState<FeedReaction[]>([]);
   const [hiddenFeedKeys, setHiddenFeedKeys] = useState<string[]>([]);
   const [showArchived, setShowArchived] = useState(false);
@@ -686,7 +697,7 @@ function App({ session }: { session: Session }) {
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
   const [selfRatings, setSelfRatings] = useState<PlayerRating[]>([]);
   const [adminRatings, setAdminRatings] = useState<PlayerRating[]>([]);
-  const [lineupView, setLineupView] = useState<"sheet" | "fairness">("sheet");
+  const [lineupView, setLineupView] = useState<"sheet" | "fairness" | "predict">("sheet");
   const [suggestedTeams, setSuggestedTeams] = useState<{ white: string[]; red: string[] } | null>(null);
   const [ratingPlayerId, setRatingPlayerId] = useState<string | null>(null);
   const [showAuditLog, setShowAuditLog] = useState(false);
@@ -855,6 +866,13 @@ function App({ session }: { session: Session }) {
     if (data) setMotmVotes(data as MotmVote[]);
   }, []);
 
+  const loadScorePredictions = useCallback(async () => {
+    const { data } = await supabase
+      .from("score_predictions")
+      .select("id, game_id, player_id, predicted_white, predicted_red, player:profiles!score_predictions_player_id_fkey(display_name)");
+    if (data) setScorePredictions(data as unknown as ScorePrediction[]);
+  }, []);
+
   const loadFeedReactions = useCallback(async () => {
     const { data } = await supabase.from("feed_reactions").select("id, item_key, emoji, user_id");
     if (data) setFeedReactions(data as FeedReaction[]);
@@ -906,6 +924,7 @@ function App({ session }: { session: Session }) {
         loadAwards(),
         loadPotEntries(),
         loadMotmVotes(),
+        loadScorePredictions(),
         loadFeedReactions(),
         loadHiddenFeedItems(),
         loadSelfRatings(),
@@ -922,6 +941,7 @@ function App({ session }: { session: Session }) {
       loadAwards,
       loadPotEntries,
       loadMotmVotes,
+      loadScorePredictions,
       loadFeedReactions,
       loadHiddenFeedItems,
       loadSelfRatings,
@@ -1335,6 +1355,21 @@ function App({ session }: { session: Session }) {
       .upsert({ game_id: gameId, voter_id: myId, candidate_id: candidateId }, { onConflict: "game_id,voter_id" });
     if (error) return notifyError(error.message);
     await loadMotmVotes();
+  }
+
+  // RLS enforces the real rules (booked on this game, before kickoff) -
+  // this just surfaces whatever it rejects rather than re-deriving them
+  // client-side and risking the two definitions drifting apart.
+  async function savePrediction(gameId: string, predictedWhite: number, predictedRed: number) {
+    const { error } = await supabase
+      .from("score_predictions")
+      .upsert(
+        { game_id: gameId, player_id: myId, predicted_white: predictedWhite, predicted_red: predictedRed, updated_at: new Date().toISOString() },
+        { onConflict: "game_id,player_id" }
+      );
+    if (error) return notifyError(error.message);
+    notifySuccess("Prediction locked in");
+    await loadScorePredictions();
   }
 
   async function toggleReaction(itemKey: string, emoji: string) {
@@ -2320,6 +2355,49 @@ function App({ session }: { session: Session }) {
     [pastGames]
   );
 
+  // Flattens every prediction on a scored game into the shape lib/predictions.ts
+  // expects - the actual scoring/aggregation logic lives there, kept pure and
+  // unit-tested, not reimplemented inline here.
+  const scoredPredictionInputs: ScoredPrediction[] = useMemo(() => {
+    const byGame = new Map(scoredPastGames.map((g) => [g.id, g]));
+    return scorePredictions.flatMap((p) => {
+      const game = byGame.get(p.game_id);
+      if (!game || game.team_white_score == null || game.team_red_score == null) return [];
+      return [
+        {
+          playerId: p.player_id,
+          playerName: p.player?.display_name ?? "Unknown",
+          gameId: p.game_id,
+          gameDate: game.date,
+          predictedWhite: p.predicted_white,
+          predictedRed: p.predicted_red,
+          actualWhite: game.team_white_score,
+          actualRed: game.team_red_score,
+        },
+      ];
+    });
+  }, [scorePredictions, scoredPastGames]);
+
+  const predictionSeasonLeaderboard = useMemo(
+    () => buildLeaderboard(scoredPredictionInputs.filter((p) => p.gameDate.slice(0, 4) === String(currentSeasonYear))),
+    [scoredPredictionInputs, currentSeasonYear]
+  );
+
+  // Same "reveal once the month's fully over" cadence as Player of the
+  // Month above, reusing the same previousMonthKey helper - the free-game
+  // prize is for a *completed* month, not a running mid-month lead that
+  // could still change.
+  const predictionMonthlyWinner = useMemo(() => {
+    const monthKey = previousMonthKey(nowUk);
+    const monthly = buildMonthlyLeaderboards(scoredPredictionInputs.filter((p) => p.gameDate.slice(0, 7) === monthKey));
+    const leaders = topScorers(monthly[monthKey] ?? []);
+    if (leaders.length === 0) return null;
+    return {
+      monthLabel: new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
+      leaders,
+    };
+  }, [scoredPredictionInputs, nowUk]);
+
   const resultsMonths = useMemo(() => {
     const set = new Set<string>();
     scoredPastGames.forEach((g) => set.add(g.date.slice(0, 7)));
@@ -2700,12 +2778,13 @@ function App({ session }: { session: Session }) {
 
         {tab === "lineup" && (
           <>
-            {isAdmin && (
-              <div className="wcf-subtabs">
-                <button className={lineupView === "sheet" ? "active" : ""} onClick={() => setLineupView("sheet")}>Team Sheet</button>
+            <div className="wcf-subtabs">
+              <button className={lineupView === "sheet" ? "active" : ""} onClick={() => setLineupView("sheet")}>Team Sheet</button>
+              {isAdmin && (
                 <button className={lineupView === "fairness" ? "active" : ""} onClick={() => setLineupView("fairness")}>Fairness</button>
-              </div>
-            )}
+              )}
+              <button className={lineupView === "predict" ? "active" : ""} onClick={() => setLineupView("predict")}>🔮 Predict</button>
+            </div>
 
             {lineupView === "fairness" && isAdmin && (
               <>
@@ -2969,8 +3048,49 @@ function App({ session }: { session: Session }) {
                       )
                   );
                 })()}
+
+                {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
+                  <PredictPanel
+                    key={nextGame.id}
+                    gameId={nextGame.id}
+                    whiteLabel={cs.team_white_name}
+                    redLabel={cs.team_red_name}
+                    isBooked={nextConfirmed.some((b) => b.player_id === myId)}
+                    myPrediction={scorePredictions.find((p) => p.game_id === nextGame.id && p.player_id === myId) ?? null}
+                    onSave={savePrediction}
+                  />
+                )}
               </>
             )}
+              </>
+            )}
+
+            {lineupView === "predict" && (
+              <>
+                {predictionMonthlyWinner && (
+                  <div className="wcf-shoutout wcf-potm">
+                    🏆 {predictionMonthlyWinner.monthLabel} winner —{" "}
+                    <strong>{predictionMonthlyWinner.leaders.map((l) => l.playerName).join(" & ")}</strong>: free game this month!
+                  </div>
+                )}
+                <div className="wcf-lb-prize">🏆 Top of the table at the end of the season wins a prize from the pot.</div>
+                <div className="wcf-lb-key">3 pts exact score · 1 pt correct result · booked players only</div>
+                {predictionSeasonLeaderboard.length === 0 && <p className="wcf-empty">No predictions scored yet this season.</p>}
+                {predictionSeasonLeaderboard.length > 0 && (
+                  <div className="wcf-lb">
+                    {predictionSeasonLeaderboard.map((row, i) => (
+                      <div key={row.playerId} className={"wcf-lb-row" + (row.playerId === myId ? " me" : "")}>
+                        <span className={"wcf-lb-rank" + (i < 3 && row.points > 0 ? " top" : "")}>{i + 1}</span>
+                        <span className="wcf-avatar">{row.playerName[0]?.toUpperCase()}</span>
+                        <div className="wcf-lb-body">
+                          <div className="wcf-lb-name">{row.playerName}{row.playerId === myId ? " (you)" : ""}</div>
+                          <div className="wcf-lb-sub">{row.exactCount} exact score{row.exactCount === 1 ? "" : "s"}</div>
+                        </div>
+                        <span className="wcf-lb-pts">{row.points}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </>
@@ -3205,6 +3325,49 @@ function App({ session }: { session: Session }) {
                               ))}
                             </div>
                           )}
+
+                          {(() => {
+                            const gamePredictions = scoredPredictionInputs.filter((p) => p.gameId === g.id);
+                            if (gamePredictions.length === 0) return null;
+                            const myGamePrediction = gamePredictions.find((p) => p.playerId === myId);
+                            const exactCount = gamePredictions.filter(
+                              (p) => predictionPoints(p.predictedWhite, p.predictedRed, p.actualWhite, p.actualRed) === 3
+                            ).length;
+                            return (
+                              <div className="wcf-predict-reveal">
+                                <div className="wcf-predict-reveal-label">
+                                  <span className="wcf-predict-reveal-title">🔮 Predictions</span>
+                                  <span className="wcf-predict-reveal-count">
+                                    {gamePredictions.length} guess{gamePredictions.length === 1 ? "" : "es"}
+                                  </span>
+                                </div>
+                                {myGamePrediction &&
+                                  (() => {
+                                    const pts = predictionPoints(
+                                      myGamePrediction.predictedWhite,
+                                      myGamePrediction.predictedRed,
+                                      myGamePrediction.actualWhite,
+                                      myGamePrediction.actualRed
+                                    );
+                                    return (
+                                      <div className="wcf-predict-reveal-row">
+                                        <span className="wcf-predict-reveal-row-label">
+                                          Your guess: <b>{cs.team_white_name} {myGamePrediction.predictedWhite}–{myGamePrediction.predictedRed} {cs.team_red_name}</b>
+                                        </span>
+                                        <span className={"wcf-predict-pts " + (pts === 3 ? "exact" : pts === 1 ? "partial" : "zero")}>
+                                          +{pts} pt{pts === 1 ? "" : "s"}
+                                        </span>
+                                      </div>
+                                    );
+                                  })()}
+                                {exactCount > 0 && (
+                                  <div className="wcf-predict-fact">
+                                    🎯 {exactCount} player{exactCount === 1 ? "" : "s"} called the exact score.
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
 
                           {isAdmin && (
                             <div className="wcf-result-share">
@@ -4132,6 +4295,98 @@ function AwardsForm({
           {adding ? "Adding…" : "Add award"}
         </button>
       </form>
+    </div>
+  );
+}
+
+function PredictPanel({
+  gameId,
+  whiteLabel,
+  redLabel,
+  isBooked,
+  myPrediction,
+  onSave,
+}: {
+  gameId: string;
+  whiteLabel: string;
+  redLabel: string;
+  isBooked: boolean;
+  myPrediction: ScorePrediction | null;
+  onSave: (gameId: string, white: number, red: number) => Promise<void>;
+}) {
+  const [white, setWhite] = useState(myPrediction?.predicted_white ?? 2);
+  const [red, setRed] = useState(myPrediction?.predicted_red ?? 1);
+  const [editing, setEditing] = useState(!myPrediction);
+  const [saving, setSaving] = useState(false);
+
+  if (!isBooked) {
+    return (
+      <div className="wcf-predict">
+        <div className="wcf-predict-gate">
+          <div className="wcf-predict-gate-icon">🔒</div>
+          <div className="wcf-predict-gate-text">
+            <b>Book a spot on this game</b> to make your prediction — guessing&apos;s for the players in it.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (myPrediction && !editing) {
+    return (
+      <div className="wcf-predict">
+        <div className="wcf-predict-locked">
+          <span className="wcf-predict-locked-icon">🔮</span>
+          <div className="wcf-predict-locked-body">
+            <div className="wcf-predict-locked-label">Your prediction</div>
+            <div className="wcf-predict-locked-value">
+              {whiteLabel} {myPrediction.predicted_white}–{myPrediction.predicted_red} {redLabel}
+            </div>
+          </div>
+          <button className="wcf-predict-edit" onClick={() => setEditing(true)}>Edit</button>
+        </div>
+      </div>
+    );
+  }
+
+  async function save() {
+    setSaving(true);
+    await onSave(gameId, white, red);
+    setSaving(false);
+    setEditing(false);
+  }
+
+  return (
+    <div className="wcf-predict">
+      <div className="wcf-predict-label">
+        <span className="wcf-predict-title">🔮 Predict the score</span>
+        <span className="wcf-predict-sub">Closes at kickoff</span>
+      </div>
+      <p className="wcf-predict-prize">
+        Now you know the sides — guess the final score. Top of the season leaderboard wins a prize from the pot; each calendar month&apos;s winner gets a free game.
+      </p>
+      <div className="wcf-predict-score">
+        <div className="wcf-predict-team">
+          <div className="wcf-predict-team-name">{whiteLabel}</div>
+          <div className="wcf-predict-stepper">
+            <button onClick={() => setWhite((n) => Math.max(0, n - 1))} aria-label={`Fewer ${whiteLabel} goals`}>−</button>
+            <span>{white}</span>
+            <button onClick={() => setWhite((n) => n + 1)} aria-label={`More ${whiteLabel} goals`}>+</button>
+          </div>
+        </div>
+        <div className="wcf-predict-vs">–</div>
+        <div className="wcf-predict-team">
+          <div className="wcf-predict-team-name">{redLabel}</div>
+          <div className="wcf-predict-stepper">
+            <button onClick={() => setRed((n) => Math.max(0, n - 1))} aria-label={`Fewer ${redLabel} goals`}>−</button>
+            <span>{red}</span>
+            <button onClick={() => setRed((n) => n + 1)} aria-label={`More ${redLabel} goals`}>+</button>
+          </div>
+        </div>
+      </div>
+      <button className="wcf-predict-lock" disabled={saving} onClick={save}>
+        {saving ? "Saving…" : "Lock in prediction"}
+      </button>
     </div>
   );
 }
@@ -5133,6 +5388,57 @@ const css = `
 .wcf-lineup-group{margin-bottom:6px}
 .wcf-lineup-group-label{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 2px 8px}
 .wcf-lineup-group-dot{width:7px;height:7px;border-radius:50%}
+
+.wcf-predict{background:var(--panel);border:1px solid rgba(139,107,232,.3);border-radius:14px;padding:13px 14px;margin-top:4px}
+.wcf-predict-label{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:3px}
+.wcf-predict-title{font-size:11.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#8B6BE8}
+.wcf-predict-sub{font-size:10px;color:var(--dim)}
+.wcf-predict-prize{font-size:11px;color:var(--dim);margin:0 0 12px;line-height:1.5}
+.wcf-predict-score{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:13px}
+.wcf-predict-team{text-align:center;flex:1}
+.wcf-predict-team-name{font-size:11px;font-weight:700;margin-bottom:7px}
+.wcf-predict-stepper{display:flex;align-items:center;justify-content:center;gap:8px}
+.wcf-predict-stepper button{width:28px;height:28px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-size:15px;cursor:pointer;display:grid;place-items:center;line-height:1}
+.wcf-predict-stepper span{font-family:var(--mono);font-size:22px;font-weight:800;width:22px;text-align:center}
+.wcf-predict-vs{color:var(--dim);font-size:11px;font-weight:700;padding-top:16px}
+.wcf-predict-lock{width:100%;background:#8B6BE8;color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;font-size:12.5px;cursor:pointer}
+.wcf-predict-lock:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
+.wcf-predict-locked{display:flex;align-items:center;gap:10px}
+.wcf-predict-locked-icon{font-size:16px}
+.wcf-predict-locked-body{flex:1;min-width:0}
+.wcf-predict-locked-label{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#8B6BE8}
+.wcf-predict-locked-value{font-size:12.5px;font-weight:700;margin-top:2px}
+.wcf-predict-edit{background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer;flex:0 0 auto}
+.wcf-predict-gate{text-align:center;padding:6px 4px 2px}
+.wcf-predict-gate-icon{font-size:20px;margin-bottom:6px}
+.wcf-predict-gate-text{font-size:12px;color:var(--dim);line-height:1.5}
+.wcf-predict-gate-text b{color:var(--white)}
+
+.wcf-lb-prize{display:flex;align-items:center;gap:8px;background:rgba(224,167,51,.1);border:1px solid rgba(224,167,51,.35);border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:11.5px;color:var(--white);line-height:1.4}
+.wcf-lb-key{font-size:10.5px;color:var(--dim);text-align:center;margin-bottom:12px;line-height:1.6}
+.wcf-lb{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px 14px 4px}
+.wcf-lb-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.wcf-lb-row:last-child{border-bottom:none}
+.wcf-lb-row.me{background:rgba(139,107,232,.08);margin:0 -14px;padding:9px 14px;border-radius:8px;border-bottom:1px solid rgba(139,107,232,.25)}
+.wcf-lb-rank{font-family:var(--mono);font-weight:800;font-size:12px;color:var(--dim);width:16px;flex:0 0 auto}
+.wcf-lb-rank.top{color:var(--amber)}
+.wcf-lb-body{flex:1;min-width:0}
+.wcf-lb-name{font-size:12.5px;font-weight:700}
+.wcf-lb-sub{font-size:10px;color:var(--dim);margin-top:1px}
+.wcf-lb-pts{font-family:var(--mono);font-weight:800;font-size:15px;flex:0 0 auto}
+
+.wcf-predict-reveal{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.wcf-predict-reveal-label{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px}
+.wcf-predict-reveal-title{font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#8B6BE8}
+.wcf-predict-reveal-count{font-size:10.5px;color:var(--dim)}
+.wcf-predict-reveal-row{display:flex;align-items:center;gap:10px;padding:7px 0}
+.wcf-predict-reveal-row-label{flex:1;font-size:12.5px}
+.wcf-predict-reveal-row-label b{font-family:var(--mono)}
+.wcf-predict-pts{font-family:var(--mono);font-weight:800;font-size:12px;padding:3px 9px;border-radius:20px;flex:0 0 auto}
+.wcf-predict-pts.exact{background:rgba(51,169,87,.18);color:var(--green)}
+.wcf-predict-pts.partial{background:rgba(46,116,204,.18);color:#7CAEF0}
+.wcf-predict-pts.zero{background:var(--panel2);color:var(--dim)}
+.wcf-predict-fact{font-size:11.5px;color:var(--dim);margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
 
 .wcf-shoutout{background:linear-gradient(135deg,rgba(228,42,54,.16),rgba(51,169,87,.1));border:1px solid rgba(228,42,54,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
 .wcf-award-media{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:10px;margin-top:10px}

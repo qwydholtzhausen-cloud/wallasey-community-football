@@ -913,3 +913,57 @@ alter table public.games add column team_set_at timestamptz;
 -- it more likely to confuse than help. team_set_at only ever existed to
 -- drive it.
 alter table public.games drop column team_set_at;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Score prediction game. Booked players only (deliberate - turns
+-- predicting into an incentive to actually book, and means the prize
+-- is only ever contested by people who showed up), score-only (no MOTM
+-- guessing - see the design notes in memory for why that was dropped).
+-- Enforced at the RLS layer, not just the UI: you can only insert/update
+-- a prediction for a game you're actually booked on (confirmed spot,
+-- not waiting list) and only before that game's kickoff - both real
+-- integrity rules, not just UX guardrails, since players could
+-- otherwise submit or adjust a guess after watching the game start.
+-- ─────────────────────────────────────────────────────────────────
+
+create table public.score_predictions (
+  id uuid primary key default gen_random_uuid(),
+  game_id uuid not null references public.games(id) on delete cascade,
+  player_id uuid not null references public.profiles(id) on delete cascade,
+  predicted_white int not null check (predicted_white >= 0),
+  predicted_red int not null check (predicted_red >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (game_id, player_id)
+);
+
+alter table public.score_predictions enable row level security;
+
+-- Select is unrestricted (any authenticated user) rather than own-only -
+-- the app itself withholds other players' individual guesses from the UI
+-- until a game's scored (same client-side gating pattern as MOTM tally
+-- staying hidden until voting closes), so there's no integrity reason to
+-- restrict this at the RLS layer too.
+create policy "score_predictions_select" on public.score_predictions for select using (auth.role() = 'authenticated');
+
+create policy "score_predictions_insert_own" on public.score_predictions for insert with check (
+  player_id = auth.uid()
+  and exists (
+    select 1 from public.bookings b
+    where b.game_id = score_predictions.game_id and b.player_id = auth.uid() and b.waiting = false
+  )
+  and exists (
+    select 1 from public.games g
+    where g.id = score_predictions.game_id and (g.date + g.kickoff::time) > (now() at time zone 'Europe/London')
+  )
+);
+
+create policy "score_predictions_update_own" on public.score_predictions for update
+  using (player_id = auth.uid())
+  with check (
+    player_id = auth.uid()
+    and exists (
+      select 1 from public.games g
+      where g.id = score_predictions.game_id and (g.date + g.kickoff::time) > (now() at time zone 'Europe/London')
+    )
+  );
