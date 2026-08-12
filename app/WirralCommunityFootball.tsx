@@ -108,7 +108,6 @@ interface GameRow {
   published: boolean;
   team_method: "generated" | "manual" | null;
   team_balance_score: number | null;
-  team_set_at: string | null;
   bookings: BookingRow[];
 }
 
@@ -814,7 +813,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, team_set_at, bookings(id, player_id, status, waiting, team, created_at, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, bookings(id, player_id, status, waiting, team, created_at, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -1401,10 +1400,7 @@ function App({ session }: { session: Session }) {
       const whiteIds = nextConfirmed.filter((b) => teamDraft[b.id] === "white").map((b) => b.player_id);
       const redIds = nextConfirmed.filter((b) => teamDraft[b.id] === "red").map((b) => b.player_id);
       const score = balanceScore(teamStats(whiteIds), teamStats(redIds));
-      await supabase
-        .from("games")
-        .update({ team_method: "manual", team_balance_score: score, team_set_at: new Date().toISOString() })
-        .eq("id", nextGame.id);
+      await supabase.from("games").update({ team_method: "manual", team_balance_score: score }).eq("id", nextGame.id);
     }
     setEditingLineup(false);
     await loadGames();
@@ -1576,10 +1572,7 @@ function App({ session }: { session: Session }) {
       )
     );
     const score = balanceScore(teamStats(suggestedTeams.white), teamStats(suggestedTeams.red));
-    await supabase
-      .from("games")
-      .update({ team_method: "generated", team_balance_score: score, team_set_at: new Date().toISOString() })
-      .eq("id", nextGame.id);
+    await supabase.from("games").update({ team_method: "generated", team_balance_score: score }).eq("id", nextGame.id);
     setSuggestedTeams(null);
     await loadGames();
     notifySuccess("Applied the suggested split — tweak any individual player in Team Sheet if needed");
@@ -2427,51 +2420,6 @@ function App({ session }: { session: Session }) {
         }),
     [upcomingGames, myId]
   );
-
-  // "Something's new" nav dots - Feed/Results/Line-up. Device+profile-
-  // scoped last-seen timestamps, same keying pattern as the push/rating
-  // nudge dismiss flags above (a deleted+recreated profile starts clean
-  // rather than inheriting stale state). This is a "something changed"
-  // signal, not per-item read tracking - it clears the moment the tab's
-  // opened, same as the message inbox badge clearing on open not on read.
-  const [lastSeen, setLastSeen] = useState<Record<string, number>>({});
-  useEffect(() => {
-    setLastSeen({
-      feed: Number(localStorage.getItem(`wcf-lastseen-feed-${myId}`) || 0),
-      results: Number(localStorage.getItem(`wcf-lastseen-results-${myId}`) || 0),
-      lineup: Number(localStorage.getItem(`wcf-lastseen-lineup-${myId}`) || 0),
-    });
-  }, [myId]);
-  useEffect(() => {
-    if (tab !== "feed" && tab !== "results" && tab !== "lineup") return;
-    // toMs(nowUk), not Date.now() - the events being compared against
-    // (kickoffCutoff-derived timestamps below) live on the app's
-    // "pretend UTC" wall-clock axis, not real epoch time. Comparing a
-    // real Date.now() against a pretend-axis value could read as
-    // permanently in the future during BST, leaving the dot stuck lit -
-    // this keeps everything on the same axis.
-    const now = toMs(nowUk);
-    localStorage.setItem(`wcf-lastseen-${tab}-${myId}`, String(now));
-    setLastSeen((s) => ({ ...s, [tab]: now }));
-  }, [tab, myId, nowUk]);
-
-  const latestFeedTs = feedItems.reduce((max, item) => Math.max(max, item.ts), 0);
-  // Games don't store a "scored at" moment, so the finished-cutoff (same
-  // kickoff+90min line used everywhere else to mean "this game is over")
-  // stands in as a close-enough proxy for "when this result became real."
-  const latestResultsTs = scoredPastGames[0] ? toMs(kickoffCutoff(scoredPastGames[0].date, scoredPastGames[0].kickoff, 90)) : 0;
-  // team_set_at is a real Postgres timestamptz (true epoch, unlike the
-  // pretend-axis values above) - comparing it against a pretend-axis
-  // lastSeen is safe in the "clears a little early" direction (at most
-  // an hour, BST vs GMT), never the "stuck" direction.
-  const latestLineupTs = nextGame?.team_set_at ? new Date(nextGame.team_set_at).getTime() : 0;
-  const hasNew: Record<string, boolean> = {
-    fixtures: false,
-    feed: latestFeedTs > (lastSeen.feed ?? 0),
-    lineup: latestLineupTs > (lastSeen.lineup ?? 0),
-    results: latestResultsTs > (lastSeen.results ?? 0),
-    admin: false,
-  };
 
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
@@ -3506,10 +3454,7 @@ function App({ session }: { session: Session }) {
       <nav className="wcf-nav">
         {TABS.map((t) => (
           <button key={t.k} className={"wcf-navbtn " + (tab === t.k ? "active" : "")} onClick={() => setTab(t.k)}>
-            <span className="wcf-navbtn-icon">
-              {t.icon}
-              {tab !== t.k && hasNew[t.k] && <span className="wcf-navdot" />}
-            </span>
+            {t.icon}
             <span>{t.label}</span>
           </button>
         ))}
@@ -5422,8 +5367,6 @@ const css = `
   color:var(--dim);padding:6px 0;cursor:pointer;font-weight:700;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;transition:.15s}
 .wcf-navbtn.active{color:var(--red-hi)}
 .wcf-navbtn svg{opacity:.9}
-.wcf-navbtn-icon{position:relative;display:inline-flex}
-.wcf-navdot{position:absolute;top:-2px;right:-5px;width:8px;height:8px;border-radius:50%;background:var(--red-hi);box-shadow:0 0 0 2px var(--bg)}
 
 @media (max-width:400px){ .wcf-sheet{grid-template-columns:1fr} .wcf-edit{grid-template-columns:1fr} }
 `;

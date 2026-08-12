@@ -906,3 +906,10 @@ create policy "admin_messages_update_own_read" on public.admin_messages for upda
 -- unlike a finished game there's no other reliable timestamp for "the
 -- lineup just changed."
 alter table public.games add column team_set_at timestamptz;
+
+-- Nav "something's new" dots feature (Feed/Results/Line-up) removed
+-- 2026-08-12 - kept misfiring (stuck lit) even after fixing the
+-- underlying pretend-UTC/real-epoch axis mismatch, and the user judged
+-- it more likely to confuse than help. team_set_at only ever existed to
+-- drive it.
+alter table public.games drop column team_set_at;
