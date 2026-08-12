@@ -108,6 +108,7 @@ interface GameRow {
   published: boolean;
   team_method: "generated" | "manual" | null;
   team_balance_score: number | null;
+  team_set_at: string | null;
   bookings: BookingRow[];
 }
 
@@ -743,6 +744,22 @@ function App({ session }: { session: Session }) {
     };
   }, []);
 
+  // Pitches are exactly where signal drops out mid-session - names what's
+  // happening instead of leaving a silently stale screen with no
+  // explanation of why nothing's updating.
+  const [isOffline, setIsOffline] = useState(false);
+  useEffect(() => {
+    setIsOffline(!navigator.onLine);
+    const onOnline = () => setIsOffline(false);
+    const onOffline = () => setIsOffline(true);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
   function notifyError(message: string) {
     setToast({ kind: "error", text: message });
   }
@@ -797,7 +814,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, bookings(id, player_id, status, waiting, team, created_at, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, team_set_at, bookings(id, player_id, status, waiting, team, created_at, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -1384,7 +1401,10 @@ function App({ session }: { session: Session }) {
       const whiteIds = nextConfirmed.filter((b) => teamDraft[b.id] === "white").map((b) => b.player_id);
       const redIds = nextConfirmed.filter((b) => teamDraft[b.id] === "red").map((b) => b.player_id);
       const score = balanceScore(teamStats(whiteIds), teamStats(redIds));
-      await supabase.from("games").update({ team_method: "manual", team_balance_score: score }).eq("id", nextGame.id);
+      await supabase
+        .from("games")
+        .update({ team_method: "manual", team_balance_score: score, team_set_at: new Date().toISOString() })
+        .eq("id", nextGame.id);
     }
     setEditingLineup(false);
     await loadGames();
@@ -1556,7 +1576,10 @@ function App({ session }: { session: Session }) {
       )
     );
     const score = balanceScore(teamStats(suggestedTeams.white), teamStats(suggestedTeams.red));
-    await supabase.from("games").update({ team_method: "generated", team_balance_score: score }).eq("id", nextGame.id);
+    await supabase
+      .from("games")
+      .update({ team_method: "generated", team_balance_score: score, team_set_at: new Date().toISOString() })
+      .eq("id", nextGame.id);
     setSuggestedTeams(null);
     await loadGames();
     notifySuccess("Applied the suggested split — tweak any individual player in Team Sheet if needed");
@@ -1688,6 +1711,25 @@ function App({ session }: { session: Session }) {
     () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) > nowUk).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)),
     [games, nowUk]
   );
+  // Same YYYY-MM grouping key already used by copyFixtureUpdate() for the
+  // WhatsApp digest, just applied to the live list instead of a copied
+  // message. Headers only render when there's more than one month in view
+  // - with just a few fixtures up, a single "August 2026" header is noise,
+  // not signal.
+  const upcomingByMonth = useMemo(() => {
+    const byMonth: Record<string, GameRow[]> = {};
+    upcomingGames.forEach((g) => {
+      const key = g.date.slice(0, 7);
+      (byMonth[key] ??= []).push(g);
+    });
+    return Object.keys(byMonth)
+      .sort()
+      .map((key) => ({
+        key,
+        label: new Date(key + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
+        games: byMonth[key],
+      }));
+  }, [upcomingGames]);
   // Deliberately quiet - small text under the heading, not a banner. Only
   // the soonest published fixture (drafts don't count, even for admins
   // previewing one), and only down to the minute - the existing "kickoff
@@ -2386,6 +2428,41 @@ function App({ session }: { session: Session }) {
     [upcomingGames, myId]
   );
 
+  // "Something's new" nav dots - Feed/Results/Line-up. Device+profile-
+  // scoped last-seen timestamps, same keying pattern as the push/rating
+  // nudge dismiss flags above (a deleted+recreated profile starts clean
+  // rather than inheriting stale state). This is a "something changed"
+  // signal, not per-item read tracking - it clears the moment the tab's
+  // opened, same as the message inbox badge clearing on open not on read.
+  const [lastSeen, setLastSeen] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setLastSeen({
+      feed: Number(localStorage.getItem(`wcf-lastseen-feed-${myId}`) || 0),
+      results: Number(localStorage.getItem(`wcf-lastseen-results-${myId}`) || 0),
+      lineup: Number(localStorage.getItem(`wcf-lastseen-lineup-${myId}`) || 0),
+    });
+  }, [myId]);
+  useEffect(() => {
+    if (tab !== "feed" && tab !== "results" && tab !== "lineup") return;
+    const now = Date.now();
+    localStorage.setItem(`wcf-lastseen-${tab}-${myId}`, String(now));
+    setLastSeen((s) => ({ ...s, [tab]: now }));
+  }, [tab, myId]);
+
+  const latestFeedTs = feedItems.reduce((max, item) => Math.max(max, item.ts), 0);
+  // Games don't store a "scored at" moment, so the finished-cutoff (same
+  // kickoff+90min line used everywhere else to mean "this game is over")
+  // stands in as a close-enough proxy for "when this result became real."
+  const latestResultsTs = scoredPastGames[0] ? toMs(kickoffCutoff(scoredPastGames[0].date, scoredPastGames[0].kickoff, 90)) : 0;
+  const latestLineupTs = nextGame?.team_set_at ? new Date(nextGame.team_set_at).getTime() : 0;
+  const hasNew: Record<string, boolean> = {
+    fixtures: false,
+    feed: latestFeedTs > (lastSeen.feed ?? 0),
+    lineup: latestLineupTs > (lastSeen.lineup ?? 0),
+    results: latestResultsTs > (lastSeen.results ?? 0),
+    admin: false,
+  };
+
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
     { k: "feed", label: "Feed", icon: Icon.pulse },
@@ -2435,6 +2512,8 @@ function App({ session }: { session: Session }) {
           {myUnreadMessages.length > 0 && <span className="wcf-role-unread">{myUnreadMessages.length}</span>}
         </button>
       </header>
+
+      {isOffline && <div className="wcf-offline-banner">📡 You&apos;re offline — showing what was last loaded</div>}
 
       {updateAvailable && (
         <button className="wcf-update-banner" onClick={() => window.location.reload()}>
@@ -2499,23 +2578,28 @@ function App({ session }: { session: Session }) {
               </div>
             )}
             {upcomingGames.length === 0 && <p className="wcf-empty">No games on. {isAdmin ? "Add one above." : "Check back soon."}</p>}
-            {upcomingGames.map((g) => (
-              <GameCard
-                key={g.id}
-                game={g}
-                myId={myId}
-                isAdmin={isAdmin}
-                overdue={iAmOverdue}
-                editing={editingId === g.id}
-                onBook={() => book(g.id)}
-                onCancel={(bookingId) => cancel(bookingId)}
-                onMarkPaid={(bookingId) => markPaid(bookingId)}
-                onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
-                onSave={(patch) => saveGame(g.id, patch)}
-                onDelete={() => deleteGame(g.id)}
-                onOpenPlayerCard={setPlayerCardId}
-                weather={weatherFor(g.date, g.kickoff)}
-              />
+            {upcomingByMonth.map((group) => (
+              <div key={group.key}>
+                {upcomingByMonth.length > 1 && <h4 className="wcf-month-head">{group.label}</h4>}
+                {group.games.map((g) => (
+                  <GameCard
+                    key={g.id}
+                    game={g}
+                    myId={myId}
+                    isAdmin={isAdmin}
+                    overdue={iAmOverdue}
+                    editing={editingId === g.id}
+                    onBook={() => book(g.id)}
+                    onCancel={(bookingId) => cancel(bookingId)}
+                    onMarkPaid={(bookingId) => markPaid(bookingId)}
+                    onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
+                    onSave={(patch) => saveGame(g.id, patch)}
+                    onDelete={() => deleteGame(g.id)}
+                    onOpenPlayerCard={setPlayerCardId}
+                    weather={weatherFor(g.date, g.kickoff)}
+                  />
+                ))}
+              </div>
             ))}
           </>
         )}
@@ -3412,7 +3496,10 @@ function App({ session }: { session: Session }) {
       <nav className="wcf-nav">
         {TABS.map((t) => (
           <button key={t.k} className={"wcf-navbtn " + (tab === t.k ? "active" : "")} onClick={() => setTab(t.k)}>
-            {t.icon}
+            <span className="wcf-navbtn-icon">
+              {t.icon}
+              {tab !== t.k && hasNew[t.k] && <span className="wcf-navdot" />}
+            </span>
             <span>{t.label}</span>
           </button>
         ))}
@@ -3555,6 +3642,8 @@ function AccountPanel({
   const myMessages = messages.filter((m) => m.recipient_id === profile.id);
   const unreadMessages = myMessages.filter((m) => !m.read_at);
   const [showRoles, setShowRoles] = useState(false);
+  const [roleSearch, setRoleSearch] = useState("");
+  const filteredRoleProfiles = profiles.filter((p) => p.display_name.toLowerCase().includes(roleSearch.trim().toLowerCase()));
   const [pushBusy, setPushBusy] = useState(false);
   const [openGuide, setOpenGuide] = useState<"install" | "notifications" | null>(null);
   // push_opt_in is a shared per-user DB flag, but permission is granted
@@ -3725,7 +3814,18 @@ function AccountPanel({
           <button className="wcf-ghost wcf-roles-toggle" onClick={() => setShowRoles((v) => !v)}>
             {showRoles ? "Hide players" : "View players"}
           </button>
-          {showRoles && profiles.map((p) => {
+          {showRoles && profiles.length > 8 && (
+            <input
+              className="wcf-roles-search"
+              placeholder="🔍 Search players…"
+              value={roleSearch}
+              onChange={(e) => setRoleSearch(e.target.value)}
+            />
+          )}
+          {showRoles && roleSearch.trim() && filteredRoleProfiles.length === 0 && (
+            <p className="wcf-empty small">No players match &quot;{roleSearch.trim()}&quot;.</p>
+          )}
+          {showRoles && filteredRoleProfiles.map((p) => {
             const isSelf = p.id === profile.id;
             // Owner rows are fully protected in the UI (SQL Editor only).
             // Co-owner rows can only be touched by the owner. Admins/
@@ -4846,6 +4946,9 @@ const css = `
 .wcf-save{grid-column:1/-1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
 .wcf-admin-section-head{margin:18px 2px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-admin-section-head:first-child{margin-top:4px}
+.wcf-month-head{font-size:10.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:16px 2px 9px;display:flex;align-items:center;gap:9px}
+.wcf-month-head:first-child{margin-top:2px}
+.wcf-month-head:after{content:"";flex:1;height:1px;background:var(--line)}
 .wcf-dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:6px}
 .wcf-dash-card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:12px;padding:12px 13px;text-align:left}
 .wcf-dash-card.wide{grid-column:1/-1;display:flex;align-items:center;gap:12px;width:100%;font:inherit;color:inherit;cursor:pointer}
@@ -4871,6 +4974,7 @@ const css = `
 .wcf-overdue-banner strong{color:var(--red-hi)}
 .wcf-overdue-note{font-size:12px;color:var(--red-hi);font-weight:700;text-align:center;margin:0;flex:1}
 .wcf-update-banner{display:block;width:100%;background:var(--amber);color:#241a02;border:none;padding:10px 14px;font-size:12.5px;font-weight:800;text-align:center;cursor:pointer;font-family:var(--sans)}
+.wcf-offline-banner{display:block;width:100%;background:var(--panel2);color:var(--dim);border-bottom:1px solid var(--line);padding:10px 14px;font-size:12.5px;font-weight:700;text-align:center}
 .wcf-nudge-banner{background:linear-gradient(135deg,rgba(46,116,204,.18),rgba(46,116,204,.06));border:1px solid rgba(46,116,204,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .wcf-nudge-banner strong{font-size:13px;color:var(--white)}
 .wcf-nudge-banner p{font-size:12px;color:var(--dim);margin:3px 0 0;line-height:1.4}
@@ -5261,6 +5365,7 @@ const css = `
 .wcf-roles{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .wcf-roles h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-roles-toggle{width:100%;margin-bottom:4px}
+.wcf-roles-search{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px 11px;border-radius:9px;font-size:12.5px;font-family:var(--sans);margin:8px 0 2px}
 .wcf-roles-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line);flex-wrap:wrap;min-width:0}
 .wcf-roles-row:last-child{border-bottom:none}
 .wcf-roles-row>span{min-width:0;overflow-wrap:break-word}
@@ -5289,6 +5394,8 @@ const css = `
   color:var(--dim);padding:6px 0;cursor:pointer;font-weight:700;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;transition:.15s}
 .wcf-navbtn.active{color:var(--red-hi)}
 .wcf-navbtn svg{opacity:.9}
+.wcf-navbtn-icon{position:relative;display:inline-flex}
+.wcf-navdot{position:absolute;top:-2px;right:-5px;width:8px;height:8px;border-radius:50%;background:var(--red-hi);box-shadow:0 0 0 2px var(--bg)}
 
 @media (max-width:400px){ .wcf-sheet{grid-template-columns:1fr} .wcf-edit{grid-template-columns:1fr} }
 `;

@@ -900,3 +900,9 @@ create policy "admin_messages_insert_admin" on public.admin_messages for insert 
 create policy "admin_messages_update_own_read" on public.admin_messages for update
   using (recipient_id = auth.uid())
   with check (recipient_id = auth.uid());
+
+-- Stamped whenever the Team Sheet is saved (manual edit or applying a
+-- generated split) - drives the Line-up nav "something's new" dot, since
+-- unlike a finished game there's no other reliable timestamp for "the
+-- lineup just changed."
+alter table public.games add column team_set_at timestamptz;
