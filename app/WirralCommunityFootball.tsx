@@ -2372,6 +2372,20 @@ function App({ session }: { session: Session }) {
     return { played, won, drawn, lost, winPct: played > 0 ? Math.round((won / played) * 100) : null };
   }, [pastGames, myId]);
 
+  // Same "computed, not stored" pattern as myRecord above - upcomingGames
+  // is already sorted soonest-first, so this just needs to keep that order
+  // while filtering to games this player's actually signed up for.
+  const myUpcomingBookings = useMemo(
+    () =>
+      upcomingGames
+        .filter((g) => g.published)
+        .flatMap((g) => {
+          const booking = g.bookings.find((b) => b.player_id === myId);
+          return booking ? [{ game: g, booking }] : [];
+        }),
+    [upcomingGames, myId]
+  );
+
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
     { k: "feed", label: "Feed", icon: Icon.pulse },
@@ -3388,6 +3402,7 @@ function App({ session }: { session: Session }) {
             ratingPlayerId={ratingPlayerId}
             onToggleRatingPlayer={(id) => setRatingPlayerId((cur) => (cur === id ? null : id))}
             myRecord={myRecord}
+            myUpcomingBookings={myUpcomingBookings}
             messages={adminMessages}
             onMarkMessageRead={markMessageRead}
           />
@@ -3498,6 +3513,7 @@ function AccountPanel({
   ratingPlayerId,
   onToggleRatingPlayer,
   myRecord,
+  myUpcomingBookings,
   messages,
   onMarkMessageRead,
 }: {
@@ -3507,6 +3523,7 @@ function AccountPanel({
   isOwner: boolean;
   profiles: Profile[];
   myRecord: { played: number; won: number; drawn: number; lost: number; winPct: number | null };
+  myUpcomingBookings: { game: GameRow; booking: BookingRow }[];
   auditLog: AuditLogEntry[];
   showAuditLog: boolean;
   onToggleAuditLog: () => void;
@@ -3575,6 +3592,21 @@ function AccountPanel({
               ) : (
                 <button className="wcf-msg-ack" onClick={() => onMarkMessageRead(m.id)}>Got it 👍 Mark as read</button>
               )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {myUpcomingBookings.length > 0 && (
+        <div className="wcf-upcoming">
+          <h4>📅 Your upcoming bookings</h4>
+          {myUpcomingBookings.map(({ game, booking }) => (
+            <div key={game.id} className="wcf-upcoming-row">
+              <div className="wcf-upcoming-body">
+                <div className="wcf-upcoming-venue">{game.venue}</div>
+                <div className="wcf-upcoming-date">{fmtDate(game.date)} · {game.kickoff}</div>
+              </div>
+              {booking.waiting ? <span className="wcf-upcoming-waiting">Waiting list</span> : <StatusBadge status={booking.status} />}
             </div>
           ))}
         </div>
@@ -5155,6 +5187,13 @@ const css = `
 .wcf-msg-ack{width:100%;background:var(--green);color:#04140a;border:none;padding:10px;border-radius:9px;font-weight:800;font-size:12.5px;cursor:pointer}
 .wcf-msg-read-note{font-size:11px;color:var(--dim);text-align:center;margin:0}
 .wcf-role-unread{background:var(--red);color:#fff;font-family:var(--mono);font-weight:800;font-size:10px;padding:1px 6px;border-radius:20px;flex:0 0 auto}
+.wcf-upcoming{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 13px}
+.wcf-upcoming h4{margin:0 0 4px;font-size:13px;font-weight:800}
+.wcf-upcoming-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.wcf-upcoming-row:last-child{border-bottom:none}
+.wcf-upcoming-venue{font-weight:700;font-size:13px}
+.wcf-upcoming-date{font-size:11px;color:var(--dim);margin-top:1px}
+.wcf-upcoming-waiting{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;padding:3px 8px;border-radius:999px;background:rgba(224,167,51,.16);color:var(--amber);white-space:nowrap;flex:0 0 auto}
 .wcf-account-field{display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-account-rename{display:flex;gap:8px}
 .wcf-account-rename input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:10px;border-radius:9px;font-size:13px;font-family:var(--sans);text-transform:none}
