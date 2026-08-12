@@ -4249,6 +4249,12 @@ function AdminConsole({
     ? messages
     : messages.filter((m) => !m.read_at || new Date(m.created_at).getTime() >= messageCutoff);
   const olderMessageCount = messages.length - visibleMessages.length;
+  const unreadSentCount = messages.filter((m) => !m.read_at).length;
+  // Collapsed by default - a bulk send (e.g. the automated welcome
+  // message going out to every existing player at once) can otherwise
+  // dump dozens of rows straight onto the page with no way to collapse
+  // them back down.
+  const [showMessageLog, setShowMessageLog] = useState(false);
 
   function startMessage(playerId: string, template: string) {
     setComposeTo(playerId);
@@ -4321,23 +4327,33 @@ function AdminConsole({
       </div>
       {messages.length > 0 && (
         <div className="wcf-msg-log">
-          <h4>Sent messages</h4>
-          {visibleMessages.map((m) => (
-            <div key={m.id} className="wcf-msg-log-row">
-              <span className="wcf-avatar">{(m.recipient?.display_name ?? "?")[0]?.toUpperCase()}</span>
-              <div className="wcf-msg-log-body">
-                <div className="wcf-msg-log-name">{m.recipient?.display_name ?? "Unknown"}</div>
-                <div className="wcf-msg-log-text">{m.message}</div>
-              </div>
-              <span className={"wcf-msg-log-status " + (m.read_at ? "read" : "unread")}>
-                {m.read_at ? `Read · ${fmtDateTime(m.read_at)}` : "Unread"}
-              </span>
-            </div>
-          ))}
-          {!showOlderMessages && olderMessageCount > 0 && (
-            <button className="wcf-msg-log-more" onClick={() => setShowOlderMessages(true)}>
-              Show {olderMessageCount} older
-            </button>
+          <button className="wcf-msg-log-toggle" onClick={() => setShowMessageLog((v) => !v)}>
+            <h4>
+              Sent messages · {messages.length}
+              {unreadSentCount > 0 ? ` (${unreadSentCount} unread)` : ""}
+            </h4>
+            <span>{showMessageLog ? "▲" : "▼"}</span>
+          </button>
+          {showMessageLog && (
+            <>
+              {visibleMessages.map((m) => (
+                <div key={m.id} className="wcf-msg-log-row">
+                  <span className="wcf-avatar">{(m.recipient?.display_name ?? "?")[0]?.toUpperCase()}</span>
+                  <div className="wcf-msg-log-body">
+                    <div className="wcf-msg-log-name">{m.recipient?.display_name ?? "Unknown"}</div>
+                    <div className="wcf-msg-log-text">{m.message}</div>
+                  </div>
+                  <span className={"wcf-msg-log-status " + (m.read_at ? "read" : "unread")}>
+                    {m.read_at ? `Read · ${fmtDateTime(m.read_at)}` : "Unread"}
+                  </span>
+                </div>
+              ))}
+              {!showOlderMessages && olderMessageCount > 0 && (
+                <button className="wcf-msg-log-more" onClick={() => setShowOlderMessages(true)}>
+                  Show {olderMessageCount} older
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
@@ -5019,6 +5035,8 @@ const css = `
 .wcf-msg-compose-send:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-msg-log{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:4px 13px 2px;margin-bottom:14px}
 .wcf-msg-log h4{margin:10px 0 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.wcf-msg-log-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;text-align:left}
+.wcf-msg-log-toggle span{font-size:11px;color:var(--dim)}
 .wcf-msg-log-row{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
 .wcf-msg-log-row:last-child{border-bottom:none}
 .wcf-msg-log-body{flex:1;min-width:0}
