@@ -4632,16 +4632,17 @@ function AdminConsole({
           {overdue.length > 0 && <div className="wcf-dash-sub">{namesList(overdue.map((o) => o.booking.player.display_name))}</div>}
         </div>
         <button
-          className={"wcf-dash-card " + (pendingApproval.length === 0 ? "clear" : "blue")}
+          className={"wcf-dash-card " + (pendingApproval.length === 0 ? "clear" : "blue") + (pendingApproval.length > 0 ? " expandable" : "")}
           onClick={() => pendingApproval.length > 0 && setShowPendingDetail((v) => !v)}
         >
           <div className="wcf-dash-icon">⏳</div>
           <div className="wcf-dash-num">{pendingApproval.length === 0 ? "✅" : pendingApproval.length}</div>
           <div className="wcf-dash-label">{pendingApproval.length === 0 ? "All approved" : "Awaiting approval"}</div>
           {pendingApproval.length > 0 && (
-            <div className="wcf-dash-sub">
-              {namesList(pendingApproval.map((p) => p.booking.player.display_name))} · {showPendingDetail ? "Hide" : "Tap for detail"}
-            </div>
+            <>
+              <div className="wcf-dash-sub">{namesList(pendingApproval.map((p) => p.booking.player.display_name))}</div>
+              <div className="wcf-dash-expand-bar">{showPendingDetail ? "▲ Hide detail" : "▼ Tap for detail"}</div>
+            </>
           )}
         </button>
         <div className={"wcf-dash-card " + (drafts.length === 0 ? "clear" : "dim")}>
@@ -5385,6 +5386,8 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-dash-card.blue{border-left-color:var(--blue)}
 .wcf-dash-card.dim{border-left-color:var(--dim)}
 .wcf-dash-card.clear{border-left-color:var(--green)}
+.wcf-dash-card.expandable{padding-bottom:0}
+.wcf-dash-expand-bar{margin:10px -13px 0;padding:7px 13px;background:var(--blue);color:#fff;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;text-align:center;border-radius:0 0 10px 10px}
 .wcf-dash-icon{font-size:16px}
 .wcf-dash-num{font-family:var(--mono);font-size:24px;font-weight:800;line-height:1;margin-top:6px}
 .wcf-dash-num.small{font-size:15px;margin-top:0}
