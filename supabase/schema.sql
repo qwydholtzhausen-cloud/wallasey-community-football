@@ -983,3 +983,38 @@ create policy "score_predictions_update_own" on public.score_predictions for upd
 -- check.
 -- ─────────────────────────────────────────────────────────────────
 alter table public.bookings add column pot_exempt_reason text check (pot_exempt_reason in ('prize', 'carried_over', 'other'));
+
+-- ─────────────────────────────────────────────────────────────────
+-- Real bug: the day-5-warning/day-7-removal payment window (see
+-- app/api/cron/frequent/route.ts) was measured from bookings.created_at
+-- for every unpaid booking - correct for someone who booked straight
+-- into a real spot, but wrong for someone promoted off the waiting
+-- list. Their created_at is from whenever they originally joined the
+-- waiting list, potentially days earlier, so promotion could hand them
+-- a payment window already most of the way to expired (reported case:
+-- 5 days on the waiting list, promoted, only 2 of the intended 7 days
+-- left to pay). The clock should start when they actually got a real,
+-- payable spot, not whenever the row was first created.
+-- ─────────────────────────────────────────────────────────────────
+alter table public.bookings add column promoted_at timestamptz;
+
+create or replace function public.bookings_promote_waiting()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if old.waiting = false then
+    update public.bookings
+    set waiting = false, promoted_at = now()
+    where id = (
+      select id from public.bookings
+      where game_id = old.game_id and waiting = true
+      order by created_at asc
+      limit 1
+    );
+  end if;
+  return old;
+end;
+$$;

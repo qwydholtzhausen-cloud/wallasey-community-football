@@ -146,12 +146,19 @@ export async function GET(req: Request) {
   // them a heads-up two days ahead of it.
   const { data: staleUnpaid } = await admin
     .from("bookings")
-    .select("id, player_id, created_at, player:profiles!bookings_player_id_fkey(display_name), game:games(id, venue, date, kickoff, price)")
+    .select(
+      "id, player_id, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name), game:games(id, venue, date, kickoff, price)"
+    )
     .eq("status", "unpaid")
     .eq("waiting", false);
 
   for (const b of staleUnpaid ?? []) {
-    const ageDays = (Date.now() - new Date(b.created_at).getTime()) / (24 * 60 * 60 * 1000);
+    // promoted_at, not created_at, when this booking came off the waiting
+    // list - otherwise someone who waited 5 days before a spot opened up
+    // only gets 2 days left to pay instead of the intended 7, since the
+    // clock should start when they actually got a real, payable spot.
+    const windowStart = b.promoted_at ?? b.created_at;
+    const ageDays = (Date.now() - new Date(windowStart).getTime()) / (24 * 60 * 60 * 1000);
     if (ageDays < 5) continue;
 
     const game = (Array.isArray(b.game) ? b.game[0] : b.game) as GameRefWithKickoff | null;
