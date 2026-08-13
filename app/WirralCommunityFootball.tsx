@@ -20,9 +20,11 @@ const MAX_AWARD_VIDEO_MB = 25;
 type Role = "player" | "admin" | "co-owner" | "owner";
 type PayStatus = "unpaid" | "pending" | "confirmed";
 
+// "Payment Pending" for someone who hasn't paid read backwards - like
+// something was already in motion, not that nothing had happened yet.
 const STATUS_LABEL: Record<PayStatus, string> = {
-  unpaid: "Payment Pending",
-  pending: "Awaiting Approval",
+  unpaid: "Awaiting Payment",
+  pending: "Pending Approval",
   confirmed: "Confirmed",
 };
 
