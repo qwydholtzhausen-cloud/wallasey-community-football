@@ -4537,6 +4537,15 @@ function AdminConsole({
   const pendingApproval = upcoming.flatMap((g) =>
     g.bookings.filter((b) => !b.waiting && b.status !== "confirmed").map((b) => ({ booking: b, game: g }))
   );
+  // Grouped by game for the expanded "Awaiting approval" breakdown - the
+  // dashboard card's namesList() alone gives no game context, meaning an
+  // admin had to go hunting through Upcoming to find each one.
+  const pendingByGame = Object.values(
+    pendingApproval.reduce<Record<string, { game: GameRow; items: typeof pendingApproval }>>((byGame, p) => {
+      (byGame[p.game.id] ??= { game: p.game, items: [] }).items.push(p);
+      return byGame;
+    }, {})
+  ).sort((a, b) => a.game.date.localeCompare(b.game.date));
   const nextGame = upcoming[0];
   const nextConfirmed = nextGame ? nextGame.bookings.filter((b) => !b.waiting) : [];
   const nextUnassigned = nextConfirmed.filter((b) => !b.team).length;
@@ -4554,6 +4563,7 @@ function AdminConsole({
   // just awaiting confirmation) kept separate and never counted toward
   // the amount shown, same distinction the day-5 warning already makes.
   const [expandedTabId, setExpandedTabId] = useState<string | null>(null);
+  const [showPendingDetail, setShowPendingDetail] = useState(false);
   const playerTabs = useMemo(() => {
     const byPlayer: Record<string, { playerId: string; playerName: string; owed: typeof overdue; pending: typeof overdue }> = {};
     for (const row of overdue) {
@@ -4621,12 +4631,19 @@ function AdminConsole({
           <div className="wcf-dash-label">{overdue.length === 0 ? "Nothing overdue" : "Overdue"}</div>
           {overdue.length > 0 && <div className="wcf-dash-sub">{namesList(overdue.map((o) => o.booking.player.display_name))}</div>}
         </div>
-        <div className={"wcf-dash-card " + (pendingApproval.length === 0 ? "clear" : "blue")}>
+        <button
+          className={"wcf-dash-card " + (pendingApproval.length === 0 ? "clear" : "blue")}
+          onClick={() => pendingApproval.length > 0 && setShowPendingDetail((v) => !v)}
+        >
           <div className="wcf-dash-icon">⏳</div>
           <div className="wcf-dash-num">{pendingApproval.length === 0 ? "✅" : pendingApproval.length}</div>
           <div className="wcf-dash-label">{pendingApproval.length === 0 ? "All approved" : "Awaiting approval"}</div>
-          {pendingApproval.length > 0 && <div className="wcf-dash-sub">{namesList(pendingApproval.map((p) => p.booking.player.display_name))}</div>}
-        </div>
+          {pendingApproval.length > 0 && (
+            <div className="wcf-dash-sub">
+              {namesList(pendingApproval.map((p) => p.booking.player.display_name))} · {showPendingDetail ? "Hide" : "Tap for detail"}
+            </div>
+          )}
+        </button>
         <div className={"wcf-dash-card " + (drafts.length === 0 ? "clear" : "dim")}>
           <div className="wcf-dash-icon">📝</div>
           <div className="wcf-dash-num">{drafts.length === 0 ? "✅" : drafts.length}</div>
@@ -4641,6 +4658,24 @@ function AdminConsole({
           </div>
         </button>
       </div>
+
+      {showPendingDetail && pendingByGame.length > 0 && (
+        <div className="wcf-pending-detail">
+          {pendingByGame.map(({ game, items }) => (
+            <div key={game.id} className="wcf-pending-game">
+              <div className="wcf-pending-game-head">{game.venue} · {fmtDate(game.date)}</div>
+              {items.map(({ booking: b }) => (
+                <div key={b.id} className="wcf-pending-row">
+                  <span className="wcf-avatar">{b.player.display_name[0]?.toUpperCase()}</span>
+                  <span className="wcf-pending-name">{b.player.display_name}</span>
+                  <StatusBadge status={b.status} />
+                  <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Approve</button>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
 
       <h3 className="wcf-admin-section-head">✉️ Messages</h3>
       <div className="wcf-msg-compose">
@@ -5341,7 +5376,9 @@ const css = `
 .wcf-month-head:first-child{margin-top:2px}
 .wcf-month-head:after{content:"";flex:1;height:1px;background:var(--line)}
 .wcf-dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:6px}
-.wcf-dash-card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:12px;padding:12px 13px;text-align:left}
+.wcf-dash-card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:12px;padding:12px 13px;text-align:left;width:100%;font:inherit;color:inherit}
+button.wcf-dash-card{cursor:pointer}
+button.wcf-dash-card:disabled{cursor:default}
 .wcf-dash-card.wide{grid-column:1/-1;display:flex;align-items:center;gap:12px;width:100%;font:inherit;color:inherit;cursor:pointer}
 .wcf-dash-card.amber{border-left-color:var(--amber)}
 .wcf-dash-card.red{border-left-color:var(--red-hi)}
@@ -5386,6 +5423,12 @@ const css = `
 .wcf-tab-line-desc{color:var(--dim)}
 .wcf-tab-line.pending .wcf-tab-line-desc{color:#7CAEF0}
 .wcf-tab-nudge{width:100%;background:var(--blue);color:#fff;border:none;padding:9px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer;margin-top:10px}
+.wcf-pending-detail{background:var(--panel);border:1px solid rgba(46,116,204,.35);border-radius:14px;padding:4px 14px 6px;margin-bottom:14px}
+.wcf-pending-game{padding:10px 0;border-bottom:1px solid var(--line)}
+.wcf-pending-game:last-child{border-bottom:none}
+.wcf-pending-game-head{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);margin-bottom:8px}
+.wcf-pending-row{display:flex;align-items:center;gap:9px;padding:6px 0}
+.wcf-pending-name{flex:1;min-width:0;font-weight:700;font-size:12.5px}
 .wcf-admin-game{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
 .wcf-admin-game-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;color:var(--white);padding:13px 14px;cursor:pointer;text-align:left}
 .wcf-admin-game-info{display:flex;flex-direction:column;gap:2px}
