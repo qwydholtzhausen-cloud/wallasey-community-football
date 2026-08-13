@@ -84,6 +84,9 @@ interface Profile {
 
 type Team = "white" | "red";
 
+type PotExemptReason = "prize" | "carried_over" | "other";
+const POT_EXEMPT_LABEL: Record<PotExemptReason, string> = { prize: "🎁 Free — prize", carried_over: "🔄 Free — carried over", other: "🎁 Free — other" };
+
 interface BookingRow {
   id: string;
   player_id: string;
@@ -93,6 +96,7 @@ interface BookingRow {
   created_at: string;
   player: Profile;
   confirmer: { display_name: string } | null;
+  pot_exempt_reason: PotExemptReason | null;
 }
 
 interface GameRow {
@@ -825,7 +829,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, bookings(id, player_id, status, waiting, team, created_at, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, bookings(id, player_id, status, waiting, team, created_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -1220,6 +1224,15 @@ function App({ session }: { session: Session }) {
       patch.confirmed_at = new Date().toISOString();
     }
     const { error } = await supabase.from("bookings").update(patch).eq("id", bookingId);
+    if (error) return notifyError(error.message);
+  }
+
+  // Keeps the booking's own status untouched (still a real spot, never
+  // wrongly flagged overdue) - only affects whether the pot/finance totals
+  // count it. The bookings-realtime subscription refetches games on any
+  // change, so no explicit reload needed here.
+  async function setPotExempt(bookingId: string, reason: PotExemptReason | null) {
+    const { error } = await supabase.from("bookings").update({ pot_exempt_reason: reason }).eq("id", bookingId);
     if (error) return notifyError(error.message);
   }
 
@@ -1838,7 +1851,10 @@ function App({ session }: { session: Session }) {
     const autoEntries = games
       .filter((g) => g.bookings.some((b) => !b.waiting && b.status === "confirmed"))
       .map((g) => {
-        const confirmedPaid = g.bookings.filter((b) => !b.waiting && b.status === "confirmed").length;
+        // Pot-exempt bookings (prize/carried-over) are still real confirmed
+        // spots - they just don't generate fresh pot income - so they count
+        // toward the game being included here, but not toward confirmedPaid.
+        const confirmedPaid = g.bookings.filter((b) => !b.waiting && b.status === "confirmed" && !b.pot_exempt_reason).length;
         const amount = confirmedPaid * g.price - g.pitch_cost;
         return {
           id: `game-${g.id}`,
@@ -1869,8 +1885,9 @@ function App({ session }: { session: Session }) {
     let grossIncome = 0;
     let pitchExpense = 0;
     for (const g of games) {
-      const confirmedPaid = g.bookings.filter((b) => !b.waiting && b.status === "confirmed").length;
-      if (confirmedPaid === 0) continue; // matches potLedger's own inclusion rule
+      const confirmedTotal = g.bookings.filter((b) => !b.waiting && b.status === "confirmed").length;
+      if (confirmedTotal === 0) continue; // matches potLedger's own inclusion rule
+      const confirmedPaid = g.bookings.filter((b) => !b.waiting && b.status === "confirmed" && !b.pot_exempt_reason).length;
       grossIncome += confirmedPaid * g.price;
       pitchExpense += g.pitch_cost;
     }
@@ -2651,6 +2668,7 @@ function App({ session }: { session: Session }) {
             onDeleteGame={deleteGame}
             onSaveResult={saveResult}
             onAddBooking={addBooking}
+            onSetPotExempt={setPotExempt}
             onGoToLineup={() => { setTab("lineup"); setLineupView("fairness"); }}
             messages={adminMessages}
             onSendMessage={sendAdminMessage}
@@ -4443,6 +4461,7 @@ function AdminConsole({
   onDeleteGame,
   onSaveResult,
   onAddBooking,
+  onSetPotExempt,
   onGoToLineup,
   messages,
   onSendMessage,
@@ -4460,11 +4479,12 @@ function AdminConsole({
   onDeleteGame: (gameId: string) => void;
   onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
+  onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
   onGoToLineup: () => void;
   messages: AdminMessage[];
   onSendMessage: (recipientId: string, message: string) => Promise<void>;
 }) {
-  const shared = { goalRows, cs, profiles, expandedId, onToggleExpand, onSetStatus, onRemoveBooking, onDeleteGame, onSaveResult, onAddBooking };
+  const shared = { goalRows, cs, profiles, expandedId, onToggleExpand, onSetStatus, onRemoveBooking, onDeleteGame, onSaveResult, onAddBooking, onSetPotExempt };
 
   // Every number here is already sitting in props passed down from
   // elsewhere - this doesn't compute anything new, just gathers what's
@@ -4668,6 +4688,7 @@ function AdminGameRow({
   onDeleteGame,
   onSaveResult,
   onAddBooking,
+  onSetPotExempt,
 }: {
   game: GameRow;
   past: boolean;
@@ -4681,6 +4702,7 @@ function AdminGameRow({
   onDeleteGame: (gameId: string) => void;
   onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
+  onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
 }) {
   const expanded = expandedId === game.id;
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -4760,6 +4782,17 @@ function AdminGameRow({
                   <button className="wcf-admin-undo" onClick={() => onSetStatus(b.id, "unpaid")}>Undo</button>
                 )}
               </div>
+              <select
+                className={"wcf-admin-pot-select" + (b.pot_exempt_reason ? " exempt" : "")}
+                value={b.pot_exempt_reason ?? ""}
+                onChange={(e) => onSetPotExempt(b.id, (e.target.value || null) as PotExemptReason | null)}
+                title="Whether this booking counts toward pot income"
+              >
+                <option value="">💷 Pays</option>
+                <option value="prize">🎁 Free — prize</option>
+                <option value="carried_over">🔄 Free — carried over</option>
+                <option value="other">🎁 Free — other</option>
+              </select>
               {past && (
                 <div className="wcf-admin-goals">
                   <button
@@ -5267,6 +5300,8 @@ const css = `
 .wcf-admin-status{display:flex;align-items:center;gap:8px}
 .wcf-admin-approve{background:var(--green);color:#04140a;border:none;padding:7px 12px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
 .wcf-admin-undo{background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer}
+.wcf-admin-pot-select{background:var(--panel2);border:1px solid var(--line);color:var(--dim);padding:6px 8px;border-radius:8px;font-size:10.5px;font-weight:700;font-family:var(--sans);cursor:pointer;flex:0 0 auto}
+.wcf-admin-pot-select.exempt{border-color:rgba(224,167,51,.5);color:var(--amber)}
 .wcf-admin-undo:hover{color:var(--red-hi)}
 .wcf-admin-goals{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-weight:700}
 .wcf-admin-goals button{width:24px;height:24px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);color:var(--white);cursor:pointer;font-size:14px;line-height:1;display:grid;place-items:center}

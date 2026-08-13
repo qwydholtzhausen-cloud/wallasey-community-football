@@ -967,3 +967,19 @@ create policy "score_predictions_update_own" on public.score_predictions for upd
       where g.id = score_predictions.game_id and (g.date + g.kickoff::time) > (now() at time zone 'Europe/London')
     )
   );
+
+-- ─────────────────────────────────────────────────────────────────
+-- Pot-exempt bookings - a booking can stay "confirmed" (real spot,
+-- never wrongly flagged overdue, all existing status logic untouched)
+-- while being excluded from that game's pot income, for two real cases:
+-- a prediction-league prize winner's free game, and a booking carried
+-- over from an already-paid-for game (counting it again would double
+-- the income). A straightforward refund where the player is removed
+-- from the game entirely needs no schema change at all - the pot is
+-- computed live from existing bookings, so deleting the booking already
+-- correctly drops that income.
+-- No RLS change needed - the existing bookings_update_payment policy
+-- already lets an admin update any column via its `public.is_admin()`
+-- check.
+-- ─────────────────────────────────────────────────────────────────
+alter table public.bookings add column pot_exempt_reason text check (pot_exempt_reason in ('prize', 'carried_over', 'other'));
