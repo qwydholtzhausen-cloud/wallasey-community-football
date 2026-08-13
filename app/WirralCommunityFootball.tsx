@@ -4662,19 +4662,53 @@ function AdminConsole({
 
       {showPendingDetail && pendingByGame.length > 0 && (
         <div className="wcf-pending-detail">
-          {pendingByGame.map(({ game, items }) => (
-            <div key={game.id} className="wcf-pending-game">
-              <div className="wcf-pending-game-head">{game.venue} · {fmtDate(game.date)}</div>
-              {items.map(({ booking: b }) => (
-                <div key={b.id} className="wcf-pending-row">
-                  <span className="wcf-avatar">{b.player.display_name[0]?.toUpperCase()}</span>
-                  <span className="wcf-pending-name">{b.player.display_name}</span>
-                  <StatusBadge status={b.status} />
-                  <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Approve</button>
-                </div>
-              ))}
-            </div>
-          ))}
+          {pendingByGame.map(({ game, items }) => {
+            // "Payment Pending" (unpaid) and "Awaiting Approval" (pending -
+            // they've already tapped I've paid) are genuinely different
+            // situations - mixing them in one flat list with an identical
+            // Approve button made it easy to confirm someone as paid who
+            // hasn't actually claimed to have paid at all.
+            const claimedPaid = items.filter((i) => i.booking.status === "pending");
+            const notPaid = items.filter((i) => i.booking.status === "unpaid");
+            return (
+              <div key={game.id} className="wcf-pending-game">
+                <div className="wcf-pending-game-head">{game.venue} · {fmtDate(game.date)}</div>
+                {claimedPaid.length > 0 && (
+                  <>
+                    <div className="wcf-pending-sublabel">⏳ Says they&apos;ve paid</div>
+                    {claimedPaid.map(({ booking: b }) => (
+                      <div key={b.id} className="wcf-pending-row">
+                        <span className="wcf-avatar">{b.player.display_name[0]?.toUpperCase()}</span>
+                        <span className="wcf-pending-name">{b.player.display_name}</span>
+                        <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Confirm</button>
+                      </div>
+                    ))}
+                  </>
+                )}
+                {notPaid.length > 0 && (
+                  <>
+                    <div className="wcf-pending-sublabel unpaid">❌ Not yet paid</div>
+                    {notPaid.map(({ booking: b }) => (
+                      <div key={b.id} className="wcf-pending-row">
+                        <span className="wcf-avatar">{b.player.display_name[0]?.toUpperCase()}</span>
+                        <span className="wcf-pending-name">{b.player.display_name}</span>
+                        <button
+                          className="wcf-admin-approve-override"
+                          onClick={() => {
+                            if (confirm(`Confirm ${b.player.display_name} as paid? They haven't marked this as paid themselves.`)) {
+                              onSetStatus(b.id, "confirmed");
+                            }
+                          }}
+                        >
+                          Approve anyway
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -5432,6 +5466,9 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-pending-game-head{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);margin-bottom:8px}
 .wcf-pending-row{display:flex;align-items:center;gap:9px;padding:6px 0}
 .wcf-pending-name{flex:1;min-width:0;font-weight:700;font-size:12.5px}
+.wcf-pending-sublabel{font-size:10px;font-weight:800;color:#7CAEF0;margin:6px 0 2px}
+.wcf-pending-sublabel.unpaid{color:var(--red-hi)}
+.wcf-admin-approve-override{background:transparent;border:1px solid rgba(228,42,54,.5);color:var(--red-hi);padding:6px 11px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
 .wcf-admin-game{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
 .wcf-admin-game-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;color:var(--white);padding:13px 14px;cursor:pointer;text-align:left}
 .wcf-admin-game-info{display:flex;flex-direction:column;gap:2px}
