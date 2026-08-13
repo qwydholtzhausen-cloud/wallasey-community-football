@@ -1018,3 +1018,34 @@ begin
   return old;
 end;
 $$;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Player tabs (Admin console). Regroups the existing Overdue data by
+-- player instead of one row per booking, split into "owed" (unpaid,
+-- real debt) vs "pending" (already marked paid, just awaiting admin
+-- confirmation - never treated as owed, same rule the day-5 warning
+-- already follows). A pot-exempt booking (prize/carried-over/other)
+-- is real either way and must never count as owed - fixing that here
+-- at the source (has_overdue_payment) rather than just client-side,
+-- since this function is what the booking-block RLS actually enforces.
+-- Without this fix, a comped booking left in a non-confirmed status
+-- could wrongly block that player from booking their next game.
+-- ─────────────────────────────────────────────────────────────────
+create or replace function public.has_overdue_payment(check_player_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.bookings b
+    join public.games g on g.id = b.game_id
+    where b.player_id = check_player_id
+      and b.waiting = false
+      and b.status != 'confirmed'
+      and b.pot_exempt_reason is null
+      and g.date < (now() at time zone 'Europe/London')::date
+  );
+$$;

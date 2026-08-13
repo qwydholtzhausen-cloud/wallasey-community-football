@@ -1799,11 +1799,21 @@ function App({ session }: { session: Session }) {
   const myOverdueBookings = useMemo(
     () =>
       pastGames.flatMap((g) =>
-        g.bookings.filter((b) => b.player_id === myId && !b.waiting && b.status !== "confirmed").map((b) => ({ game: g, booking: b }))
+        g.bookings
+          .filter((b) => b.player_id === myId && !b.waiting && b.status !== "confirmed" && !b.pot_exempt_reason)
+          .map((b) => ({ game: g, booking: b }))
       ),
     [pastGames, myId]
   );
   const iAmOverdue = myOverdueBookings.length > 0;
+  // Split for the "Your tab" card display only - owed (unpaid, real
+  // debt) vs pending (already tapped I've paid, awaiting admin
+  // confirmation). Doesn't change what counts as "overdue" for the
+  // booking-block banner above, which deliberately still requires full
+  // admin confirmation (not just a player's self-reported "I've paid")
+  // before the block lifts - same as the server-side RLS check.
+  const myTabOwed = useMemo(() => myOverdueBookings.filter((o) => o.booking.status === "unpaid"), [myOverdueBookings]);
+  const myTabPending = useMemo(() => myOverdueBookings.filter((o) => o.booking.status === "pending"), [myOverdueBookings]);
 
   const myUnreadMessages = useMemo(
     () => adminMessages.filter((m) => m.recipient_id === myId && !m.read_at),
@@ -2358,7 +2368,7 @@ function App({ session }: { session: Session }) {
     const rows: { booking: BookingRow; game: GameRow }[] = [];
     pastGames.forEach((g) => {
       g.bookings
-        .filter((b) => !b.waiting && b.status !== "confirmed")
+        .filter((b) => !b.waiting && b.status !== "confirmed" && !b.pot_exempt_reason)
         .forEach((b) => rows.push({ booking: b, game: g }));
     });
     return rows.sort((a, b) => b.game.date.localeCompare(a.game.date));
@@ -3664,6 +3674,9 @@ function App({ session }: { session: Session }) {
             onToggleRatingPlayer={(id) => setRatingPlayerId((cur) => (cur === id ? null : id))}
             myRecord={myRecord}
             myUpcomingBookings={myUpcomingBookings}
+            myTabOwed={myTabOwed}
+            myTabPending={myTabPending}
+            onMarkPaid={markPaid}
             messages={adminMessages}
             onMarkMessageRead={markMessageRead}
           />
@@ -3775,6 +3788,9 @@ function AccountPanel({
   onToggleRatingPlayer,
   myRecord,
   myUpcomingBookings,
+  myTabOwed,
+  myTabPending,
+  onMarkPaid,
   messages,
   onMarkMessageRead,
 }: {
@@ -3785,6 +3801,9 @@ function AccountPanel({
   profiles: Profile[];
   myRecord: { played: number; won: number; drawn: number; lost: number; winPct: number | null };
   myUpcomingBookings: { game: GameRow; booking: BookingRow }[];
+  myTabOwed: { game: GameRow; booking: BookingRow }[];
+  myTabPending: { game: GameRow; booking: BookingRow }[];
+  onMarkPaid: (bookingId: string) => void;
   auditLog: AuditLogEntry[];
   showAuditLog: boolean;
   onToggleAuditLog: () => void;
@@ -3855,6 +3874,30 @@ function AccountPanel({
               ) : (
                 <button className="wcf-msg-ack" onClick={() => onMarkMessageRead(m.id)}>Got it 👍 Mark as read</button>
               )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(myTabOwed.length > 0 || myTabPending.length > 0) && (
+        <div className="wcf-upcoming">
+          <h4>💷 Your tab</h4>
+          {myTabOwed.map(({ game, booking }) => (
+            <div key={booking.id} className="wcf-upcoming-row">
+              <div className="wcf-upcoming-body">
+                <div className="wcf-upcoming-venue">{game.venue}</div>
+                <div className="wcf-upcoming-date">{fmtDate(game.date)} · £{game.price} owed</div>
+              </div>
+              <button className="wcf-tab-self-pay" onClick={() => onMarkPaid(booking.id)}>I&apos;ve paid</button>
+            </div>
+          ))}
+          {myTabPending.map(({ game, booking }) => (
+            <div key={booking.id} className="wcf-upcoming-row">
+              <div className="wcf-upcoming-body">
+                <div className="wcf-upcoming-venue">{game.venue}</div>
+                <div className="wcf-upcoming-date">{fmtDate(game.date)} · £{game.price}</div>
+              </div>
+              <span className="wcf-tab-self-pending">⏳ Awaiting confirmation</span>
             </div>
           ))}
         </div>
@@ -4506,6 +4549,30 @@ function AdminConsole({
   const [composeText, setComposeText] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
 
+  // Regroups the flat overdue list by player - "owed" (unpaid, real
+  // debt) sorted to the top by amount, "pending" (already marked paid,
+  // just awaiting confirmation) kept separate and never counted toward
+  // the amount shown, same distinction the day-5 warning already makes.
+  const [expandedTabId, setExpandedTabId] = useState<string | null>(null);
+  const playerTabs = useMemo(() => {
+    const byPlayer: Record<string, { playerId: string; playerName: string; owed: typeof overdue; pending: typeof overdue }> = {};
+    for (const row of overdue) {
+      const entry = (byPlayer[row.booking.player_id] ??= {
+        playerId: row.booking.player_id,
+        playerName: row.booking.player.display_name,
+        owed: [],
+        pending: [],
+      });
+      if (row.booking.status === "unpaid") entry.owed.push(row);
+      else if (row.booking.status === "pending") entry.pending.push(row);
+    }
+    return Object.values(byPlayer).sort((a, b) => {
+      const aOwed = a.owed.reduce((sum, o) => sum + o.game.price, 0);
+      const bOwed = b.owed.reduce((sum, o) => sum + o.game.price, 0);
+      return bOwed - aOwed || b.pending.length - a.pending.length;
+    });
+  }, [overdue]);
+
   // Unread ones always show regardless of age - they're the ones that
   // actually need attention. Read ones older than this fall behind
   // "Show older" so the log doesn't just grow forever as more reminders
@@ -4626,40 +4693,67 @@ function AdminConsole({
         </div>
       )}
 
-      <h3 className="wcf-admin-section-head">⚠️ Overdue</h3>
-      {overdue.length === 0 && <p className="wcf-empty small">Nothing overdue — everyone's paid up.</p>}
-      {overdue.map(({ booking: b, game: g }) => (
-        <div key={b.id} className="wcf-overdue-row">
-          <span className="wcf-avatar">{b.player.display_name[0]?.toUpperCase()}</span>
-          <div>
-            <div className="wcf-admin-player-name">{b.player.display_name}</div>
-            <div className="wcf-pitch">{g.venue} · {fmtDate(g.date)} · £{g.price}</div>
+      <h3 className="wcf-admin-section-head">💷 Tabs</h3>
+      {playerTabs.length === 0 && <p className="wcf-empty small">Nothing outstanding — everyone's settled up.</p>}
+      {playerTabs.map((row) => {
+        const owedTotal = row.owed.reduce((sum, o) => sum + o.game.price, 0);
+        const expanded = expandedTabId === row.playerId;
+        return (
+          <div key={row.playerId} className="wcf-tab">
+            <button className="wcf-tab-summary" onClick={() => setExpandedTabId(expanded ? null : row.playerId)}>
+              <span className="wcf-avatar">{row.playerName[0]?.toUpperCase()}</span>
+              <span className="wcf-tab-summary-body">
+                <span className="wcf-tab-summary-name">{row.playerName}</span>
+                <span className="wcf-tab-summary-sub">
+                  {owedTotal > 0 && `Owes across ${row.owed.length} game${row.owed.length === 1 ? "" : "s"}`}
+                  {owedTotal > 0 && row.pending.length > 0 && " · "}
+                  {row.pending.length > 0 && `${row.pending.length} pending confirmation`}
+                </span>
+              </span>
+              {owedTotal > 0 && <span className="wcf-tab-amount">−£{owedTotal}</span>}
+              <span className="wcf-tab-chevron">{expanded ? "▲" : "▼"}</span>
+            </button>
+            {expanded && (
+              <div className="wcf-tab-detail">
+                {row.owed.map(({ booking: b, game: g }) => (
+                  <div key={b.id} className="wcf-tab-line">
+                    <span className="wcf-tab-line-desc">{g.venue} · {fmtDate(g.date)} · £{g.price}</span>
+                    <button
+                      className="wcf-admin-remove"
+                      onClick={() => { if (confirm(`Remove ${row.playerName} from this game?`)) onRemoveBooking(b.id); }}
+                      aria-label="Remove from game"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                {row.pending.map(({ booking: b, game: g }) => (
+                  <div key={b.id} className="wcf-tab-line pending">
+                    <span className="wcf-tab-line-desc">⏳ {g.venue} · {fmtDate(g.date)} · £{g.price}</span>
+                    <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Confirm</button>
+                  </div>
+                ))}
+                {owedTotal > 0 && (
+                  <button
+                    className="wcf-tab-nudge"
+                    onClick={() => {
+                      const gamesList = row.owed.map((o) => `${o.game.venue} (${fmtDate(o.game.date)})`).join(", ");
+                      startMessage(
+                        row.playerId,
+                        `Hey ${row.playerName.split(" ")[0]} — you're currently down as owing £${owedTotal} across ${row.owed.length} game${
+                          row.owed.length === 1 ? "" : "s"
+                        }: ${gamesList}. Can you sort it when you get a sec?`
+                      );
+                    }}
+                  >
+                    ✉️ Send nudge
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-          <div className="wcf-admin-status">
-            <StatusBadge status={b.status} />
-            <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Approve</button>
-          </div>
-          <button
-            className="wcf-admin-message-btn"
-            onClick={() =>
-              startMessage(
-                b.player_id,
-                `Hey ${b.player.display_name.split(" ")[0]} — you're still down as owing £${g.price} for the ${g.venue} game on ${fmtDate(g.date)}. Can you sort it when you get a sec?`
-              )
-            }
-            aria-label="Message about payment"
-          >
-            ✉️
-          </button>
-          <button
-            className="wcf-admin-remove"
-            onClick={() => { if (confirm(`Remove ${b.player.display_name} from this game?`)) onRemoveBooking(b.id); }}
-            aria-label="Remove from game"
-          >
-            ×
-          </button>
-        </div>
-      ))}
+        );
+      })}
 
       <h3 className="wcf-admin-section-head">📅 Upcoming</h3>
       {upcoming.length === 0 && <p className="wcf-empty small">No upcoming fixtures.</p>}
@@ -5279,6 +5373,19 @@ const css = `
 .wcf-nudge-actions button{font-size:12px;font-weight:800;padding:8px 14px;border-radius:20px;border:none;background:var(--blue);color:#fff;cursor:pointer}
 .wcf-nudge-actions button.wcf-ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
 .wcf-overdue-row>div:first-child{flex:1;min-width:120px}
+.wcf-tab{background:var(--panel);border:1px solid rgba(228,42,54,.35);border-radius:14px;margin-bottom:9px;overflow:hidden}
+.wcf-tab-summary{width:100%;display:flex;align-items:center;gap:11px;background:none;border:none;color:var(--white);padding:12px 14px;cursor:pointer;text-align:left}
+.wcf-tab-summary-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.wcf-tab-summary-name{font-weight:700;font-size:13px}
+.wcf-tab-summary-sub{font-size:10.5px;color:var(--dim)}
+.wcf-tab-amount{font-family:var(--mono);font-weight:800;font-size:14px;color:var(--red-hi);flex:0 0 auto}
+.wcf-tab-chevron{font-size:10px;color:var(--dim);flex:0 0 auto}
+.wcf-tab-detail{padding:0 14px 12px;border-top:1px solid var(--line)}
+.wcf-tab-line{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px}
+.wcf-tab-line:last-of-type{border-bottom:none}
+.wcf-tab-line-desc{color:var(--dim)}
+.wcf-tab-line.pending .wcf-tab-line-desc{color:#7CAEF0}
+.wcf-tab-nudge{width:100%;background:var(--blue);color:#fff;border:none;padding:9px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer;margin-top:10px}
 .wcf-admin-game{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
 .wcf-admin-game-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;color:var(--white);padding:13px 14px;cursor:pointer;text-align:left}
 .wcf-admin-game-info{display:flex;flex-direction:column;gap:2px}
@@ -5309,8 +5416,6 @@ const css = `
 .wcf-admin-goals span{width:16px;text-align:center}
 .wcf-admin-remove{background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;line-height:1;padding:0 2px}
 .wcf-admin-remove:hover{color:var(--red-hi)}
-.wcf-admin-message-btn{background:none;border:none;color:var(--dim);font-size:15px;cursor:pointer;line-height:1;padding:0 2px}
-.wcf-admin-message-btn:hover{color:var(--blue)}
 .wcf-msg-compose{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 13px;margin-bottom:12px;display:flex;flex-direction:column;gap:9px}
 .wcf-msg-compose select{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:12.5px;font-family:var(--sans)}
 .wcf-msg-compose-box{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;color:var(--white);font-size:13px;font-family:var(--sans);min-height:64px;resize:vertical}
@@ -5650,6 +5755,8 @@ const css = `
 .wcf-upcoming-venue{font-weight:700;font-size:13px}
 .wcf-upcoming-date{font-size:11px;color:var(--dim);margin-top:1px}
 .wcf-upcoming-waiting{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;padding:3px 8px;border-radius:999px;background:rgba(224,167,51,.16);color:var(--amber);white-space:nowrap;flex:0 0 auto}
+.wcf-tab-self-pay{background:var(--red);color:#fff;border:none;padding:8px 12px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer;flex:0 0 auto;white-space:nowrap}
+.wcf-tab-self-pending{font-size:10px;font-weight:800;color:#7CAEF0;white-space:nowrap;flex:0 0 auto}
 .wcf-account-field{display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-account-rename{display:flex;gap:8px}
 .wcf-account-rename input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:10px;border-radius:9px;font-size:13px;font-family:var(--sans);text-transform:none}
