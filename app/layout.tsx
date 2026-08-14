@@ -1,5 +1,9 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
+import { Sora, Inter } from 'next/font/google';
+
+const sora = Sora({ subsets: ['latin'], weight: ['600', '700', '800'], variable: '--font-sora' });
+const inter = Inter({ subsets: ['latin'], weight: ['400', '600', '700'], variable: '--font-inter' });
 
 export const metadata: Metadata = {
   title: 'Wirral Community Football',
@@ -12,12 +16,12 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#0A1A34',
+  themeColor: '#0d0d1a',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${sora.variable} ${inter.variable}`}>
       <body>{children}</body>
     </html>
   );
