@@ -710,6 +710,26 @@ function App({ session }: { session: Session }) {
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+
+  // In-app replacement for window.confirm() - same "confirm before acting"
+  // behaviour everywhere it's used, just styled to match the app instead
+  // of breaking out to the browser's plain native dialog. Promise-based so
+  // call sites read almost identically to the confirm() they replace:
+  // `if (await askConfirm(...)) doThing()` instead of `if (confirm(...))`.
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    danger: boolean;
+    resolve: (v: boolean) => void;
+  } | null>(null);
+  function askConfirm(title: string, message: string, confirmLabel = "Confirm", danger = true): Promise<boolean> {
+    return new Promise((resolve) => setConfirmState({ title, message, confirmLabel, danger, resolve }));
+  }
+  function resolveConfirm(value: boolean) {
+    confirmState?.resolve(value);
+    setConfirmState(null);
+  }
   // Keyed by profile id, not just a bare device-level flag - a deleted
   // and re-added account gets a brand new id (see deleteProfile/addPlayer,
   // full auth.users delete+recreate), so a stale dismiss from the old
@@ -1549,7 +1569,7 @@ function App({ session }: { session: Session }) {
 
     const text = `*⭐ Wirral Community Football ⭐*\n*Fixture Updates*\n\n${movementLine}Get booked on lads 👇\n\n${sections.join("\n\n")}`;
 
-    if (!confirm('Copy the fixture update? This resets the "since last update" count for next time.')) return;
+    if (!(await askConfirm("Copy the fixture update?", "This resets the \"since last update\" count for next time.", "Copy", false))) return;
     try {
       await navigator.clipboard.writeText(text);
       const { error } = await supabase.from("club_settings").update({ last_fixture_update_at: new Date().toISOString() }).eq("id", true);
@@ -1643,7 +1663,9 @@ function App({ session }: { session: Session }) {
     logAction("Changed role", `${targetName} → ${ROLE_LABEL[role]}`);
   }
   async function deleteProfile(id: string, name: string) {
-    if (!confirm(`Permanently delete ${name}'s account? This removes their login and all their bookings. This can't be undone.`)) return;
+    if (!(await askConfirm(`Permanently delete ${name}'s account?`, "This removes their login and all their bookings. This can't be undone.", "Delete forever"))) {
+      return;
+    }
     const token = await getFreshAccessToken();
     if (!token) return notifyError("Your session's expired — refresh the page and sign in again, then retry.");
     const res = await fetch("/api/admin/delete-user", {
@@ -2595,7 +2617,12 @@ function App({ session }: { session: Session }) {
           {tab === "fixtures" && isAdmin && (
             <div className="wcf-heading-actions">
               <button className="wcf-addbtn ghost" onClick={copyFixtureUpdate} title="Copy a WhatsApp fixture update">📋 Update</button>
-              <button className="wcf-addbtn" onClick={() => { if (confirm("Add a new fixture?")) addGame(); }}>+ Fixture</button>
+              <button
+                className="wcf-addbtn"
+                onClick={async () => { if (await askConfirm("Add a new fixture?", "You can fill in the details and post it once it's ready.", "Add", false)) addGame(); }}
+              >
+                + Fixture
+              </button>
             </div>
           )}
         </div>
@@ -2658,6 +2685,7 @@ function App({ session }: { session: Session }) {
                     onDelete={() => deleteGame(g.id)}
                     onOpenPlayerCard={setPlayerCardId}
                     weather={weatherFor(g.date, g.kickoff)}
+                    askConfirm={askConfirm}
                   />
                 ))}
               </div>
@@ -2684,6 +2712,7 @@ function App({ session }: { session: Session }) {
             onGoToLineup={() => { setTab("lineup"); setLineupView("fairness"); }}
             messages={adminMessages}
             onSendMessage={sendAdminMessage}
+            askConfirm={askConfirm}
           />
         )}
 
@@ -2766,7 +2795,7 @@ function App({ session }: { session: Session }) {
                     {(c.submitted_by === myId || isAdmin) && (
                       <button
                         className="wcf-clip-del"
-                        onClick={() => { if (confirm(`Delete "${c.title}"?`)) deleteClip(c.id); }}
+                        onClick={async () => { if (await askConfirm(`Delete "${c.title}"?`, "This removes it from the feed for everyone.", "Delete")) deleteClip(c.id); }}
                         aria-label="Delete clip"
                       >
                         ×
@@ -2787,9 +2816,11 @@ function App({ session }: { session: Session }) {
                     {isAdmin && (
                       <button
                         className="wcf-feed-archive-btn"
-                        onClick={() => {
+                        onClick={async () => {
                           if (isHidden) return unhideFeedItem(item.key);
-                          if (confirm("Archive this from the feed? You can restore it later from \"Show archived\".")) hideFeedItem(item.key);
+                          if (await askConfirm("Archive this from the feed?", "You can restore it later from \"Show archived\".", "Archive", false)) {
+                            hideFeedItem(item.key);
+                          }
                         }}
                       >
                         {isHidden ? "↺ Restore" : "Archive"}
@@ -3545,7 +3576,7 @@ function App({ session }: { session: Session }) {
                         {entry.kind === "manual" && (
                           <button
                             className="wcf-admin-remove"
-                            onClick={() => { if (confirm("Remove this pot entry?")) deletePotEntry(entry.id); }}
+                            onClick={async () => { if (await askConfirm("Remove this pot entry?", "This deletes it from the ledger for good.", "Remove")) deletePotEntry(entry.id); }}
                             aria-label="Remove entry"
                           >
                             ×
@@ -3679,6 +3710,7 @@ function App({ session }: { session: Session }) {
             myTabOwed={myTabOwed}
             myTabPending={myTabPending}
             onMarkPaid={markPaid}
+            askConfirm={askConfirm}
             messages={adminMessages}
             onMarkMessageRead={markMessageRead}
           />
@@ -3702,6 +3734,22 @@ function App({ session }: { session: Session }) {
         const rating = canSeeRating ? ratingByPlayer[playerCardId] ?? null : null;
         return <PlayerCardModal profile={cardProfile} stats={stats} rating={rating} onClose={() => setPlayerCardId(null)} />;
       })()}
+
+      {confirmState && (
+        <div className="wcf-modal-overlay" onClick={() => resolveConfirm(false)}>
+          <div className="wcf-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="wcf-modal-icon">{confirmState.danger ? "⚠️" : "❓"}</div>
+            <div className="wcf-modal-title">{confirmState.title}</div>
+            <div className="wcf-modal-msg">{confirmState.message}</div>
+            <div className="wcf-modal-actions">
+              <button className="wcf-modal-cancel" onClick={() => resolveConfirm(false)}>Cancel</button>
+              <button className={"wcf-modal-confirm" + (confirmState.danger ? "" : " safe")} onClick={() => resolveConfirm(true)}>
+                {confirmState.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -3758,6 +3806,34 @@ function PlayerCardModal({
   );
 }
 
+// Same collapse pattern as "View players"/Tabs elsewhere - reused here as
+// a small generic wrapper since Account groups several of these back to
+// back (settings, rating, guides, and - for admins - roles/log/settings/
+// awards) rather than each hand-rolling its own toggle button.
+function AccordionSection({
+  icon,
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  icon: string;
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="wcf-accordion">
+      <button className="wcf-accordion-head" onClick={onToggle}>
+        <span>{icon} {title}</span>
+        <span className="wcf-accordion-chevron">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && <div className="wcf-accordion-body">{children}</div>}
+    </div>
+  );
+}
+
 function AccountPanel({
   profile,
   email,
@@ -3795,6 +3871,7 @@ function AccountPanel({
   onMarkPaid,
   messages,
   onMarkMessageRead,
+  askConfirm,
 }: {
   profile: Profile;
   email: string;
@@ -3806,6 +3883,7 @@ function AccountPanel({
   myTabOwed: { game: GameRow; booking: BookingRow }[];
   myTabPending: { game: GameRow; booking: BookingRow }[];
   onMarkPaid: (bookingId: string) => void;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
   auditLog: AuditLogEntry[];
   showAuditLog: boolean;
   onToggleAuditLog: () => void;
@@ -3840,6 +3918,14 @@ function AccountPanel({
   const [roleSearch, setRoleSearch] = useState("");
   const filteredRoleProfiles = profiles.filter((p) => p.display_name.toLowerCase().includes(roleSearch.trim().toLowerCase()));
   const [pushBusy, setPushBusy] = useState(false);
+  // Collapsed by default - only the time-sensitive cards above (messages,
+  // your tab, upcoming bookings) stay always open. Everything here is
+  // either "set once, rarely touched again" or admin reference tooling.
+  const [openAccountSettings, setOpenAccountSettings] = useState(false);
+  const [openRating, setOpenRating] = useState(false);
+  const [openGuides, setOpenGuides] = useState(false);
+  const [openClubSettings, setOpenClubSettings] = useState(false);
+  const [openAwards, setOpenAwards] = useState(false);
   const [openGuide, setOpenGuide] = useState<"install" | "notifications" | null>(null);
   // push_opt_in is a shared per-user DB flag, but permission is granted
   // per-device/per-browser - deriving "on" from both means a fresh device
@@ -3920,80 +4006,87 @@ function AccountPanel({
         </div>
       )}
 
-      <label className="wcf-account-field">
-        Display name
-        <div className="wcf-account-rename">
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-          <button
-            onClick={() => {
-              if (confirm(`Change your display name to "${name.trim()}"?`)) onRename(name);
-            }}
-            disabled={!name.trim() || name.trim() === profile.display_name}
-          >
-            Save
-          </button>
-        </div>
-      </label>
+      <div className="wcf-account-always">Settings &amp; reference</div>
 
-      <div className="wcf-rating-section">
-        <h3>Rate yourself</h3>
-        <p className="wcf-rating-note">
-          Helps admins put together fair teams. Only visible to you and admins — once an admin rates you, theirs takes over.
-        </p>
-        <RatingForm initial={myRating} onSave={onSaveSelfRating} saveLabel={myRating ? "Update my rating" : "Save my rating"} />
-      </div>
-
-      <div className="wcf-record-section">
-        <h3>My record</h3>
-        <p className="wcf-rating-note">Only visible to you — worked out from every past game you had a spot in.</p>
-        {myRecord.played === 0 ? (
-          <p className="wcf-record-empty">No results yet — this fills in once you've played a game.</p>
-        ) : (
-          <>
-            <div className="wcf-record-pct">{myRecord.winPct}%<span>win rate</span></div>
-            <div className="wcf-record-row">
-              <div><strong>{myRecord.played}</strong><span>Played</span></div>
-              <div><strong>{myRecord.won}</strong><span>Won</span></div>
-              <div><strong>{myRecord.drawn}</strong><span>Drawn</span></div>
-              <div><strong>{myRecord.lost}</strong><span>Lost</span></div>
-            </div>
-          </>
-        )}
-      </div>
-
-      <div className="wcf-push-section">
-        <div className="wcf-push-row">
-          <div>
-            <div className="wcf-push-label">Game-day notifications</div>
-            <div className="wcf-push-sub">Kickoff reminders, payment nudges, spots opening up</div>
+      <AccordionSection icon="⚙️" title="Account settings" open={openAccountSettings} onToggle={() => setOpenAccountSettings((v) => !v)}>
+        <label className="wcf-account-field">
+          Display name
+          <div className="wcf-account-rename">
+            <input value={name} onChange={(e) => setName(e.target.value)} />
+            <button
+              onClick={async () => {
+                if (await askConfirm(`Change your display name?`, `Change it to "${name.trim()}"?`, "Save", false)) onRename(name);
+              }}
+              disabled={!name.trim() || name.trim() === profile.display_name}
+            >
+              Save
+            </button>
           </div>
-          <button
-            className={"wcf-push-toggle " + (pushOn ? "on" : "")}
-            disabled={pushBusy}
-            onClick={async () => {
-              setPushBusy(true);
-              if (pushOn) await onDisablePush();
-              else await onEnablePush();
-              setPushBusy(false);
-            }}
-          >
-            {pushBusy ? "…" : pushOn ? "On" : "Off"}
-          </button>
-        </div>
-        {pushOn && (
-          <button className="wcf-ghost wcf-push-test" onClick={onSendTestPush}>
-            Send me a test push
-          </button>
-        )}
-        {!pushOn && (
-          <p className="wcf-push-note">
-            Note: the app must be added to your Home Screen for notifications to work — see &quot;Add to your home screen&quot; below if you haven&apos;t yet.
-          </p>
-        )}
-      </div>
+        </label>
 
-      <div className="wcf-guides">
-        <h3>Getting set up</h3>
+        <div className="wcf-push-section">
+          <div className="wcf-push-row">
+            <div>
+              <div className="wcf-push-label">Game-day notifications</div>
+              <div className="wcf-push-sub">Kickoff reminders, payment nudges, spots opening up</div>
+            </div>
+            <button
+              className={"wcf-push-toggle " + (pushOn ? "on" : "")}
+              disabled={pushBusy}
+              onClick={async () => {
+                setPushBusy(true);
+                if (pushOn) await onDisablePush();
+                else await onEnablePush();
+                setPushBusy(false);
+              }}
+            >
+              {pushBusy ? "…" : pushOn ? "On" : "Off"}
+            </button>
+          </div>
+          {pushOn && (
+            <button className="wcf-ghost wcf-push-test" onClick={onSendTestPush}>
+              Send me a test push
+            </button>
+          )}
+          {!pushOn && (
+            <p className="wcf-push-note">
+              Note: the app must be added to your Home Screen for notifications to work — see &quot;Getting set up&quot; below if you haven&apos;t yet.
+            </p>
+          )}
+        </div>
+
+        <button className="wcf-signout" onClick={onSignOut}>Sign out</button>
+      </AccordionSection>
+
+      <AccordionSection icon="⭐" title="Your rating &amp; record" open={openRating} onToggle={() => setOpenRating((v) => !v)}>
+        <div className="wcf-rating-section">
+          <h3>Rate yourself</h3>
+          <p className="wcf-rating-note">
+            Helps admins put together fair teams. Only visible to you and admins — once an admin rates you, theirs takes over.
+          </p>
+          <RatingForm initial={myRating} onSave={onSaveSelfRating} saveLabel={myRating ? "Update my rating" : "Save my rating"} />
+        </div>
+
+        <div className="wcf-record-section">
+          <h3>My record</h3>
+          <p className="wcf-rating-note">Only visible to you — worked out from every past game you had a spot in.</p>
+          {myRecord.played === 0 ? (
+            <p className="wcf-record-empty">No results yet — this fills in once you've played a game.</p>
+          ) : (
+            <>
+              <div className="wcf-record-pct">{myRecord.winPct}%<span>win rate</span></div>
+              <div className="wcf-record-row">
+                <div><strong>{myRecord.played}</strong><span>Played</span></div>
+                <div><strong>{myRecord.won}</strong><span>Won</span></div>
+                <div><strong>{myRecord.drawn}</strong><span>Drawn</span></div>
+                <div><strong>{myRecord.lost}</strong><span>Lost</span></div>
+              </div>
+            </>
+          )}
+        </div>
+      </AccordionSection>
+
+      <AccordionSection icon="📖" title="Getting set up" open={openGuides} onToggle={() => setOpenGuides((v) => !v)}>
         <button className="wcf-guide-row" onClick={() => setOpenGuide("install")}>
           <span>📱 Add to your home screen</span>
           <span className="wcf-guide-arrow">›</span>
@@ -4002,7 +4095,7 @@ function AccountPanel({
           <span>🔔 Enable notifications</span>
           <span className="wcf-guide-arrow">›</span>
         </button>
-      </div>
+      </AccordionSection>
 
       {openGuide && (
         <div className="wcf-lightbox" onClick={() => setOpenGuide(null)}>
@@ -4016,24 +4109,19 @@ function AccountPanel({
         </div>
       )}
 
-      <button className="wcf-signout" onClick={onSignOut}>Sign out</button>
-
-      {isAdmin && pushStats && (
-        <div className="wcf-push-stat">
-          🔔 {pushStats.subscribed} of {pushStats.total} players have notifications on
-        </div>
-      )}
-
-      {isAdmin && <AddPlayerForm onAdd={onAddPlayer} />}
-      {isAdmin && <LoginCodeForm onGenerate={onGenerateLoginCode} />}
+      {isAdmin && <div className="wcf-account-always">Admin</div>}
 
       {isAdmin && (
-        <div className="wcf-roles">
-          <h3>Manage roles · {profiles.length}</h3>
-          <button className="wcf-ghost wcf-roles-toggle" onClick={() => setShowRoles((v) => !v)}>
-            {showRoles ? "Hide players" : "View players"}
-          </button>
-          {showRoles && profiles.length > 8 && (
+        <AccordionSection icon="👥" title={`Manage roles · ${profiles.length}`} open={showRoles} onToggle={() => setShowRoles((v) => !v)}>
+          {pushStats && (
+            <div className="wcf-push-stat">
+              🔔 {pushStats.subscribed} of {pushStats.total} players have notifications on
+            </div>
+          )}
+          <AddPlayerForm onAdd={onAddPlayer} />
+          <LoginCodeForm onGenerate={onGenerateLoginCode} />
+
+          {profiles.length > 8 && (
             <input
               className="wcf-roles-search"
               placeholder="🔍 Search players…"
@@ -4041,10 +4129,11 @@ function AccountPanel({
               onChange={(e) => setRoleSearch(e.target.value)}
             />
           )}
-          {showRoles && roleSearch.trim() && filteredRoleProfiles.length === 0 && (
+          {roleSearch.trim() && filteredRoleProfiles.length === 0 && (
             <p className="wcf-empty small">No players match &quot;{roleSearch.trim()}&quot;.</p>
           )}
-          {showRoles && filteredRoleProfiles.map((p) => {
+          <div className="wcf-roles-list">
+          {filteredRoleProfiles.map((p) => {
             const isSelf = p.id === profile.id;
             // Owner rows are fully protected in the UI (SQL Editor only).
             // Co-owner rows can only be touched by the owner. Admins/
@@ -4059,8 +4148,15 @@ function AccountPanel({
                   {p.role === "player" && (
                     <button
                       className="wcf-ghost"
-                      onClick={() => {
-                        if (confirm(`Make ${p.display_name} an admin? They'll be able to manage fixtures, payments, and other players.`)) {
+                      onClick={async () => {
+                        if (
+                          await askConfirm(
+                            "Make admin?",
+                            `${p.display_name} will be able to manage fixtures, payments, and other players.`,
+                            "Make admin",
+                            false
+                          )
+                        ) {
                           onSetRole(p.id, "admin");
                         }
                       }}
@@ -4072,19 +4168,25 @@ function AccountPanel({
                     <>
                       <button
                         className="wcf-ghost"
-                        onClick={() => {
-                          const msg = isSelf
-                            ? "Remove your own admin access? You'll need the owner (or the SQL Editor) to get it back."
-                            : `Remove admin access from ${p.display_name}?`;
-                          if (confirm(msg)) onSetRole(p.id, "player");
+                        onClick={async () => {
+                          const title = isSelf ? "Remove your own admin access?" : `Remove admin access from ${p.display_name}?`;
+                          const msg = isSelf ? "You'll need the owner (or the SQL Editor) to get it back." : "They'll go back to being a regular player.";
+                          if (await askConfirm(title, msg, "Remove admin")) onSetRole(p.id, "player");
                         }}
                       >
                         Remove admin
                       </button>
                       <button
                         className="wcf-ghost"
-                        onClick={() => {
-                          if (confirm(`Make ${p.display_name} a co-owner? Only you'll be able to change or remove that access afterwards.`)) {
+                        onClick={async () => {
+                          if (
+                            await askConfirm(
+                              "Make co-owner?",
+                              `Only you'll be able to change or remove ${p.display_name}'s access afterwards.`,
+                              "Make co-owner",
+                              false
+                            )
+                          ) {
                             onSetRole(p.id, "co-owner");
                           }
                         }}
@@ -4096,11 +4198,10 @@ function AccountPanel({
                   {p.role === "co-owner" && isOwner && (
                     <button
                       className="wcf-ghost"
-                      onClick={() => {
-                        const msg = isSelf
-                          ? "Remove your own co-owner access? You'll need the owner to get it back."
-                          : `Remove co-owner access from ${p.display_name}? They'll become an admin.`;
-                        if (confirm(msg)) onSetRole(p.id, "admin");
+                      onClick={async () => {
+                        const title = isSelf ? "Remove your own co-owner access?" : `Remove co-owner access from ${p.display_name}?`;
+                        const msg = isSelf ? "You'll need the owner to get it back." : "They'll become an admin.";
+                        if (await askConfirm(title, msg, "Remove co-owner")) onSetRole(p.id, "admin");
                       }}
                     >
                       Remove co-owner
@@ -4131,35 +4232,40 @@ function AccountPanel({
               </div>
             );
           })}
-        </div>
+          </div>
+        </AccordionSection>
       )}
 
       {isAdmin && (
-        <div className="wcf-audit">
-          <button className="wcf-ghost wcf-roles-toggle" onClick={onToggleAuditLog}>
-            {showAuditLog ? "Hide activity log" : "View activity log"}
-          </button>
-          {showAuditLog && (
-            <>
-              {auditLog.length === 0 && <p className="wcf-empty">No activity logged yet.</p>}
-              {auditLog.map((entry) => (
-                <div key={entry.id} className="wcf-audit-row">
-                  <div className="wcf-audit-line">
-                    <strong>{entry.actor?.display_name ?? "Someone"}</strong> {entry.action.toLowerCase()}
-                    {entry.details ? ` — ${entry.details}` : ""}
-                  </div>
-                  <div className="wcf-audit-time">
-                    {new Date(entry.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                  </div>
+        <AccordionSection icon="📋" title="Activity log" open={showAuditLog} onToggle={onToggleAuditLog}>
+          {auditLog.length === 0 && <p className="wcf-empty">No activity logged yet.</p>}
+          <div className="wcf-audit-list">
+            {auditLog.map((entry) => (
+              <div key={entry.id} className="wcf-audit-row">
+                <div className="wcf-audit-line">
+                  <strong>{entry.actor?.display_name ?? "Someone"}</strong> {entry.action.toLowerCase()}
+                  {entry.details ? ` — ${entry.details}` : ""}
                 </div>
-              ))}
-            </>
-          )}
-        </div>
+                <div className="wcf-audit-time">
+                  {new Date(entry.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </AccordionSection>
       )}
 
-      {isAdmin && <ClubSettingsForm settings={clubSettings} onSave={onSaveClubSettings} />}
-      {isAdmin && <AwardsForm awards={awards} onAdd={onAddAward} onDelete={onDeleteAward} />}
+      {isAdmin && (
+        <AccordionSection icon="⚙️" title="Club settings" open={openClubSettings} onToggle={() => setOpenClubSettings((v) => !v)}>
+          <ClubSettingsForm settings={clubSettings} onSave={onSaveClubSettings} />
+        </AccordionSection>
+      )}
+
+      {isAdmin && (
+        <AccordionSection icon="🏆" title="Awards" open={openAwards} onToggle={() => setOpenAwards((v) => !v)}>
+          <AwardsForm awards={awards} onAdd={onAddAward} onDelete={onDeleteAward} askConfirm={askConfirm} />
+        </AccordionSection>
+      )}
     </div>
   );
 }
@@ -4324,10 +4430,12 @@ function AwardsForm({
   awards,
   onAdd,
   onDelete,
+  askConfirm,
 }: {
   awards: AwardRow[];
   onAdd: (title: string, value: string, note: string, imageFile: File | null, videoFile: File | null) => Promise<void>;
   onDelete: (id: string) => void;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
 }) {
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");
@@ -4361,7 +4469,9 @@ function AwardsForm({
           </span>
           <button
             className="wcf-admin-remove"
-            onClick={() => { if (confirm(`Remove "${a.title}"? This also deletes any photo/video attached.`)) onDelete(a.id); }}
+            onClick={async () => {
+              if (await askConfirm(`Remove "${a.title}"?`, "This also deletes any photo/video attached to it.", "Remove")) onDelete(a.id);
+            }}
             aria-label="Remove award"
           >
             ×
@@ -4510,6 +4620,7 @@ function AdminConsole({
   onGoToLineup,
   messages,
   onSendMessage,
+  askConfirm,
 }: {
   upcoming: GameRow[];
   previous: GameRow[];
@@ -4528,8 +4639,22 @@ function AdminConsole({
   onGoToLineup: () => void;
   messages: AdminMessage[];
   onSendMessage: (recipientId: string, message: string) => Promise<void>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
 }) {
-  const shared = { goalRows, cs, profiles, expandedId, onToggleExpand, onSetStatus, onRemoveBooking, onDeleteGame, onSaveResult, onAddBooking, onSetPotExempt };
+  const shared = {
+    goalRows,
+    cs,
+    profiles,
+    expandedId,
+    onToggleExpand,
+    onSetStatus,
+    onRemoveBooking,
+    onDeleteGame,
+    onSaveResult,
+    onAddBooking,
+    onSetPotExempt,
+    askConfirm,
+  };
 
   // Every number here is already sitting in props passed down from
   // elsewhere - this doesn't compute anything new, just gathers what's
@@ -4696,8 +4821,8 @@ function AdminConsole({
                         <span className="wcf-pending-name">{b.player.display_name}</span>
                         <button
                           className="wcf-admin-approve-override"
-                          onClick={() => {
-                            if (confirm(`Confirm ${b.player.display_name} as paid? They haven't marked this as paid themselves.`)) {
+                          onClick={async () => {
+                            if (await askConfirm(`Confirm ${b.player.display_name} as paid?`, "They haven't marked this as paid themselves.", "Confirm anyway")) {
                               onSetStatus(b.id, "confirmed");
                             }
                           }}
@@ -4792,7 +4917,11 @@ function AdminConsole({
                     <span className="wcf-tab-line-desc">{g.venue} · {fmtDate(g.date)} · £{g.price}</span>
                     <button
                       className="wcf-admin-remove"
-                      onClick={() => { if (confirm(`Remove ${row.playerName} from this game?`)) onRemoveBooking(b.id); }}
+                      onClick={async () => {
+                        if (await askConfirm(`Remove ${row.playerName} from this game?`, `${g.venue} · ${fmtDate(g.date)}. Their spot opens up to the waiting list.`, "Remove")) {
+                          onRemoveBooking(b.id);
+                        }
+                      }}
                       aria-label="Remove from game"
                     >
                       ×
@@ -4855,6 +4984,7 @@ function AdminGameRow({
   onSaveResult,
   onAddBooking,
   onSetPotExempt,
+  askConfirm,
 }: {
   game: GameRow;
   past: boolean;
@@ -4869,6 +4999,7 @@ function AdminGameRow({
   onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
 }) {
   const expanded = expandedId === game.id;
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -4973,7 +5104,11 @@ function AdminGameRow({
               )}
               <button
                 className="wcf-admin-remove"
-                onClick={() => { if (confirm(`Remove ${b.player.display_name} from this game?`)) onRemoveBooking(b.id); }}
+                onClick={async () => {
+                  if (await askConfirm(`Remove ${b.player.display_name} from this game?`, "Their spot opens up to the waiting list.", "Remove")) {
+                    onRemoveBooking(b.id);
+                  }
+                }}
                 aria-label="Remove from game"
               >
                 ×
@@ -4995,7 +5130,11 @@ function AdminGameRow({
                   <span className="wcf-admin-player-name">{i + 1}. {b.player.display_name}</span>
                   <button
                     className="wcf-admin-remove"
-                    onClick={() => { if (confirm(`Remove ${b.player.display_name} from the waiting list?`)) onRemoveBooking(b.id); }}
+                    onClick={async () => {
+                      if (await askConfirm(`Remove ${b.player.display_name} from the waiting list?`, "They'll need to rejoin if they want a spot again.", "Remove")) {
+                        onRemoveBooking(b.id);
+                      }
+                    }}
                     aria-label="Remove from waiting list"
                   >
                     ×
@@ -5028,9 +5167,15 @@ function AdminGameRow({
 
           <button
             className="wcf-admin-delete-game"
-            onClick={() => {
+            onClick={async () => {
               const when = past ? "past" : "upcoming";
-              if (confirm(`Delete this ${when} fixture: ${game.venue} on ${fmtDate(game.date)}? This removes it completely, along with everyone's bookings.`)) {
+              if (
+                await askConfirm(
+                  `Delete this ${when} fixture?`,
+                  `${game.venue} on ${fmtDate(game.date)} — this removes it completely, along with everyone's bookings.`,
+                  "Delete"
+                )
+              ) {
                 onDeleteGame(game.id);
               }
             }}
@@ -5057,6 +5202,7 @@ function GameCard({
   onDelete,
   onOpenPlayerCard,
   weather,
+  askConfirm,
 }: {
   game: GameRow;
   myId: string;
@@ -5071,6 +5217,7 @@ function GameCard({
   onDelete: () => void;
   onOpenPlayerCard: (playerId: string) => void;
   weather: { code: number; temp: number } | null;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
 }) {
   const [form, setForm] = useState<GameRow>(game);
   const [showWaiting, setShowWaiting] = useState(false);
@@ -5149,8 +5296,10 @@ function GameCard({
                   {isAdmin && editing && (
                     <button
                       className="wcf-waiting-remove"
-                      onClick={() => {
-                        if (confirm(`Remove ${b.player.display_name} from the waiting list?`)) onCancel(b.id);
+                      onClick={async () => {
+                        if (await askConfirm(`Remove ${b.player.display_name} from the waiting list?`, "They'll need to rejoin if they want a spot again.", "Remove")) {
+                          onCancel(b.id);
+                        }
                       }}
                     >
                       Remove
@@ -5202,9 +5351,12 @@ function GameCard({
           <button
             className={"wcf-book " + (myBooking ? "cancel" : "")}
             disabled={!myBooking && full && waitingList.length >= 10}
-            onClick={() => {
+            onClick={async () => {
               if (!myBooking) return onBook();
-              if (confirm(myBooking.waiting ? "Leave the waiting list?" : "Give up your spot in this game?")) onCancel(myBooking.id);
+              const ok = myBooking.waiting
+                ? await askConfirm("Leave the waiting list?", "You'll lose your place in the queue.", "Leave")
+                : await askConfirm("Give up your spot?", `${game.venue} · ${fmtDate(game.date)}. Someone from the waiting list will be offered it.`, "Give up spot");
+              if (ok) onCancel(myBooking.id);
             }}
           >
             {myBooking
@@ -5217,8 +5369,10 @@ function GameCard({
             <button className="wcf-ghost" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
             <button
               className="wcf-ghost danger"
-              onClick={() => {
-                if (confirm(`Delete ${game.venue} on ${fmtDate(game.date)}? This removes the fixture and everyone's bookings.`)) onDelete();
+              onClick={async () => {
+                if (await askConfirm(`Delete this fixture?`, `${game.venue} on ${fmtDate(game.date)} — this removes it and everyone's bookings.`, "Delete")) {
+                  onDelete();
+                }
               }}
             >
               Delete
@@ -5813,6 +5967,11 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-motm-bar-fill.winner{background:var(--amber)}
 
 .wcf-account{display:flex;flex-direction:column;gap:16px}
+.wcf-account-always{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin:-6px 2px -8px}
+.wcf-accordion{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.wcf-accordion-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;color:var(--white);padding:13px 14px;font-weight:800;font-size:13px;cursor:pointer;text-align:left}
+.wcf-accordion-chevron{font-size:10px;color:var(--dim);flex:0 0 auto}
+.wcf-accordion-body{padding:0 14px 14px;display:flex;flex-direction:column;gap:16px}
 .wcf-account-card{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
 .wcf-account-name{font-weight:800;font-size:15px}
 .wcf-account-email{font-size:12px;color:var(--dim);margin-top:2px}
@@ -5884,6 +6043,15 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-guide-arrow{color:var(--dim);font-size:18px}
 .wcf-lightbox{position:fixed;inset:0;background:rgba(4,9,20,.92);z-index:100;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 12px 40px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
 .wcf-lightbox-img{max-width:min(480px,100%);width:100%;border-radius:14px;box-shadow:0 20px 60px -20px rgba(0,0,0,.6)}
+.wcf-modal-overlay{position:fixed;inset:0;background:rgba(3,7,15,.7);z-index:110;display:flex;align-items:center;justify-content:center;padding:20px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+.wcf-modal{width:100%;max-width:300px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 20px 60px -15px rgba(0,0,0,.6)}
+.wcf-modal-icon{font-size:22px;margin-bottom:10px}
+.wcf-modal-title{font-size:15px;font-weight:800;margin-bottom:6px}
+.wcf-modal-msg{font-size:12.5px;color:var(--dim);line-height:1.5;margin-bottom:18px}
+.wcf-modal-actions{display:flex;gap:8px}
+.wcf-modal-cancel{flex:1;background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px;border-radius:9px;font-weight:700;font-size:12.5px;cursor:pointer}
+.wcf-modal-confirm{flex:1;background:var(--red);color:#fff;border:none;padding:11px;border-radius:9px;font-weight:800;font-size:12.5px;cursor:pointer}
+.wcf-modal-confirm.safe{background:var(--blue)}
 .wcf-pcard{width:100%;max-width:300px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:24px 20px;text-align:center;margin:auto}
 .wcf-pcard .wcf-avatar.big{margin:0 auto 12px}
 .wcf-pcard-name{font-size:17px;font-weight:800}
@@ -5901,14 +6069,10 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-pcard-fill{height:100%;border-radius:5px;background:var(--blue)}
 .wcf-lightbox-close{position:fixed;top:16px;right:16px;width:38px;height:38px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-size:22px;line-height:1;cursor:pointer;z-index:101}
 .wcf-push-stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:12.5px;color:var(--dim);font-weight:600}
-.wcf-audit{margin-bottom:16px}
 .wcf-audit-row{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px}
 .wcf-audit-line{font-size:12.5px;color:var(--white);line-height:1.4}
 .wcf-audit-line strong{font-weight:800}
 .wcf-audit-time{font-size:10.5px;color:var(--dim);font-family:var(--mono);margin-top:3px}
-.wcf-roles{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
-.wcf-roles h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
-.wcf-roles-toggle{width:100%;margin-bottom:4px}
 .wcf-roles-search{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px 11px;border-radius:9px;font-size:12.5px;font-family:var(--sans);margin:8px 0 2px}
 .wcf-roles-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line);flex-wrap:wrap;min-width:0}
 .wcf-roles-row:last-child{border-bottom:none}
