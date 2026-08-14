@@ -2165,6 +2165,8 @@ function App({ session }: { session: Session }) {
   const SEASON_EPOCH_YEAR = 2026;
   const currentSeasonYear = Number(nowUk.slice(0, 4));
   const [statsSeasonYear, setStatsSeasonYear] = useState<number | null>(null);
+  const [statsSort, setStatsSort] = useState<"apps" | "goals">("apps");
+  const [statsOpenId, setStatsOpenId] = useState<string | null>(null);
   const activeStatsYear = statsSeasonYear ?? currentSeasonYear;
   const seasonYears = useMemo(() => {
     const set = new Set(pastGames.map((g) => Number(g.date.slice(0, 4))));
@@ -2173,22 +2175,23 @@ function App({ session }: { session: Session }) {
   }, [pastGames, currentSeasonYear]);
 
   const playerStats = useMemo(() => {
-    const tally: Record<string, { name: string; apps: number; goals: number }> = {};
+    const tally: Record<string, { name: string; apps: number; goals: number; lastPlayed: string }> = {};
     const seasonGames = pastGames.filter((g) => g.date.slice(0, 4) === String(activeStatsYear));
     const pastGameIds = new Set(seasonGames.map((g) => g.id));
     seasonGames.forEach((g) =>
       g.bookings
         .filter((b) => !b.waiting)
         .forEach((b) => {
-          const cur = tally[b.player_id] ?? { name: b.player.display_name, apps: 0, goals: 0 };
+          const cur = tally[b.player_id] ?? { name: b.player.display_name, apps: 0, goals: 0, lastPlayed: "" };
           cur.apps += 1;
+          if (g.date > cur.lastPlayed) cur.lastPlayed = g.date;
           tally[b.player_id] = cur;
         })
     );
     goalRows
       .filter((r) => pastGameIds.has(r.game_id))
       .forEach((r) => {
-        const cur = tally[r.player_id] ?? { name: r.player.display_name, apps: 0, goals: 0 };
+        const cur = tally[r.player_id] ?? { name: r.player.display_name, apps: 0, goals: 0, lastPlayed: "" };
         cur.goals += r.goals;
         tally[r.player_id] = cur;
       });
@@ -3322,39 +3325,147 @@ function App({ session }: { session: Session }) {
               </>
             )}
 
-            {resultsView === "table" && (
-              <div className="wcf-board">
-                <select
-                  className="wcf-month-filter"
-                  value={activeStatsYear}
-                  onChange={(e) => setStatsSeasonYear(Number(e.target.value))}
-                >
-                  {seasonYears.map((y) => (
-                    <option key={y} value={y}>
-                      Season {y - SEASON_EPOCH_YEAR + 1} ({y}){y === currentSeasonYear ? " — current" : ""}
-                    </option>
-                  ))}
-                </select>
-                <p className="wcf-board-note">Confirmed spots across upcoming fixtures, plus goals logged by admins. Sorted by appearances.</p>
-                <div className="wcf-board-row wcf-board-header">
-                  <span className="wcf-rank" />
-                  <span className="wcf-board-name">Player</span>
-                  <span className="wcf-board-count">Apps</span>
-                  <span className="wcf-board-count">Goals</span>
-                </div>
-                {playerStats.map((row, i) => (
-                  <div key={row.id} className={"wcf-board-row " + (i === 0 ? "lead " : "") + (row.id === myId ? "me" : "")}>
-                    <span className="wcf-rank">{i === 0 ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
-                    <button className="wcf-board-name wcf-name-link" onClick={() => setPlayerCardId(row.id)}>
-                      {row.name}{row.id === myId ? " (you)" : ""}
-                      {row.apps >= 5 && <span className="wcf-apps-badge">🎖️ {Math.floor(row.apps / 5) * 5}</span>}
-                    </button>
-                    <span className="wcf-board-count">{row.apps}</span>
-                    <span className="wcf-board-count">{row.goals || "—"}</span>
+            {resultsView === "table" && (() => {
+              const sorted = [...playerStats].sort((a, b) =>
+                statsSort === "goals" ? b.goals - a.goals || b.apps - a.apps : b.apps - a.apps || b.goals - a.goals
+              );
+              const byGoals = [...playerStats].sort((a, b) => b.goals - a.goals || b.apps - a.apps).slice(0, 3);
+              const podiumOrder = [byGoals[1], byGoals[0], byGoals[2]];
+              const podiumRing = ["#eab308", "#cbd5e1", "#e63946"];
+              const myIdx = sorted.findIndex((r) => r.id === myId);
+              const me = sorted[myIdx];
+
+              return (
+                <div className="wcf-board">
+                  <div className="wcf-lb-eyebrow">Leaderboard</div>
+                  <h3 className="wcf-lb-title">Player stats</h3>
+
+                  {byGoals.length > 0 && (
+                    <div className="wcf-lb-podium-card">
+                      <div className="wcf-lb-podium-glow" />
+                      <div className="wcf-lb-podium-label">
+                        <span className="wcf-lb-podium-rule" /> TOP SCORERS <span className="wcf-lb-podium-rule" />
+                      </div>
+                      <div className="wcf-lb-podium-row">
+                        {podiumOrder.map((p, i) => {
+                          if (!p) return <div key={i} />;
+                          const rank = byGoals.indexOf(p) + 1;
+                          const lead = rank === 1;
+                          const ring = podiumRing[rank - 1];
+                          const a = avatarFor(p.name);
+                          return (
+                            <div key={p.id} className="wcf-lb-podium-slot">
+                              {lead && <div className="wcf-lb-crown">♔</div>}
+                              <div
+                                className={"wcf-lb-podium-avatar " + (lead ? "lead" : "")}
+                                style={{ borderColor: ring, width: lead ? 96 : 74, height: lead ? 96 : 74 }}
+                              >
+                                <span style={{ fontSize: lead ? 26 : 20 }}>{a.initial}</span>
+                                <span className="wcf-lb-podium-badge" style={{ background: ring }}>{rank}</span>
+                              </div>
+                              <div className="wcf-lb-podium-name">{p.name.split(" ")[0]}</div>
+                              <div className="wcf-lb-podium-goals" style={{ fontSize: lead ? 26 : 22 }}>
+                                {p.goals} <span>G</span>
+                              </div>
+                              <div className="wcf-lb-podium-apps">{p.apps} apps</div>
+                              <div
+                                className="wcf-lb-podium-plinth"
+                                style={{ height: lead ? 34 : rank === 2 ? 22 : 15, borderColor: ring, background: `linear-gradient(0deg,${ring}3d,${ring}0f)` }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {me && (
+                        <div className="wcf-lb-me-card">
+                          <div className="wcf-lb-me-rank">{myIdx + 1}</div>
+                          <div className="wcf-lb-me-label">Your<br />rank</div>
+                          <div className="wcf-lb-me-name">{me.name}</div>
+                          <div className="wcf-lb-me-stat"><div>{me.apps}</div><span>apps</span></div>
+                          <div className="wcf-lb-me-stat"><div>{me.goals}</div><span>goals</span></div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="wcf-lb-list-card">
+                    <select
+                      className="wcf-month-filter"
+                      value={activeStatsYear}
+                      onChange={(e) => { setStatsSeasonYear(Number(e.target.value)); setStatsOpenId(null); }}
+                    >
+                      {seasonYears.map((y) => (
+                        <option key={y} value={y}>
+                          Season {y - SEASON_EPOCH_YEAR + 1} ({y}){y === currentSeasonYear ? " — current" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="wcf-board-note">
+                      Confirmed spots across upcoming fixtures, plus goals logged by admins. Sorted by {statsSort === "goals" ? "goals" : "appearances"}.
+                    </p>
+
+                    <div className="wcf-lb-sorts">
+                      {(["apps", "goals"] as const).map((s) => (
+                        <button
+                          key={s}
+                          className={"wcf-lb-sort-btn " + (statsSort === s ? "on" : "")}
+                          onClick={() => { setStatsSort(s); setStatsOpenId(null); }}
+                        >
+                          {s === "apps" ? "Appearances" : "Goals"}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="wcf-board-row wcf-board-header">
+                      <span className="wcf-rank" />
+                      <span style={{ width: 24 }} />
+                      <span className="wcf-board-name">Player</span>
+                      <span className="wcf-board-count">Apps</span>
+                      <span className="wcf-board-count">Goals</span>
+                    </div>
+                    {sorted.map((row, i) => {
+                      const isLead = i === 0;
+                      const isMe = row.id === myId;
+                      const a = avatarFor(row.name);
+                      const open = statsOpenId === row.id;
+                      return (
+                        <div key={row.id}>
+                          <div
+                            className={"wcf-board-row " + (isLead ? "lead " : "") + (isMe ? "me" : "")}
+                            onClick={() => setStatsOpenId((v) => (v === row.id ? null : row.id))}
+                          >
+                            <span className="wcf-rank">{isLead ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
+                            <span className="wcf-lb-row-avatar" style={{ background: a.gradient }}>{a.initial}</span>
+                            <button
+                              className="wcf-board-name wcf-name-link"
+                              onClick={(e) => { e.stopPropagation(); setPlayerCardId(row.id); }}
+                            >
+                              {row.name}
+                            </button>
+                            {isMe && <span className="wcf-lb-you-badge">you</span>}
+                            {row.apps >= 5 && <span className="wcf-apps-badge">🎖️ {Math.floor(row.apps / 5) * 5}</span>}
+                            <span className="wcf-board-count">{row.apps}</span>
+                            <span className="wcf-board-count">{row.goals || "—"}</span>
+                          </div>
+                          {open && (
+                            <div className="wcf-lb-row-detail">
+                              <span>Goals / app <b>{(row.goals / row.apps).toFixed(2)}</b></span>
+                              <span>Last played <b>{row.lastPlayed ? fmtDate(row.lastPlayed) : "—"}</b></span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    <div className="wcf-lb-footer">
+                      <span>Milestone badges are awarded every 5 appearances.</span>
+                      <button onClick={() => setTab("fixtures")}>View fixtures</button>
+                    </div>
                   </div>
-                ))}
-              </div>
-            )}
+                </div>
+              );
+            })()}
 
             {resultsView === "fixtures" && (
               <>
@@ -5849,7 +5960,7 @@ button.wcf-dash-card:disabled{cursor:default}
 
 .wcf-board{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:8px 14px 14px;overflow:hidden}
 .wcf-board-note{font-size:12px;color:var(--dim);margin:10px 2px 12px;line-height:1.4}
-.wcf-board-row{display:flex;align-items:center;gap:12px;padding:11px 8px;border-radius:9px;border-bottom:1px solid var(--line)}
+.wcf-board-row{display:flex;align-items:center;gap:10px;padding:11px 8px;border-radius:9px;border-bottom:1px solid var(--line);cursor:pointer}
 .wcf-board-row:last-child{border-bottom:none}
 .wcf-board-row.lead{background:rgba(51,169,87,.12);border-bottom:none;margin-bottom:2px}
 .wcf-board-row.me{background:rgba(46,116,204,.14)}
@@ -5862,6 +5973,60 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-board-name{flex:1;font-weight:800;font-size:14px}
 .wcf-apps-badge{display:inline-block;margin-left:7px;font-size:10px;font-weight:800;font-family:var(--mono);color:var(--amber);background:rgba(224,167,51,.14);border:1px solid rgba(224,167,51,.35);padding:1px 7px;border-radius:20px;vertical-align:middle}
 .wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue);width:44px;text-align:right}
+
+.wcf-lb-eyebrow{font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0 2px}
+.wcf-lb-title{margin:8px 2px 16px;font-family:var(--display);font-size:24px;font-weight:800;letter-spacing:-.02em;color:var(--white)}
+
+.wcf-lb-podium-card{position:relative;border-radius:22px;padding:20px 16px 16px;margin-bottom:16px;
+  background:radial-gradient(120% 90% at 50% 0%,rgba(230,57,70,.14),rgba(30,41,59,.55) 55%,rgba(21,21,39,.9));
+  border:1px solid var(--line);box-shadow:0 18px 40px -24px rgba(0,0,0,.9);overflow:hidden}
+.wcf-lb-podium-glow{position:absolute;top:-90px;left:50%;transform:translateX(-50%);width:260px;height:200px;
+  background:radial-gradient(closest-side,rgba(234,179,8,.2),transparent);filter:blur(6px);pointer-events:none}
+.wcf-lb-podium-label{position:relative;display:flex;align-items:center;justify-content:center;gap:9px;
+  font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.22em;color:#e2e8f0}
+.wcf-lb-podium-rule{width:26px;height:1px;background:rgba(226,232,240,.5)}
+.wcf-lb-podium-row{position:relative;display:grid;grid-template-columns:1fr 1.15fr 1fr;align-items:end;gap:8px;
+  margin-top:20px;border-bottom:1px solid rgba(226,232,240,.18)}
+.wcf-lb-podium-slot{display:flex;flex-direction:column;align-items:center;gap:8px}
+.wcf-lb-crown{font-size:20px;line-height:1;color:var(--amber);margin-bottom:2px}
+.wcf-lb-podium-avatar{position:relative;border-radius:50%;border-width:2px;border-style:solid;
+  background:linear-gradient(160deg,var(--panel2),var(--bg));display:grid;place-items:center;
+  box-shadow:0 0 0 6px rgba(13,13,26,.6);font-family:var(--display);font-weight:700;color:var(--dim)}
+.wcf-lb-podium-avatar.lead{box-shadow:0 0 0 6px rgba(13,13,26,.6),0 0 26px -4px rgba(234,179,8,.55)}
+.wcf-lb-podium-badge{position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:26px;height:26px;
+  border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:12px;
+  color:var(--bg);border:2px solid var(--bg)}
+.wcf-lb-podium-name{margin-top:4px;font-family:var(--display);font-weight:800;font-size:14px;color:var(--white)}
+.wcf-lb-podium-goals{font-family:var(--display);font-weight:800;color:var(--white);font-variant-numeric:tabular-nums;
+  display:flex;align-items:baseline;gap:3px;justify-content:center}
+.wcf-lb-podium-goals span{font-size:11px;font-weight:600;color:var(--dim)}
+.wcf-lb-podium-apps{font-size:11px;color:var(--dim)}
+.wcf-lb-podium-plinth{margin-top:8px;width:100%;border-radius:8px 8px 0 0;border-top-width:2px;border-top-style:solid}
+
+.wcf-lb-me-card{position:relative;display:flex;align-items:center;gap:14px;margin-top:14px;padding:14px 16px;
+  border-radius:18px;background:rgba(46,116,204,.13);border:1px solid rgba(46,116,204,.32)}
+.wcf-lb-me-rank{width:40px;height:40px;border-radius:50%;background:rgba(46,116,204,.22);display:grid;place-items:center;
+  font-family:var(--display);font-weight:700;font-size:15px;color:#7fb0ec;flex:0 0 auto}
+.wcf-lb-me-label{flex:1;min-width:0;font-family:var(--sans);font-size:10px;font-weight:800;letter-spacing:.16em;color:var(--blue)}
+.wcf-lb-me-name{margin-top:4px;font-family:var(--display);font-weight:800;font-size:15px;color:var(--white)}
+.wcf-lb-me-stat{text-align:center;flex:0 0 auto}
+.wcf-lb-me-stat div{font-family:var(--display);font-weight:700;font-size:20px;color:var(--white)}
+.wcf-lb-me-stat span{display:block;margin-top:4px;font-size:11px;color:var(--dim)}
+
+.wcf-lb-list-card{position:relative}
+.wcf-lb-sorts{display:flex;gap:6px;padding:0 2px 10px}
+.wcf-lb-sort-btn{border-radius:20px;padding:7px 13px;cursor:pointer;font-family:var(--sans);font-weight:700;font-size:10.5px;
+  letter-spacing:.08em;text-transform:uppercase;background:rgba(148,163,184,.07);border:1px solid var(--line);color:var(--dim)}
+.wcf-lb-sort-btn.on{background:rgba(230,57,70,.16);border-color:rgba(230,57,70,.42);color:#f8b3b8}
+.wcf-lb-row-avatar{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;
+  font-family:var(--display);font-weight:700;font-size:9.5px;color:#fff}
+.wcf-lb-you-badge{flex:none;font-size:10px;font-weight:700;color:var(--blue);background:rgba(46,116,204,.18);
+  border:1px solid rgba(46,116,204,.4);padding:1px 6px;border-radius:20px;margin-left:6px}
+.wcf-lb-row-detail{display:flex;gap:16px;padding:2px 8px 12px 46px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.wcf-lb-row-detail b{color:var(--white);font-weight:600}
+.wcf-lb-footer{display:flex;align-items:center;justify-content:space-between;padding:13px 8px 2px}
+.wcf-lb-footer span{font-size:11px;color:var(--dim)}
+.wcf-lb-footer button{background:none;border:none;padding:0;cursor:pointer;font-size:11px;font-weight:600;color:var(--blue)}
 
 .wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
