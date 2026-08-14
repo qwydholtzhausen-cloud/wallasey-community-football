@@ -5978,7 +5978,8 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-lb-title{margin:8px 2px 16px;font-family:var(--display);font-size:24px;font-weight:800;letter-spacing:-.02em;color:var(--white)}
 
 .wcf-lb-podium-card{position:relative;border-radius:22px;padding:20px 16px 16px;margin-bottom:16px;
-  background:radial-gradient(120% 90% at 50% 0%,rgba(230,57,70,.14),rgba(30,41,59,.55) 55%,rgba(21,21,39,.9));
+  background-image:linear-gradient(180deg,rgba(8,8,15,.72),rgba(8,8,15,.5) 42%,rgba(8,8,15,.93)),url('/pitch-floodlit.jpg');
+  background-size:cover;background-position:center;
   border:1px solid var(--line);box-shadow:0 18px 40px -24px rgba(0,0,0,.9);overflow:hidden}
 .wcf-lb-podium-glow{position:absolute;top:-90px;left:50%;transform:translateX(-50%);width:260px;height:200px;
   background:radial-gradient(closest-side,rgba(234,179,8,.2),transparent);filter:blur(6px);pointer-events:none}
@@ -5988,7 +5989,7 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-lb-podium-row{position:relative;display:grid;grid-template-columns:1fr 1.15fr 1fr;align-items:end;gap:8px;
   margin-top:20px;border-bottom:1px solid rgba(226,232,240,.18)}
 .wcf-lb-podium-slot{display:flex;flex-direction:column;align-items:center;gap:8px}
-.wcf-lb-crown{font-size:20px;line-height:1;color:var(--amber);margin-bottom:2px}
+.wcf-lb-crown{font-size:20px;line-height:1;color:var(--amber);margin-bottom:8px}
 .wcf-lb-podium-avatar{position:relative;border-radius:50%;border-width:2px;border-style:solid;
   background:linear-gradient(160deg,var(--panel2),var(--bg));display:grid;place-items:center;
   box-shadow:0 0 0 6px rgba(13,13,26,.6);font-family:var(--display);font-weight:700;color:var(--dim)}
