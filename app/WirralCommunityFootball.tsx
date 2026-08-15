@@ -235,6 +235,58 @@ function avatarFor(name: string) {
   return { initial, gradient: AVATAR_GRADIENTS[hash % AVATAR_GRADIENTS.length] };
 }
 
+// Derives a light/dark gradient pair from a club's configured team colour so
+// jersey chips stay correct even if an admin picks a colour other than
+// literal red/white - same "respect the real setting" pattern as the rest
+// of the Line-up screen already uses team_*_color for.
+function teamGradient(hex: string) {
+  const c = hex.replace("#", "");
+  const r = parseInt(c.substring(0, 2), 16) || 0;
+  const g = parseInt(c.substring(2, 4), 16) || 0;
+  const b = parseInt(c.substring(4, 6), 16) || 0;
+  const mix = (v: number, target: number, amt: number) => Math.round(v + (target - v) * amt);
+  const light = `rgb(${mix(r, 255, 0.35)},${mix(g, 255, 0.35)},${mix(b, 255, 0.35)})`;
+  const dark = `rgb(${mix(r, 0, 0.35)},${mix(g, 0, 0.35)},${mix(b, 0, 0.35)})`;
+  return `linear-gradient(160deg,${light},${dark})`;
+}
+
+// Positions aren't real data anywhere in the app - nothing tracks who plays
+// where. This is a purely cosmetic arrangement (booking order -> slot),
+// generalised to whatever squad size a fixture actually has rather than
+// assuming exactly 8-a-side.
+function formationSlots(n: number): { x: number; y: number; role: string }[] {
+  if (n <= 0) return [];
+  const slots: { x: number; y: number; role: string }[] = [{ x: 50, y: 6, role: "Goalkeeper" }];
+  const outfield = n - 1;
+  if (outfield <= 0) return slots;
+  let rows: { count: number; role: string }[];
+  if (outfield <= 3) {
+    rows = [{ count: outfield, role: "Outfield" }];
+  } else if (outfield <= 6) {
+    rows = [
+      { count: Math.ceil(outfield / 2), role: "Defence" },
+      { count: Math.floor(outfield / 2), role: "Attack" },
+    ];
+  } else {
+    const back = Math.ceil(outfield / 3);
+    const remaining = outfield - back;
+    const mid = Math.ceil(remaining / 2);
+    const att = remaining - mid;
+    rows = att > 0
+      ? [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }, { count: att, role: "Attack" }]
+      : [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }];
+  }
+  const rowYs = rows.length === 1 ? [24] : rows.length === 2 ? [20, 34] : [18, 30, 42];
+  rows.forEach((row, ri) => {
+    const y = rowYs[ri];
+    for (let i = 0; i < row.count; i++) {
+      const x = row.count === 1 ? 50 : 16 + i * (68 / (row.count - 1));
+      slots.push({ x, y, role: row.role });
+    }
+  });
+  return slots;
+}
+
 interface ClipRow {
   id: string;
   title: string;
@@ -835,6 +887,8 @@ function App({ session }: { session: Session }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
   const [editingLineup, setEditingLineup] = useState(false);
+  const [lineupDisplayView, setLineupDisplayView] = useState<"pitch" | "list">("pitch");
+  const [selectedLineupPlayerId, setSelectedLineupPlayerId] = useState<string | null>(null);
   const [teamDraft, setTeamDraft] = useState<Record<string, Team | null>>({});
   const [clipTitle, setClipTitle] = useState("");
   const [clipUrl, setClipUrl] = useState("");
@@ -2205,7 +2259,7 @@ function App({ session }: { session: Session }) {
     () => (nextGame ? nextGame.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)) : []),
     [nextGame]
   );
-  useEffect(() => setEditingLineup(false), [nextGame?.id]);
+  useEffect(() => { setEditingLineup(false); setSelectedLineupPlayerId(null); }, [nextGame?.id]);
   useEffect(() => setSuggestedTeams(null), [nextGame?.id]);
   const nextGrouped = useMemo(
     () => ({
@@ -3074,31 +3128,29 @@ function App({ session }: { session: Session }) {
             {nextGame && (
               <>
                 <div className="wcf-lineup-head">
-                  <div>
-                    <div className="wcf-venue">{nextGame.venue}</div>
-                    <div className="wcf-pitch">{fmtDate(nextGame.date)} · {nextGame.kickoff}</div>
-                  </div>
+                  <div className="wcf-lineup-eyebrow">Line-up</div>
+                  <div className="wcf-lineup-title">{nextGame.venue}</div>
+                  <div className="wcf-lineup-sub">{fmtDate(nextGame.date)} · {nextGame.kickoff}</div>
                   {isAdmin && (
                     <div className="wcf-lineup-head-actions">
                       {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
-                        <button className="wcf-ghost" onClick={copyLineup}>📋 Copy for WhatsApp</button>
+                        <button className="wcf-lineup-pill" onClick={copyLineup}>📋 Copy for WhatsApp</button>
                       )}
                       {editingLineup ? (
                         <>
-                          <button className="wcf-ghost" onClick={cancelEditingLineup}>Cancel</button>
-                          <button className="wcf-ghost" onClick={saveLineup}>Save</button>
+                          <button className="wcf-lineup-pill" onClick={cancelEditingLineup}>Cancel</button>
+                          <button className="wcf-lineup-pill primary" onClick={saveLineup}>Save</button>
                         </>
                       ) : (
-                        <button className="wcf-ghost" onClick={startEditingLineup}>Edit line-up</button>
+                        <button className="wcf-lineup-pill" onClick={startEditingLineup}>Edit line-up</button>
                       )}
                     </div>
                   )}
                 </div>
                 {nextConfirmed.length === 0 && <p className="wcf-empty">No one&apos;s booked in yet.</p>}
 
-                {(() => {
-                  const displayGrouped = isAdmin && editingLineup ? editGrouped : nextGrouped;
-                  return ([["white", displayGrouped.white, cs.team_white_name, cs.team_white_color], ["red", displayGrouped.red, cs.team_red_name, cs.team_red_color], ["unassigned", displayGrouped.unassigned, "Unassigned", null]] as const).map(
+                {isAdmin && editingLineup && (() => {
+                  return ([["white", editGrouped.white, cs.team_white_name, cs.team_white_color], ["red", editGrouped.red, cs.team_red_name, cs.team_red_color], ["unassigned", editGrouped.unassigned, "Unassigned", null]] as const).map(
                     ([key, group, name, color]) =>
                       group.length > 0 && (
                         <div key={key} className="wcf-lineup-group">
@@ -3107,50 +3159,171 @@ function App({ session }: { session: Session }) {
                             {name} · {group.length}
                           </div>
                           {group.map((b) => (
-                            <div
-                              key={b.id}
-                              className={"wcf-lineup-row" + (b.player_id === myId ? (editingLineup ? " me-edit" : " me") : "")}
-                              style={!editingLineup ? {
-                                borderLeft: color ? `3px solid ${color}` : undefined,
-                                boxShadow: b.player_id === myId && color ? `0 0 0 1px ${color}, 0 0 14px ${color}99` : undefined,
-                              } : undefined}
-                            >
-                              {!editingLineup && (
-                                <span className="wcf-lineup-avatar" style={color ? { background: `${color}2e`, color } : undefined}>
-                                  {b.player.display_name[0]?.toUpperCase()}
-                                </span>
-                              )}
-                              {editingLineup ? (
-                                <span className="wcf-lineup-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
-                              ) : (
-                                <button className="wcf-lineup-name wcf-name-link" onClick={() => setPlayerCardId(b.player_id)}>
-                                  {b.player.display_name}{b.player_id === myId ? " (you)" : ""}
+                            <div key={b.id} className={"wcf-lineup-row" + (b.player_id === myId ? " me-edit" : "")}>
+                              <span className="wcf-lineup-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
+                              <div className="wcf-lineup-picks">
+                                <button
+                                  style={teamDraft[b.id] === "white" ? { background: cs.team_white_color, color: readableTextColor(cs.team_white_color), borderColor: cs.team_white_color } : undefined}
+                                  className="wcf-lineup-pick"
+                                  onClick={() => setTeamDraft((d) => ({ ...d, [b.id]: d[b.id] === "white" ? null : "white" }))}
+                                >
+                                  {cs.team_white_name}
                                 </button>
-                              )}
-                              {isAdmin && editingLineup && (
-                                <div className="wcf-lineup-picks">
-                                  <button
-                                    style={teamDraft[b.id] === "white" ? { background: cs.team_white_color, color: readableTextColor(cs.team_white_color), borderColor: cs.team_white_color } : undefined}
-                                    className="wcf-lineup-pick"
-                                    onClick={() => setTeamDraft((d) => ({ ...d, [b.id]: d[b.id] === "white" ? null : "white" }))}
-                                  >
-                                    {cs.team_white_name}
-                                  </button>
-                                  <button
-                                    style={teamDraft[b.id] === "red" ? { background: cs.team_red_color, color: readableTextColor(cs.team_red_color), borderColor: cs.team_red_color } : undefined}
-                                    className="wcf-lineup-pick"
-                                    onClick={() => setTeamDraft((d) => ({ ...d, [b.id]: d[b.id] === "red" ? null : "red" }))}
-                                  >
-                                    {cs.team_red_name}
-                                  </button>
-                                </div>
-                              )}
+                                <button
+                                  style={teamDraft[b.id] === "red" ? { background: cs.team_red_color, color: readableTextColor(cs.team_red_color), borderColor: cs.team_red_color } : undefined}
+                                  className="wcf-lineup-pick"
+                                  onClick={() => setTeamDraft((d) => ({ ...d, [b.id]: d[b.id] === "red" ? null : "red" }))}
+                                >
+                                  {cs.team_red_name}
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
                       )
                   );
                 })()}
+
+                {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
+                  <div className="wcf-lineup-strip-row">
+                    {([["red", cs.team_red_name, cs.team_red_color, nextGrouped.red.length], ["white", cs.team_white_name, cs.team_white_color, nextGrouped.white.length]] as const).map(([key, name, color, count]) => (
+                      <div key={key} className="wcf-lineup-strip" style={{ background: `linear-gradient(135deg, ${color}2e, rgba(13,13,26,.6))`, borderColor: `${color}57` }}>
+                        <span className="wcf-lineup-strip-dot" style={{ background: color }} />
+                        <span className="wcf-lineup-strip-name">{name}</span>
+                        <span className="wcf-lineup-strip-count">{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
+                  <div className="wcf-lineup-views">
+                    <button className={"wcf-lineup-view-btn " + (lineupDisplayView === "pitch" ? "on" : "")} onClick={() => setLineupDisplayView("pitch")}>Pitch</button>
+                    <button className={"wcf-lineup-view-btn " + (lineupDisplayView === "list" ? "on" : "")} onClick={() => setLineupDisplayView("list")}>List</button>
+                  </div>
+                )}
+
+                {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (() => {
+                  const redSlots = formationSlots(nextGrouped.red.length);
+                  const whiteSlots = formationSlots(nextGrouped.white.length);
+                  const redTokens = nextGrouped.red.map((b, i) => ({ booking: b, isRed: true, x: redSlots[i].x, y: redSlots[i].y, role: redSlots[i].role }));
+                  const whiteTokens = nextGrouped.white.map((b, i) => ({ booking: b, isRed: false, x: whiteSlots[i].x, y: 100 - whiteSlots[i].y, role: whiteSlots[i].role }));
+                  const allTokens = [...redTokens, ...whiteTokens];
+                  const selected = allTokens.find((t) => t.booking.player_id === selectedLineupPlayerId);
+                  const selectedStats = selected ? playerStats.find((p) => p.id === selected.booking.player_id) : null;
+                  const selectColor = (isRed: boolean) => (isRed ? cs.team_red_color : cs.team_white_color);
+
+                  const renderToken = (t: (typeof allTokens)[number]) => {
+                    const me = t.booking.player_id === myId;
+                    const color = selectColor(t.isRed);
+                    return (
+                      <button
+                        key={t.booking.id}
+                        className="wcf-lineup-token"
+                        style={{ left: `${t.x}%`, top: `${t.y}%` }}
+                        onClick={() => setSelectedLineupPlayerId((v) => (v === t.booking.player_id ? null : t.booking.player_id))}
+                      >
+                        <span
+                          className="wcf-lineup-token-chip"
+                          style={{ background: teamGradient(color), color: readableTextColor(color), boxShadow: me ? "0 0 0 2px var(--blue), 0 6px 14px -6px rgba(0,0,0,.85)" : undefined }}
+                        >
+                          {t.booking.player.display_name[0]?.toUpperCase()}
+                        </span>
+                        <span className="wcf-lineup-token-label">{t.booking.player.display_name.split(" ")[0]}</span>
+                      </button>
+                    );
+                  };
+
+                  return (
+                    <>
+                      {lineupDisplayView === "pitch" && (
+                        <div className="wcf-lineup-pitch-card">
+                          <svg viewBox="0 0 200 300" preserveAspectRatio="none" className="wcf-lineup-pitch-lines">
+                            <rect x="10" y="8" width="180" height="284" rx="2" />
+                            <line x1="10" y1="150" x2="190" y2="150" />
+                            <circle cx="100" cy="150" r="30" />
+                            <circle cx="100" cy="150" r="1.6" fill="#e2e8f0" stroke="none" />
+                            <rect x="55" y="8" width="90" height="34" rx="1" />
+                            <rect x="78" y="8" width="44" height="14" rx="1" />
+                            <rect x="55" y="258" width="90" height="34" rx="1" />
+                            <rect x="78" y="278" width="44" height="14" rx="1" />
+                          </svg>
+                          <div className="wcf-lineup-pitch-tokens">
+                            {allTokens.map(renderToken)}
+                          </div>
+                        </div>
+                      )}
+                      {lineupDisplayView === "pitch" && (
+                        <p className="wcf-lineup-pitch-note">
+                          {cs.team_red_name} attack down, {cs.team_white_name} attack up. Tap a shirt for that player&apos;s season stats.
+                        </p>
+                      )}
+
+                      {lineupDisplayView === "list" && (
+                        <div className="wcf-lineup-list-wrap">
+                          {([["red", nextGrouped.red, cs.team_red_name, cs.team_red_color] as const, ["white", nextGrouped.white, cs.team_white_name, cs.team_white_color] as const]).map(([key, group, name, color]) => (
+                            <div key={key} className="wcf-lineup-list-card">
+                              <div className="wcf-lineup-list-head" style={{ color }}>{name}</div>
+                              {group.map((b) => (
+                                <button
+                                  key={b.id}
+                                  className="wcf-lineup-list-row"
+                                  onClick={() => setSelectedLineupPlayerId((v) => (v === b.player_id ? null : b.player_id))}
+                                >
+                                  <span className="wcf-lineup-list-chip" style={{ background: teamGradient(color), color: readableTextColor(color) }}>
+                                    {b.player.display_name[0]?.toUpperCase()}
+                                  </span>
+                                  <span className="wcf-lineup-list-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {selected && (
+                        <div className="wcf-lineup-selected">
+                          <span
+                            className="wcf-lineup-selected-chip"
+                            style={{ background: teamGradient(selectColor(selected.isRed)), color: readableTextColor(selectColor(selected.isRed)) }}
+                          >
+                            {selected.booking.player.display_name[0]?.toUpperCase()}
+                          </span>
+                          <div className="wcf-lineup-selected-body">
+                            <div className="wcf-lineup-selected-name">
+                              {selected.booking.player.display_name}{selected.booking.player_id === myId ? " (you)" : ""}
+                            </div>
+                            <div className="wcf-lineup-selected-role">
+                              {selected.role} · {selected.isRed ? cs.team_red_name : cs.team_white_name}
+                            </div>
+                          </div>
+                          <div className="wcf-lineup-selected-stat">
+                            <div>{selectedStats?.apps ?? 0}</div>
+                            <span>apps</span>
+                          </div>
+                          <div className="wcf-lineup-selected-stat">
+                            <div>{selectedStats?.goals ?? 0}</div>
+                            <span>goals</span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+
+                {!editingLineup && nextGrouped.unassigned.length > 0 && (
+                  <div className="wcf-lineup-group">
+                    <div className="wcf-lineup-group-label">Unassigned · {nextGrouped.unassigned.length}</div>
+                    {nextGrouped.unassigned.map((b) => (
+                      <div key={b.id} className={"wcf-lineup-row" + (b.player_id === myId ? " me" : "")}>
+                        <span className="wcf-lineup-avatar">{b.player.display_name[0]?.toUpperCase()}</span>
+                        <button className="wcf-lineup-name wcf-name-link" onClick={() => setPlayerCardId(b.player_id)}>
+                          {b.player.display_name}{b.player_id === myId ? " (you)" : ""}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
                   <PredictPanel
@@ -6032,8 +6205,13 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
 
-.wcf-lineup-head{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
-.wcf-lineup-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.wcf-lineup-head{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:14px}
+.wcf-lineup-eyebrow{font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.wcf-lineup-title{margin-top:9px;font-family:var(--display);font-size:22px;font-weight:800;letter-spacing:-.02em;color:var(--white)}
+.wcf-lineup-sub{margin-top:6px;font-size:12px;color:var(--dim)}
+.wcf-lineup-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px}
+.wcf-lineup-pill{flex:1;min-height:44px;padding:11px 12px;border-radius:12px;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.2);color:var(--white);font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-lineup-pill.primary{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.32);color:#86efac}
 .wcf-lineup-row{display:flex;align-items:center;gap:11px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:9px;transition:box-shadow .2s}
 .wcf-lineup-row.me{border-color:transparent}
 .wcf-lineup-row.me-edit{background:rgba(46,116,204,.14);border-color:var(--blue)}
@@ -6042,6 +6220,40 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-name-link{background:none;border:none;padding:0;margin:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
 .wcf-lineup-picks{display:flex;gap:6px}
 .wcf-lineup-pick{background:transparent;border:1px solid var(--line);color:var(--dim);padding:7px 11px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
+
+.wcf-lineup-strip-row{display:flex;gap:8px;margin-bottom:12px}
+.wcf-lineup-strip{flex:1;display:flex;align-items:center;gap:9px;padding:11px 13px;border-radius:14px;border:1px solid}
+.wcf-lineup-strip-dot{width:12px;height:12px;border-radius:4px;flex:0 0 auto}
+.wcf-lineup-strip-name{flex:1;font-family:var(--sans);font-weight:800;font-size:11px;letter-spacing:.1em;color:var(--white)}
+.wcf-lineup-strip-count{font-family:var(--display);font-weight:700;font-size:14px;color:var(--white)}
+
+.wcf-lineup-views{display:flex;gap:6px;margin-bottom:12px}
+.wcf-lineup-view-btn{border-radius:20px;padding:8px 15px;cursor:pointer;font-family:var(--sans);font-weight:700;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;background:rgba(148,163,184,.07);border:1px solid var(--line);color:var(--dim)}
+.wcf-lineup-view-btn.on{background:rgba(230,57,70,.16);border-color:rgba(230,57,70,.42);color:#f8b3b8}
+
+.wcf-lineup-pitch-card{position:relative;border-radius:22px;border:1px solid var(--line);box-shadow:0 22px 44px -28px rgba(0,0,0,.95);overflow:hidden;background:linear-gradient(180deg,rgba(6,12,10,.72),rgba(6,12,10,.48) 50%,rgba(6,12,10,.76)),url('/turf-texture.jpg');background-size:cover;background-position:center}
+.wcf-lineup-pitch-lines{position:relative;width:100%;aspect-ratio:0.56;opacity:.3;stroke:#e2e8f0;stroke-width:0.9;fill:none;display:block}
+.wcf-lineup-pitch-tokens{position:absolute;inset:0}
+.wcf-lineup-token{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:none;padding:2px;cursor:pointer;min-width:44px}
+.wcf-lineup-token-chip{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:13px;box-shadow:0 6px 14px -6px rgba(0,0,0,.85)}
+.wcf-lineup-token-label{font-size:9.5px;font-weight:700;letter-spacing:.02em;color:var(--white);text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap}
+.wcf-lineup-pitch-note{margin:12px 2px 0;font-size:11.5px;line-height:1.5;color:var(--dim)}
+
+.wcf-lineup-list-wrap{position:relative;display:flex;gap:10px;border-radius:18px;overflow:hidden;padding:10px;background-image:linear-gradient(180deg,rgba(13,13,26,.5),rgba(13,13,26,.85)),url('/floodlight-haze.jpg');background-size:cover;background-position:50% 30%}
+.wcf-lineup-list-card{flex:1;min-width:0;border-radius:14px;padding:6px 8px 10px;backdrop-filter:blur(14px);background:linear-gradient(180deg,rgba(30,41,59,.7),rgba(19,22,38,.82));border:1px solid var(--line)}
+.wcf-lineup-list-head{padding:9px 4px;font-family:var(--sans);font-weight:800;font-size:10px;letter-spacing:.16em}
+.wcf-lineup-list-row{width:100%;display:flex;align-items:center;gap:8px;padding:8px 4px;background:none;border:none;border-top:1px solid var(--line);cursor:pointer;min-height:40px}
+.wcf-lineup-list-chip{flex:0 0 auto;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:10.5px}
+.wcf-lineup-list-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700;font-size:12.5px;color:var(--white);text-align:left}
+
+.wcf-lineup-selected{margin-top:14px;padding:14px 16px;border-radius:18px;background:rgba(46,116,204,.13);border:1px solid rgba(46,116,204,.32);display:flex;align-items:center;gap:13px}
+.wcf-lineup-selected-chip{flex:0 0 auto;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:15px}
+.wcf-lineup-selected-body{flex:1;min-width:0}
+.wcf-lineup-selected-name{font-family:var(--display);font-weight:800;font-size:14px;color:var(--white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-lineup-selected-role{margin-top:4px;font-size:11px;color:var(--dim)}
+.wcf-lineup-selected-stat{text-align:center;flex:0 0 auto}
+.wcf-lineup-selected-stat div{font-family:var(--display);font-weight:700;font-size:17px;color:var(--blue)}
+.wcf-lineup-selected-stat span{display:block;margin-top:4px;font-size:10px;color:var(--dim)}
 .wcf-ratings-table{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .wcf-ratings-table h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
 .wcf-ratings-rows{display:flex;flex-direction:column;gap:2px}
