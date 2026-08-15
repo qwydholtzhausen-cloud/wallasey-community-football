@@ -2913,10 +2913,21 @@ function App({ session }: { session: Session }) {
 
               return (
           <>
-            <div className="wcf-subtabs pill">
-              <button className={feedView === "feed" ? "active" : ""} onClick={() => setFeedView("feed")}>Feed</button>
-              <button className={feedView === "clips" ? "active" : ""} onClick={() => setFeedView("clips")}>Clips</button>
-            </div>
+            {!showArchived ? (
+              <div className="wcf-feed-hero">
+                <div className="wcf-feed-hero-eyebrow">Community Feed</div>
+                <div className="wcf-feed-hero-title">Goals, clips &amp; shoutouts</div>
+                <div className="wcf-feed-hero-tabs">
+                  <button className={feedView === "feed" ? "active" : ""} onClick={() => setFeedView("feed")}>Feed</button>
+                  <button className={feedView === "clips" ? "active" : ""} onClick={() => setFeedView("clips")}>Clips</button>
+                </div>
+              </div>
+            ) : (
+              <div className="wcf-subtabs pill">
+                <button className={feedView === "feed" ? "active" : ""} onClick={() => setFeedView("feed")}>Feed</button>
+                <button className={feedView === "clips" ? "active" : ""} onClick={() => setFeedView("clips")}>Clips</button>
+              </div>
+            )}
 
             {feedView === "clips" && (
               <form className="wcf-clip-form" onSubmit={addClip}>
@@ -6435,6 +6446,19 @@ button.wcf-dash-card:disabled{cursor:default}
 
 .wcf-feed-section-label{display:flex;align-items:center;gap:10px;padding:6px 2px 10px;font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#64748b}
 .wcf-feed-section-label:after{content:"";flex:1;height:1px;background:rgba(148,163,184,.1)}
+
+.wcf-feed-hero{
+  position:relative;min-height:270px;border-radius:22px;overflow:hidden;margin:2px 2px 18px;
+  display:flex;flex-direction:column;justify-content:flex-end;padding:18px 18px 20px;
+  background-image:linear-gradient(180deg,rgba(6,8,14,.05) 0%,rgba(6,8,14,.2) 50%,rgba(4,6,10,.94) 100%),url('/celebration.jpg');
+  background-size:cover;background-position:center 38%;
+  border:1px solid var(--line);box-shadow:0 18px 40px -24px rgba(0,0,0,.9);
+}
+.wcf-feed-hero-eyebrow{font-family:var(--sans);font-size:10.5px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#f8b3b8}
+.wcf-feed-hero-title{margin-top:6px;font-family:var(--display);font-size:19px;font-weight:800;letter-spacing:-.01em;color:#fff}
+.wcf-feed-hero-tabs{display:flex;gap:8px;margin-top:16px}
+.wcf-feed-hero-tabs button{flex:1;min-height:42px;padding:9px 14px;border-radius:20px;cursor:pointer;font-family:var(--sans);font-weight:700;font-size:12.5px;letter-spacing:.01em;background:rgba(148,163,184,.14);border:1px solid rgba(255,255,255,.2);color:#e2e8f0;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.wcf-feed-hero-tabs button.active{background:rgba(230,57,70,.88);border-color:rgba(230,57,70,.9);color:#fff}
 
 .wcf-clip-hero{position:relative;border-radius:20px;overflow:hidden;border:1px solid var(--line);background:var(--panel2);margin-bottom:20px}
 .wcf-clip-hero-thumb{position:relative;display:block;aspect-ratio:16/9;background:linear-gradient(135deg,var(--panel2),var(--bg))}
