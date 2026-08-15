@@ -3582,8 +3582,15 @@ function App({ session }: { session: Session }) {
               )}
             </div>
 
-            {resultsView === "season" && (
+            {resultsView === "season" && (() => {
+              const gamesThisSeason = pastGames.filter((g) => g.date.slice(0, 4) === String(currentSeasonYear)).length;
+              return (
               <>
+                <div className="wcf-season-hero">
+                  <div className="wcf-season-hero-eyebrow">Season {currentSeasonYear - SEASON_EPOCH_YEAR + 1}</div>
+                  <div className="wcf-season-hero-title">{currentSeasonYear}</div>
+                  <div className="wcf-season-hero-sub">{gamesThisSeason} game{gamesThisSeason === 1 ? "" : "s"} played so far</div>
+                </div>
                 {playerOfMonth && (
                   <div className="wcf-shoutout wcf-potm">
                     🏅 Player of the Month — {playerOfMonth.monthLabel}: <strong>{playerOfMonth.names.join(" & ")}</strong>
@@ -3652,7 +3659,8 @@ function App({ session }: { session: Session }) {
                   </div>
                 )}
               </>
-            )}
+              );
+            })()}
 
             {resultsView === "table" && (() => {
               const sorted = [...playerStats].sort((a, b) =>
@@ -6845,6 +6853,17 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-predict-pts.partial{background:rgba(46,116,204,.18);color:#7CAEF0}
 .wcf-predict-pts.zero{background:var(--panel2);color:var(--dim)}
 .wcf-predict-fact{font-size:11.5px;color:var(--dim);margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+
+.wcf-season-hero{
+  position:relative;min-height:220px;border-radius:22px;overflow:hidden;margin:2px 2px 18px;
+  display:flex;flex-direction:column;justify-content:flex-end;padding:18px 20px;
+  background-image:linear-gradient(180deg,rgba(6,8,14,.1) 0%,rgba(6,8,14,.3) 55%,rgba(4,6,10,.92) 100%),url('/season-hero.jpg');
+  background-size:cover;background-position:center 42%;
+  border:1px solid var(--line);box-shadow:0 18px 40px -24px rgba(0,0,0,.9);
+}
+.wcf-season-hero-eyebrow{font-family:var(--sans);font-size:10.5px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#f8b3b8}
+.wcf-season-hero-title{margin-top:6px;font-family:var(--display);font-size:32px;font-weight:800;letter-spacing:-.02em;color:#fff}
+.wcf-season-hero-sub{margin-top:6px;font-size:12px;color:#B7BDD0}
 
 .wcf-shoutout{background:linear-gradient(135deg,rgba(228,42,54,.16),rgba(51,169,87,.1));border:1px solid rgba(228,42,54,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
 .wcf-award-media{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:10px;margin-top:10px}
