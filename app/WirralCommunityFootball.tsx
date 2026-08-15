@@ -276,15 +276,20 @@ function formationSlots(n: number): { x: number; y: number; role: string }[] {
       ? [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }, { count: att, role: "Attack" }]
       : [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }];
   }
-  // Rows step forward from the keeper by a fixed, comfortable gap (12)
-  // rather than compressing to fit a shared front-row target - that
-  // approach either left a dead zone in the middle for small squads, or
-  // (once fixed) squeezed the row-to-row gap too tight for a 3-row squad
-  // to make room. A 1-row squad has no keeper-adjacency to worry about,
-  // so it can sit closer to the halfway line on its own.
+  // Front row anchors close to the halfway line (46) for a 2-3 row squad,
+  // with earlier rows stepping back from there by a comfortable, fixed
+  // gap (13) - a fixed forward-stepping gap from the keeper instead left
+  // a wide dead band across the middle on a real device (confirmed
+  // against a real 7-a-side roster), even though it looked fine on a
+  // small isolated test card. A 1-row squad keeps its own, smaller
+  // target (40) - pushing a single row all the way to 46 was the first
+  // thing tried here, and it collides when that row's middle player
+  // lines up with the mirrored team's, which a 1-row squad's odd counts
+  // do far more often than a 2-3 row squad's do.
   const backY = 20;
-  const rowGap = 12;
-  const rowYs = rows.length === 1 ? [40] : rows.map((_, i) => backY + i * rowGap);
+  const rowGap = 13;
+  const frontY = 46;
+  const rowYs = rows.length === 1 ? [40] : rows.map((_, i) => frontY - (rows.length - 1 - i) * rowGap);
   rows.forEach((row, ri) => {
     const y = rowYs[ri];
     for (let i = 0; i < row.count; i++) {
