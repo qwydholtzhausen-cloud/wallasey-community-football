@@ -1020,6 +1020,22 @@ end;
 $$;
 
 -- ─────────────────────────────────────────────────────────────────
+-- One-time backfill: the trigger above only sets promoted_at going
+-- forward, so any booking promoted off the waiting list *before* this
+-- migration ran is still sitting on promoted_at = null - exactly the
+-- state that reproduces the original bug (reported case: someone
+-- removed for "7 days unpaid" who'd actually only had a real spot for
+-- 2). There's no reliable way to recover the real historical
+-- promotion time from stored data alone, so the safe call for anyone
+-- currently exposed to this gap (still unpaid, not on the waiting
+-- list, no promoted_at yet) is to start their window fresh from now -
+-- it never shortens anyone's grace period, only ever extends it.
+-- ─────────────────────────────────────────────────────────────────
+update public.bookings
+set promoted_at = now()
+where waiting = false and status = 'unpaid' and promoted_at is null;
+
+-- ─────────────────────────────────────────────────────────────────
 -- Player tabs (Admin console). Regroups the existing Overdue data by
 -- player instead of one row per booking, split into "owed" (unpaid,
 -- real debt) vs "pending" (already marked paid, just awaiting admin

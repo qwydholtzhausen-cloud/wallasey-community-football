@@ -276,7 +276,15 @@ function formationSlots(n: number): { x: number; y: number; role: string }[] {
       ? [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }, { count: att, role: "Attack" }]
       : [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }];
   }
-  const rowYs = rows.length === 1 ? [24] : rows.length === 2 ? [20, 34] : [18, 30, 42];
+  // Rows step forward from the keeper by a fixed, comfortable gap (12)
+  // rather than compressing to fit a shared front-row target - that
+  // approach either left a dead zone in the middle for small squads, or
+  // (once fixed) squeezed the row-to-row gap too tight for a 3-row squad
+  // to make room. A 1-row squad has no keeper-adjacency to worry about,
+  // so it can sit closer to the halfway line on its own.
+  const backY = 20;
+  const rowGap = 12;
+  const rowYs = rows.length === 1 ? [40] : rows.map((_, i) => backY + i * rowGap);
   rows.forEach((row, ri) => {
     const y = rowYs[ri];
     for (let i = 0; i < row.count; i++) {
