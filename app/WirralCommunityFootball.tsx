@@ -2894,8 +2894,6 @@ function App({ session }: { session: Session }) {
 
               return (
           <>
-            <div className="wcf-feed-eyebrow">Clubhouse</div>
-            <div className="wcf-feed-headline">{feedView === "clips" ? "Clips" : "Club feed"}</div>
             <div className="wcf-subtabs pill">
               <button className={feedView === "feed" ? "active" : ""} onClick={() => setFeedView("feed")}>Feed</button>
               <button className={feedView === "clips" ? "active" : ""} onClick={() => setFeedView("clips")}>Clips</button>
@@ -6290,9 +6288,6 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-admin-add-player{display:flex;gap:8px;margin-top:14px}
 .wcf-admin-add-player select{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:12px;font-family:var(--sans)}
 .wcf-admin-add-player .wcf-ghost:disabled{opacity:.4;cursor:not-allowed}
-
-.wcf-feed-eyebrow{font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0 2px}
-.wcf-feed-headline{margin:9px 2px 16px;font-family:var(--display);font-size:24px;font-weight:800;letter-spacing:-.02em;color:var(--white)}
 
 .wcf-clip-form{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:18px;padding:12px;display:flex;flex-direction:column;gap:9px;margin-bottom:16px}
 .wcf-clip-form-head{display:flex;align-items:center;gap:8px;margin-bottom:2px}
