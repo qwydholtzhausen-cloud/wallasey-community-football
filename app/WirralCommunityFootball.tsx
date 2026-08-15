@@ -3770,7 +3770,7 @@ function App({ session }: { session: Session }) {
                 </select>
 
                 {filteredResults.length === 0 && <p className="wcf-empty">No results yet.</p>}
-                {filteredResults.map((g) => {
+                {filteredResults.map((g, resultIndex) => {
                   const scorers = goalRows.filter((r) => r.game_id === g.id && r.goals > 0).sort((a, b) => b.goals - a.goals);
                   const teamOf = (playerId: string) => g.bookings.find((b) => b.player_id === playerId)?.team;
                   const whiteScorers = scorers.filter((s) => teamOf(s.player_id) === "white");
@@ -3789,7 +3789,7 @@ function App({ session }: { session: Session }) {
                   const topVotes = ranked[0]?.votes ?? 0;
                   const expanded = expandedResultId === g.id;
                   return (
-                    <article key={g.id} className="wcf-result">
+                    <article key={g.id} className={"wcf-result" + (resultIndex === 0 ? " featured" : "")}>
                       <button className="wcf-result-toggle" onClick={() => setExpandedResultId(expanded ? null : g.id)}>
                         <div className="wcf-result-head">
                           <div>
@@ -6067,8 +6067,8 @@ const css = `
 .wcf-card.in{border-color:rgba(34,197,94,.5)}
 .wcf-card.in:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--green)}
 .wcf-card.featured{
-  background-image:linear-gradient(180deg,rgba(8,10,14,.15) 0%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/pitch-night.jpg');
-  background-size:cover;background-position:center 30%;border-radius:24px;padding:24px;margin-bottom:22px;
+  background-image:linear-gradient(180deg,rgba(8,10,14,.15) 0%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/tunnel.jpg');
+  background-size:cover;background-position:center 42%;border-radius:24px;padding:24px;margin-bottom:22px;
 }
 .wcf-card.featured.in:before{display:none}
 .wcf-hero-top{display:flex;justify-content:space-between;align-items:flex-start}
@@ -6683,7 +6683,10 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-pot-row-amount.neg{color:var(--red-hi)}
 .wcf-streak{background:var(--panel);border:1px solid var(--line);border-left:3px solid;border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
 .wcf-streak strong{color:var(--white)}
-.wcf-h2h{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
+.wcf-h2h{
+  background-image:linear-gradient(180deg,rgba(13,13,26,.55) 0%,rgba(13,13,26,.86) 38%,rgba(13,13,26,.98) 70%),url('/net-rain.jpg');
+  background-size:cover;background-position:center 65%;
+  border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .wcf-h2h-title{font-weight:800;font-size:13px;margin-bottom:10px}
 .wcf-h2h-row{display:grid;grid-template-columns:1fr repeat(5,28px);align-items:center;font-size:12px;padding:6px 0;border-bottom:1px solid var(--line)}
 .wcf-h2h-row:last-child{border-bottom:none}
@@ -6706,6 +6709,10 @@ button.wcf-dash-card:disabled{cursor:default}
 
 .wcf-month-filter{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans);margin-bottom:14px}
 .wcf-result{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:11px}
+.wcf-result.featured{
+  background-image:linear-gradient(180deg,rgba(6,10,16,.5) 0%,rgba(6,10,16,.84) 45%,rgba(6,10,16,.97) 80%),url('/pitch-ball-wet.jpg');
+  background-size:cover;background-position:center 62%;
+}
 .wcf-result-toggle{display:block;width:100%;background:none;border:none;padding:0;margin:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
 .wcf-result-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .wcf-result-score{font-family:var(--mono);font-weight:800;font-size:18px;display:flex;align-items:center;gap:6px}
@@ -6743,7 +6750,11 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-accordion-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;color:var(--white);padding:13px 14px;font-weight:800;font-size:13px;cursor:pointer;text-align:left}
 .wcf-accordion-chevron{font-size:10px;color:var(--dim);flex:0 0 auto}
 .wcf-accordion-body{padding:0 14px 14px;display:flex;flex-direction:column;gap:16px}
-.wcf-account-card{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+.wcf-account-card{
+  display:flex;align-items:center;gap:12px;
+  background-image:linear-gradient(135deg,rgba(13,13,26,.55) 0%,rgba(13,13,26,.88) 55%,rgba(13,13,26,.97) 100%),url('/bench-kit.jpg');
+  background-size:cover;background-position:center 68%;
+  border:1px solid var(--line);border-radius:14px;padding:14px}
 .wcf-account-name{font-weight:800;font-size:15px}
 .wcf-account-email{font-size:12px;color:var(--dim);margin-top:2px}
 .wcf-role-badge{margin-left:auto;font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
