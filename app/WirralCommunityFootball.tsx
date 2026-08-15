@@ -276,20 +276,14 @@ function formationSlots(n: number): { x: number; y: number; role: string }[] {
       ? [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }, { count: att, role: "Attack" }]
       : [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }];
   }
-  // Front row anchors close to the halfway line (46) for a 2-3 row squad,
-  // with earlier rows stepping back from there by a comfortable, fixed
-  // gap (13) - a fixed forward-stepping gap from the keeper instead left
-  // a wide dead band across the middle on a real device (confirmed
-  // against a real 7-a-side roster), even though it looked fine on a
-  // small isolated test card. A 1-row squad keeps its own, smaller
-  // target (40) - pushing a single row all the way to 46 was the first
-  // thing tried here, and it collides when that row's middle player
-  // lines up with the mirrored team's, which a 1-row squad's odd counts
-  // do far more often than a 2-3 row squad's do.
+  // Each team spreads across nearly its whole half, back row close to the
+  // keeper (20) through front row right up against the halfway line (48) -
+  // matching a real tactics-board lineup, where a team's shape reaches
+  // deep into their attacking half rather than sitting bunched near their
+  // own goal with a gap before the center circle.
   const backY = 20;
-  const rowGap = 13;
-  const frontY = 46;
-  const rowYs = rows.length === 1 ? [40] : rows.map((_, i) => frontY - (rows.length - 1 - i) * rowGap);
+  const frontY = 45;
+  const rowYs = rows.length === 1 ? [frontY] : rows.map((_, i) => backY + (i * (frontY - backY)) / (rows.length - 1));
   rows.forEach((row, ri) => {
     const y = rowYs[ri];
     for (let i = 0; i < row.count; i++) {
@@ -2791,7 +2785,6 @@ function App({ session }: { session: Session }) {
                   weather={weatherFor(nextFixtureForCountdown.date, nextFixtureForCountdown.kickoff)}
                   askConfirm={askConfirm}
                 />
-                {upcomingGames.length > 1 && <div className="wcf-eyebrow" style={{ marginTop: 4 }}>Upcoming fixtures</div>}
               </>
             )}
 
@@ -5989,7 +5982,7 @@ function GameCard({
               <span className="wcf-hero-roster-n">{confirmed.length} / {game.max_players}</span>
               <span className={"wcf-hero-roster-l " + (full ? "full" : "open")}>{full ? "Squad full" : `${spotsLeft} spots left`}</span>
             </div>
-            <div className="wcf-avatars">
+            <button className="wcf-avatars" onClick={() => setShowRoster((v) => !v)} aria-label="View players">
               {confirmed.slice(0, 5).map((b) => {
                 const a = avatarFor(b.player.display_name);
                 return (
@@ -5999,7 +5992,7 @@ function GameCard({
                 );
               })}
               {confirmed.length > 5 && <span className="wcf-avatar-chip lg more">+{confirmed.length - 5}</span>}
-            </div>
+            </button>
           </div>
         </>
       ) : (
@@ -6018,7 +6011,7 @@ function GameCard({
           <div className="wcf-count-col">
             <span className={"wcf-status-pill " + (full ? "full" : "open")}>{full ? "Full" : "Open"}</span>
             <div className="wcf-avatars-row">
-              <div className="wcf-avatars">
+              <button className="wcf-avatars" onClick={() => setShowRoster((v) => !v)} aria-label="View players">
                 {confirmed.slice(0, 4).map((b) => {
                   const a = avatarFor(b.player.display_name);
                   return (
@@ -6028,7 +6021,7 @@ function GameCard({
                   );
                 })}
                 {confirmed.length > 4 && <span className="wcf-avatar-chip more">+{confirmed.length - 4}</span>}
-              </div>
+              </button>
               <span className="wcf-count-n">{confirmed.length}/{game.max_players}</span>
             </div>
             {!full && <span className="wcf-spots-note">{spotsLeft} left</span>}
@@ -6294,7 +6287,7 @@ const css = `
 .wcf-hero-roster-l.full{color:var(--red)}
 .wcf-hero-roster-l.open{color:var(--green)}
 .wcf-avatar-chip.lg{width:36px;height:36px;font-size:12px;margin-left:-10px}
-.wcf-card.featured .wcf-waiting{margin:8px -24px 0}
+.wcf-card.featured .wcf-waiting{margin:18px -24px 0}
 .wcf-card.featured .wcf-waiting-banner,.wcf-card.featured .wcf-waiting-list{padding-left:24px;padding-right:24px}
 .wcf-card.featured .wcf-book{padding:16px 19px;font-size:14px;border-radius:14px}
 .wcf-card-top{display:flex;align-items:flex-start;gap:11px}
@@ -6312,7 +6305,7 @@ const css = `
 .wcf-status-pill.full{color:#fff;border-color:var(--red);background:var(--red)}
 .wcf-status-pill.open{color:var(--green);border-color:var(--green);background:transparent}
 .wcf-avatars-row{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px}
-.wcf-avatars{display:flex}
+.wcf-avatars{display:flex;background:none;border:none;padding:0;cursor:pointer}
 .wcf-avatar-chip{width:24px;height:24px;border-radius:50%;border:2px solid var(--panel);margin-left:-8px;display:grid;place-items:center;font-size:9px;font-weight:800;color:#fff;background:var(--panel2)}
 .wcf-avatar-chip:first-child{margin-left:0}
 .wcf-avatar-chip.more{color:var(--dim);background:var(--panel2)}
@@ -6333,7 +6326,7 @@ const css = `
 .wcf-pay-dot.pending{background:var(--amber)}
 .wcf-pay-dot.confirmed{background:var(--green)}
 
-.wcf-waiting{margin:8px -20px 0}
+.wcf-waiting{margin:18px -20px 0}
 .wcf-waiting-banner{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:rgba(234,179,8,.08);border:none;border-top:1px solid rgba(234,179,8,.22);border-bottom:1px solid rgba(234,179,8,.22);padding:14px 20px;cursor:pointer;text-align:left}
 .wcf-waiting-banner-left{display:flex;align-items:center;gap:10px;color:var(--amber)}
 .wcf-waiting-label{display:block;font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--amber)}
@@ -6471,7 +6464,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-admin-game-month{margin-top:3px;font-weight:700;font-size:8.5px;letter-spacing:.12em;color:var(--dim)}
 .wcf-admin-game-info{flex:1;min-width:0;text-align:left}
 .wcf-admin-game-venue{font-family:var(--display);font-weight:800;font-size:13.5px;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wcf-admin-game-date{margin-top:5px;font-size:11px;color:var(--dim)}
+.wcf-admin-game-date{margin-top:9px;font-size:11px;color:var(--dim)}
 .wcf-admin-game-badge{flex:none;font-weight:800;font-size:9px;letter-spacing:.1em;padding:6px 9px;border-radius:20px;white-space:nowrap}
 .wcf-admin-game-badge.green{color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.35)}
 .wcf-admin-game-badge.amber{color:var(--amber);background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.35)}
@@ -6702,7 +6695,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-view-btn.on{background:rgba(230,57,70,.16);border-color:rgba(230,57,70,.42);color:#f8b3b8}
 
 .wcf-lineup-pitch-card{position:relative;border-radius:22px;border:1px solid var(--line);box-shadow:0 22px 44px -28px rgba(0,0,0,.95);overflow:hidden;background:linear-gradient(180deg,rgba(6,12,10,.72),rgba(6,12,10,.48) 50%,rgba(6,12,10,.76)),url('/turf-texture.jpg');background-size:cover;background-position:center}
-.wcf-lineup-pitch-lines{position:relative;width:100%;aspect-ratio:0.64;opacity:.3;stroke:#e2e8f0;stroke-width:0.9;fill:none;display:block}
+.wcf-lineup-pitch-lines{position:relative;width:100%;aspect-ratio:0.56;opacity:.3;stroke:#e2e8f0;stroke-width:0.9;fill:none;display:block}
 .wcf-lineup-pitch-tokens{position:absolute;inset:0}
 .wcf-lineup-token{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:none;padding:2px;cursor:pointer;min-width:44px}
 .wcf-lineup-token-chip{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:13px;box-shadow:0 6px 14px -6px rgba(0,0,0,.85)}
