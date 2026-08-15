@@ -6577,12 +6577,17 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
 
-.wcf-lineup-head{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:14px}
-.wcf-lineup-eyebrow{font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.wcf-lineup-head{
+  position:relative;overflow:hidden;min-height:220px;border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:14px;
+  background-image:linear-gradient(180deg,rgba(6,10,18,.15) 0%,rgba(6,10,18,.35) 55%,rgba(6,10,18,.74) 100%),url('/lineup-teams.jpg');
+  background-size:cover;background-position:center 68%;
+  box-shadow:0 18px 40px -24px rgba(0,0,0,.9);
+}
+.wcf-lineup-eyebrow{font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#f8b3b8}
 .wcf-lineup-title{margin-top:9px;font-family:var(--display);font-size:22px;font-weight:800;letter-spacing:-.02em;color:var(--white)}
-.wcf-lineup-sub{margin-top:6px;font-size:12px;color:var(--dim)}
+.wcf-lineup-sub{margin-top:6px;font-size:12px;color:#B7BDD0}
 .wcf-lineup-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px}
-.wcf-lineup-pill{flex:1;min-height:44px;padding:11px 12px;border-radius:12px;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.2);color:var(--white);font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-lineup-pill{flex:1;min-height:44px;padding:11px 12px;border-radius:22px;background:rgba(148,163,184,.14);border:1px solid rgba(255,255,255,.2);color:var(--white);font-weight:700;font-size:11.5px;cursor:pointer;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 .wcf-lineup-pill.primary{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.32);color:#86efac}
 .wcf-lineup-row{display:flex;align-items:center;gap:11px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:9px;transition:box-shadow .2s}
 .wcf-lineup-row.me{border-color:transparent}
