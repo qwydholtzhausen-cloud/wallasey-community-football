@@ -885,6 +885,7 @@ function App({ session }: { session: Session }) {
   const [resultsMonth, setResultsMonth] = useState<string>("all");
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [playerCardId, setPlayerCardId] = useState<string | null>(null);
+  const [playerCardTeam, setPlayerCardTeam] = useState<{ name: string; color: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
   const [editingLineup, setEditingLineup] = useState(false);
@@ -1722,6 +1723,15 @@ function App({ session }: { session: Session }) {
     notifySuccess("Applied the suggested split — tweak any individual player in Team Sheet if needed");
   }
 
+  // Team is per-fixture, not a fixed player attribute, so the card can only
+  // show one when the tap happened somewhere that actually knows it (the
+  // Line-up screen). Every other call site goes through here too, passing
+  // no team, so a stale team from a previous card can never leak into one
+  // that doesn't have that context.
+  function openPlayerCard(id: string, team?: { name: string; color: string } | null) {
+    setPlayerCardId(id);
+    setPlayerCardTeam(team ?? null);
+  }
   async function renameSelf(name: string) {
     if (!name.trim()) return;
     const { error } = await supabase.from("profiles").update({ display_name: name.trim() }).eq("id", myId);
@@ -2764,7 +2774,7 @@ function App({ session }: { session: Session }) {
                   onEdit={() => setEditingId(editingId === nextFixtureForCountdown.id ? null : nextFixtureForCountdown.id)}
                   onSave={(patch) => saveGame(nextFixtureForCountdown.id, patch)}
                   onDelete={() => deleteGame(nextFixtureForCountdown.id)}
-                  onOpenPlayerCard={setPlayerCardId}
+                  onOpenPlayerCard={openPlayerCard}
                   weather={weatherFor(nextFixtureForCountdown.date, nextFixtureForCountdown.kickoff)}
                   askConfirm={askConfirm}
                 />
@@ -2792,7 +2802,7 @@ function App({ session }: { session: Session }) {
                       onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
                       onSave={(patch) => saveGame(g.id, patch)}
                       onDelete={() => deleteGame(g.id)}
-                      onOpenPlayerCard={setPlayerCardId}
+                      onOpenPlayerCard={openPlayerCard}
                       weather={weatherFor(g.date, g.kickoff)}
                       askConfirm={askConfirm}
                     />
@@ -3346,7 +3356,15 @@ function App({ session }: { session: Session }) {
                             {selected.booking.player.display_name[0]?.toUpperCase()}
                           </span>
                           <div className="wcf-lineup-selected-body">
-                            <div className="wcf-lineup-selected-name">
+                            <div
+                              className="wcf-lineup-selected-name clickable"
+                              onClick={() =>
+                                openPlayerCard(selected.booking.player_id, {
+                                  name: selected.isRed ? cs.team_red_name : cs.team_white_name,
+                                  color: selected.isRed ? cs.team_red_color : cs.team_white_color,
+                                })
+                              }
+                            >
                               {selected.booking.player.display_name}{selected.booking.player_id === myId ? " (you)" : ""}
                             </div>
                             <div className="wcf-lineup-selected-role">
@@ -3373,7 +3391,7 @@ function App({ session }: { session: Session }) {
                     {nextGrouped.unassigned.map((b) => (
                       <div key={b.id} className={"wcf-lineup-row" + (b.player_id === myId ? " me" : "")}>
                         <span className="wcf-lineup-avatar">{b.player.display_name[0]?.toUpperCase()}</span>
-                        <button className="wcf-lineup-name wcf-name-link" onClick={() => setPlayerCardId(b.player_id)}>
+                        <button className="wcf-lineup-name wcf-name-link" onClick={() => openPlayerCard(b.player_id)}>
                           {b.player.display_name}{b.player_id === myId ? " (you)" : ""}
                         </button>
                       </div>
@@ -3739,7 +3757,7 @@ function App({ session }: { session: Session }) {
                             <span className="wcf-lb-row-avatar" style={{ background: a.gradient }}>{a.initial}</span>
                             <button
                               className="wcf-board-name wcf-name-link"
-                              onClick={(e) => { e.stopPropagation(); setPlayerCardId(row.id); }}
+                              onClick={(e) => { e.stopPropagation(); openPlayerCard(row.id); }}
                             >
                               {row.name}
                             </button>
@@ -3823,7 +3841,7 @@ function App({ session }: { session: Session }) {
                                 <div className="wcf-result-goals-col">
                                   {whiteScorers.map((s) => (
                                     <div key={s.id} className="wcf-result-goal-row">
-                                      <button className="wcf-name-link" onClick={() => setPlayerCardId(s.player_id)}>{s.player.display_name}</button>
+                                      <button className="wcf-name-link" onClick={() => openPlayerCard(s.player_id)}>{s.player.display_name}</button>
                                       <b>{s.goals}</b>
                                     </div>
                                   ))}
@@ -3831,7 +3849,7 @@ function App({ session }: { session: Session }) {
                                 <div className="wcf-result-goals-col">
                                   {redScorers.map((s) => (
                                     <div key={s.id} className="wcf-result-goal-row">
-                                      <button className="wcf-name-link" onClick={() => setPlayerCardId(s.player_id)}>{s.player.display_name}</button>
+                                      <button className="wcf-name-link" onClick={() => openPlayerCard(s.player_id)}>{s.player.display_name}</button>
                                       <b>{s.goals}</b>
                                     </div>
                                   ))}
@@ -4261,7 +4279,19 @@ function App({ session }: { session: Session }) {
         const stats = playerCardStats[playerCardId] ?? { apps: 0, goals: 0, motm: 0 };
         const canSeeRating = isAdmin || playerCardId === myId;
         const rating = canSeeRating ? ratingByPlayer[playerCardId] ?? null : null;
-        return <PlayerCardModal profile={cardProfile} stats={stats} rating={rating} onClose={() => setPlayerCardId(null)} />;
+        const appsRank = playerStats.findIndex((p) => p.id === playerCardId) + 1;
+        return (
+          <PlayerCardModal
+            profile={cardProfile}
+            stats={stats}
+            rating={rating}
+            canSeeRating={canSeeRating}
+            isOwnCard={playerCardId === myId}
+            rank={appsRank > 0 ? appsRank : null}
+            team={playerCardTeam}
+            onClose={() => { setPlayerCardId(null); setPlayerCardTeam(null); }}
+          />
+        );
       })()}
 
       {confirmState && (
@@ -4291,45 +4321,112 @@ const ROLE_LABEL: Record<Role, string> = { player: "Player", admin: "Admin", "co
 // person. Ratings only render for an admin or the player's own card - same
 // privacy rule as everywhere else - rather than showing a "private"
 // placeholder that'd tease data that isn't there for anyone else.
+function ratingFillColor(v: number) {
+  // amber below 2.5, green above 4, blue in between - reads at a glance without a legend
+  return v >= 4 ? "#22c55e" : v < 2.5 ? "#eab308" : "#2E74CC";
+}
+
 function PlayerCardModal({
   profile,
   stats,
   rating,
+  canSeeRating,
+  isOwnCard,
+  rank,
+  team,
   onClose,
 }: {
   profile: Profile;
   stats: { apps: number; goals: number; motm: number };
   rating: PlayerRating | null;
+  canSeeRating: boolean;
+  isOwnCard: boolean;
+  rank: number | null;
+  team: { name: string; color: string } | null;
   onClose: () => void;
 }) {
+  const a = avatarFor(profile.display_name);
+  const firstName = profile.display_name.split(" ")[0];
+  const overall = rating ? ((rating.fitness + rating.attack + rating.defence) / 3).toFixed(1) : null;
   return (
     <div className="wcf-lightbox" onClick={onClose}>
       <button className="wcf-lightbox-close" onClick={onClose} aria-label="Close">×</button>
       <div className="wcf-pcard" onClick={(e) => e.stopPropagation()}>
-        <span className="wcf-avatar big">{profile.display_name[0]?.toUpperCase()}</span>
-        <div className="wcf-pcard-name">{profile.display_name}</div>
-        <span className={"wcf-role-badge " + profile.role}>{ROLE_LABEL[profile.role]}</span>
-        <div className="wcf-pcard-stats">
-          <div className="wcf-pcard-stat"><b>{stats.apps}</b><span>Apps</span></div>
-          <div className="wcf-pcard-stat"><b>{stats.goals}</b><span>Goals</span></div>
-          <div className="wcf-pcard-stat"><b>{stats.motm}</b><span>MOTM</span></div>
-        </div>
-        {rating && (
-          <div className="wcf-pcard-ratings">
-            <div className="wcf-pcard-ratings-label">Rating</div>
-            {(["fitness", "attack", "defence"] as const).map((k) => (
-              <div key={k} className="wcf-pcard-metric">
-                <div className="wcf-pcard-metric-top">
-                  <span>{k[0].toUpperCase()}{k.slice(1)}</span>
-                  <b>{rating[k].toFixed(1)}</b>
-                </div>
-                <div className="wcf-pcard-track">
-                  <div className="wcf-pcard-fill" style={{ width: `${(rating[k] / 5) * 100}%` }} />
-                </div>
-              </div>
-            ))}
+        <div className="wcf-pcard-head">
+          <div className="wcf-pcard-glow" />
+          <div className="wcf-pcard-topline" />
+          {canSeeRating && (
+            <span className="wcf-pcard-privacy">
+              <span className="wcf-pcard-privacy-dot" />
+              {isOwnCard ? "YOUR CARD" : "ADMIN VIEW"}
+            </span>
+          )}
+          <div className="wcf-pcard-avatar-wrap">
+            <span className="wcf-pcard-avatar" style={{ background: a.gradient }}>{a.initial}</span>
+            {rank != null && <span className="wcf-pcard-rank">#{rank}</span>}
           </div>
-        )}
+          <div className="wcf-pcard-name">{profile.display_name}</div>
+          <div className="wcf-pcard-badges">
+            <span className="wcf-pcard-role-badge">{ROLE_LABEL[profile.role]}</span>
+            {team && (
+              <span
+                className="wcf-pcard-team-badge"
+                style={{
+                  background: `${team.color}29`,
+                  borderColor: `${team.color}66`,
+                  color: readableTextColor(team.color) === "#0d0d1a" ? team.color : "#f8fafc",
+                }}
+              >
+                {team.name}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="wcf-pcard-body">
+          <div className="wcf-pcard-stats">
+            <div className="wcf-pcard-stat"><b>{stats.apps}</b><span>Apps</span></div>
+            <div className="wcf-pcard-stat"><b>{stats.goals}</b><span>Goals</span></div>
+            <div className="wcf-pcard-stat"><b>{stats.motm}</b><span>MOTM</span></div>
+          </div>
+
+          {canSeeRating && rating ? (
+            <div className="wcf-pcard-ratings">
+              <div className="wcf-pcard-ratings-top">
+                <span className="wcf-pcard-ratings-label">Rating</span>
+                <span className="wcf-pcard-ratings-divider" />
+                <span className="wcf-pcard-ratings-visibility">
+                  {isOwnCard ? "ONLY YOU" : "ADMIN ONLY"}
+                </span>
+              </div>
+              {(["fitness", "attack", "defence"] as const).map((k) => (
+                <div key={k} className="wcf-pcard-metric">
+                  <div className="wcf-pcard-metric-top">
+                    <span>{k[0].toUpperCase()}{k.slice(1)}</span>
+                    <b>{rating[k].toFixed(1)}</b>
+                  </div>
+                  <div className="wcf-pcard-track">
+                    <div
+                      className="wcf-pcard-fill"
+                      style={{
+                        width: `${(rating[k] / 5) * 100}%`,
+                        background: `linear-gradient(90deg,${ratingFillColor(rating[k])}99,${ratingFillColor(rating[k])})`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+              <div className="wcf-pcard-overall">
+                <span>Overall</span>
+                <b>{overall}</b>
+              </div>
+            </div>
+          ) : (
+            <div className="wcf-pcard-private">
+              <span>Ratings are private to {firstName} and the admins.</span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -6501,6 +6598,8 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-lineup-selected-chip{flex:0 0 auto;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:15px}
 .wcf-lineup-selected-body{flex:1;min-width:0}
 .wcf-lineup-selected-name{font-family:var(--display);font-weight:800;font-size:14px;color:var(--white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-lineup-selected-name.clickable{cursor:pointer}
+.wcf-lineup-selected-name.clickable:hover{text-decoration:underline}
 .wcf-lineup-selected-role{margin-top:4px;font-size:11px;color:var(--dim)}
 .wcf-lineup-selected-stat{text-align:center;flex:0 0 auto}
 .wcf-lineup-selected-stat div{font-family:var(--display);font-weight:700;font-size:17px;color:var(--blue)}
@@ -6874,21 +6973,42 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-modal-cancel{flex:1;background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px;border-radius:9px;font-weight:700;font-size:12.5px;cursor:pointer}
 .wcf-modal-confirm{flex:1;background:var(--red);color:#fff;border:none;padding:11px;border-radius:9px;font-weight:800;font-size:12.5px;cursor:pointer}
 .wcf-modal-confirm.safe{background:var(--blue)}
-.wcf-pcard{width:100%;max-width:300px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:24px 20px;text-align:center;margin:auto}
-.wcf-pcard .wcf-avatar.big{margin:0 auto 12px}
-.wcf-pcard-name{font-size:17px;font-weight:800}
-.wcf-pcard-stats{display:flex;margin:18px 0 0;border-top:1px solid var(--line);padding-top:16px}
-.wcf-pcard-stat{flex:1}
-.wcf-pcard-stat b{display:block;font-family:var(--mono);font-size:19px;font-weight:800}
-.wcf-pcard-stat span{font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;margin-top:2px;display:block}
+@keyframes wcfPcardIn{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+.wcf-pcard{width:100%;max-width:300px;margin:auto;border-radius:20px;overflow:hidden;border:1px solid var(--line);box-shadow:0 26px 50px -30px rgba(0,0,0,.95);animation:wcfPcardIn .22s ease-out}
+.wcf-pcard-head{position:relative;padding:26px 20px 20px;text-align:center;background:radial-gradient(120% 90% at 50% 0%,rgba(230,57,70,.22),rgba(30,41,59,.9) 58%,rgba(21,25,42,.98));overflow:hidden}
+.wcf-pcard-glow{position:absolute;top:-70px;left:50%;transform:translateX(-50%);width:220px;height:170px;background:radial-gradient(closest-side,rgba(230,57,70,.3),transparent);filter:blur(4px);pointer-events:none}
+.wcf-pcard-topline{position:absolute;top:0;left:16px;right:16px;height:1px;background:linear-gradient(to right,transparent,rgba(255,255,255,.24),transparent)}
+.wcf-pcard-privacy{position:absolute;top:14px;left:14px;display:flex;align-items:center;gap:5px;padding:5px 9px;border-radius:20px;background:rgba(46,116,204,.18);border:1px solid rgba(46,116,204,.42);font-size:8.5px;font-weight:800;letter-spacing:.14em;color:#7fb0ec}
+.wcf-pcard-privacy-dot{width:5px;height:5px;border-radius:50%;background:var(--blue)}
+.wcf-pcard-avatar-wrap{position:relative;width:88px;height:88px;margin:8px auto 0}
+.wcf-pcard-avatar{width:88px;height:88px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:32px;color:#f8fafc;box-shadow:inset 0 0 0 1px rgba(255,255,255,.16),0 0 0 5px rgba(13,13,26,.55),0 0 34px -8px rgba(0,0,0,.7)}
+.wcf-pcard-rank{position:absolute;bottom:-4px;right:-4px;width:30px;height:30px;border-radius:50%;background:var(--bg);border:1px solid var(--line);display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:11px;color:var(--amber)}
+.wcf-pcard-name{margin-top:14px;font-family:var(--display);font-weight:800;font-size:19px;letter-spacing:-.02em;color:#f8fafc}
+.wcf-pcard-badges{display:flex;justify-content:center;gap:6px;margin-top:9px}
+.wcf-pcard-role-badge{font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:6px 10px;border-radius:999px;background:var(--panel2);color:var(--dim)}
+.wcf-pcard-team-badge{font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:6px 10px;border-radius:999px;border:1px solid}
+.wcf-pcard-body{background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));padding:16px 20px 22px}
+.wcf-pcard-stats{display:flex;border-top:1px solid var(--line);padding-top:16px}
+.wcf-pcard-stat{flex:1;text-align:center}
+.wcf-pcard-stat b{display:block;font-family:var(--display);font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;color:#f8fafc}
+.wcf-pcard-stat span{display:block;font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;margin-top:6px;font-weight:600}
 .wcf-pcard-ratings{margin-top:18px;padding-top:16px;border-top:1px solid var(--line);text-align:left}
-.wcf-pcard-ratings-label{font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:10px;text-align:center}
-.wcf-pcard-metric{margin-bottom:8px}
+.wcf-pcard-ratings-top{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.wcf-pcard-ratings-label{font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.wcf-pcard-ratings-divider{flex:1;height:1px;background:var(--line)}
+.wcf-pcard-ratings-visibility{font-size:9px;font-weight:700;letter-spacing:.1em;color:#64748b}
+.wcf-pcard-metric{margin-bottom:13px}
 .wcf-pcard-metric:last-child{margin-bottom:0}
-.wcf-pcard-metric-top{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:3px}
-.wcf-pcard-metric-top b{color:var(--white);font-family:var(--mono)}
+.wcf-pcard-metric-top{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--dim);margin-bottom:6px}
+.wcf-pcard-metric-top span{font-weight:600;letter-spacing:.02em}
+.wcf-pcard-metric-top b{font-family:var(--mono);font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;color:#cbd5e1}
 .wcf-pcard-track{height:5px;border-radius:5px;background:var(--panel2);overflow:hidden}
-.wcf-pcard-fill{height:100%;border-radius:5px;background:var(--blue)}
+.wcf-pcard-fill{height:100%;border-radius:5px}
+.wcf-pcard-overall{margin-top:14px;padding-top:13px;border-top:1px solid var(--line);display:flex;align-items:baseline;justify-content:space-between}
+.wcf-pcard-overall span{font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.wcf-pcard-overall b{font-family:var(--display);font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--blue)}
+.wcf-pcard-private{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);text-align:center}
+.wcf-pcard-private span{font-size:10.5px;line-height:1.5;color:#64748b}
 .wcf-lightbox-close{position:fixed;top:16px;right:16px;width:38px;height:38px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-size:22px;line-height:1;cursor:pointer;z-index:101}
 .wcf-push-stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:12.5px;color:var(--dim);font-weight:600}
 .wcf-audit-row{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px}
