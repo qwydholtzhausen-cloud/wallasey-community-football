@@ -6067,8 +6067,8 @@ const css = `
 .wcf-card.in{border-color:rgba(34,197,94,.5)}
 .wcf-card.in:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--green)}
 .wcf-card.featured{
-  background-image:linear-gradient(180deg,rgba(8,10,14,.15) 0%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/tunnel.jpg');
-  background-size:cover;background-position:center 42%;border-radius:24px;padding:24px;margin-bottom:22px;
+  background-image:linear-gradient(180deg,rgba(8,10,14,.15) 0%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/pitch-night.jpg');
+  background-size:cover;background-position:center 30%;border-radius:24px;padding:24px;margin-bottom:22px;
 }
 .wcf-card.featured.in:before{display:none}
 .wcf-hero-top{display:flex;justify-content:space-between;align-items:flex-start}
