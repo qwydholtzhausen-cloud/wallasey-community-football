@@ -2785,12 +2785,6 @@ function App({ session }: { session: Session }) {
                   weather={weatherFor(nextFixtureForCountdown.date, nextFixtureForCountdown.kickoff)}
                   askConfirm={askConfirm}
                 />
-                {upcomingGames.length > 1 && (
-                  <div className="wcf-console-section">
-                    <span className="wcf-console-section-label">Upcoming</span>
-                    <span className="wcf-console-section-rule" />
-                  </div>
-                )}
               </>
             )}
 
@@ -6470,7 +6464,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-admin-game-month{margin-top:3px;font-weight:700;font-size:8.5px;letter-spacing:.12em;color:var(--dim)}
 .wcf-admin-game-info{flex:1;min-width:0;text-align:left}
 .wcf-admin-game-venue{font-family:var(--display);font-weight:800;font-size:13.5px;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wcf-admin-game-date{margin-top:9px;font-size:11px;color:var(--dim)}
+.wcf-admin-game-date{margin-top:12px;font-size:11px;color:var(--dim)}
 .wcf-admin-game-badge{flex:none;font-weight:800;font-size:9px;letter-spacing:.1em;padding:6px 9px;border-radius:20px;white-space:nowrap}
 .wcf-admin-game-badge.green{color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.35)}
 .wcf-admin-game-badge.amber{color:var(--amber);background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.35)}
