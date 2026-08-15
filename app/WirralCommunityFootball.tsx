@@ -2785,6 +2785,12 @@ function App({ session }: { session: Session }) {
                   weather={weatherFor(nextFixtureForCountdown.date, nextFixtureForCountdown.kickoff)}
                   askConfirm={askConfirm}
                 />
+                {upcomingGames.length > 1 && (
+                  <div className="wcf-console-section">
+                    <span className="wcf-console-section-label">Upcoming</span>
+                    <span className="wcf-console-section-rule" />
+                  </div>
+                )}
               </>
             )}
 
@@ -3948,7 +3954,7 @@ function App({ session }: { session: Session }) {
                                     return (
                                       <div className="wcf-predict-reveal-row">
                                         <span className="wcf-predict-reveal-row-label">
-                                          Your guess: <b>{cs.team_white_name} {myGamePrediction.predictedWhite}–{myGamePrediction.predictedRed} {cs.team_red_name}</b>
+                                          Your guess: <b>{cs.team_red_name} {myGamePrediction.predictedRed}–{myGamePrediction.predictedWhite} {cs.team_white_name}</b>
                                         </span>
                                         <span className={"wcf-predict-pts " + (pts === 3 ? "exact" : pts === 1 ? "partial" : "zero")}>
                                           +{pts} pt{pts === 1 ? "" : "s"}
@@ -5232,7 +5238,7 @@ function PredictPanel({
           <div className="wcf-predict-locked-body">
             <div className="wcf-predict-locked-label">Your prediction</div>
             <div className="wcf-predict-locked-value">
-              {whiteLabel} {myPrediction.predicted_white}–{myPrediction.predicted_red} {redLabel}
+              {redLabel} {myPrediction.predicted_red}–{myPrediction.predicted_white} {whiteLabel}
             </div>
           </div>
           <button className="wcf-predict-edit" onClick={() => setEditing(true)}>Edit</button>
@@ -5259,20 +5265,20 @@ function PredictPanel({
       </p>
       <div className="wcf-predict-score">
         <div className="wcf-predict-team">
-          <div className="wcf-predict-team-name">{whiteLabel}</div>
-          <div className="wcf-predict-stepper">
-            <button onClick={() => setWhite((n) => Math.max(0, n - 1))} aria-label={`Fewer ${whiteLabel} goals`}>−</button>
-            <span>{white}</span>
-            <button onClick={() => setWhite((n) => n + 1)} aria-label={`More ${whiteLabel} goals`}>+</button>
-          </div>
-        </div>
-        <div className="wcf-predict-vs">–</div>
-        <div className="wcf-predict-team">
           <div className="wcf-predict-team-name">{redLabel}</div>
           <div className="wcf-predict-stepper">
             <button onClick={() => setRed((n) => Math.max(0, n - 1))} aria-label={`Fewer ${redLabel} goals`}>−</button>
             <span>{red}</span>
             <button onClick={() => setRed((n) => n + 1)} aria-label={`More ${redLabel} goals`}>+</button>
+          </div>
+        </div>
+        <div className="wcf-predict-vs">–</div>
+        <div className="wcf-predict-team">
+          <div className="wcf-predict-team-name">{whiteLabel}</div>
+          <div className="wcf-predict-stepper">
+            <button onClick={() => setWhite((n) => Math.max(0, n - 1))} aria-label={`Fewer ${whiteLabel} goals`}>−</button>
+            <span>{white}</span>
+            <button onClick={() => setWhite((n) => n + 1)} aria-label={`More ${whiteLabel} goals`}>+</button>
           </div>
         </div>
       </div>
@@ -6287,7 +6293,7 @@ const css = `
 .wcf-hero-roster-l.full{color:var(--red)}
 .wcf-hero-roster-l.open{color:var(--green)}
 .wcf-avatar-chip.lg{width:36px;height:36px;font-size:12px;margin-left:-10px}
-.wcf-card.featured .wcf-waiting{margin:18px -24px 0}
+.wcf-card.featured .wcf-waiting{margin:18px -24px 14px}
 .wcf-card.featured .wcf-waiting-banner,.wcf-card.featured .wcf-waiting-list{padding-left:24px;padding-right:24px}
 .wcf-card.featured .wcf-book{padding:16px 19px;font-size:14px;border-radius:14px}
 .wcf-card-top{display:flex;align-items:flex-start;gap:11px}
@@ -6326,7 +6332,7 @@ const css = `
 .wcf-pay-dot.pending{background:var(--amber)}
 .wcf-pay-dot.confirmed{background:var(--green)}
 
-.wcf-waiting{margin:18px -20px 0}
+.wcf-waiting{margin:18px -20px 14px}
 .wcf-waiting-banner{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:rgba(234,179,8,.08);border:none;border-top:1px solid rgba(234,179,8,.22);border-bottom:1px solid rgba(234,179,8,.22);padding:14px 20px;cursor:pointer;text-align:left}
 .wcf-waiting-banner-left{display:flex;align-items:center;gap:10px;color:var(--amber)}
 .wcf-waiting-label{display:block;font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--amber)}
@@ -6671,7 +6677,7 @@ button.wcf-glance-card:disabled{cursor:default}
 }
 .wcf-lineup-eyebrow{font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#f8b3b8}
 .wcf-lineup-title{margin-top:9px;font-family:var(--display);font-size:22px;font-weight:800;letter-spacing:-.02em;color:var(--white)}
-.wcf-lineup-sub{margin-top:6px;font-size:12px;color:#B7BDD0}
+.wcf-lineup-sub{margin-top:10px;font-size:12px;color:#B7BDD0}
 .wcf-lineup-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:118px}
 .wcf-lineup-pill{flex:1;min-height:44px;padding:11px 12px;border-radius:22px;background:rgba(148,163,184,.14);border:1px solid rgba(255,255,255,.2);color:var(--white);font-weight:700;font-size:11.5px;cursor:pointer;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 .wcf-lineup-pill.primary{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.32);color:#86efac}
