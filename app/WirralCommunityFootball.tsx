@@ -6702,7 +6702,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-view-btn.on{background:rgba(230,57,70,.16);border-color:rgba(230,57,70,.42);color:#f8b3b8}
 
 .wcf-lineup-pitch-card{position:relative;border-radius:22px;border:1px solid var(--line);box-shadow:0 22px 44px -28px rgba(0,0,0,.95);overflow:hidden;background:linear-gradient(180deg,rgba(6,12,10,.72),rgba(6,12,10,.48) 50%,rgba(6,12,10,.76)),url('/turf-texture.jpg');background-size:cover;background-position:center}
-.wcf-lineup-pitch-lines{position:relative;width:100%;aspect-ratio:0.56;opacity:.3;stroke:#e2e8f0;stroke-width:0.9;fill:none;display:block}
+.wcf-lineup-pitch-lines{position:relative;width:100%;aspect-ratio:0.64;opacity:.3;stroke:#e2e8f0;stroke-width:0.9;fill:none;display:block}
 .wcf-lineup-pitch-tokens{position:absolute;inset:0}
 .wcf-lineup-token{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:none;padding:2px;cursor:pointer;min-width:44px}
 .wcf-lineup-token-chip{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:13px;box-shadow:0 6px 14px -6px rgba(0,0,0,.85)}
