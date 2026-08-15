@@ -775,6 +775,7 @@ function App({ session }: { session: Session }) {
   const [adminRatings, setAdminRatings] = useState<PlayerRating[]>([]);
   const [lineupView, setLineupView] = useState<"sheet" | "fairness" | "predict">("sheet");
   const [predictView, setPredictView] = useState<string>("season");
+  const [predictOpenId, setPredictOpenId] = useState<string | null>(null);
   const [suggestedTeams, setSuggestedTeams] = useState<{ white: string[]; red: string[] } | null>(null);
   const [ratingPlayerId, setRatingPlayerId] = useState<string | null>(null);
   const [showAuditLog, setShowAuditLog] = useState(false);
@@ -3351,66 +3352,137 @@ function App({ session }: { session: Session }) {
               </>
             )}
 
-            {lineupView === "predict" && (
-              <>
-                <select className="wcf-month-filter" value={predictView} onChange={(e) => setPredictView(e.target.value)}>
-                  <option value="season">Overall (this season)</option>
-                  {predictionMonths.map((m) => (
-                    <option key={m} value={m}>
-                      {new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
-                    </option>
-                  ))}
-                </select>
+            {lineupView === "predict" && (() => {
+              const isSeason = predictView === "season";
+              const board = isSeason ? predictionSeasonLeaderboard : predictionMonthlyLeaderboards[predictView] ?? [];
+              const isCurrentMonth = !isSeason && predictView === currentMonthKey;
+              // The free-game prize is for a *completed* month, not a
+              // running mid-month lead that could still change - same
+              // "reveal once it's over" cadence as Player of the Month.
+              const leaders = !isSeason && !isCurrentMonth ? topScorers(board) : [];
+              const monthLabel = !isSeason
+                ? new Date(predictView + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })
+                : "";
+              const scopeInputs = isSeason
+                ? scoredPredictionInputs.filter((p) => p.gameDate.slice(0, 4) === String(currentSeasonYear))
+                : scoredPredictionInputs.filter((p) => p.gameDate.slice(0, 7) === predictView);
+              const leader = board[0];
 
-                {(() => {
-                  const isSeason = predictView === "season";
-                  const board = isSeason ? predictionSeasonLeaderboard : predictionMonthlyLeaderboards[predictView] ?? [];
-                  const isCurrentMonth = !isSeason && predictView === currentMonthKey;
-                  // The free-game prize is for a *completed* month, not a
-                  // running mid-month lead that could still change - same
-                  // "reveal once it's over" cadence as Player of the Month.
-                  const leaders = !isSeason && !isCurrentMonth ? topScorers(board) : [];
-                  const monthLabel = !isSeason
-                    ? new Date(predictView + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })
-                    : "";
+              return (
+                <>
+                  <select className="wcf-month-filter" value={predictView} onChange={(e) => { setPredictView(e.target.value); setPredictOpenId(null); }}>
+                    <option value="season">Overall (this season)</option>
+                    {predictionMonths.map((m) => (
+                      <option key={m} value={m}>
+                        {new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
+                      </option>
+                    ))}
+                  </select>
 
-                  return (
-                    <>
-                      {isSeason && <div className="wcf-lb-prize">🏆 Top 3 at the end of the season win prizes from the pot.</div>}
-                      {!isSeason && isCurrentMonth && (
-                        <div className="wcf-lb-prize">🏃 {monthLabel} is still in progress — standings so far, not final.</div>
-                      )}
-                      {!isSeason && !isCurrentMonth && leaders.length > 0 && (
-                        <div className="wcf-shoutout wcf-potm">
-                          🏆 {monthLabel} winner — <strong>{leaders.map((l) => l.playerName).join(" & ")}</strong>: free game this month!
+                  {leader && (
+                    <div className="wcf-pl-leader-card">
+                      <div className="wcf-pl-leader-eyebrow">Leader · {isSeason ? "This season" : monthLabel}</div>
+                      <div className="wcf-pl-leader-row">
+                        <span className="wcf-pl-leader-avatar" style={{ background: avatarFor(leader.playerName).gradient }}>
+                          {avatarFor(leader.playerName).initial}
+                        </span>
+                        <div className="wcf-pl-leader-body">
+                          <div className="wcf-pl-leader-name">{leader.playerName}</div>
+                          <div className="wcf-pl-leader-sub">
+                            {leader.exactCount} exact · {leader.points - leader.exactCount * 3} results · {leader.gamesGuessed} played
+                          </div>
                         </div>
-                      )}
-                      <div className="wcf-lb-key">3 pts exact score · 1 pt correct result · booked players only</div>
-                      {board.length === 0 && <p className="wcf-empty">No predictions scored yet {isSeason ? "this season" : "this month"}.</p>}
-                      {board.length > 0 && (
-                        <div className="wcf-lb">
-                          {board.map((row, i) => {
-                            const inPrizes = isSeason && i < 3 && row.points > 0;
-                            const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
-                            return (
-                              <div key={row.playerId} className={"wcf-lb-row" + (row.playerId === myId ? " me" : "")}>
-                                <span className={"wcf-lb-rank" + (inPrizes ? " top" : "")}>{inPrizes ? medal : i + 1}</span>
-                                <span className="wcf-avatar">{row.playerName[0]?.toUpperCase()}</span>
-                                <div className="wcf-lb-body">
-                                  <div className="wcf-lb-name">{row.playerName}{row.playerId === myId ? " (you)" : ""}</div>
-                                  <div className="wcf-lb-sub">{row.exactCount} exact score{row.exactCount === 1 ? "" : "s"}</div>
+                        <div className="wcf-pl-leader-pts">
+                          <div>{leader.points}</div>
+                          <span>points</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {isSeason && <div className="wcf-lb-prize">🏆 Top 3 at the end of the season win prizes from the pot.</div>}
+                  {!isSeason && isCurrentMonth && (
+                    <div className="wcf-lb-prize">🏃 {monthLabel} is still in progress — standings so far, not final.</div>
+                  )}
+                  {!isSeason && !isCurrentMonth && leaders.length > 0 && (
+                    <div className="wcf-shoutout wcf-potm">
+                      🏆 {monthLabel} winner — <strong>{leaders.map((l) => l.playerName).join(" & ")}</strong>: free game this month!
+                    </div>
+                  )}
+                  <div className="wcf-lb-key">3 pts exact score · 1 pt correct result · booked players only</div>
+
+                  {board.length > 0 && (
+                    <div className="wcf-pl-legend">
+                      <span><span className="wcf-pl-dot" style={{ background: "var(--green)" }} />exact</span>
+                      <span><span className="wcf-pl-dot" style={{ background: "var(--blue)" }} />result</span>
+                      <span><span className="wcf-pl-dot" style={{ background: "rgba(148,163,184,.28)" }} />miss</span>
+                      <span className="wcf-pl-legend-last">last 5</span>
+                    </div>
+                  )}
+
+                  {board.length === 0 && <p className="wcf-empty">No predictions scored yet {isSeason ? "this season" : "this month"}.</p>}
+                  {board.length > 0 && (
+                    <div className="wcf-lb">
+                      {board.map((row, i) => {
+                        const inPrizes = isSeason && i < 3 && row.points > 0;
+                        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
+                        const results = row.points - row.exactCount * 3;
+                        const a = avatarFor(row.playerName);
+                        const form = scopeInputs
+                          .filter((p) => p.playerId === row.playerId)
+                          .sort((x, y) => x.gameDate.localeCompare(y.gameDate))
+                          .slice(-5)
+                          .map((p) => predictionPoints(p.predictedWhite, p.predictedRed, p.actualWhite, p.actualRed));
+                        const open = predictOpenId === row.playerId;
+                        return (
+                          <div key={row.playerId}>
+                            <div
+                              className={"wcf-pl-row" + (i === 0 ? " lead" : "") + (row.playerId === myId ? " me" : "")}
+                              onClick={() => setPredictOpenId((v) => (v === row.playerId ? null : row.playerId))}
+                            >
+                              <span className={"wcf-lb-rank" + (inPrizes ? " top" : "")}>{inPrizes ? medal : i + 1}</span>
+                              <span className="wcf-pl-avatar" style={{ background: a.gradient }}>{a.initial}</span>
+                              <div className="wcf-pl-body">
+                                <div className="wcf-pl-name">{row.playerName}{row.playerId === myId ? " (you)" : ""}</div>
+                                <div className="wcf-pl-sub-row">
+                                  <span>{row.exactCount} exact score{row.exactCount === 1 ? "" : "s"}</span>
+                                  {form.length > 0 && (
+                                    <span className="wcf-pl-form">
+                                      {form.map((pts, fi) => (
+                                        <span
+                                          key={fi}
+                                          className="wcf-pl-dot"
+                                          style={{ background: pts === 3 ? "var(--green)" : pts === 1 ? "var(--blue)" : "rgba(148,163,184,.28)" }}
+                                        />
+                                      ))}
+                                    </span>
+                                  )}
                                 </div>
-                                <span className="wcf-lb-pts">{row.points}</span>
                               </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </>
-            )}
+                              <span className="wcf-lb-pts">{row.points}</span>
+                            </div>
+                            {open && (
+                              <div className="wcf-pl-detail">
+                                <span>Exact <b style={{ color: "var(--green)" }}>{row.exactCount}</b></span>
+                                <span>Results <b style={{ color: "var(--blue)" }}>{results}</b></span>
+                                <span>Played <b>{row.gamesGuessed}</b></span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {board.length > 0 && (
+                    <div className="wcf-pl-footer">
+                      <span>Predictions lock at kick-off.</span>
+                      <button onClick={() => setLineupView("sheet")}>Predict next match</button>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </>
         )}
 
@@ -6344,15 +6416,43 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-lb-prize{display:flex;align-items:center;gap:8px;background:rgba(224,167,51,.1);border:1px solid rgba(224,167,51,.35);border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:11.5px;color:var(--white);line-height:1.4}
 .wcf-lb-key{font-size:10.5px;color:var(--dim);text-align:center;margin-bottom:12px;line-height:1.6}
 .wcf-lb{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px 14px 4px}
-.wcf-lb-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
-.wcf-lb-row:last-child{border-bottom:none}
-.wcf-lb-row.me{background:rgba(139,107,232,.08);margin:0 -14px;padding:9px 14px;border-radius:8px;border-bottom:1px solid rgba(139,107,232,.25)}
 .wcf-lb-rank{font-family:var(--mono);font-weight:800;font-size:12px;color:var(--dim);width:16px;flex:0 0 auto}
 .wcf-lb-rank.top{color:var(--amber)}
-.wcf-lb-body{flex:1;min-width:0}
-.wcf-lb-name{font-size:12.5px;font-weight:700}
-.wcf-lb-sub{font-size:10px;color:var(--dim);margin-top:1px}
-.wcf-lb-pts{font-family:var(--mono);font-weight:800;font-size:15px;flex:0 0 auto}
+.wcf-lb-pts{font-family:var(--display);font-weight:800;font-size:15px;flex:0 0 auto;color:var(--blue)}
+
+.wcf-pl-leader-card{position:relative;border-radius:22px;border:1px solid var(--line);box-shadow:0 22px 44px -28px rgba(0,0,0,.95);overflow:hidden;padding:20px 18px 18px;margin-bottom:14px;
+  background-image:linear-gradient(180deg,rgba(11,16,32,.42),rgba(11,16,32,.82) 72%,rgba(11,16,32,.96)),url('/floodlight-haze.jpg');background-size:cover;background-position:50% 26%}
+.wcf-pl-leader-eyebrow{font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.22em;color:#cbd5e1}
+.wcf-pl-leader-row{display:flex;align-items:center;gap:14px;margin-top:16px}
+.wcf-pl-leader-avatar{flex:0 0 auto;width:56px;height:56px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:20px;color:#fff}
+.wcf-pl-leader-body{flex:1;min-width:0}
+.wcf-pl-leader-name{font-family:var(--display);font-weight:800;font-size:20px;color:var(--white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-pl-leader-sub{margin-top:6px;font-size:12px;color:#cbd5e1}
+.wcf-pl-leader-pts{text-align:right;flex:0 0 auto}
+.wcf-pl-leader-pts div{font-family:var(--display);font-weight:800;font-size:30px;color:var(--amber);font-variant-numeric:tabular-nums}
+.wcf-pl-leader-pts span{display:block;margin-top:5px;font-size:10px;font-weight:600;letter-spacing:.14em;color:var(--dim)}
+
+.wcf-pl-legend{display:flex;align-items:center;gap:14px;padding:0 2px 8px;font-size:10px;color:var(--dim)}
+.wcf-pl-legend span{display:flex;align-items:center;gap:5px}
+.wcf-pl-legend-last{margin-left:auto}
+.wcf-pl-dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto}
+
+.wcf-pl-row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.wcf-pl-row:last-child{border-bottom:none}
+.wcf-pl-row.lead{background:rgba(234,179,8,.08);margin:0 -14px;padding:11px 14px;border-radius:10px;border-bottom:none}
+.wcf-pl-row.me{background:rgba(46,116,204,.1);margin:0 -14px;padding:11px 14px;border-radius:10px;border-bottom:1px solid rgba(46,116,204,.25)}
+.wcf-pl-avatar{flex:0 0 auto;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:12px;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+.wcf-pl-body{flex:1;min-width:0}
+.wcf-pl-name{font-size:13.5px;font-weight:800;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--white)}
+.wcf-pl-sub-row{display:flex;align-items:center;gap:8px;margin-top:5px}
+.wcf-pl-sub-row>span:first-child{font-size:11px;color:var(--dim);white-space:nowrap}
+.wcf-pl-form{display:flex;gap:3px}
+.wcf-pl-detail{display:flex;gap:16px;padding:0 8px 12px 42px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.wcf-pl-detail b{font-weight:600}
+
+.wcf-pl-footer{display:flex;align-items:center;justify-content:space-between;padding:13px 8px 2px}
+.wcf-pl-footer span{font-size:11px;color:var(--dim)}
+.wcf-pl-footer button{background:none;border:none;padding:0;cursor:pointer;font-size:11px;font-weight:600;color:var(--blue)}
 
 .wcf-predict-reveal{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
 .wcf-predict-reveal-label{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px}
