@@ -1728,6 +1728,15 @@ function App({ session }: { session: Session }) {
     if (error) return notifyError(error.message);
     await Promise.all([loadProfile(), loadProfiles()]);
   }
+  async function adminRenamePlayer(id: string, name: string) {
+    if (!name.trim()) return;
+    const oldName = profiles.find((p) => p.id === id)?.display_name ?? "someone";
+    const { error } = await supabase.from("profiles").update({ display_name: name.trim() }).eq("id", id);
+    if (error) return notifyError(error.message);
+    await loadProfiles();
+    if (id === myId) await loadProfile();
+    logAction("Renamed player", `${oldName} → ${name.trim()}`);
+  }
   async function setRole(id: string, role: Role) {
     const targetName = profiles.find((p) => p.id === id)?.display_name ?? "someone";
     const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
@@ -4204,6 +4213,7 @@ function App({ session }: { session: Session }) {
             awards={awards}
             onRename={renameSelf}
             onSetRole={setRole}
+            onAdminRename={adminRenamePlayer}
             onDeleteProfile={deleteProfile}
             onAddPlayer={addPlayer}
             onGenerateLoginCode={generateLoginCode}
@@ -4363,6 +4373,7 @@ function AccountPanel({
   awards,
   onRename,
   onSetRole,
+  onAdminRename,
   onDeleteProfile,
   onAddPlayer,
   onGenerateLoginCode,
@@ -4417,6 +4428,7 @@ function AccountPanel({
   awards: AwardRow[];
   onRename: (name: string) => void;
   onSetRole: (id: string, role: Role) => void;
+  onAdminRename: (id: string, name: string) => void;
   onDeleteProfile: (id: string, name: string) => void;
   onAddPlayer: (email: string, displayName: string) => Promise<boolean>;
   onGenerateLoginCode: (email: string) => Promise<string | null>;
@@ -4435,6 +4447,8 @@ function AccountPanel({
   const unreadMessages = myMessages.filter((m) => !m.read_at);
   const [showRoles, setShowRoles] = useState(false);
   const [roleSearch, setRoleSearch] = useState("");
+  const [renamingPlayerId, setRenamingPlayerId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const filteredRoleProfiles = profiles.filter((p) => p.display_name.toLowerCase().includes(roleSearch.trim().toLowerCase()));
   const [pushBusy, setPushBusy] = useState(false);
   // Collapsed by default - only the time-sensitive cards above (messages,
@@ -4662,8 +4676,34 @@ function AccountPanel({
               p.role === "player" ? !isSelf : (p.role === "admin" || p.role === "co-owner") ? isOwner && !isSelf : false;
             return (
               <div key={p.id} className="wcf-roles-row">
-                <span>{p.display_name}{isSelf ? " (you)" : ""} <span className={"wcf-role-badge small " + p.role}>{ROLE_LABEL[p.role]}</span></span>
+                {renamingPlayerId === p.id ? (
+                  <div className="wcf-account-rename">
+                    <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} autoFocus />
+                    <button
+                      disabled={!renameDraft.trim() || renameDraft.trim() === p.display_name}
+                      onClick={async () => {
+                        if (await askConfirm("Change this player's name?", `Change "${p.display_name}" to "${renameDraft.trim()}"? This is what shows on team sheets everywhere.`, "Save", false)) {
+                          onAdminRename(p.id, renameDraft);
+                          setRenamingPlayerId(null);
+                        }
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button className="wcf-ghost" onClick={() => setRenamingPlayerId(null)}>Cancel</button>
+                  </div>
+                ) : (
+                  <span>{p.display_name}{isSelf ? " (you)" : ""} <span className={"wcf-role-badge small " + p.role}>{ROLE_LABEL[p.role]}</span></span>
+                )}
                 <div className="wcf-roles-actions">
+                  {renamingPlayerId !== p.id && (
+                    <button
+                      className="wcf-ghost"
+                      onClick={() => { setRenamingPlayerId(p.id); setRenameDraft(p.display_name); }}
+                    >
+                      Rename
+                    </button>
+                  )}
                   {p.role === "player" && (
                     <button
                       className="wcf-ghost"
