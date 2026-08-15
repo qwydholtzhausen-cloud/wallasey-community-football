@@ -3881,18 +3881,85 @@ function App({ session }: { session: Session }) {
               </>
             )}
 
-            {resultsView === "pot" && (
-              <>
-                <div className="wcf-pot-total">
-                  <div className="wcf-pot-total-label">Community pot</div>
-                  <div className={"wcf-pot-total-amount" + (potTotal < 0 ? " negative" : "")}>
-                    {potTotal < 0 ? "−" : ""}£{Math.abs(potTotal).toFixed(2)}
+            {resultsView === "pot" && (() => {
+              const totalIn = potLedger.filter((e) => e.amount > 0).reduce((a, e) => a + e.amount, 0);
+              const totalOut = potLedger.filter((e) => e.amount < 0).reduce((a, e) => a - e.amount, 0);
+              const chronological = [...potLedger].sort((a, b) => a.date.localeCompare(b.date));
+              const series = chronological.reduce<number[]>((acc, e) => {
+                acc.push((acc[acc.length - 1] ?? 0) + e.amount);
+                return acc;
+              }, []);
+              const hi = Math.max(...series, 1);
+              const lo = Math.min(...series, 0);
+              const pt = (v: number, i: number) => {
+                const x = (i / Math.max(series.length - 1, 1)) * 320;
+                const y = 66 - ((v - lo) / Math.max(hi - lo, 1)) * 58;
+                return `${Math.round(x)},${Math.round(y)}`;
+              };
+              const sparkLine = series.map(pt).join(" ");
+              const sparkFill = `0,70 ${sparkLine} 320,70`;
+              const byCat = (Object.keys(POT_CATEGORY_LABEL) as PotCategory[])
+                .map((k) => ({
+                  k,
+                  label: POT_CATEGORY_LABEL[k],
+                  net: potLedger.filter((e) => e.category === k).reduce((a, e) => a + e.amount, 0),
+                }))
+                .filter((c) => c.net !== 0)
+                .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+              const widest = Math.max(...byCat.map((c) => Math.abs(c.net)), 1);
+
+              return (
+                <>
+                  <div className="wcf-pot-total">
+                    <div className="wcf-pot-total-label">Community pot</div>
+                    <div className={"wcf-pot-total-amount" + (isAdmin ? " admin" : "") + (potTotal < 0 ? " negative" : "")}>
+                      {potTotal < 0 ? "−" : ""}£{Math.abs(potTotal).toFixed(2)}
+                    </div>
+                    <p className="wcf-pot-total-note">
+                      Built up from game surpluses (match fees vs pitch hire) plus socials, sponsorship and other contributions.
+                      Goes towards equipment, socials and running the club.
+                    </p>
+
+                    {isAdmin && potLedger.length > 0 && (
+                      <>
+                        <div className="wcf-pot-inout">
+                          <span><span className="wcf-pot-inout-dot in" />In £{totalIn.toFixed(2)}</span>
+                          <span><span className="wcf-pot-inout-dot out" />Out £{totalOut.toFixed(2)}</span>
+                        </div>
+                        <svg viewBox="0 0 320 70" preserveAspectRatio="none" className="wcf-pot-spark">
+                          <polyline points={sparkFill} fill="rgba(34,197,94,.18)" stroke="none" />
+                          <polyline points={sparkLine} stroke="var(--green)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" fill="none" />
+                        </svg>
+                      </>
+                    )}
+
+                    {!isAdmin && (
+                      <div className="wcf-pot-tags">
+                        <span className="wcf-pot-tag">Equipment</span>
+                        <span className="wcf-pot-tag">Socials</span>
+                        <span className="wcf-pot-tag">Running the club</span>
+                      </div>
+                    )}
                   </div>
-                  <p className="wcf-pot-total-note">
-                    Built up from game surpluses (match fees vs pitch hire) plus socials, sponsorship and other contributions.
-                    Goes towards equipment, socials and running the club.
-                  </p>
-                </div>
+
+                  {isAdmin && byCat.length > 0 && (
+                    <div className="wcf-pot-breakdown">
+                      {byCat.map((c) => (
+                        <div key={c.k} className="wcf-pot-breakdown-row">
+                          <span className="wcf-pot-breakdown-label">{c.label}</span>
+                          <span className="wcf-pot-breakdown-track">
+                            <span
+                              className="wcf-pot-breakdown-bar"
+                              style={{ width: `${Math.round((Math.abs(c.net) / widest) * 100)}%`, background: c.net < 0 ? "var(--red-hi)" : "var(--green)" }}
+                            />
+                          </span>
+                          <span className="wcf-pot-breakdown-amount" style={{ color: c.net < 0 ? "var(--red-hi)" : "var(--green)" }}>
+                            {c.net < 0 ? "−" : "+"}£{Math.abs(c.net).toFixed(2)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                 {isAdmin && (
                   <>
@@ -3959,9 +4026,14 @@ function App({ session }: { session: Session }) {
                       </button>
                     </form>
 
+                    <div className="wcf-pot-ledger-head">
+                      <span>Ledger</span>
+                      <span>{potLedger.length} entries</span>
+                    </div>
                     {potLedger.length === 0 && <p className="wcf-empty">Nothing in the ledger yet.</p>}
                     {potLedger.map((entry) => (
                       <div key={entry.id} className="wcf-pot-row">
+                        <span className={"wcf-pot-row-icon " + (entry.amount < 0 ? "neg" : "pos")}>{entry.amount < 0 ? "−" : "+"}</span>
                         <div>
                           <div className="wcf-pot-row-desc">{entry.description}</div>
                           <div className="wcf-pitch">
@@ -3983,10 +4055,12 @@ function App({ session }: { session: Session }) {
                         )}
                       </div>
                     ))}
+                    {potLedger.length > 0 && <p className="wcf-pot-auto-note">Match surpluses are added automatically the morning after each fixture.</p>}
                   </>
                 )}
-              </>
-            )}
+                </>
+              );
+            })()}
 
             {resultsView === "finances" && isAdmin && (
               <>
@@ -6474,9 +6548,31 @@ button.wcf-dash-card:disabled{cursor:default}
 
 .wcf-pot-total{background:linear-gradient(135deg,rgba(51,169,87,.16),rgba(46,116,204,.1));border:1px solid rgba(51,169,87,.35);border-radius:16px;padding:18px;margin-bottom:16px;text-align:center}
 .wcf-pot-total-label{font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim)}
-.wcf-pot-total-amount{font-family:var(--mono);font-weight:800;font-size:36px;color:var(--green);margin:4px 0 8px}
+.wcf-pot-total-amount{font-family:var(--display);font-weight:800;font-size:54px;line-height:1;letter-spacing:-.02em;color:var(--green);margin:12px 0 14px;text-shadow:0 0 44px rgba(34,197,94,.45)}
+.wcf-pot-total-amount.admin{font-size:36px;margin:4px 0 8px;text-shadow:none}
 .wcf-pot-total-amount.negative{color:var(--red-hi)}
 .wcf-pot-total-note{font-size:12px;color:var(--dim);line-height:1.5;margin:0;max-width:340px;margin-left:auto;margin-right:auto}
+.wcf-pot-inout{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:16px}
+.wcf-pot-inout span{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--dim)}
+.wcf-pot-inout-dot{width:7px;height:7px;border-radius:2px}
+.wcf-pot-inout-dot.in{background:var(--green)}
+.wcf-pot-inout-dot.out{background:var(--red-hi)}
+.wcf-pot-spark{display:block;width:100%;height:70px;margin-top:12px}
+.wcf-pot-tags{display:flex;flex-wrap:wrap;justify-content:center;gap:7px;margin:18px 0 4px}
+.wcf-pot-tag{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#86efac;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);padding:8px 12px;border-radius:20px}
+.wcf-pot-breakdown{display:flex;flex-direction:column;gap:10px;margin:16px 2px}
+.wcf-pot-breakdown-row{display:flex;align-items:center;gap:10px}
+.wcf-pot-breakdown-label{flex:none;width:78px;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.wcf-pot-breakdown-track{flex:1;height:8px;border-radius:20px;background:rgba(148,163,184,.12);overflow:hidden}
+.wcf-pot-breakdown-bar{display:block;height:100%;border-radius:20px}
+.wcf-pot-breakdown-amount{flex:none;width:64px;text-align:right;font-family:var(--mono);font-weight:700;font-size:11.5px}
+.wcf-pot-ledger-head{display:flex;align-items:baseline;justify-content:space-between;margin:22px 2px 10px}
+.wcf-pot-ledger-head span:first-child{font-family:var(--display);font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.wcf-pot-ledger-head span:last-child{font-size:11px;color:#64748b}
+.wcf-pot-row-icon{flex:none;width:26px;height:26px;border-radius:9px;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:14px}
+.wcf-pot-row-icon.pos{background:rgba(34,197,94,.13);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+.wcf-pot-row-icon.neg{background:rgba(240,82,94,.14);border:1px solid rgba(240,82,94,.3);color:var(--red-hi)}
+.wcf-pot-auto-note{margin:12px 2px 0;font-size:11px;line-height:1.5;color:#64748b}
 .wcf-pot-add{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
 .wcf-pot-add input,.wcf-pot-add select{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
 .wcf-pot-kind-toggle{display:flex;gap:8px}
