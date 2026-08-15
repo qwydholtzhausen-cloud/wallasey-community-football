@@ -2817,15 +2817,93 @@ function App({ session }: { session: Session }) {
           />
         )}
 
-        {tab === "feed" && (
+        {tab === "feed" && (() => {
+              const reactionRow = (item: FeedItem) => {
+                const tally = feedReactionTally[item.key] ?? {};
+                return (
+                  <div className="wcf-feed-reactions">
+                    {FEED_REACTION_EMOJI.map((emoji) => {
+                      const count = tally[emoji] ?? 0;
+                      const mine = feedReactions.some((r) => r.item_key === item.key && r.emoji === emoji && r.user_id === myId);
+                      return (
+                        <button
+                          key={emoji}
+                          className={"wcf-feed-pill" + (mine ? " mine" : "")}
+                          onClick={() => toggleReaction(item.key, emoji)}
+                        >
+                          {emoji}{count > 0 ? ` ${count}` : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              };
+
+              const clipCard = (item: Extract<FeedItem, { kind: "clip" }>, hero: boolean) => {
+                const c = item.clip;
+                const videoId = c.video_url ? youtubeVideoId(c.video_url) : null;
+                const thumb = (
+                  <a className={hero ? "wcf-clip-hero-thumb" : "wcf-clip-thumb"} href={c.video_url ?? undefined} target="_blank" rel="noreferrer">
+                    {videoId && <img src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`} alt="" loading="lazy" />}
+                    <span className={hero ? "wcf-clip-hero-play" : "wcf-clip-play"}>▶</span>
+                  </a>
+                );
+                if (hero) {
+                  return (
+                    <article key={item.key} className="wcf-clip-hero">
+                      {thumb}
+                      <div className="wcf-clip-hero-body">
+                        <div className="wcf-clip-hero-title">{c.title}</div>
+                        <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"} · {fmtFeedDate(item.ts)}</div>
+                        <div className="wcf-clip-hero-actions">
+                          {reactionRow(item)}
+                          {(c.submitted_by === myId || isAdmin) && (
+                            <button
+                              className="wcf-clip-del"
+                              onClick={async () => { if (await askConfirm(`Delete "${c.title}"?`, "This removes it from the feed for everyone.", "Delete")) deleteClip(c.id); }}
+                              aria-label="Delete clip"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  );
+                }
+                return (
+                  <article key={item.key} className="wcf-clip">
+                    {thumb}
+                    <div className="wcf-clip-body">
+                      <div className="wcf-clip-title">{c.title}</div>
+                      <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"} · {fmtFeedDate(item.ts)}</div>
+                      {reactionRow(item)}
+                    </div>
+                    {(c.submitted_by === myId || isAdmin) && (
+                      <button
+                        className="wcf-clip-del"
+                        onClick={async () => { if (await askConfirm(`Delete "${c.title}"?`, "This removes it from the feed for everyone.", "Delete")) deleteClip(c.id); }}
+                        aria-label="Delete clip"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </article>
+                );
+              };
+
+              return (
           <>
-            <div className="wcf-subtabs">
+            <div className="wcf-feed-eyebrow">Clubhouse</div>
+            <div className="wcf-feed-headline">{feedView === "clips" ? "Clips" : "Club feed"}</div>
+            <div className="wcf-subtabs pill">
               <button className={feedView === "feed" ? "active" : ""} onClick={() => setFeedView("feed")}>Feed</button>
               <button className={feedView === "clips" ? "active" : ""} onClick={() => setFeedView("clips")}>Clips</button>
             </div>
 
             {feedView === "clips" && (
               <form className="wcf-clip-form" onSubmit={addClip}>
+                <div className="wcf-clip-form-head"><span>Share a clip</span></div>
                 <input placeholder="Clip title" value={clipTitle} onChange={(e) => setClipTitle(e.target.value)} />
                 <input placeholder="YouTube link (optional)" value={clipUrl} onChange={(e) => setClipUrl(e.target.value)} />
                 <button type="submit" disabled={!clipTitle.trim()}>Share clip</button>
@@ -2847,92 +2925,62 @@ function App({ session }: { session: Session }) {
                   : "Nothing yet — check back after the first game."}
               </p>
             )}
-            {visibleFeedItems.map((item) => {
-              const tally = feedReactionTally[item.key] ?? {};
-              const reactionRow = (
-                <div className="wcf-feed-reactions">
-                  {FEED_REACTION_EMOJI.map((emoji) => {
-                    const count = tally[emoji] ?? 0;
-                    const mine = feedReactions.some((r) => r.item_key === item.key && r.emoji === emoji && r.user_id === myId);
+
+            {feedView === "clips" && visibleFeedItems.length > 0 && (
+              <>
+                {clipCard(visibleFeedItems[0] as Extract<FeedItem, { kind: "clip" }>, true)}
+                {visibleFeedItems.length > 1 && <div className="wcf-feed-section-label">Earlier</div>}
+                {visibleFeedItems.slice(1).map((item) => clipCard(item as Extract<FeedItem, { kind: "clip" }>, false))}
+              </>
+            )}
+
+            {feedView === "feed" && visibleFeedItems.length > 0 && (() => {
+              const groups: { label: string; items: typeof visibleFeedItems }[] = [];
+              visibleFeedItems.forEach((item) => {
+                const days = Math.floor((Date.now() - item.ts) / 86400000);
+                const label = days <= 7 ? "This week" : days <= 14 ? "Last week" : "Earlier";
+                let g = groups.find((x) => x.label === label);
+                if (!g) { g = { label, items: [] }; groups.push(g); }
+                g.items.push(item);
+              });
+              return groups.map((g) => (
+                <div key={g.label}>
+                  <div className="wcf-feed-section-label">{g.label}</div>
+                  {g.items.map((item) => {
+                    const isHidden = hiddenFeedKeys.includes(item.key);
+                    if (item.kind !== "derived") return null;
                     return (
-                      <button
-                        key={emoji}
-                        className={"wcf-feed-reaction" + (mine ? " mine" : "")}
-                        onClick={() => toggleReaction(item.key, emoji)}
-                      >
-                        {emoji} {count > 0 ? count : ""}
-                      </button>
+                      <article key={item.key} className="wcf-feed-item">
+                        <div className={"wcf-feed-icon " + item.tone}>{item.icon}</div>
+                        <div className="wcf-feed-body">
+                          <div className="wcf-feed-text">{item.text}</div>
+                          <div className="wcf-feed-date">{fmtFeedDate(item.ts)}</div>
+                          <div className="wcf-feed-item-actions">
+                            {reactionRow(item)}
+                            {isAdmin && (
+                              <button
+                                className="wcf-feed-archive-btn"
+                                onClick={async () => {
+                                  if (isHidden) return unhideFeedItem(item.key);
+                                  if (await askConfirm("Archive this from the feed?", "You can restore it later from \"Show archived\".", "Archive", false)) {
+                                    hideFeedItem(item.key);
+                                  }
+                                }}
+                              >
+                                {isHidden ? "↺ Restore" : "Archive"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </article>
                     );
                   })}
                 </div>
-              );
-
-              if (item.kind === "clip") {
-                const c = item.clip;
-                const videoId = c.video_url ? youtubeVideoId(c.video_url) : null;
-                return (
-                  <article key={item.key} className="wcf-clip">
-                    {c.video_url ? (
-                      <a className="wcf-clip-thumb" href={c.video_url} target="_blank" rel="noreferrer">
-                        {videoId ? (
-                          <>
-                            <img src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`} alt="" loading="lazy" />
-                            <span className="wcf-clip-play">▶</span>
-                          </>
-                        ) : (
-                          <span>▶</span>
-                        )}
-                      </a>
-                    ) : (
-                      <div className="wcf-clip-thumb">
-                        <span>▶</span>
-                      </div>
-                    )}
-                    <div className="wcf-clip-body">
-                      <div className="wcf-clip-title">{c.title}</div>
-                      <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"} · {fmtFeedDate(item.ts)}</div>
-                      {reactionRow}
-                    </div>
-                    {(c.submitted_by === myId || isAdmin) && (
-                      <button
-                        className="wcf-clip-del"
-                        onClick={async () => { if (await askConfirm(`Delete "${c.title}"?`, "This removes it from the feed for everyone.", "Delete")) deleteClip(c.id); }}
-                        aria-label="Delete clip"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </article>
-                );
-              }
-
-              const isHidden = hiddenFeedKeys.includes(item.key);
-              return (
-                <article key={item.key} className="wcf-feed-item">
-                  <div className={"wcf-feed-icon " + item.tone}>{item.icon}</div>
-                  <div className="wcf-feed-body">
-                    <div className="wcf-feed-text">{item.text}</div>
-                    <div className="wcf-feed-date">{fmtFeedDate(item.ts)}</div>
-                    {reactionRow}
-                    {isAdmin && (
-                      <button
-                        className="wcf-feed-archive-btn"
-                        onClick={async () => {
-                          if (isHidden) return unhideFeedItem(item.key);
-                          if (await askConfirm("Archive this from the feed?", "You can restore it later from \"Show archived\".", "Archive", false)) {
-                            hideFeedItem(item.key);
-                          }
-                        }}
-                      >
-                        {isHidden ? "↺ Restore" : "Archive"}
-                      </button>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
+              ));
+            })()}
           </>
-        )}
+              );
+            })()}
 
         {tab === "lineup" && (
           <>
@@ -6243,39 +6291,61 @@ button.wcf-dash-card:disabled{cursor:default}
 .wcf-admin-add-player select{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:12px;font-family:var(--sans)}
 .wcf-admin-add-player .wcf-ghost:disabled{opacity:.4;cursor:not-allowed}
 
-.wcf-clip-form{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
-.wcf-clip-form input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans)}
-.wcf-clip-form button{background:var(--red);color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;cursor:pointer}
-.wcf-clip-form button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
+.wcf-feed-eyebrow{font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0 2px}
+.wcf-feed-headline{margin:9px 2px 16px;font-family:var(--display);font-size:24px;font-weight:800;letter-spacing:-.02em;color:var(--white)}
+
+.wcf-clip-form{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:18px;padding:12px;display:flex;flex-direction:column;gap:9px;margin-bottom:16px}
+.wcf-clip-form-head{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.wcf-clip-form-head span{font-family:var(--display);font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.wcf-clip-form input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:13px;border-radius:12px;font-size:13px;font-family:var(--sans);min-height:44px;box-sizing:border-box}
+.wcf-clip-form button{background:linear-gradient(135deg,var(--red),rgba(230,57,70,.55));color:#fff;border:1px solid rgba(230,57,70,.5);padding:14px;border-radius:14px;font-weight:800;font-size:13px;cursor:pointer;min-height:48px}
+.wcf-clip-form button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed;border-color:var(--line)}
+
+.wcf-feed-section-label{display:flex;align-items:center;gap:10px;padding:6px 2px 10px;font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#64748b}
+.wcf-feed-section-label:after{content:"";flex:1;height:1px;background:rgba(148,163,184,.1)}
+
+.wcf-clip-hero{position:relative;border-radius:20px;overflow:hidden;border:1px solid var(--line);background:var(--panel2);margin-bottom:20px}
+.wcf-clip-hero-thumb{position:relative;display:block;aspect-ratio:16/9;background:linear-gradient(135deg,var(--panel2),var(--bg))}
+.wcf-clip-hero-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.wcf-clip-hero-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.wcf-clip-hero-play:before{content:"";position:absolute;inset:0;background:rgba(4,9,20,.28)}
+.wcf-clip-hero-play:after{content:"▶";position:relative;width:54px;height:54px;border-radius:50%;background:rgba(230,57,70,.9);color:#fff;font-size:19px;padding-left:3px;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 30px -10px rgba(230,57,70,.9)}
+.wcf-clip-hero-body{padding:14px}
+.wcf-clip-hero-title{font-family:var(--display);font-weight:800;font-size:16px;line-height:1.25;color:var(--white)}
+.wcf-clip-hero-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px}
+
 .wcf-clip{display:flex;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:12px;align-items:flex-start}
-.wcf-clip-thumb{width:74px;height:52px;border-radius:9px;flex:0 0 auto;background:linear-gradient(135deg,var(--panel2),var(--bg));display:grid;place-items:center;color:var(--red-hi);font-size:16px;border:1px solid var(--line);position:relative;overflow:hidden}
+.wcf-clip-thumb{width:74px;height:52px;border-radius:9px;flex:0 0 auto;background:linear-gradient(135deg,var(--panel2),var(--bg));position:relative;overflow:hidden}
 .wcf-clip-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .wcf-clip-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(4,9,20,.28);color:#fff;font-size:14px;text-shadow:0 1px 4px rgba(0,0,0,.6)}
 .wcf-clip-body{flex:1;min-width:0}
 .wcf-clip-title{font-weight:800;font-size:14px}
-.wcf-clip-sub{font-size:11px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
+.wcf-clip-sub{font-size:11px;color:var(--dim);margin-top:3px}
 .wcf-clip-del{background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;flex:0 0 auto;line-height:1}
 .wcf-clip-del:hover{color:var(--red-hi)}
+
 .wcf-feed-item{display:flex;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:11px 12px;margin-bottom:10px;align-items:flex-start}
 .wcf-feed-icon{width:32px;height:32px;border-radius:9px;flex:0 0 auto;display:grid;place-items:center;font-size:15px}
-.wcf-feed-icon.amber{background:rgba(224,167,51,.16)}
-.wcf-feed-icon.green{background:rgba(51,169,87,.16)}
+.wcf-feed-icon.amber{background:rgba(234,179,8,.16)}
+.wcf-feed-icon.green{background:rgba(34,197,94,.16)}
 .wcf-feed-icon.blue{background:rgba(46,116,204,.16)}
 .wcf-feed-body{flex:1;min-width:0}
 .wcf-feed-text{font-size:13px;color:var(--white);line-height:1.4}
-.wcf-feed-date{font-size:10.5px;color:var(--dim);font-family:var(--mono);margin-top:3px}
+.wcf-feed-date{font-size:10.5px;color:#64748b;margin-top:3px}
 .wcf-feed-score-chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-weight:800;font-size:13px;padding:3px 9px;border-radius:20px;background:var(--panel2);margin-top:4px}
 .wcf-feed-score-dash{color:var(--dim);font-weight:400}
-.wcf-feed-archive-btn{margin-top:8px;font-size:11px;font-weight:800;padding:5px 11px;border-radius:20px;background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer}
+.wcf-feed-item-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}
+.wcf-feed-archive-btn{font-size:11px;font-weight:800;padding:5px 11px;border-radius:20px;background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer}
 .wcf-feed-archive-btn:hover{border-color:var(--red-hi);color:var(--red-hi)}
 .wcf-archive-toggle{font-size:11.5px;padding:7px 12px;margin-bottom:12px}
-.wcf-feed-reactions{display:flex;gap:6px;margin-top:8px}
-.wcf-feed-reaction{font-size:11px;font-family:var(--mono);color:var(--dim);background:var(--panel2);border:1px solid transparent;border-radius:20px;padding:3px 9px;cursor:pointer}
-.wcf-feed-reaction.mine{border-color:var(--green);color:var(--green)}
+.wcf-feed-reactions{display:flex;gap:6px}
+.wcf-feed-pill{display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;font-size:12px;border-radius:22px;padding:0 14px;min-height:36px;cursor:pointer;background:var(--panel2);color:var(--dim);border:1px solid transparent}
+.wcf-feed-pill.mine{border-color:var(--green);color:var(--green)}
 
-.wcf-subtabs{display:flex;gap:8px;margin:0 2px 12px}
+.wcf-subtabs{display:flex;gap:8px;margin:0 2px 16px}
 .wcf-subtabs button{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--dim);padding:9px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer}
 .wcf-subtabs button.active{background:var(--red);border-color:var(--red);color:#fff}
+.wcf-subtabs.pill button{border-radius:22px;min-height:44px;font-size:12.5px}
 
 .wcf-board{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:8px 14px 14px;overflow:hidden}
 .wcf-board-note{font-size:12px;color:var(--dim);margin:10px 2px 12px;line-height:1.4}
