@@ -274,44 +274,36 @@ function teamGradient(hex: string) {
 // where. This is a purely cosmetic arrangement (booking order -> slot),
 // generalised to whatever squad size a fixture actually has rather than
 // assuming exactly 8-a-side.
-function formationSlots(n: number): { x: number; y: number; role: string; isFront: boolean }[] {
+function formationSlots(n: number): { x: number; y: number; role: string }[] {
   if (n <= 0) return [];
-  const slots: { x: number; y: number; role: string; isFront: boolean }[] = [{ x: 50, y: 6, role: "Goalkeeper", isFront: false }];
+  const slots: { x: number; y: number; role: string }[] = [{ x: 50, y: 6, role: "Goalkeeper" }];
   const outfield = n - 1;
   if (outfield <= 0) return slots;
   let rows: { count: number; role: string }[];
   if (outfield <= 3) {
     rows = [{ count: outfield, role: "Outfield" }];
-  } else if (outfield <= 6) {
-    rows = [
-      { count: Math.ceil(outfield / 2), role: "Defence" },
-      { count: Math.floor(outfield / 2), role: "Attack" },
-    ];
   } else {
-    const back = Math.ceil(outfield / 3);
-    const remaining = outfield - back;
-    const mid = Math.ceil(remaining / 2);
-    const att = remaining - mid;
-    rows = att > 0
-      ? [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }, { count: att, role: "Attack" }]
-      : [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }];
+    // A single lone striker up front (like a real 1-3-3-1), with the rest
+    // split between defence and midfield - defence gets the extra player
+    // when the split is uneven.
+    const front = 1;
+    const remaining = outfield - front;
+    const back = Math.ceil(remaining / 2);
+    const mid = remaining - back;
+    rows = mid > 0
+      ? [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }, { count: front, role: "Attack" }]
+      : [{ count: back, role: "Defence" }, { count: front, role: "Attack" }];
   }
   // Each team spreads across nearly its whole half, back row close to the
-  // keeper (20) through front row right up against the halfway line (46).
-  // The front row's name label is flagged (isFront) so the caller can flip
-  // it to sit above the chip instead of below - fixed-size chips need ~8%
-  // of pitch height to clear each other at the halfway line on a real
-  // phone width, and a label pointing into that gap eats into it further
-  // (this is what caused the old "names hidden behind circles" bug at 48).
+  // keeper (20) through front row right up against the halfway line (46.5).
   const backY = 20;
-  const frontY = 46;
+  const frontY = 46.5;
   const rowYs = rows.length === 1 ? [frontY] : rows.map((_, i) => backY + (i * (frontY - backY)) / (rows.length - 1));
   rows.forEach((row, ri) => {
     const y = rowYs[ri];
-    const isFront = ri === rows.length - 1 && rows.length > 1;
     for (let i = 0; i < row.count; i++) {
       const x = row.count === 1 ? 50 : 16 + i * (68 / (row.count - 1));
-      slots.push({ x, y, role: row.role, isFront });
+      slots.push({ x, y, role: row.role });
     }
   });
   return slots;
@@ -3312,11 +3304,11 @@ function App({ session }: { session: Session }) {
                 {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (() => {
                   const redSlots = formationSlots(nextGrouped.red.length);
                   const whiteSlots = formationSlots(nextGrouped.white.length);
-                  // Only red's front-row label flips above its chip - red sits in the
-                  // top half so a below-chip label points down into the halfway gap;
-                  // white's already points down away from it, so it's left alone.
-                  const redTokens = nextGrouped.red.map((b, i) => ({ booking: b, isRed: true, x: redSlots[i].x, y: redSlots[i].y, role: redSlots[i].role, labelFlip: redSlots[i].isFront }));
-                  const whiteTokens = nextGrouped.white.map((b, i) => ({ booking: b, isRed: false, x: whiteSlots[i].x, y: 100 - whiteSlots[i].y, role: whiteSlots[i].role, labelFlip: false }));
+                  // Every red label sits above its chip, every white label sits below -
+                  // consistent per team (not just the front row), and each points away
+                  // from the halfway line so neither ever eats into that gap.
+                  const redTokens = nextGrouped.red.map((b, i) => ({ booking: b, isRed: true, x: redSlots[i].x, y: redSlots[i].y, role: redSlots[i].role }));
+                  const whiteTokens = nextGrouped.white.map((b, i) => ({ booking: b, isRed: false, x: whiteSlots[i].x, y: 100 - whiteSlots[i].y, role: whiteSlots[i].role }));
                   const allTokens = [...redTokens, ...whiteTokens];
                   const selected = allTokens.find((t) => t.booking.player_id === selectedLineupPlayerId);
                   const selectedStats = selected ? playerStats.find((p) => p.id === selected.booking.player_id) : null;
@@ -3328,7 +3320,7 @@ function App({ session }: { session: Session }) {
                     return (
                       <button
                         key={t.booking.id}
-                        className={"wcf-lineup-token" + (t.labelFlip ? " flip" : "")}
+                        className={"wcf-lineup-token" + (t.isRed ? " flip" : "")}
                         style={{ left: `${t.x}%`, top: `${t.y}%` }}
                         onClick={() => setSelectedLineupPlayerId((v) => (v === t.booking.player_id ? null : t.booking.player_id))}
                       >
