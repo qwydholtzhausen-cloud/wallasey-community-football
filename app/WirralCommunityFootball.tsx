@@ -7150,8 +7150,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-acc-section-tile.amber{background:rgba(234,179,8,.15);border-color:rgba(234,179,8,.3);color:var(--amber)}
 .wcf-acc-section-tile.red{background:rgba(230,57,70,.15);border-color:rgba(230,57,70,.3);color:var(--red)}
 .wcf-acc-section-body{flex:1;min-width:0;text-align:left}
-.wcf-acc-section-title{font-family:var(--sans);font-weight:800;font-size:13px;color:#f1f5f9}
-.wcf-acc-section-meta{margin-top:4px;font-size:10.5px;color:var(--dim)}
+.wcf-acc-section-title{display:block;font-family:var(--sans);font-weight:800;font-size:13px;line-height:1.3;color:#f1f5f9}
+.wcf-acc-section-meta{display:block;margin-top:6px;font-size:10.5px;line-height:1.3;color:var(--dim)}
 .wcf-acc-section-value{flex:none;font-family:var(--display);font-weight:800;font-size:15px;font-variant-numeric:tabular-nums;color:var(--blue)}
 .wcf-acc-section-chevron{flex:none;font-size:11px;color:var(--dim);margin-left:4px}
 .wcf-acc-section-panel{padding:0 13px 13px;animation:wcfAccIn .18s ease-out}
