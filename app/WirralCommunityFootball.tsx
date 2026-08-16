@@ -203,7 +203,7 @@ const FEED_REACTION_EMOJI = ["👍", "🔥"] as const;
 
 type FeedItem =
   | { key: string; ts: number; kind: "clip"; clip: ClipRow }
-  | { key: string; ts: number; kind: "derived"; icon: string; tone: "amber" | "green" | "blue"; text: React.ReactNode };
+  | { key: string; ts: number; kind: "derived"; icon: React.ReactNode; tone: "amber" | "green" | "blue"; text: React.ReactNode };
 
 interface ClubSettings {
   team_white_name: string;
@@ -2164,7 +2164,13 @@ function App({ session }: { session: Session }) {
         key: `game-${g.id}-fulltime`,
         ts: toMs(kickoffCutoff(g.date, g.kickoff, 90)),
         kind: "derived",
-        icon: "⚽",
+        icon: (
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7.5l3 2.2-1.1 3.6h-3.8L9 9.7z" />
+            <path d="M12 3v4.5M5 8.5l4 1.7M19 8.5l-4 1.7M7.3 19l1.7-4.9M16.7 19l-1.7-4.9" />
+          </svg>
+        ),
         tone: "blue",
         text: (
           <>
@@ -2188,7 +2194,13 @@ function App({ session }: { session: Session }) {
             key: `motm-${g.id}`,
             ts: toMs(kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES)),
             kind: "derived",
-            icon: "🏆",
+            icon: (
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M7 4h10v5a5 5 0 0 1-10 0z" strokeLinejoin="round" />
+                <path d="M7 5H4v2a3 3 0 0 0 3 3M17 5h3v2a3 3 0 0 1-3 3" />
+                <path d="M12 14v3M9 20h6M9.5 17h5l.5 3H9z" strokeLinejoin="round" />
+              </svg>
+            ),
             tone: "amber",
             text: (
               <>
@@ -2211,7 +2223,13 @@ function App({ session }: { session: Session }) {
           key: `pot-${t}`,
           ts: toMs(e.date + "T12:00"),
           kind: "derived",
-          icon: "💰",
+          icon: (
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+              <ellipse cx="12" cy="6" rx="7" ry="3" />
+              <path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6" />
+              <path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+            </svg>
+          ),
           tone: "green",
           text: (
             <>
@@ -2228,7 +2246,13 @@ function App({ session }: { session: Session }) {
         key: `join-${p.id}`,
         ts: new Date(p.created_at).getTime(),
         kind: "derived",
-        icon: "🎉",
+        icon: (
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="7" cy="7" r="4" />
+            <path d="M19 8v6M22 11h-6" />
+          </svg>
+        ),
         tone: "blue",
         text: (
           <>
@@ -2251,7 +2275,11 @@ function App({ session }: { session: Session }) {
             key: `apps-${b.player_id}-${count}`,
             ts: toMs(kickoffCutoff(g.date, g.kickoff, 90)),
             kind: "derived",
-            icon: "🎖️",
+            icon: (
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 3l2.6 5.6 6 .7-4.4 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.4 9.3l6-.7z" strokeLinejoin="round" />
+              </svg>
+            ),
             tone: "amber",
             text: (
               <>
@@ -3139,7 +3167,7 @@ function App({ session }: { session: Session }) {
               {isAdmin && (
                 <button className={lineupView === "fairness" ? "active" : ""} onClick={() => setLineupView("fairness")}>Fairness</button>
               )}
-              <button className={lineupView === "predict" ? "active" : ""} onClick={() => setLineupView("predict")}>🔮 Predict</button>
+              <button className={lineupView === "predict" ? "active" : ""} onClick={() => setLineupView("predict")}>Predict</button>
             </div>
 
             {lineupView === "fairness" && isAdmin && (
@@ -3581,7 +3609,9 @@ function App({ session }: { session: Session }) {
                 {!editingLineup && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && nextConfirmed.length > 0 && (
                   <div className="wcf-predict">
                     <div className="wcf-predict-gate">
-                      <div className="wcf-predict-gate-icon">🔮</div>
+                      <div className="wcf-predict-gate-icon">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" /></svg>
+                      </div>
                       <div className="wcf-predict-gate-text">
                         <b>Predictions open once teams are posted</b> for this game — check back here nearer kickoff.
                       </div>
@@ -4083,7 +4113,10 @@ function App({ session }: { session: Session }) {
                             return (
                               <div className="wcf-predict-reveal">
                                 <div className="wcf-predict-reveal-label">
-                                  <span className="wcf-predict-reveal-title">🔮 Predictions</span>
+                                  <span className="wcf-predict-reveal-title">
+                              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" /></svg>
+                              Predictions
+                            </span>
                                   <span className="wcf-predict-reveal-count">
                                     {gamePredictions.length} guess{gamePredictions.length === 1 ? "" : "es"}
                                   </span>
@@ -5503,7 +5536,9 @@ function PredictPanel({
     return (
       <div className="wcf-predict">
         <div className="wcf-predict-gate">
-          <div className="wcf-predict-gate-icon">🔒</div>
+          <div className="wcf-predict-gate-icon">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          </div>
           <div className="wcf-predict-gate-text">
             <b>Book a spot on this game</b> to make your prediction — guessing&apos;s for the players in it.
           </div>
@@ -5516,7 +5551,9 @@ function PredictPanel({
     return (
       <div className="wcf-predict">
         <div className="wcf-predict-locked">
-          <span className="wcf-predict-locked-icon">🔮</span>
+          <span className="wcf-predict-locked-icon">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" /></svg>
+          </span>
           <div className="wcf-predict-locked-body">
             <div className="wcf-predict-locked-label">Your prediction</div>
             <div className="wcf-predict-locked-value">
@@ -5539,7 +5576,10 @@ function PredictPanel({
   return (
     <div className="wcf-predict">
       <div className="wcf-predict-label">
-        <span className="wcf-predict-title">🔮 Predict the score</span>
+        <span className="wcf-predict-title">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" /></svg>
+          Predict the score
+        </span>
         <span className="wcf-predict-sub">Closes at kickoff</span>
       </div>
       <p className="wcf-predict-prize">
@@ -7147,7 +7187,7 @@ button.wcf-glance-card:disabled{cursor:default}
 
 .wcf-predict{background:var(--panel);border:1px solid rgba(139,107,232,.3);border-radius:14px;padding:13px 14px;margin-top:4px}
 .wcf-predict-label{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:3px}
-.wcf-predict-title{font-size:11.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#8B6BE8}
+.wcf-predict-title{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#8B6BE8}
 .wcf-predict-sub{font-size:10px;color:var(--dim)}
 .wcf-predict-prize{font-size:11px;color:var(--dim);margin:0 0 12px;line-height:1.5}
 .wcf-predict-score{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:13px}
@@ -7160,13 +7200,13 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-predict-lock{width:100%;background:#8B6BE8;color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;font-size:12.5px;cursor:pointer}
 .wcf-predict-lock:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-predict-locked{display:flex;align-items:center;gap:10px}
-.wcf-predict-locked-icon{font-size:16px}
+.wcf-predict-locked-icon{color:#8B6BE8;flex:0 0 auto;display:flex}
 .wcf-predict-locked-body{flex:1;min-width:0}
 .wcf-predict-locked-label{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#8B6BE8}
 .wcf-predict-locked-value{font-size:12.5px;font-weight:700;margin-top:2px}
 .wcf-predict-edit{background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer;flex:0 0 auto}
 .wcf-predict-gate{text-align:center;padding:6px 4px 2px}
-.wcf-predict-gate-icon{font-size:20px;margin-bottom:6px}
+.wcf-predict-gate-icon{display:flex;justify-content:center;color:var(--dim);margin-bottom:6px}
 .wcf-predict-gate-text{font-size:12px;color:var(--dim);line-height:1.5}
 .wcf-predict-gate-text b{color:var(--white)}
 
@@ -7213,7 +7253,7 @@ button.wcf-glance-card:disabled{cursor:default}
 
 .wcf-predict-reveal{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
 .wcf-predict-reveal-label{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px}
-.wcf-predict-reveal-title{font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#8B6BE8}
+.wcf-predict-reveal-title{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#8B6BE8}
 .wcf-predict-reveal-count{font-size:10.5px;color:var(--dim)}
 .wcf-predict-reveal-row{display:flex;align-items:center;gap:10px;padding:7px 0}
 .wcf-predict-reveal-row-label{flex:1;font-size:12.5px}
