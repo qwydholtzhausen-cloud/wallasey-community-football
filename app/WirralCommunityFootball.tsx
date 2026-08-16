@@ -3379,7 +3379,7 @@ function App({ session }: { session: Session }) {
                     return (
                       <button
                         key={t.booking.id}
-                        className={"wcf-lineup-token" + ((t.role === "Goalkeeper" ? !t.isRed : t.isRed) ? " flip" : "") + (draggable ? " draggable" : "") + (draggingPlayerId === t.booking.player_id ? " dragging" : "")}
+                        className={"wcf-lineup-token" + (draggable ? " draggable" : "") + (draggingPlayerId === t.booking.player_id ? " dragging" : "")}
                         style={{ left: `${t.x}%`, top: `${t.y}%` }}
                         onClick={() => { if (!draggable) setSelectedLineupPlayerId((v) => (v === t.booking.player_id ? null : t.booking.player_id)); }}
                         onPointerDown={
@@ -6954,7 +6954,6 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-token{position:absolute;transform:translate(-50%,-50%);width:44px;height:44px;display:grid;place-items:center;background:none;border:none;padding:0;cursor:pointer}
 .wcf-lineup-token-chip{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:13px;box-shadow:0 6px 14px -6px rgba(0,0,0,.85)}
 .wcf-lineup-token-label{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:5px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:var(--white);text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap;pointer-events:none}
-.wcf-lineup-token.flip .wcf-lineup-token-label{top:auto;bottom:100%;margin-top:0;margin-bottom:5px}
 .wcf-lineup-token.draggable{cursor:grab;touch-action:none}
 .wcf-lineup-token.draggable .wcf-lineup-token-chip{box-shadow:0 0 0 2px rgba(46,116,204,.5),0 6px 14px -6px rgba(0,0,0,.85)}
 .wcf-lineup-token.dragging{cursor:grabbing;z-index:5}
