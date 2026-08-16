@@ -1073,4 +1073,17 @@ $$;
 -- itself is null) falls back to the auto-generated formationSlots()
 -- layout for that one player, same as before this existed.
 -- ─────────────────────────────────────────────────────────────────
+
+-- Pitch fee is back up to £55 - the temporary £50 rate (see the
+-- migration above dated when it dropped) has ended. All upcoming
+-- (not yet played) fixtures still at £50 were bumped back to £55 via
+-- a one-off data update run through the app's service-role client
+-- rather than this file (same "past games keep their real historical
+-- cost" rule as before). The column DEFAULT itself is intentionally
+-- left at 50 here - PostgREST can't run DDL, so instead the app's
+-- addGame() now explicitly passes pitch_cost: 55 on insert, making
+-- new-fixture cost visible in code rather than a hidden DB default.
+-- If you want the column default changed too for defense-in-depth,
+-- run this manually in the Supabase SQL editor:
+--   alter table public.games alter column pitch_cost set default 55;
 alter table public.games add column lineup_positions jsonb;

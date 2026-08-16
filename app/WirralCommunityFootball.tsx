@@ -1404,6 +1404,7 @@ function App({ session }: { session: Session }) {
         pitch: cs.default_pitch,
         price: cs.default_price,
         max_players: cs.default_max_players,
+        pitch_cost: 55,
         published: false,
       })
       .select()
