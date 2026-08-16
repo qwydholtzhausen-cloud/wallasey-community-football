@@ -6241,13 +6241,20 @@ function GameCard({
   const spotsLeft = Math.max(0, game.max_players - confirmed.length);
   const fillPct = Math.min(100, (confirmed.length / game.max_players) * 100);
   const openSheet = () => { setSheetTab("playing"); setShowSheet(true); };
+  // Red/amber/green glow (via the .in.<status> CSS below) replaces what used
+  // to be a separate "Payment confirmed" card - it tells the viewer their
+  // own payment state at a glance without needing to read anything, only
+  // when it's their own waiting-list-free booking (not admin viewing
+  // someone else's status, and not a waiting-list spot which has no
+  // payment state yet).
+  const bookedClass = myBooking && !myBooking.waiting ? "in " + myBooking.status : "";
 
   const editIcon = (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
   );
 
   return (
-    <article className={"wcf-card " + (featured ? "featured " : "") + (myBooking ? "in" : "")}>
+    <article className={featured ? "wcf-card featured " + bookedClass : ""} style={featured ? undefined : { marginBottom: 18 }}>
       {featured ? (
         <>
           <div className="wcf-hero-top">
@@ -6305,7 +6312,7 @@ function GameCard({
           </button>
         </>
       ) : (
-        <div className="wcf-fx-row" onClick={openSheet}>
+        <div className={"wcf-fx-row " + bookedClass} onClick={openSheet}>
           <div className="wcf-fx-date">
             <div className="wcf-fx-day">{fmtDate(game.date).split(",")[0]?.toUpperCase()}</div>
             <div className="wcf-fx-num">{new Date(game.date + "T00:00:00").getDate()}</div>
@@ -6333,7 +6340,10 @@ function GameCard({
               {editIcon}
             </button>
           )}
-          <span className={"wcf-fx-pill " + (full ? "full" : "open")}>{full ? "FULL" : `${spotsLeft} LEFT`}</span>
+          <div className="wcf-fx-status">
+            {waitingList.length > 0 && <span className="wcf-hero-waiting-chip">+{waitingList.length} WAITING</span>}
+            <span className={"wcf-fx-pill " + (full ? "full" : "open")}>{full ? "FULL" : `${spotsLeft} LEFT`}</span>
+          </div>
         </div>
       )}
 
@@ -6341,6 +6351,7 @@ function GameCard({
         <div className="wcf-sheet-overlay" onClick={() => setShowSheet(false)}>
           <div className="wcf-squad-sheet" onClick={(e) => e.stopPropagation()}>
             <div className="wcf-sheet-handle-wrap"><div className="wcf-sheet-handle" /></div>
+            <button className="wcf-sheet-close" onClick={() => setShowSheet(false)} aria-label="Close">×</button>
             <div className="wcf-sheet-head">
               <div className="wcf-sheet-kicker">{fmtDate(game.date).replace(",", "").toUpperCase()} · {game.venue.toUpperCase()}</div>
               <div className="wcf-sheet-title">Squad &amp; waiting list</div>
@@ -6400,35 +6411,20 @@ function GameCard({
         </div>
       )}
 
-      {myBooking && !myBooking.waiting && (
-        <div className={"wcf-payment " + myBooking.status}>
-          <div className="wcf-payment-head">
-            <span>
-              {myBooking.status === "unpaid" && "You're in! Your spot has been reserved."}
-              {myBooking.status === "pending" && "Thanks! Your payment has been submitted for verification."}
-              {myBooking.status === "confirmed" && "Payment confirmed."}
-            </span>
-            <StatusBadge status={myBooking.status} />
-          </div>
-          <p className="wcf-payment-fee">Match fee: £{game.price}</p>
-          {myBooking.status === "unpaid" && (
-            <>
-              <p className="wcf-payment-note">
-                {PAYMENT_LINK
-                  ? "Tap Pay Now to secure your spot, then press I've paid."
-                  : `Pay your organiser £${game.price} to secure your spot, then press I've paid.`}
-              </p>
-              <div className="wcf-payment-actions">
-                {PAYMENT_LINK && (
-                  <a className="wcf-pay-now" href={PAYMENT_LINK} target="_blank" rel="noreferrer">
-                    Pay Now
-                  </a>
-                )}
-                <button onClick={() => onMarkPaid(myBooking.id)}>I&apos;ve paid</button>
-              </div>
-            </>
+      {/* Confirmed/pending need no card at all now - the red/amber/green
+          glow on the card itself (via the .in.<status> classes below)
+          already says "you owe money" / "awaiting confirmation" / "you're
+          sorted" at a glance. Unpaid still gets a compact action strip
+          since there's a real action to take, just not a full card. */}
+      {myBooking && !myBooking.waiting && myBooking.status === "unpaid" && (
+        <div className="wcf-pay-strip">
+          <span className="wcf-pay-strip-text">£{game.price} due</span>
+          {PAYMENT_LINK && (
+            <a className="wcf-pay-now" href={PAYMENT_LINK} target="_blank" rel="noreferrer">
+              Pay Now
+            </a>
           )}
-          {myBooking.status === "pending" && <p className="wcf-payment-note">An organiser will confirm it shortly.</p>}
+          <button className="wcf-pay-paid" onClick={() => onMarkPaid(myBooking.id)}>I&apos;ve paid</button>
         </div>
       )}
 
@@ -6589,14 +6585,17 @@ const css = `
 .wcf-empty.small{padding:8px 0;font-size:12px}
 
 .wcf-card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px;margin-bottom:18px;position:relative;overflow:hidden}
-.wcf-card.in{border-color:rgba(34,197,94,.5)}
-.wcf-card.in:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--green)}
 .wcf-card.featured{
   background-image:linear-gradient(180deg,rgba(8,10,14,.15) 0%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/pitch-night.jpg');
   background-size:cover;background-position:center 30%;border-radius:24px;padding:24px;margin-bottom:22px;
 }
-.wcf-card.featured.in:before{display:none}
-.wcf-card.featured.in{border-color:rgba(34,197,94,.45);box-shadow:0 0 0 1px rgba(34,197,94,.15),0 0 60px 6px rgba(34,197,94,.28)}
+/* Payment-status glow (own booking only): red=unpaid, amber=pending,
+   green=confirmed. Box-shadow, not an inner gradient div, since the
+   card's own overflow:hidden (for the photo's rounded corners) would
+   clip an inner div to a tint instead of a halo. */
+.wcf-card.featured.in.unpaid{border-color:rgba(230,57,70,.45);box-shadow:0 0 0 1px rgba(230,57,70,.15),0 0 60px 6px rgba(230,57,70,.28)}
+.wcf-card.featured.in.pending{border-color:rgba(234,179,8,.45);box-shadow:0 0 0 1px rgba(234,179,8,.15),0 0 60px 6px rgba(234,179,8,.28)}
+.wcf-card.featured.in.confirmed{border-color:rgba(34,197,94,.45);box-shadow:0 0 0 1px rgba(34,197,94,.15),0 0 60px 6px rgba(34,197,94,.28)}
 .wcf-hero-top{display:flex;justify-content:space-between;align-items:flex-start}
 .wcf-hero-top-right{display:flex;align-items:center;gap:8px}
 .wcf-hero-date{font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#B7BDD0}
@@ -6636,7 +6635,10 @@ const css = `
 .wcf-avatar-chip.more{color:var(--dim);background:var(--panel2)}
 
 .wcf-fx-row{position:relative;display:flex;align-items:center;gap:13px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);border-radius:16px;padding:13px 14px;margin-bottom:9px;box-shadow:0 18px 38px -34px rgba(0,0,0,.9);cursor:pointer}
-.wcf-fx-row.in{border-color:rgba(34,197,94,.4);box-shadow:0 18px 38px -34px rgba(0,0,0,.9),0 0 34px 2px rgba(34,197,94,.22)}
+.wcf-fx-row.in.unpaid{border-color:rgba(230,57,70,.4);box-shadow:0 18px 38px -34px rgba(0,0,0,.9),0 0 34px 2px rgba(230,57,70,.22)}
+.wcf-fx-row.in.pending{border-color:rgba(234,179,8,.4);box-shadow:0 18px 38px -34px rgba(0,0,0,.9),0 0 34px 2px rgba(234,179,8,.22)}
+.wcf-fx-row.in.confirmed{border-color:rgba(34,197,94,.4);box-shadow:0 18px 38px -34px rgba(0,0,0,.9),0 0 34px 2px rgba(34,197,94,.22)}
+.wcf-fx-status{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:0 0 auto}
 .wcf-fx-date{width:44px;flex:0 0 auto;text-align:center}
 .wcf-fx-day{font-family:var(--mono);font-weight:600;font-size:9px;letter-spacing:1.2px;color:var(--dim)}
 .wcf-fx-num{font-family:var(--display);font-weight:800;font-size:22px;line-height:1.15;color:var(--white)}
@@ -6651,9 +6653,10 @@ const css = `
 .wcf-fx-pill.open{background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.35);color:var(--green)}
 
 .wcf-sheet-overlay{position:fixed;inset:0;background:rgba(6,7,14,.6);z-index:60;display:flex;align-items:flex-end;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
-.wcf-squad-sheet{width:100%;max-width:520px;margin:0 auto;max-height:82vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(30,41,59,.99),rgba(19,22,38,1));border-top:1px solid rgba(148,163,184,.2);border-radius:24px 24px 0 0;box-shadow:0 -18px 48px -20px rgba(0,0,0,.95)}
+.wcf-squad-sheet{position:relative;width:100%;max-width:520px;margin:0 auto;max-height:82vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(30,41,59,.99),rgba(19,22,38,1));border-top:1px solid rgba(148,163,184,.2);border-radius:24px 24px 0 0;box-shadow:0 -18px 48px -20px rgba(0,0,0,.95)}
 .wcf-sheet-handle-wrap{padding:10px 0 0;display:flex;justify-content:center;flex:0 0 auto}
 .wcf-sheet-handle{width:40px;height:4px;border-radius:3px;background:rgba(148,163,184,.3)}
+.wcf-sheet-close{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:50%;background:rgba(148,163,184,.1);border:1px solid var(--line);color:var(--dim);font-size:18px;line-height:1;cursor:pointer;display:grid;place-items:center;z-index:1}
 .wcf-sheet-head{padding:14px 20px 0;flex:0 0 auto}
 .wcf-sheet-kicker{font-family:var(--mono);font-weight:600;font-size:10px;letter-spacing:1.8px;color:var(--dim)}
 .wcf-sheet-title{font-family:var(--display);font-weight:700;font-size:19px;color:var(--white);margin-top:7px}
@@ -6672,14 +6675,10 @@ const css = `
 .wcf-sheet-remove{flex:0 0 auto;background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer;margin-right:6px}
 .wcf-sheet-remove:hover{color:var(--red-hi)}
 
-.wcf-payment{margin:0 0 14px;padding:12px;border-radius:10px;font-size:12px;line-height:1.5;background:var(--panel2);border:1px solid var(--line)}
-.wcf-payment-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;color:var(--white)}
-.wcf-payment-fee{margin:6px 0 10px;color:var(--dim);font-family:var(--mono)}
-.wcf-payment.confirmed{border-color:rgba(51,169,87,.5)}
-.wcf-payment.pending .wcf-payment-note{margin:0;color:var(--amber)}
-.wcf-payment-actions{display:flex;gap:8px;flex-wrap:wrap}
-.wcf-payment-actions button,.wcf-pay-now{background:var(--red);color:#fff;border:none;padding:9px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center}
-.wcf-pay-now{background:var(--panel2);border:1px solid var(--line)}
+.wcf-pay-strip{display:flex;align-items:center;gap:8px;margin:0 0 14px;padding:10px 10px 10px 14px;border-radius:12px;background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.3)}
+.wcf-pay-strip-text{flex:1;min-width:0;font-weight:700;font-size:12px;color:var(--red-hi)}
+.wcf-pay-now,.wcf-pay-paid{background:var(--red);color:#fff;border:none;padding:9px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;white-space:nowrap}
+.wcf-pay-now{background:var(--panel2);border:1px solid var(--line);color:var(--white)}
 
 .wcf-status-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.3px;padding:3px 8px;border-radius:999px;background:var(--panel2);color:var(--dim);white-space:nowrap;flex:0 0 auto}
 .wcf-status-badge.unpaid{color:var(--dim);border:1px solid var(--line)}
