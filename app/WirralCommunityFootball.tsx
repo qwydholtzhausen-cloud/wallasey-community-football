@@ -7236,7 +7236,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-account-rename button:disabled{opacity:.5;cursor:not-allowed}
 .wcf-signout{width:100%;margin-top:14px;min-height:46px;padding:13px;border-radius:12px;background:rgba(240,82,94,.1);border:1px solid rgba(240,82,94,.3);color:var(--red-hi);font-weight:700;font-size:12px;cursor:pointer}
 .wcf-signout:hover{background:rgba(240,82,94,.16)}
-.wcf-push-section{display:flex;align-items:center;gap:11px;margin-top:14px;padding:12px 13px;border-radius:14px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.12)}
+.wcf-push-section{display:flex;flex-direction:column;gap:11px;margin-top:14px;padding:12px 13px;border-radius:14px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.12)}
 .wcf-rating-section{margin-bottom:0}
 .wcf-rating-section h3,.wcf-record-section h3{display:none}
 .wcf-rating-note{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin:0 0 14px}
