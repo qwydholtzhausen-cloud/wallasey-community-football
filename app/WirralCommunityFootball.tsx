@@ -6859,13 +6859,13 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-view-btn{border-radius:20px;padding:8px 15px;cursor:pointer;font-family:var(--sans);font-weight:700;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;background:rgba(148,163,184,.07);border:1px solid var(--line);color:var(--dim)}
 .wcf-lineup-view-btn.on{background:rgba(230,57,70,.16);border-color:rgba(230,57,70,.42);color:#f8b3b8}
 
-.wcf-lineup-pitch-card{position:relative;border-radius:22px;border:1px solid var(--line);box-shadow:0 22px 44px -28px rgba(0,0,0,.95);overflow:hidden;background:linear-gradient(180deg,rgba(6,12,10,.72),rgba(6,12,10,.48) 50%,rgba(6,12,10,.76)),url('/turf-texture.jpg');background-size:cover;background-position:center}
-.wcf-lineup-pitch-lines{position:relative;width:100%;aspect-ratio:0.56;opacity:.3;stroke:#e2e8f0;stroke-width:0.9;fill:none;display:block}
+.wcf-lineup-pitch-card{position:relative;aspect-ratio:0.56;border-radius:22px;border:1px solid var(--line);box-shadow:0 22px 44px -28px rgba(0,0,0,.95);overflow:hidden;background:linear-gradient(180deg,rgba(6,12,10,.72),rgba(6,12,10,.48) 50%,rgba(6,12,10,.76)),url('/turf-texture.jpg');background-size:cover;background-position:center}
+.wcf-lineup-pitch-lines{position:absolute;inset:0;width:100%;height:100%;opacity:.3;stroke:#e2e8f0;stroke-width:0.9;fill:none;display:block}
 .wcf-lineup-pitch-tokens{position:absolute;inset:0}
-.wcf-lineup-token{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:none;padding:2px;cursor:pointer;min-width:44px}
-.wcf-lineup-token.flip{flex-direction:column-reverse}
+.wcf-lineup-token{position:absolute;transform:translate(-50%,-50%);width:44px;height:44px;display:grid;place-items:center;background:none;border:none;padding:0;cursor:pointer}
 .wcf-lineup-token-chip{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:13px;box-shadow:0 6px 14px -6px rgba(0,0,0,.85)}
-.wcf-lineup-token-label{font-size:9.5px;font-weight:700;letter-spacing:.02em;color:var(--white);text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap}
+.wcf-lineup-token-label{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:5px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:var(--white);text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap;pointer-events:none}
+.wcf-lineup-token.flip .wcf-lineup-token-label{top:auto;bottom:100%;margin-top:0;margin-bottom:5px}
 .wcf-lineup-pitch-note{margin:12px 2px 0;font-size:11.5px;line-height:1.5;color:var(--dim)}
 
 .wcf-lineup-list-wrap{position:relative;display:flex;gap:10px;border-radius:18px;overflow:hidden;padding:10px;background-image:linear-gradient(180deg,rgba(13,13,26,.5),rgba(13,13,26,.85)),url('/floodlight-haze.jpg');background-size:cover;background-position:50% 30%}
