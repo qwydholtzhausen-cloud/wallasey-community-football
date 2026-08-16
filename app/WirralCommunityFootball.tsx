@@ -2803,7 +2803,7 @@ function App({ session }: { session: Session }) {
           onClick={() => setTab(tab === "account" ? "fixtures" : "account")}
         >
           <span className="dot" />
-          {myProfile.display_name}
+          <span className="wcf-role-name">{myProfile.display_name}</span>
           {myUnreadMessages.length > 0 && <span className="wcf-role-unread">{myUnreadMessages.length}</span>}
         </button>
       </header>
@@ -2823,12 +2823,16 @@ function App({ session }: { session: Session }) {
           </div>
           {tab === "fixtures" && isAdmin && (
             <div className="wcf-heading-actions">
-              <button className="wcf-addbtn ghost" onClick={copyFixtureUpdate} title="Copy a WhatsApp fixture update">📋 Update</button>
+              <button className="wcf-addbtn ghost" onClick={copyFixtureUpdate} title="Copy a WhatsApp fixture update">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/></svg>
+                Update
+              </button>
               <button
                 className="wcf-addbtn"
                 onClick={async () => { if (await askConfirm("Add a new fixture?", "You can fill in the details and post it once it's ready.", "Add", false)) addGame(); }}
               >
-                + Fixture
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                Fixture
               </button>
             </div>
           )}
@@ -6585,8 +6589,8 @@ const css = `
 .wcf-wordmark-sub{font-weight:800;font-size:10px;letter-spacing:2.5px;color:var(--red-hi);margin-top:3px}
 .wcf-role{display:flex;align-items:center;gap:7px;background:transparent;border:1px solid var(--line);
   color:var(--dim);padding:8px 13px;border-radius:999px;font-size:12px;font-weight:800;cursor:pointer;
-  font-family:var(--mono);letter-spacing:.5px;transition:.15s;max-width:140px}
-.wcf-role span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  font-family:var(--mono);letter-spacing:.5px;transition:.15s;max-width:140px;overflow:hidden}
+.wcf-role-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .wcf-role .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:0 0 auto}
 .wcf-role.admin .dot{background:var(--green)}
 .wcf-role.on{color:#fff;border-color:var(--red)}
@@ -6595,7 +6599,8 @@ const css = `
 .wcf-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin:4px 2px 14px}
 .wcf-heading h2{margin:0;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim)}
 .wcf-heading-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
-.wcf-addbtn{background:var(--red);color:#fff;border:none;padding:7px 13px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;flex:0 0 auto;white-space:nowrap}
+.wcf-addbtn{display:inline-flex;align-items:center;gap:6px;background:var(--red);color:#fff;border:none;padding:8px 14px;border-radius:999px;font-family:var(--display);font-weight:800;font-size:12px;cursor:pointer;flex:0 0 auto;white-space:nowrap}
+.wcf-addbtn svg{flex:0 0 auto}
 .wcf-addbtn.ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
 .wcf-empty{color:var(--dim);text-align:center;padding:40px 0;font-size:14px}
 .wcf-empty.small{padding:8px 0;font-size:12px}
