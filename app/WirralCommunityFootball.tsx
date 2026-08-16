@@ -4507,7 +4507,13 @@ function App({ session }: { session: Session }) {
       {confirmState && (
         <div className="wcf-modal-overlay" onClick={() => resolveConfirm(false)}>
           <div className="wcf-modal" onClick={(e) => e.stopPropagation()}>
-            <div className={"wcf-modal-icon " + (confirmState.danger ? "danger" : "safe")}>{confirmState.danger ? "⚠️" : "❓"}</div>
+            <div className={"wcf-modal-icon " + (confirmState.danger ? "danger" : "safe")}>
+              {confirmState.danger ? (
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.5L22 20.5H2z" /><path d="M12 9.5v5M12 18v.01" /></svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7v.3" /><path d="M12 17v.01" /></svg>
+              )}
+            </div>
             <div className="wcf-modal-title">{confirmState.title}</div>
             <div className="wcf-modal-msg">{confirmState.message}</div>
             <div className="wcf-modal-actions">
@@ -6741,7 +6747,7 @@ const css = `
 
 .wcf-pay-strip{display:flex;align-items:center;gap:8px;margin:0 0 14px;padding:10px 10px 10px 14px;border-radius:12px;background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.3)}
 .wcf-pay-strip-text{flex:1;min-width:0;font-weight:700;font-size:12px;color:var(--red-hi)}
-.wcf-pay-now,.wcf-pay-paid{background:var(--red);color:#fff;border:none;padding:9px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;white-space:nowrap}
+.wcf-pay-now,.wcf-pay-paid{background:var(--red);color:#fff;border:none;padding:9px 14px;border-radius:10px;font-weight:800;font-size:12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;white-space:nowrap}
 .wcf-pay-now{background:var(--panel2);border:1px solid var(--line);color:var(--white)}
 
 .wcf-status-badge{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.3px;padding:3px 8px;border-radius:999px;background:var(--panel2);color:var(--dim);white-space:nowrap;flex:0 0 auto}
@@ -6762,7 +6768,7 @@ const css = `
 
 .wcf-edit{margin-top:14px;padding-top:14px;border-top:1px dashed var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .wcf-edit label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
-.wcf-edit input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans)}
+.wcf-edit input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:10px;font-size:13px;font-family:var(--sans)}
 .wcf-edit-actions{grid-column:1/-1;display:flex;gap:8px}
 .wcf-save{grid-column:1/-1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
 .wcf-save-red{width:100%;min-height:46px;padding:13px;border-radius:12px;cursor:pointer;font-weight:800;font-size:12px;color:#fff;border:1px solid rgba(230,57,70,.5);background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5))}
@@ -7081,7 +7087,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-name{font-weight:700;font-size:14px;flex:1;min-width:0}
 .wcf-name-link{background:none;border:none;padding:0;margin:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
 .wcf-lineup-picks{display:flex;gap:6px}
-.wcf-lineup-pick{background:transparent;border:1px solid var(--line);color:var(--dim);padding:7px 11px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer}
+.wcf-lineup-pick{background:transparent;border:1px solid var(--line);color:var(--dim);padding:7px 11px;border-radius:10px;font-weight:800;font-size:11px;cursor:pointer}
 
 .wcf-lineup-strip-row{display:flex;gap:8px;margin-bottom:12px}
 .wcf-lineup-strip{flex:1;display:flex;align-items:center;gap:9px;padding:11px 13px;border-radius:14px;border:1px solid}
@@ -7195,7 +7201,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-predict-team{text-align:center;flex:1}
 .wcf-predict-team-name{font-size:11px;font-weight:700;margin-bottom:7px}
 .wcf-predict-stepper{display:flex;align-items:center;justify-content:center;gap:8px}
-.wcf-predict-stepper button{width:28px;height:28px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-size:15px;cursor:pointer;display:grid;place-items:center;line-height:1}
+.wcf-predict-stepper button{width:28px;height:28px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-size:15px;cursor:pointer;display:grid;place-items:center;line-height:1}
 .wcf-predict-stepper span{font-family:var(--mono);font-size:22px;font-weight:800;width:22px;text-align:center}
 .wcf-predict-vs{color:var(--dim);font-size:11px;font-weight:700;padding-top:16px}
 .wcf-predict-lock{width:100%;background:#8B6BE8;color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;font-size:12.5px;cursor:pointer}
