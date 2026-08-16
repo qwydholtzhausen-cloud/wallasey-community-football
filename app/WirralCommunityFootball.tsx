@@ -675,6 +675,25 @@ export default function WirralCommunityFootball() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // iOS standalone (home-screen) web apps don't reliably resolve
+  // 100vh/100dvh/100svh to the true full-screen height, leaving a gap
+  // above the home indicator. window.innerHeight is accurate there, so
+  // drive the app-shell height off a JS-measured value instead.
+  useEffect(() => {
+    const setAppHeight = () => {
+      document.documentElement.style.setProperty("--app-height", `${window.innerHeight}px`);
+    };
+    setAppHeight();
+    window.addEventListener("resize", setAppHeight);
+    window.addEventListener("orientationchange", setAppHeight);
+    window.visualViewport?.addEventListener("resize", setAppHeight);
+    return () => {
+      window.removeEventListener("resize", setAppHeight);
+      window.removeEventListener("orientationchange", setAppHeight);
+      window.visualViewport?.removeEventListener("resize", setAppHeight);
+    };
+  }, []);
+
   return (
     <div className="wcf-root">
       <style>{css}</style>
@@ -6535,7 +6554,7 @@ const css = `
   --mono:ui-monospace,"SF Mono","Roboto Mono",Menlo,monospace;
   --display:var(--font-sora),-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   --sans:var(--font-inter),-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  max-width:520px;margin:0 auto;height:100vh;height:100dvh;overflow:hidden;background:var(--bg);
+  max-width:520px;margin:0 auto;height:100vh;height:100dvh;height:var(--app-height,100dvh);overflow:hidden;background:var(--bg);
   color:var(--white);font-family:var(--sans);display:flex;flex-direction:column;
   border-left:1px solid var(--line);border-right:1px solid var(--line);
 }
@@ -6578,8 +6597,8 @@ const css = `
 .wcf-signin-alt:disabled{opacity:.4;cursor:not-allowed;text-decoration:none}
 .wcf-privacy-note{color:var(--dim);font-size:11px;max-width:280px;margin:0;line-height:1.5;opacity:.8}
 
-.wcf-top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
-  padding:calc(14px + env(safe-area-inset-top,0px)) 16px 14px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.wcf-top{position:relative;z-index:5;display:flex;align-items:center;justify-content:space-between;
+  padding:calc(14px + env(safe-area-inset-top,0px)) 16px 14px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);flex:0 0 auto}
 .wcf-brand{display:flex;align-items:center;gap:11px;background:none;border:none;padding:0;margin:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
 .wcf-logo{display:block;width:42px;height:42px;flex:0 0 auto;border-radius:11px;overflow:hidden;
   border:1px solid rgba(230,57,70,.4);box-shadow:0 2px 10px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.05)}
@@ -7583,8 +7602,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-login-code-value{display:block;font-family:var(--mono);font-weight:800;font-size:28px;letter-spacing:4px;color:var(--green)}
 .wcf-login-code-note{display:block;font-size:11px;color:var(--dim);margin-top:6px;line-height:1.4}
 
-.wcf-nav{position:sticky;bottom:0;z-index:5;display:flex;background:rgba(10,26,52,.95);backdrop-filter:blur(8px);
-  border-top:1px solid var(--line);padding:8px 6px}
+.wcf-nav{position:relative;z-index:5;display:flex;background:rgba(10,26,52,.95);backdrop-filter:blur(8px);
+  border-top:1px solid var(--line);padding:8px 6px;flex:0 0 auto}
 .wcf-navbtn{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;background:none;border:none;
   color:var(--dim);padding:6px 0;cursor:pointer;font-weight:700;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;transition:.15s}
 .wcf-navbtn.active{color:var(--red-hi)}
