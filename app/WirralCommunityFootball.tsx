@@ -471,11 +471,11 @@ async function drawResultCard(opts: {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas isn't supported on this device");
 
-  ctx.fillStyle = "#0A1A34";
+  ctx.fillStyle = "#0d0d1a";
   ctx.fillRect(0, 0, W, H);
   const grad = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, W * 0.75);
-  grad.addColorStop(0, "rgba(228,42,54,0.20)");
-  grad.addColorStop(1, "rgba(228,42,54,0)");
+  grad.addColorStop(0, "rgba(230,57,70,0.20)");
+  grad.addColorStop(1, "rgba(230,57,70,0)");
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H * 0.55);
 
@@ -495,15 +495,15 @@ async function drawResultCard(opts: {
 
   ctx.textBaseline = "top";
   ctx.textAlign = "left";
-  ctx.fillStyle = "#EEF4FC";
+  ctx.fillStyle = "#F5F6F8";
   ctx.font = "800 32px -apple-system, Helvetica, Arial, sans-serif";
   ctx.fillText("WIRRAL", pad + 96, pad + 8);
-  ctx.fillStyle = "#E42A36";
+  ctx.fillStyle = "#e63946";
   ctx.font = "800 16px -apple-system, Helvetica, Arial, sans-serif";
   ctx.fillText("C O M M U N I T Y   F O O T B A L L", pad + 96, pad + 48);
 
   ctx.textAlign = "center";
-  ctx.fillStyle = "#8FA6C8";
+  ctx.fillStyle = "#94a3b8";
   ctx.font = "800 24px -apple-system, Helvetica, Arial, sans-serif";
   ctx.fillText("F U L L   T I M E", W / 2, 300);
 
@@ -511,9 +511,9 @@ async function drawResultCard(opts: {
   const colW = 260;
   ctx.textBaseline = "top";
   ctx.font = "800 30px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillStyle = "#D9E4F5";
+  ctx.fillStyle = "#F5F6F8";
   ctx.fillText(opts.whiteName.toUpperCase(), W / 2 - colW, scoreY);
-  ctx.fillStyle = "#F0616A";
+  ctx.fillStyle = "#f0525e";
   ctx.fillText(opts.redName.toUpperCase(), W / 2 + colW, scoreY);
 
   ctx.textBaseline = "alphabetic";
@@ -522,7 +522,7 @@ async function drawResultCard(opts: {
   ctx.fillText(String(opts.whiteScore), W / 2 - colW, scoreY + 175);
   ctx.fillStyle = opts.redColor;
   ctx.fillText(String(opts.redScore), W / 2 + colW, scoreY + 175);
-  ctx.strokeStyle = "#8FA6C8";
+  ctx.strokeStyle = "#94a3b8";
   ctx.lineWidth = 8;
   ctx.lineCap = "round";
   ctx.beginPath();
@@ -532,10 +532,10 @@ async function drawResultCard(opts: {
 
   ctx.textBaseline = "top";
   ctx.font = "500 24px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillStyle = "#8FA6C8";
+  ctx.fillStyle = "#94a3b8";
   ctx.fillText(`${opts.venue} · ${opts.dateLabel}`, W / 2, scoreY + 200);
 
-  ctx.strokeStyle = "rgba(200,218,245,0.13)";
+  ctx.strokeStyle = "rgba(148,163,184,.16)";
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(pad, scoreY + 260);
@@ -544,7 +544,7 @@ async function drawResultCard(opts: {
 
   ctx.textAlign = "left";
   ctx.font = "800 20px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillStyle = "#8FA6C8";
+  ctx.fillStyle = "#94a3b8";
   ctx.fillText("⚽  GOALS", pad, scoreY + 300);
 
   const rowsY = scoreY + 350;
@@ -552,21 +552,21 @@ async function drawResultCard(opts: {
   const maxRows = Math.max(opts.whiteScorers.length, opts.redScorers.length, 1);
   opts.whiteScorers.forEach((s, i) => {
     ctx.font = "600 24px -apple-system, Helvetica, Arial, sans-serif";
-    ctx.fillStyle = "#EEF4FC";
+    ctx.fillStyle = "#F5F6F8";
     ctx.textAlign = "left";
     ctx.fillText(s.name, pad, rowsY + i * rowH);
     ctx.font = "700 24px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#8FA6C8";
+    ctx.fillStyle = "#94a3b8";
     ctx.textAlign = "right";
     ctx.fillText(String(s.goals), pad + 400, rowsY + i * rowH);
   });
   opts.redScorers.forEach((s, i) => {
     ctx.font = "600 24px -apple-system, Helvetica, Arial, sans-serif";
-    ctx.fillStyle = "#EEF4FC";
+    ctx.fillStyle = "#F5F6F8";
     ctx.textAlign = "left";
     ctx.fillText(s.name, W / 2 + 30, rowsY + i * rowH);
     ctx.font = "700 24px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#8FA6C8";
+    ctx.fillStyle = "#94a3b8";
     ctx.textAlign = "right";
     ctx.fillText(String(s.goals), W - pad, rowsY + i * rowH);
   });
@@ -594,14 +594,14 @@ async function drawResultCard(opts: {
     ctx.fillText("M A N   O F   T H E   M A T C H", pad + 100, motmY + 26);
 
     ctx.font = "800 28px -apple-system, Helvetica, Arial, sans-serif";
-    ctx.fillStyle = "#EEF4FC";
+    ctx.fillStyle = "#F5F6F8";
     ctx.fillText(opts.motmWinner, pad + 100, motmY + 54);
   }
 
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.font = "800 15px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillStyle = "#8FA6C8";
+  ctx.fillStyle = "#94a3b8";
   ctx.fillText("W I R R A L C O M M U N I T Y F O O T B A L L", W / 2, H - 44);
 
   return new Promise((resolve, reject) => {
@@ -927,9 +927,9 @@ function App({ session }: { session: Session }) {
   const isOwner = myProfile?.role === "owner";
   const cs: ClubSettings = clubSettings ?? {
     team_white_name: "Whites",
-    team_white_color: "#EEF4FC",
+    team_white_color: "#F5F6F8",
     team_red_name: "Reds",
-    team_red_color: "#E42A36",
+    team_red_color: "#e63946",
     default_venue: "New venue",
     default_kickoff: "19:00",
     default_price: 5,
@@ -6398,7 +6398,7 @@ const css = `
   padding:14px 16px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .wcf-brand{display:flex;align-items:center;gap:11px;background:none;border:none;padding:0;margin:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
 .wcf-logo{display:block;width:42px;height:42px;flex:0 0 auto;border-radius:11px;overflow:hidden;
-  border:1px solid rgba(228,42,54,.4);box-shadow:0 2px 10px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.05)}
+  border:1px solid rgba(230,57,70,.4);box-shadow:0 2px 10px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.05)}
 .wcf-logo img{display:block;width:100%;height:100%;object-fit:cover;object-position:50% 43%}
 .wcf-wordmark{font-weight:900;font-size:22px;letter-spacing:1px;line-height:.9;
   color:var(--white);text-shadow:0 1px 0 rgba(0,0,0,.4)}
@@ -6519,7 +6519,7 @@ const css = `
 .wcf-book:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-admin-actions{display:flex;gap:6px}
 .wcf-ghost{background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px 12px;border-radius:10px;font-weight:700;font-size:12px;cursor:pointer}
-.wcf-ghost.danger:hover{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
+.wcf-ghost.danger:hover{color:var(--red-hi);border-color:rgba(230,57,70,.5)}
 
 .wcf-edit{margin-top:14px;padding-top:14px;border-top:1px dashed var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .wcf-edit label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
@@ -6561,8 +6561,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-glance-label{margin-top:10px;font-family:var(--sans);font-weight:700;font-size:11.5px;line-height:1.3;color:#f1f5f9}
 .wcf-glance-card.clear .wcf-glance-label{color:var(--dim)}
 .wcf-glance-names{margin-top:6px;font-size:10.5px;line-height:1.4;color:#64748b}
-.wcf-overdue-row{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid rgba(228,42,54,.35);border-radius:12px;padding:11px 13px;margin-bottom:9px;flex-wrap:wrap}
-.wcf-overdue-banner{background:linear-gradient(135deg,rgba(228,42,54,.18),rgba(228,42,54,.06));border:1px solid rgba(228,42,54,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5;color:var(--white)}
+.wcf-overdue-row{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid rgba(230,57,70,.35);border-radius:12px;padding:11px 13px;margin-bottom:9px;flex-wrap:wrap}
+.wcf-overdue-banner{background:linear-gradient(135deg,rgba(230,57,70,.18),rgba(230,57,70,.06));border:1px solid rgba(230,57,70,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5;color:var(--white)}
 .wcf-overdue-banner strong{color:var(--red-hi)}
 .wcf-overdue-note{font-size:12px;color:var(--red-hi);font-weight:700;text-align:center;margin:0;flex:1}
 .wcf-update-banner{display:block;width:100%;background:var(--amber);color:#241a02;border:none;padding:10px 14px;font-size:12.5px;font-weight:800;text-align:center;cursor:pointer;font-family:var(--sans)}
@@ -6613,7 +6613,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pending-status.unpaid{color:var(--dim);background:rgba(148,163,184,.1);border:1px solid rgba(148,163,184,.2)}
 .wcf-pending-status.confirmed{color:#86efac;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.34)}
 .wcf-pending-confirm{flex:none;min-height:40px;padding:0 12px;border-radius:11px;cursor:pointer;font-weight:700;font-size:10.5px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.34);color:#86efac}
-.wcf-admin-approve-override{flex:none;min-height:36px;padding:0 11px;border-radius:11px;background:transparent;border:1px solid rgba(228,42,54,.5);color:var(--red-hi);font-weight:800;font-size:10.5px;cursor:pointer}
+.wcf-admin-approve-override{flex:none;min-height:36px;padding:0 11px;border-radius:11px;background:transparent;border:1px solid rgba(230,57,70,.5);color:var(--red-hi);font-weight:800;font-size:10.5px;cursor:pointer}
 .wcf-admin-game{border-radius:18px;overflow:hidden;margin-bottom:10px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);box-shadow:0 18px 38px -30px rgba(0,0,0,.9)}
 .wcf-admin-game.open{border-color:rgba(148,163,184,.3)}
 .wcf-admin-game-head{width:100%;min-height:56px;display:flex;align-items:center;gap:11px;background:none;border:none;color:var(--white);padding:14px;cursor:pointer;text-align:left}
@@ -6907,7 +6907,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-balance-badge{font-family:var(--mono);font-weight:800;font-size:11.5px;padding:3px 10px;border-radius:20px}
 .wcf-balance-badge.high{background:rgba(51,169,87,.16);color:var(--green)}
 .wcf-balance-badge.mid{background:rgba(224,167,51,.16);color:var(--amber)}
-.wcf-balance-badge.low{background:rgba(228,42,54,.16);color:var(--red-hi)}
+.wcf-balance-badge.low{background:rgba(230,57,70,.16);color:var(--red-hi)}
 .wcf-balance-badge.none{font-family:var(--sans);font-weight:600;font-size:10.5px;color:var(--dim);background:var(--panel2)}
 .wcf-balance-verdict{margin:8px 0 0;padding-top:8px;border-top:1px solid var(--line);font-size:12px;color:var(--dim);text-align:center}
 .wcf-balance-log{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:8px 14px 12px;margin-bottom:14px}
@@ -7030,7 +7030,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-season-hero-title{margin-top:6px;font-family:var(--display);font-size:32px;font-weight:800;letter-spacing:-.02em;color:#fff}
 .wcf-season-hero-sub{margin-top:6px;font-size:12px;color:#B7BDD0}
 
-.wcf-shoutout{background:linear-gradient(135deg,rgba(228,42,54,.16),rgba(51,169,87,.1));border:1px solid rgba(228,42,54,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
+.wcf-shoutout{background:linear-gradient(135deg,rgba(230,57,70,.16),rgba(51,169,87,.1));border:1px solid rgba(230,57,70,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
 .wcf-award-media{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:10px;margin-top:10px}
 .wcf-potm{background:linear-gradient(135deg,rgba(224,167,51,.2),rgba(224,167,51,.06));border-color:rgba(224,167,51,.4)}
 
@@ -7149,7 +7149,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-result-goal-row b{font-family:var(--mono);color:var(--dim);font-weight:700}
 .wcf-result-share{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
 .wcf-result-share-btn{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-weight:800;font-size:12.5px;padding:10px;border-radius:10px;cursor:pointer}
-.wcf-result-admin-tag{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 8px;border-radius:20px;background:rgba(228,42,54,.16);color:var(--red-hi);white-space:nowrap}
+.wcf-result-admin-tag{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 8px;border-radius:20px;background:rgba(230,57,70,.16);color:var(--red-hi);white-space:nowrap}
 .wcf-motm{margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
 .wcf-motm-label{font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
 .wcf-motm-candidates{display:flex;flex-wrap:wrap;gap:6px}
@@ -7192,7 +7192,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-role-badge{margin-left:auto;font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
 .wcf-role-badge.admin{color:var(--green);border:1px solid rgba(51,169,87,.4)}
 .wcf-role-badge.co-owner{color:var(--blue);border:1px solid rgba(46,116,204,.4)}
-.wcf-role-badge.owner{color:var(--red-hi);border:1px solid rgba(228,42,54,.4)}
+.wcf-role-badge.owner{color:var(--red-hi);border:1px solid rgba(230,57,70,.4)}
 .wcf-role-badge.small{margin-left:4px;padding:2px 7px;font-size:9px}
 .wcf-inbox-msg{border-radius:16px;padding:13px;margin-bottom:9px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line)}
 .wcf-inbox-msg.unread{border-color:rgba(230,57,70,.32)}
