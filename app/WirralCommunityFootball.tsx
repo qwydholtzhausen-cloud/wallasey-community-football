@@ -6253,6 +6253,46 @@ function GameCard({
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
   );
 
+  // Rendered inside whichever card is showing (hero or compact row) so the
+  // whole fixture - photo/info, payment nudge, and the book/cancel action -
+  // reads as one block instead of a card with a loose button floating
+  // beneath it.
+  const payStrip = myBooking && !myBooking.waiting && myBooking.status === "unpaid" && (
+    <div className="wcf-pay-strip">
+      <span className="wcf-pay-strip-text">£{game.price} due</span>
+      {PAYMENT_LINK && (
+        <a className="wcf-pay-now" href={PAYMENT_LINK} target="_blank" rel="noreferrer">
+          Pay Now
+        </a>
+      )}
+      <button className="wcf-pay-paid" onClick={() => onMarkPaid(myBooking.id)}>I&apos;ve paid</button>
+    </div>
+  );
+
+  const cta = (
+    <div className="wcf-card-actions">
+      {!myBooking && overdue ? (
+        <p className="wcf-overdue-note">Overdue payment — speak to an admin before booking your next game.</p>
+      ) : (
+        <button
+          className={"wcf-book " + (myBooking ? "cancel" : "")}
+          disabled={!myBooking && full && waitingList.length >= 10}
+          onClick={async () => {
+            if (!myBooking) return onBook();
+            const ok = myBooking.waiting
+              ? await askConfirm("Leave the waiting list?", "You'll lose your place in the queue.", "Leave")
+              : await askConfirm("Give up your spot?", `${game.venue} · ${fmtDate(game.date)}. Someone from the waiting list will be offered it.`, "Give up spot");
+            if (ok) onCancel(myBooking.id);
+          }}
+        >
+          {myBooking
+            ? myBooking.waiting ? "Leave waiting list" : "Give up spot"
+            : full ? (waitingList.length >= 10 ? "Waiting list full" : "Join waiting list") : "Grab a spot"}
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <article className={featured ? "wcf-card featured " + bookedClass : ""} style={featured ? undefined : { marginBottom: 18 }}>
       {featured ? (
@@ -6312,38 +6352,42 @@ function GameCard({
           </button>
         </>
       ) : (
-        <div className={"wcf-fx-row " + bookedClass} onClick={openSheet}>
-          <div className="wcf-fx-date">
-            <div className="wcf-fx-day">{fmtDate(game.date).split(",")[0]?.toUpperCase()}</div>
-            <div className="wcf-fx-num">{new Date(game.date + "T00:00:00").getDate()}</div>
-          </div>
-          <div className="wcf-fx-divider" />
-          <div className="wcf-fx-info">
-            <div className="wcf-fx-title">
-              {game.kickoff} · {game.venue}
-              {!game.published && <span className="wcf-draft-badge">Draft</span>}
+        <div className={"wcf-fx-row " + bookedClass}>
+          <div className="wcf-fx-row-top" onClick={openSheet}>
+            <div className="wcf-fx-date">
+              <div className="wcf-fx-day">{fmtDate(game.date).split(",")[0]?.toUpperCase()}</div>
+              <div className="wcf-fx-num">{new Date(game.date + "T00:00:00").getDate()}</div>
             </div>
-            <div className="wcf-fx-meta">
-              {game.pitch} · £{game.price} · {confirmed.length}/{game.max_players}
-              {weather && <> · {weatherIcon(weather.code)} {weather.temp}°C</>}
+            <div className="wcf-fx-divider" />
+            <div className="wcf-fx-info">
+              <div className="wcf-fx-title">
+                {game.kickoff} · {game.venue}
+                {!game.published && <span className="wcf-draft-badge">Draft</span>}
+              </div>
+              <div className="wcf-fx-meta">
+                {game.pitch} · £{game.price} · {confirmed.length}/{game.max_players}
+                {weather && <> · {weatherIcon(weather.code)} {weather.temp}°C</>}
+              </div>
+              <div className="wcf-fx-bar-track">
+                <div className="wcf-fx-bar-fill" style={{ width: `${fillPct}%` }} />
+              </div>
             </div>
-            <div className="wcf-fx-bar-track">
-              <div className="wcf-fx-bar-fill" style={{ width: `${fillPct}%` }} />
+            {isAdmin && (
+              <button
+                className="wcf-hero-edit-btn"
+                onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                aria-label="Edit fixture"
+              >
+                {editIcon}
+              </button>
+            )}
+            <div className="wcf-fx-status">
+              {waitingList.length > 0 && <span className="wcf-hero-waiting-chip">+{waitingList.length} WAITING</span>}
+              <span className={"wcf-fx-pill " + (full ? "full" : "open")}>{full ? "FULL" : `${spotsLeft} LEFT`}</span>
             </div>
           </div>
-          {isAdmin && (
-            <button
-              className="wcf-hero-edit-btn"
-              onClick={(e) => { e.stopPropagation(); onEdit(); }}
-              aria-label="Edit fixture"
-            >
-              {editIcon}
-            </button>
-          )}
-          <div className="wcf-fx-status">
-            {waitingList.length > 0 && <span className="wcf-hero-waiting-chip">+{waitingList.length} WAITING</span>}
-            <span className={"wcf-fx-pill " + (full ? "full" : "open")}>{full ? "FULL" : `${spotsLeft} LEFT`}</span>
-          </div>
+          {payStrip}
+          {cta}
         </div>
       )}
 
@@ -6415,40 +6459,12 @@ function GameCard({
           glow on the card itself (via the .in.<status> classes below)
           already says "you owe money" / "awaiting confirmation" / "you're
           sorted" at a glance. Unpaid still gets a compact action strip
-          since there's a real action to take, just not a full card. */}
-      {myBooking && !myBooking.waiting && myBooking.status === "unpaid" && (
-        <div className="wcf-pay-strip">
-          <span className="wcf-pay-strip-text">£{game.price} due</span>
-          {PAYMENT_LINK && (
-            <a className="wcf-pay-now" href={PAYMENT_LINK} target="_blank" rel="noreferrer">
-              Pay Now
-            </a>
-          )}
-          <button className="wcf-pay-paid" onClick={() => onMarkPaid(myBooking.id)}>I&apos;ve paid</button>
-        </div>
-      )}
-
-      <div className="wcf-card-actions">
-        {!myBooking && overdue ? (
-          <p className="wcf-overdue-note">Overdue payment — speak to an admin before booking your next game.</p>
-        ) : (
-          <button
-            className={"wcf-book " + (myBooking ? "cancel" : "")}
-            disabled={!myBooking && full && waitingList.length >= 10}
-            onClick={async () => {
-              if (!myBooking) return onBook();
-              const ok = myBooking.waiting
-                ? await askConfirm("Leave the waiting list?", "You'll lose your place in the queue.", "Leave")
-                : await askConfirm("Give up your spot?", `${game.venue} · ${fmtDate(game.date)}. Someone from the waiting list will be offered it.`, "Give up spot");
-              if (ok) onCancel(myBooking.id);
-            }}
-          >
-            {myBooking
-              ? myBooking.waiting ? "Leave waiting list" : "Give up spot"
-              : full ? (waitingList.length >= 10 ? "Waiting list full" : "Join waiting list") : "Grab a spot"}
-          </button>
-        )}
-      </div>
+          since there's a real action to take, just not a full card.
+          For the compact row, payStrip/cta render inside .wcf-fx-row
+          above instead so the whole fixture reads as one card; the hero
+          already is one card, so they render here. */}
+      {featured && payStrip}
+      {featured && cta}
 
       {isAdmin && editing && (
         <div className="wcf-edit">
@@ -6634,10 +6650,12 @@ const css = `
 .wcf-avatar-chip:first-child{margin-left:0}
 .wcf-avatar-chip.more{color:var(--dim);background:var(--panel2)}
 
-.wcf-fx-row{position:relative;display:flex;align-items:center;gap:13px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);border-radius:16px;padding:13px 14px;margin-bottom:9px;box-shadow:0 18px 38px -34px rgba(0,0,0,.9);cursor:pointer}
+.wcf-fx-row{position:relative;display:flex;flex-direction:column;gap:12px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);border-radius:16px;padding:13px 14px;margin-bottom:9px;box-shadow:0 18px 38px -34px rgba(0,0,0,.9)}
 .wcf-fx-row.in.unpaid{border-color:rgba(230,57,70,.4);box-shadow:0 18px 38px -34px rgba(0,0,0,.9),0 0 34px 2px rgba(230,57,70,.22)}
 .wcf-fx-row.in.pending{border-color:rgba(234,179,8,.4);box-shadow:0 18px 38px -34px rgba(0,0,0,.9),0 0 34px 2px rgba(234,179,8,.22)}
 .wcf-fx-row.in.confirmed{border-color:rgba(34,197,94,.4);box-shadow:0 18px 38px -34px rgba(0,0,0,.9),0 0 34px 2px rgba(34,197,94,.22)}
+.wcf-fx-row-top{display:flex;align-items:center;gap:13px;cursor:pointer}
+.wcf-fx-row .wcf-pay-strip,.wcf-fx-row .wcf-card-actions{margin:0}
 .wcf-fx-status{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:0 0 auto}
 .wcf-fx-date{width:44px;flex:0 0 auto;text-align:center}
 .wcf-fx-day{font-family:var(--mono);font-weight:600;font-size:9px;letter-spacing:1.2px;color:var(--dim)}
