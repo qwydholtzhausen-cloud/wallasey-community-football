@@ -4467,7 +4467,7 @@ function App({ session }: { session: Session }) {
       {confirmState && (
         <div className="wcf-modal-overlay" onClick={() => resolveConfirm(false)}>
           <div className="wcf-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="wcf-modal-icon">{confirmState.danger ? "⚠️" : "❓"}</div>
+            <div className={"wcf-modal-icon " + (confirmState.danger ? "danger" : "safe")}>{confirmState.danger ? "⚠️" : "❓"}</div>
             <div className="wcf-modal-title">{confirmState.title}</div>
             <div className="wcf-modal-msg">{confirmState.message}</div>
             <div className="wcf-modal-actions">
@@ -7428,14 +7428,16 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lightbox{position:fixed;inset:0;background:rgba(4,9,20,.92);z-index:100;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 12px 40px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
 .wcf-lightbox-img{max-width:min(480px,100%);width:100%;border-radius:14px;box-shadow:0 20px 60px -20px rgba(0,0,0,.6)}
 .wcf-modal-overlay{position:fixed;inset:0;background:rgba(3,7,15,.7);z-index:110;display:flex;align-items:center;justify-content:center;padding:20px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
-.wcf-modal{width:100%;max-width:300px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 20px 60px -15px rgba(0,0,0,.6)}
-.wcf-modal-icon{font-size:22px;margin-bottom:10px}
-.wcf-modal-title{font-size:15px;font-weight:800;margin-bottom:6px}
-.wcf-modal-msg{font-size:12.5px;color:var(--dim);line-height:1.5;margin-bottom:18px}
-.wcf-modal-actions{display:flex;gap:8px}
-.wcf-modal-cancel{flex:1;background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px;border-radius:9px;font-weight:700;font-size:12.5px;cursor:pointer}
-.wcf-modal-confirm{flex:1;background:var(--red);color:#fff;border:none;padding:11px;border-radius:9px;font-weight:800;font-size:12.5px;cursor:pointer}
-.wcf-modal-confirm.safe{background:var(--blue)}
+.wcf-modal{width:100%;max-width:300px;background:linear-gradient(180deg,rgba(30,41,59,.97),rgba(19,22,38,.99));border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 30px 70px -20px rgba(0,0,0,.75);animation:wcfPcardIn .2s ease-out}
+.wcf-modal-icon{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:19px;margin-bottom:14px}
+.wcf-modal-icon.danger{background:rgba(230,57,70,.15);border:1px solid rgba(230,57,70,.35)}
+.wcf-modal-icon.safe{background:rgba(46,116,204,.15);border:1px solid rgba(46,116,204,.35)}
+.wcf-modal-title{font-family:var(--display);font-size:16px;font-weight:800;margin-bottom:7px;color:var(--white)}
+.wcf-modal-msg{font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:20px}
+.wcf-modal-actions{display:flex;gap:9px}
+.wcf-modal-cancel{flex:1;background:rgba(148,163,184,.08);border:1px solid var(--line);color:var(--dim);padding:12px;border-radius:11px;font-weight:700;font-size:12.5px;cursor:pointer}
+.wcf-modal-confirm{flex:1;background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5));color:#fff;border:1px solid rgba(230,57,70,.5);padding:12px;border-radius:11px;font-weight:800;font-size:12.5px;cursor:pointer;box-shadow:0 10px 24px -14px rgba(230,57,70,.8)}
+.wcf-modal-confirm.safe{background:linear-gradient(135deg,var(--blue),rgba(46,116,204,.5));border-color:rgba(46,116,204,.5);box-shadow:0 10px 24px -14px rgba(46,116,204,.8)}
 @keyframes wcfPcardIn{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
 .wcf-pcard{width:100%;max-width:300px;margin:auto;border-radius:20px;overflow:hidden;border:1px solid var(--line);box-shadow:0 26px 50px -30px rgba(0,0,0,.95);animation:wcfPcardIn .22s ease-out}
 .wcf-pcard-head{position:relative;padding:26px 20px 20px;text-align:center;background:radial-gradient(120% 90% at 50% 0%,rgba(230,57,70,.22),rgba(30,41,59,.9) 58%,rgba(21,25,42,.98));overflow:hidden}
