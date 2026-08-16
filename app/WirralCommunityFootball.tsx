@@ -722,56 +722,86 @@ function SignIn() {
 
   return (
     <div className="wcf-signin">
-      <span className="wcf-logo big">
-        <img src="/logo.png" alt="Wirral Community Football crest" />
-      </span>
-      <div className="wcf-wordmark">WIRRAL</div>
-      <div className="wcf-wordmark-sub">COMMUNITY FOOTBALL</div>
+      <img className="wcf-signin-photo" src="/floodlit-signin.jpg" alt="" />
+      <div className="wcf-signin-scrim" />
 
-      {sent ? (
-        <form className="wcf-signin-form" onSubmit={verifyCode}>
-          <p className="wcf-signin-sent">
-            Enter the code emailed to <strong>{email}</strong>
-          </p>
-          <input
-            type="text"
-            inputMode="numeric"
-            autoFocus
-            required
-            placeholder="123456"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-          />
-          <button type="submit" disabled={verifying || !code.trim()}>
-            {verifying ? "Checking…" : "Verify code"}
-          </button>
-          {error && <p className="wcf-signin-error">{error}</p>}
-          <button type="button" className="wcf-signin-back" onClick={() => { setSent(false); setCode(""); setError(null); }}>
-            Use a different email
-          </button>
-        </form>
-      ) : (
-        <form className="wcf-signin-form" onSubmit={sendCode}>
-          <input
-            type="email"
-            required
-            placeholder="you@email.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-          <button type="submit" disabled={sending || !email.trim()}>
-            {sending ? "Sending…" : "Send sign-in code"}
-          </button>
-          {error && <p className="wcf-signin-error">{error}</p>}
-          <button type="button" className="wcf-signin-back" disabled={!email.trim()} onClick={() => setSent(true)}>
-            I already have a code
-          </button>
-        </form>
-      )}
+      <div className="wcf-signin-head">
+        <div className="wcf-signin-brand-row">
+          <span className="wcf-signin-crest">
+            <img src="/logo.png" alt="Wirral Community Football crest" />
+          </span>
+          <span className="wcf-signin-est">EST. 2026 · WIRRAL</span>
+        </div>
+        <div className="wcf-signin-wordmark">
+          WIRRAL
+          <div className="wcf-signin-wordmark-dim1">COMM.</div>
+          <div className="wcf-signin-wordmark-dim2">FOOTBALL</div>
+        </div>
+      </div>
 
-      <p className="wcf-privacy-note">
-        We only store your name, email, and booking history to run the club — nothing else.
-      </p>
+      <div className="wcf-signin-bottom">
+        <div className="wcf-signin-steps">
+          <div className="wcf-signin-step-bar on" />
+          <div className={"wcf-signin-step-bar" + (sent ? " on" : "")} />
+          <div className="wcf-signin-step-label">{sent ? "STEP 2 / 2" : "STEP 1 / 2"}</div>
+        </div>
+
+        {sent ? (
+          <form className="wcf-signin-form2" onSubmit={verifyCode}>
+            <p className="wcf-signin-sub">
+              We sent a six-digit code to <strong>{email}</strong>.
+            </p>
+            <div className="wcf-signin-cells">
+              {Array.from({ length: 6 }, (_, i) => (
+                <div key={i} className={"wcf-signin-cell" + (code.length === i ? " active" : "")}>
+                  {code[i] || ""}
+                </div>
+              ))}
+            </div>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoFocus
+              required
+              className="wcf-signin-hidden-input"
+              placeholder="tap and type your code"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            />
+            <button type="submit" className="wcf-signin-cta" disabled={verifying || !code.trim()}>
+              {verifying ? "Checking…" : "Verify code"}
+            </button>
+            {error && <p className="wcf-signin-error">{error}</p>}
+            <button type="button" className="wcf-signin-alt" onClick={() => { setSent(false); setCode(""); setError(null); }}>
+              Use a different email
+            </button>
+          </form>
+        ) : (
+          <form className="wcf-signin-form2" onSubmit={sendCode}>
+            <p className="wcf-signin-sub">No password needed. We&apos;ll email you a six-digit code.</p>
+            <div className="wcf-signin-email-pill">
+              <input
+                type="email"
+                required
+                placeholder="you@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <button type="submit" disabled={sending || !email.trim()}>
+                {sending ? "Sending…" : "Send sign-in code"}
+              </button>
+            </div>
+            {error && <p className="wcf-signin-error">{error}</p>}
+            <button type="button" className="wcf-signin-alt" disabled={!email.trim()} onClick={() => setSent(true)}>
+              I already have a code
+            </button>
+          </form>
+        )}
+
+        <p className="wcf-privacy-note">
+          We only store your name, email, and booking history to run the club — nothing else.
+        </p>
+      </div>
     </div>
   );
 }
@@ -6475,19 +6505,38 @@ const css = `
 .wcf-splash{flex:1;display:flex;align-items:center;justify-content:center}
 .wcf-splash .wcf-logo.big{width:96px;height:96px;border-radius:24px}
 
-.wcf-signin{flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:24px;text-align:center}
-.wcf-logo.big{width:96px;height:96px;border-radius:24px;margin-bottom:6px}
-.wcf-signin .wcf-wordmark{font-size:30px;margin-top:6px}
-.wcf-signin-form{display:flex;flex-direction:column;gap:10px;width:100%;max-width:280px;margin-top:24px}
-.wcf-signin-form input{background:var(--panel);border:1px solid var(--line);color:var(--white);padding:12px;border-radius:10px;font-size:14px;font-family:var(--sans)}
-.wcf-signin-form button{background:var(--red);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:800;cursor:pointer}
-.wcf-signin-form button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
-.wcf-signin-error{color:var(--red-hi);font-size:12px;margin:0}
-.wcf-signin-sent{color:var(--dim);font-size:14px;max-width:280px;margin:0 0 4px;line-height:1.5}
-.wcf-signin-form input[inputmode="numeric"]{letter-spacing:4px;text-align:center;font-family:var(--mono);font-size:18px}
-.wcf-signin-back{background:none!important;border:none!important;color:var(--dim)!important;font-weight:600!important;font-size:12px!important;padding:4px!important;cursor:pointer;text-decoration:underline}
-.wcf-signin-back:disabled{opacity:.4;cursor:not-allowed;text-decoration:none}
-.wcf-privacy-note{color:var(--dim);font-size:11px;max-width:260px;margin-top:32px;line-height:1.5;opacity:.8}
+.wcf-signin{position:relative;flex:1;overflow-y:auto;display:flex;flex-direction:column;background:var(--bg)}
+.wcf-signin-photo{position:absolute;left:0;right:0;top:0;width:100%;height:72%;object-fit:cover;object-position:50% 55%}
+.wcf-signin-scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(13,13,26,.6) 0%,rgba(13,13,26,.34) 20%,rgba(13,13,26,.6) 52%,rgba(13,13,26,.86) 66%,var(--bg) 80%)}
+.wcf-signin-head{position:relative;padding:36px 22px 0;flex:0 0 auto}
+.wcf-signin-brand-row{display:flex;align-items:center;gap:10px}
+.wcf-signin-crest{display:block;width:34px;height:34px;border-radius:10px;overflow:hidden;border:1px solid rgba(230,57,70,.4);flex:0 0 auto;box-shadow:0 2px 10px rgba(0,0,0,.5)}
+.wcf-signin-crest img{display:block;width:100%;height:100%;object-fit:cover;object-position:50% 43%}
+.wcf-signin-est{font-weight:800;font-size:9.5px;letter-spacing:2.6px;color:var(--red-hi)}
+.wcf-signin-wordmark{font-family:var(--display);font-weight:800;font-size:52px;line-height:.86;letter-spacing:-1px;color:var(--white);margin-top:22px;text-shadow:0 6px 30px rgba(0,0,0,.6)}
+.wcf-signin-wordmark-dim1{font-family:var(--display);color:rgba(245,246,248,.34)}
+.wcf-signin-wordmark-dim2{font-family:var(--display);color:rgba(245,246,248,.16)}
+.wcf-signin-bottom{position:relative;flex:1;display:flex;flex-direction:column;justify-content:flex-end;padding:0 22px 40px;box-sizing:border-box;gap:15px}
+.wcf-signin-steps{display:flex;gap:8px;align-items:center}
+.wcf-signin-step-bar{flex:1;height:3px;border-radius:2px;background:rgba(148,163,184,.2)}
+.wcf-signin-step-bar.on{background:linear-gradient(90deg,var(--red),rgba(230,57,70,.4))}
+.wcf-signin-step-label{font:600 9.5px ui-monospace,Menlo,monospace;letter-spacing:1.4px;color:var(--dim);white-space:nowrap}
+.wcf-signin-form2{display:flex;flex-direction:column;gap:11px;margin:0}
+.wcf-signin-sub{color:var(--dim);font-size:12.5px;line-height:1.55;margin:0}
+.wcf-signin-email-pill{display:flex;gap:10px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);border-radius:14px;padding:6px 6px 6px 14px;align-items:center;box-shadow:0 18px 38px -30px rgba(0,0,0,.9)}
+.wcf-signin-email-pill input{flex:1;min-width:0;background:transparent;border:none;color:var(--white);padding:11px 0;font-size:15px;font-family:var(--sans)}
+.wcf-signin-email-pill button{background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5));color:#fff;border:none;padding:12px 16px;border-radius:11px;font-weight:800;font-size:12.5px;cursor:pointer;flex:0 0 auto;white-space:nowrap}
+.wcf-signin-email-pill button:disabled{opacity:.5;cursor:not-allowed}
+.wcf-signin-cells{display:flex;gap:7px;justify-content:space-between}
+.wcf-signin-cell{flex:1;height:56px;border-radius:13px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:21px;color:var(--white);box-shadow:0 14px 30px -24px rgba(0,0,0,.9)}
+.wcf-signin-cell.active{border-color:rgba(240,82,94,.6)}
+.wcf-signin-hidden-input{background:transparent;border:none;border-bottom:1px solid rgba(148,163,184,.18);color:transparent;caret-color:var(--red-hi);padding:6px 2px;font-size:12px;text-align:center;font-family:var(--sans);width:100%;box-sizing:border-box}
+.wcf-signin-cta{background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5));color:#fff;border:none;padding:15px;border-radius:13px;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 12px 28px -14px rgba(230,57,70,.9)}
+.wcf-signin-cta:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
+.wcf-signin-error{background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.3);border-radius:10px;padding:10px 12px;color:var(--red-hi);font-size:12px;line-height:1.45;margin:0}
+.wcf-signin-alt{background:none;border:none;color:var(--dim);font-weight:600;font-size:12px;padding:5px;cursor:pointer;text-decoration:underline;font-family:var(--sans);align-self:flex-start}
+.wcf-signin-alt:disabled{opacity:.4;cursor:not-allowed;text-decoration:none}
+.wcf-privacy-note{color:var(--dim);font-size:11px;max-width:280px;margin:0;line-height:1.5;opacity:.8}
 
 .wcf-top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
   padding:14px 16px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
