@@ -3320,7 +3320,7 @@ function App({ session }: { session: Session }) {
                     return (
                       <button
                         key={t.booking.id}
-                        className={"wcf-lineup-token" + (t.isRed ? " flip" : "")}
+                        className={"wcf-lineup-token" + ((t.role === "Goalkeeper" ? !t.isRed : t.isRed) ? " flip" : "")}
                         style={{ left: `${t.x}%`, top: `${t.y}%` }}
                         onClick={() => setSelectedLineupPlayerId((v) => (v === t.booking.player_id ? null : t.booking.player_id))}
                       >
