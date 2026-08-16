@@ -2892,6 +2892,7 @@ function App({ session }: { session: Session }) {
                   onSave={(patch) => saveGame(nextFixtureForCountdown.id, patch)}
                   onDelete={() => deleteGame(nextFixtureForCountdown.id)}
                   onOpenPlayerCard={openPlayerCard}
+                  onSetStatus={setBookingStatus}
                   weather={weatherFor(nextFixtureForCountdown.date, nextFixtureForCountdown.kickoff)}
                   askConfirm={askConfirm}
                 />
@@ -2919,6 +2920,7 @@ function App({ session }: { session: Session }) {
                       onSave={(patch) => saveGame(g.id, patch)}
                       onDelete={() => deleteGame(g.id)}
                       onOpenPlayerCard={openPlayerCard}
+                      onSetStatus={setBookingStatus}
                       weather={weatherFor(g.date, g.kickoff)}
                       askConfirm={askConfirm}
                     />
@@ -6202,6 +6204,7 @@ function GameCard({
   onSave,
   onDelete,
   onOpenPlayerCard,
+  onSetStatus,
   weather,
   askConfirm,
   featured,
@@ -6219,52 +6222,75 @@ function GameCard({
   onSave: (patch: Partial<GameRow>) => void;
   onDelete: () => void;
   onOpenPlayerCard: (playerId: string) => void;
+  onSetStatus: (bookingId: string, status: PayStatus) => void;
   weather: { code: number; temp: number } | null;
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
   featured?: boolean;
   countdownText?: string | null;
 }) {
   const [form, setForm] = useState<GameRow>(game);
-  const [showWaiting, setShowWaiting] = useState(false);
-  const [showRoster, setShowRoster] = useState(false);
+  const [showSheet, setShowSheet] = useState(false);
+  const [sheetTab, setSheetTab] = useState<"playing" | "waiting">("playing");
 
   useEffect(() => setForm(game), [game, editing]);
 
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const waitingList = game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const myBooking = game.bookings.find((b) => b.player_id === myId);
-  const myWaitingPosition = waitingList.findIndex((b) => b.player_id === myId) + 1;
   const full = confirmed.length >= game.max_players;
   const spotsLeft = Math.max(0, game.max_players - confirmed.length);
+  const fillPct = Math.min(100, (confirmed.length / game.max_players) * 100);
+  const openSheet = () => { setSheetTab("playing"); setShowSheet(true); };
+
+  const editIcon = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
+  );
 
   return (
     <article className={"wcf-card " + (featured ? "featured " : "") + (myBooking ? "in" : "")}>
       {featured ? (
         <>
           <div className="wcf-hero-top">
-            <span className="wcf-hero-date">{fmtDate(game.date)}</span>
-            <span className={"wcf-status-pill " + (full ? "full" : "open")}>{full ? "Full" : "Open"}</span>
+            <span className="wcf-hero-date mono">{fmtDate(game.date).replace(",", "").toUpperCase()}</span>
+            <span className="wcf-hero-top-right">
+              {isAdmin && (
+                <button className="wcf-hero-edit-btn" onClick={onEdit} aria-label="Edit fixture">
+                  {editIcon}
+                </button>
+              )}
+              <span className={"wcf-status-pill " + (full ? "full" : "open")}>{full ? "Full" : "Open"}</span>
+            </span>
           </div>
           <div className="wcf-hero-time">{game.kickoff}</div>
-          <div className="wcf-hero-venue">
-            📍 {game.venue}
-            {!game.published && <span className="wcf-draft-badge">Draft</span>}
+          <div className="wcf-hero-venue-row">
+            <span className="wcf-hero-venue combo">
+              <span className="wcf-hero-pin">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s7-6.2 7-11a7 7 0 10-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.4"/></svg>
+              </span>
+              {game.venue}
+              {!game.published && <span className="wcf-draft-badge">Draft</span>}
+            </span>
+            {countdownText && <span className="wcf-hero-countdown combo">⏱ {countdownText}</span>}
           </div>
           <div className="wcf-hero-meta">
             <span>{game.pitch}</span><span className="wcf-hero-dot" /><span>£{game.price}</span>
             {weather && <><span className="wcf-hero-dot" /><span>{weatherIcon(weather.code)} {weather.temp}°C</span></>}
           </div>
-          {countdownText && <div className="wcf-hero-countdown">⏱ Kicks off in {countdownText}</div>}
           <div className="wcf-hero-divider" />
-          <div className="wcf-hero-roster">
+          <button className="wcf-hero-roster combo tappable" onClick={openSheet} aria-label="View squad">
             <div className="wcf-hero-roster-icon">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </div>
-            <div className="wcf-hero-roster-text">
-              <span className="wcf-hero-roster-n">{confirmed.length} / {game.max_players}</span>
-              <span className={"wcf-hero-roster-l " + (full ? "full" : "open")}>{full ? "Squad full" : `${spotsLeft} spots left`}</span>
+            <div className="wcf-hero-roster-text" style={{ flex: 1 }}>
+              <div className="wcf-hero-roster-row">
+                <span className="wcf-hero-roster-n2">{confirmed.length}/{game.max_players}</span>
+                {waitingList.length > 0 && <span className="wcf-hero-waiting-chip">+{waitingList.length} WAITING</span>}
+              </div>
+              <div className="wcf-hero-bar-track">
+                <div className="wcf-hero-bar-fill" style={{ width: `${fillPct}%` }} />
+              </div>
             </div>
-            <button className="wcf-avatars" onClick={() => setShowRoster((v) => !v)} aria-label="View players">
+            <span className="wcf-avatars" style={{ pointerEvents: "none" }}>
               {confirmed.slice(0, 5).map((b) => {
                 const a = avatarFor(b.player.display_name);
                 return (
@@ -6274,103 +6300,103 @@ function GameCard({
                 );
               })}
               {confirmed.length > 5 && <span className="wcf-avatar-chip lg more">+{confirmed.length - 5}</span>}
-            </button>
-          </div>
+            </span>
+            <span className="wcf-hero-roster-chev">›</span>
+          </button>
         </>
       ) : (
-        <div className="wcf-card-top">
-          <div className="wcf-kick">
-            <span className="wcf-kick-time">{game.kickoff}</span>
-            <span className="wcf-kick-date">{fmtDate(game.date)}</span>
+        <div className="wcf-fx-row" onClick={openSheet}>
+          <div className="wcf-fx-date">
+            <div className="wcf-fx-day">{fmtDate(game.date).split(",")[0]?.toUpperCase()}</div>
+            <div className="wcf-fx-num">{new Date(game.date + "T00:00:00").getDate()}</div>
           </div>
-          <div className="wcf-card-info">
-            <div className="wcf-venue">{game.venue}{!game.published && <span className="wcf-draft-badge">Draft</span>}</div>
-            <div className="wcf-pitch-row">
-              <span className="wcf-pitch">{game.pitch} · £{game.price}</span>
-              {weather && <span className="wcf-wx-chip">{weatherIcon(weather.code)} {weather.temp}°C</span>}
+          <div className="wcf-fx-divider" />
+          <div className="wcf-fx-info">
+            <div className="wcf-fx-title">
+              {game.kickoff} · {game.venue}
+              {!game.published && <span className="wcf-draft-badge">Draft</span>}
+            </div>
+            <div className="wcf-fx-meta">
+              {game.pitch} · £{game.price} · {confirmed.length}/{game.max_players}
+              {weather && <> · {weatherIcon(weather.code)} {weather.temp}°C</>}
+            </div>
+            <div className="wcf-fx-bar-track">
+              <div className="wcf-fx-bar-fill" style={{ width: `${fillPct}%` }} />
             </div>
           </div>
-          <div className="wcf-count-col">
-            <span className={"wcf-status-pill " + (full ? "full" : "open")}>{full ? "Full" : "Open"}</span>
-            <div className="wcf-avatars-row">
-              <button className="wcf-avatars" onClick={() => setShowRoster((v) => !v)} aria-label="View players">
-                {confirmed.slice(0, 4).map((b) => {
-                  const a = avatarFor(b.player.display_name);
-                  return (
-                    <span key={b.id} className="wcf-avatar-chip" style={{ background: a.gradient }}>
-                      {a.initial}
-                    </span>
-                  );
-                })}
-                {confirmed.length > 4 && <span className="wcf-avatar-chip more">+{confirmed.length - 4}</span>}
-              </button>
-              <span className="wcf-count-n">{confirmed.length}/{game.max_players}</span>
-            </div>
-            {!full && <span className="wcf-spots-note">{spotsLeft} left</span>}
-          </div>
-        </div>
-      )}
-
-      <button className="wcf-roster-toggle" onClick={() => setShowRoster((v) => !v)}>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        View players ({confirmed.length}/{game.max_players})
-        <span className="wcf-roster-chev">{showRoster ? "▲" : "▼"}</span>
-      </button>
-      {showRoster && (
-        <div className="wcf-sheet">
-          {Array.from({ length: game.max_players }).map((_, i) => {
-            const b = confirmed[i];
-            return (
-              <div key={i} className={"wcf-slot " + (b ? "taken" : "")}>
-                <span className="wcf-slot-num">{i + 1}</span>
-                {b ? (
-                  <button className="wcf-slot-name wcf-name-link" onClick={() => onOpenPlayerCard(b.player_id)}>{b.player.display_name}</button>
-                ) : (
-                  <span className="wcf-slot-name">—</span>
-                )}
-                {b && <span className={"wcf-pay-dot " + b.status} title={b.status} />}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {waitingList.length > 0 && (
-        <div className="wcf-waiting">
-          <button className="wcf-waiting-banner" onClick={() => setShowWaiting((v) => !v)}>
-            <span className="wcf-waiting-banner-left">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-              <span>
-                <span className="wcf-waiting-label">Waiting list</span>
-                <span className="wcf-waiting-sub">
-                  {waitingList.length} player{waitingList.length === 1 ? "" : "s"} waiting
-                  {myWaitingPosition > 0 ? ` · you're #${myWaitingPosition}` : ""}
-                </span>
-              </span>
-            </span>
-            <span className="wcf-waiting-chev">{showWaiting ? "▲" : "›"}</span>
-          </button>
-          {showWaiting && (
-            <div className="wcf-waiting-list">
-              {waitingList.map((b, i) => (
-                <div key={b.id} className="wcf-waiting-row">
-                  <span>{i + 1}. {b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
-                  {isAdmin && editing && (
-                    <button
-                      className="wcf-waiting-remove"
-                      onClick={async () => {
-                        if (await askConfirm(`Remove ${b.player.display_name} from the waiting list?`, "They'll need to rejoin if they want a spot again.", "Remove")) {
-                          onCancel(b.id);
-                        }
-                      }}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
+          {isAdmin && (
+            <button
+              className="wcf-hero-edit-btn"
+              onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              aria-label="Edit fixture"
+            >
+              {editIcon}
+            </button>
           )}
+          <span className={"wcf-fx-pill " + (full ? "full" : "open")}>{full ? "FULL" : `${spotsLeft} LEFT`}</span>
+        </div>
+      )}
+
+      {showSheet && (
+        <div className="wcf-sheet-overlay" onClick={() => setShowSheet(false)}>
+          <div className="wcf-squad-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="wcf-sheet-handle-wrap"><div className="wcf-sheet-handle" /></div>
+            <div className="wcf-sheet-head">
+              <div className="wcf-sheet-kicker">{fmtDate(game.date).replace(",", "").toUpperCase()} · {game.venue.toUpperCase()}</div>
+              <div className="wcf-sheet-title">Squad &amp; waiting list</div>
+              <div className="wcf-sheet-tabs">
+                <button className={"wcf-sheet-tab" + (sheetTab === "playing" ? " on" : "")} onClick={() => setSheetTab("playing")}>
+                  Playing · {confirmed.length}
+                </button>
+                <button className={"wcf-sheet-tab" + (sheetTab === "waiting" ? " on" : "")} onClick={() => setSheetTab("waiting")}>
+                  Waiting · {waitingList.length}
+                </button>
+              </div>
+            </div>
+            <div className="wcf-sheet-scroll">
+              {(sheetTab === "playing" ? confirmed : waitingList).length === 0 && (
+                <p className="wcf-empty small">{sheetTab === "playing" ? "No one booked in yet." : "No one on the waiting list."}</p>
+              )}
+              {(sheetTab === "playing" ? confirmed : waitingList).map((b, i) => {
+                const a = avatarFor(b.player.display_name);
+                return (
+                  <div key={b.id} className="wcf-sheet-row">
+                    <button className="wcf-sheet-row-main" onClick={() => onOpenPlayerCard(b.player_id)}>
+                      <span className="wcf-sheet-row-n">{String(i + 1).padStart(2, "0")}</span>
+                      <span className="wcf-sheet-row-avatar" style={{ background: a.gradient }}>{a.initial}</span>
+                      <span className="wcf-sheet-row-body">
+                        <span className="wcf-sheet-row-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
+                        <span className="wcf-sheet-row-sub">
+                          {sheetTab === "waiting" ? `Joined ${fmtDateTime(b.created_at)}` : `Booked ${fmtDateTime(b.created_at)}`}
+                        </span>
+                      </span>
+                    </button>
+                    {isAdmin && sheetTab === "playing" && b.status !== "confirmed" && (
+                      <button
+                        className="wcf-sheet-confirm"
+                        onClick={() => onSetStatus(b.id, "confirmed")}
+                      >
+                        Confirm
+                      </button>
+                    )}
+                    {isAdmin && sheetTab === "playing" && b.status === "confirmed" && <StatusBadge status={b.status} />}
+                    {isAdmin && sheetTab === "waiting" && (
+                      <button
+                        className="wcf-sheet-remove"
+                        onClick={async () => {
+                          if (await askConfirm(`Remove ${b.player.display_name} from the waiting list?`, "They'll need to rejoin if they want a spot again.", "Remove")) {
+                            onCancel(b.id);
+                          }
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
 
@@ -6426,21 +6452,6 @@ function GameCard({
               : full ? (waitingList.length >= 10 ? "Waiting list full" : "Join waiting list") : "Grab a spot"}
           </button>
         )}
-        {isAdmin && (
-          <div className="wcf-admin-actions">
-            <button className="wcf-ghost" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
-            <button
-              className="wcf-ghost danger"
-              onClick={async () => {
-                if (await askConfirm(`Delete this fixture?`, `${game.venue} on ${fmtDate(game.date)} — this removes it and everyone's bookings.`, "Delete")) {
-                  onDelete();
-                }
-              }}
-            >
-              Delete
-            </button>
-          </div>
-        )}
       </div>
 
       {isAdmin && editing && (
@@ -6478,6 +6489,19 @@ function GameCard({
               onChange={(e) => setForm({ ...form, max_players: Math.min(MAX_SPOTS, Number(e.target.value) || 0) })}
             />
           </label>
+          <div className="wcf-edit-actions">
+            <button className="wcf-ghost" onClick={onEdit}>Close</button>
+            <button
+              className="wcf-ghost danger"
+              onClick={async () => {
+                if (await askConfirm(`Delete this fixture?`, `${game.venue} on ${fmtDate(game.date)} — this removes it and everyone's bookings.`, "Delete")) {
+                  onDelete();
+                }
+              }}
+            >
+              Delete
+            </button>
+          </div>
           <button className="wcf-save" onClick={() => onSave(form)}>
             {game.published ? "Save changes" : "Confirm & post fixture"}
           </button>
@@ -6572,72 +6596,81 @@ const css = `
   background-size:cover;background-position:center 30%;border-radius:24px;padding:24px;margin-bottom:22px;
 }
 .wcf-card.featured.in:before{display:none}
+.wcf-card.featured.in{border-color:rgba(34,197,94,.45);box-shadow:0 0 0 1px rgba(34,197,94,.15),0 0 60px 6px rgba(34,197,94,.28)}
 .wcf-hero-top{display:flex;justify-content:space-between;align-items:flex-start}
+.wcf-hero-top-right{display:flex;align-items:center;gap:8px}
 .wcf-hero-date{font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#B7BDD0}
+.wcf-hero-date.mono{font-family:var(--mono);letter-spacing:1.6px}
 .wcf-hero-time{font-family:var(--display);font-size:52px;font-weight:900;letter-spacing:-.03em;line-height:1;margin-top:6px}
 .wcf-hero-venue{display:flex;align-items:center;gap:7px;font-size:16px;font-weight:800;margin-top:16px}
+.wcf-hero-venue.combo{margin-top:0}
+.wcf-hero-venue-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:16px}
+.wcf-hero-pin{width:22px;height:22px;border-radius:7px;background:rgba(46,116,204,.22);border:1px solid rgba(46,116,204,.4);display:grid;place-items:center;color:#7fb0ec;flex:0 0 auto}
 .wcf-hero-meta{display:flex;align-items:center;gap:8px;font-size:12px;color:#A6ACC0;margin-top:6px}
 .wcf-hero-dot{width:3px;height:3px;border-radius:50%;background:#4A5170}
 .wcf-hero-countdown{font-size:11.5px;font-weight:700;color:var(--white);opacity:.85;margin-top:10px}
+.wcf-hero-countdown.combo{margin-top:0;font-family:var(--mono);font-size:11px;letter-spacing:.4px;white-space:nowrap;color:var(--red-hi);opacity:1;font-weight:800}
 .wcf-hero-divider{height:1px;background:rgba(255,255,255,.1);margin:16px 0}
 .wcf-hero-roster{display:flex;align-items:center;gap:12px}
+.wcf-hero-roster.tappable{width:100%;background:none;border:none;padding:0;cursor:pointer;text-align:left;font:inherit;color:inherit}
 .wcf-hero-roster-icon{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.08);border:1px solid var(--line);display:grid;place-items:center;flex:0 0 auto}
 .wcf-hero-roster-text{display:flex;flex-direction:column;flex:0 0 auto}
-.wcf-hero-roster-n{font-family:var(--display);font-weight:900;font-size:16px}
-.wcf-hero-roster-l{font-size:11px;font-weight:700;margin-top:2px}
-.wcf-hero-roster-l.full{color:var(--red)}
-.wcf-hero-roster-l.open{color:var(--green)}
+.wcf-hero-roster-row{display:flex;align-items:center;gap:8px}
+.wcf-hero-roster-n2{font-family:var(--display);font-weight:800;font-size:15px;color:var(--white)}
+.wcf-hero-waiting-chip{font-family:var(--sans);font-weight:800;font-size:8.5px;letter-spacing:.6px;color:#f5d97a;background:rgba(234,179,8,.16);border:1px solid rgba(234,179,8,.4);padding:3px 7px;border-radius:999px;white-space:nowrap}
+.wcf-hero-bar-track{height:4px;border-radius:3px;background:rgba(255,255,255,.12);margin-top:7px;overflow:hidden;width:100%}
+.wcf-hero-bar-fill{height:100%;background:linear-gradient(90deg,var(--red),rgba(230,57,70,.5))}
+.wcf-hero-roster-chev{color:var(--dim);font-size:18px;flex:0 0 auto}
+.wcf-hero-edit-btn{width:26px;height:26px;border-radius:9px;background:rgba(13,13,26,.55);border:1px solid rgba(148,163,184,.25);color:var(--white);display:grid;place-items:center;cursor:pointer;backdrop-filter:blur(6px);flex:0 0 auto}
 .wcf-avatar-chip.lg{width:36px;height:36px;font-size:12px;margin-left:-10px}
-.wcf-card.featured .wcf-waiting{margin:18px -24px 14px}
-.wcf-card.featured .wcf-waiting-banner,.wcf-card.featured .wcf-waiting-list{padding-left:24px;padding-right:24px}
 .wcf-card.featured .wcf-book{padding:16px 19px;font-size:14px;border-radius:14px}
-.wcf-card-top{display:flex;align-items:flex-start;gap:11px}
-.wcf-kick{display:flex;flex-direction:column;min-width:50px;flex:0 0 auto}
-.wcf-kick-time{font-family:var(--display);font-size:20px;font-weight:900;letter-spacing:-.02em;line-height:1;color:var(--white)}
-.wcf-kick-date{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin-top:6px;font-weight:800}
-.wcf-card-info{flex:1;min-width:0}
 .wcf-venue{font-weight:700;font-size:13.5px}
 .wcf-draft-badge{display:inline-block;margin-left:8px;background:rgba(234,179,8,.18);color:var(--amber);border:1px solid rgba(234,179,8,.4);font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;padding:2px 7px;border-radius:20px;vertical-align:middle}
 .wcf-pitch{font-size:11px;color:var(--dim);font-family:var(--sans)}
-.wcf-pitch-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:5px}
-.wcf-wx-chip{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:20px;background:var(--panel2);color:var(--dim)}
-.wcf-count-col{text-align:right;flex:0 0 auto}
 .wcf-status-pill{display:inline-block;font-family:var(--display);font-size:10px;font-weight:800;letter-spacing:.06em;padding:5px 12px;border-radius:20px;border:1.5px solid;white-space:nowrap}
 .wcf-status-pill.full{color:#fff;border-color:var(--red);background:var(--red)}
 .wcf-status-pill.open{color:var(--green);border-color:var(--green);background:transparent}
-.wcf-avatars-row{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px}
 .wcf-avatars{display:flex;background:none;border:none;padding:0;cursor:pointer}
 .wcf-avatar-chip{width:24px;height:24px;border-radius:50%;border:2px solid var(--panel);margin-left:-8px;display:grid;place-items:center;font-size:9px;font-weight:800;color:#fff;background:var(--panel2)}
 .wcf-avatar-chip:first-child{margin-left:0}
 .wcf-avatar-chip.more{color:var(--dim);background:var(--panel2)}
-.wcf-count-n{font-family:var(--display);font-weight:900;font-size:13px;color:var(--white)}
-.wcf-spots-note{display:block;font-size:10.5px;font-weight:800;margin-top:9px;color:var(--green)}
 
-.wcf-roster-toggle{display:flex;align-items:center;gap:7px;width:100%;background:none;border:none;color:var(--dim);font-family:var(--sans);padding:6px 0;font-weight:700;font-size:11.5px;cursor:pointer;margin-top:16px}
-.wcf-roster-toggle svg{flex:0 0 auto}
-.wcf-roster-chev{margin-left:auto;font-size:10px}
-.wcf-sheet{display:grid;grid-template-columns:repeat(2,1fr);gap:5px 10px;margin:10px 0 14px;padding:12px;
-  background:var(--bg);border-radius:10px;border:1px solid var(--line)}
-.wcf-slot{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px}
-.wcf-slot-num{font-family:var(--mono);color:var(--dim);width:20px;text-align:center;font-size:11px;border:1px solid var(--line);border-radius:4px;padding:1px 0}
-.wcf-slot-name{color:var(--dim);flex:1}
-.wcf-slot.taken .wcf-slot-name{color:var(--white)}
-.wcf-slot.taken .wcf-slot-num{color:var(--green);border-color:rgba(34,197,94,.5)}
-.wcf-pay-dot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex:0 0 auto}
-.wcf-pay-dot.pending{background:var(--amber)}
-.wcf-pay-dot.confirmed{background:var(--green)}
+.wcf-fx-row{position:relative;display:flex;align-items:center;gap:13px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);border-radius:16px;padding:13px 14px;margin-bottom:9px;box-shadow:0 18px 38px -34px rgba(0,0,0,.9);cursor:pointer}
+.wcf-fx-row.in{border-color:rgba(34,197,94,.4);box-shadow:0 18px 38px -34px rgba(0,0,0,.9),0 0 34px 2px rgba(34,197,94,.22)}
+.wcf-fx-date{width:44px;flex:0 0 auto;text-align:center}
+.wcf-fx-day{font-family:var(--mono);font-weight:600;font-size:9px;letter-spacing:1.2px;color:var(--dim)}
+.wcf-fx-num{font-family:var(--display);font-weight:800;font-size:22px;line-height:1.15;color:var(--white)}
+.wcf-fx-divider{width:1px;height:34px;background:var(--line);flex:0 0 auto}
+.wcf-fx-info{flex:1;min-width:0}
+.wcf-fx-title{font-weight:700;font-size:13.5px;color:var(--white)}
+.wcf-fx-meta{font-size:11px;color:var(--dim);margin-top:3px}
+.wcf-fx-bar-track{height:3px;border-radius:2px;background:rgba(148,163,184,.16);margin-top:8px;overflow:hidden}
+.wcf-fx-bar-fill{height:100%;background:linear-gradient(90deg,var(--red),rgba(230,57,70,.45))}
+.wcf-fx-pill{flex:0 0 auto;font-family:var(--sans);font-weight:800;font-size:9.5px;letter-spacing:.5px;padding:5px 9px;border-radius:999px;white-space:nowrap}
+.wcf-fx-pill.full{background:rgba(230,57,70,.16);border:1px solid rgba(230,57,70,.4);color:var(--red-hi)}
+.wcf-fx-pill.open{background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.35);color:var(--green)}
 
-.wcf-waiting{margin:18px -20px 14px}
-.wcf-waiting-banner{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:rgba(234,179,8,.08);border:none;border-top:1px solid rgba(234,179,8,.22);border-bottom:1px solid rgba(234,179,8,.22);padding:14px 20px;cursor:pointer;text-align:left}
-.wcf-waiting-banner-left{display:flex;align-items:center;gap:10px;color:var(--amber)}
-.wcf-waiting-label{display:block;font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--amber)}
-.wcf-waiting-sub{display:block;font-size:11.5px;color:var(--dim);margin-top:1px;font-weight:400}
-.wcf-waiting-chev{color:var(--amber);font-size:14px;flex:0 0 auto}
-.wcf-waiting-list{padding:10px 20px 0}
-.wcf-waiting-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--dim);padding:3px 0}
-.wcf-waiting-row span:first-child{flex:1}
-.wcf-waiting-remove{background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer;flex:0 0 auto}
-.wcf-waiting-remove:hover{color:var(--red-hi)}
+.wcf-sheet-overlay{position:fixed;inset:0;background:rgba(6,7,14,.6);z-index:60;display:flex;align-items:flex-end;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.wcf-squad-sheet{width:100%;max-width:520px;margin:0 auto;max-height:82vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(30,41,59,.99),rgba(19,22,38,1));border-top:1px solid rgba(148,163,184,.2);border-radius:24px 24px 0 0;box-shadow:0 -18px 48px -20px rgba(0,0,0,.95)}
+.wcf-sheet-handle-wrap{padding:10px 0 0;display:flex;justify-content:center;flex:0 0 auto}
+.wcf-sheet-handle{width:40px;height:4px;border-radius:3px;background:rgba(148,163,184,.3)}
+.wcf-sheet-head{padding:14px 20px 0;flex:0 0 auto}
+.wcf-sheet-kicker{font-family:var(--mono);font-weight:600;font-size:10px;letter-spacing:1.8px;color:var(--dim)}
+.wcf-sheet-title{font-family:var(--display);font-weight:700;font-size:19px;color:var(--white);margin-top:7px}
+.wcf-sheet-tabs{display:flex;gap:8px;margin-top:14px}
+.wcf-sheet-tab{flex:1;background:rgba(148,163,184,.08);border:1px solid var(--line);color:var(--dim);font-family:var(--sans);font-weight:800;font-size:10px;letter-spacing:1.2px;padding:10px;border-radius:11px;cursor:pointer}
+.wcf-sheet-tab.on{background:rgba(230,57,70,.16);border-color:rgba(230,57,70,.4);color:#f8b3b8}
+.wcf-sheet-scroll{flex:1;overflow-y:auto;padding:14px 20px 30px;display:flex;flex-direction:column;gap:7px}
+.wcf-sheet-row{display:flex;align-items:center;gap:8px;background:rgba(13,13,26,.45);border:1px solid var(--line);border-radius:14px;padding:6px}
+.wcf-sheet-row-main{flex:1;min-width:0;display:flex;align-items:center;gap:12px;background:none;border:none;padding:5px 6px;cursor:pointer;text-align:left;font:inherit;color:inherit}
+.wcf-sheet-row-n{font-family:var(--mono);font-weight:600;font-size:10px;color:var(--dim);width:16px;flex:0 0 auto}
+.wcf-sheet-row-avatar{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:11px;color:#fff;flex:0 0 auto}
+.wcf-sheet-row-body{flex:1;min-width:0;display:flex;flex-direction:column}
+.wcf-sheet-row-name{font-weight:700;font-size:13.5px;color:var(--white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-sheet-row-sub{font-size:10.5px;color:var(--dim);margin-top:3px}
+.wcf-sheet-confirm{flex:0 0 auto;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.34);color:#86efac;font-weight:800;font-size:10.5px;padding:8px 11px;border-radius:10px;cursor:pointer;margin-right:6px}
+.wcf-sheet-remove{flex:0 0 auto;background:none;border:none;color:var(--dim);font-size:11px;font-weight:700;text-decoration:underline;cursor:pointer;margin-right:6px}
+.wcf-sheet-remove:hover{color:var(--red-hi)}
 
 .wcf-payment{margin:0 0 14px;padding:12px;border-radius:10px;font-size:12px;line-height:1.5;background:var(--panel2);border:1px solid var(--line)}
 .wcf-payment-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;color:var(--white)}
@@ -6661,13 +6694,13 @@ const css = `
 .wcf-book:hover{background:var(--red-hi)}
 .wcf-book.cancel{background:transparent;color:var(--white);border:1px solid var(--line)}
 .wcf-book:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
-.wcf-admin-actions{display:flex;gap:6px}
 .wcf-ghost{background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px 12px;border-radius:10px;font-weight:700;font-size:12px;cursor:pointer}
 .wcf-ghost.danger:hover{color:var(--red-hi);border-color:rgba(230,57,70,.5)}
 
 .wcf-edit{margin-top:14px;padding-top:14px;border-top:1px dashed var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .wcf-edit label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-edit input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans)}
+.wcf-edit-actions{grid-column:1/-1;display:flex;gap:8px}
 .wcf-save{grid-column:1/-1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
 .wcf-save-red{width:100%;min-height:46px;padding:13px;border-radius:12px;cursor:pointer;font-weight:800;font-size:12px;color:#fff;border:1px solid rgba(230,57,70,.5);background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5))}
 .wcf-save-amber{width:100%;min-height:48px;padding:14px;border-radius:14px;cursor:pointer;font-weight:800;font-size:13px;color:#fff;border:1px solid rgba(234,179,8,.5);background:linear-gradient(135deg,var(--amber),rgba(234,179,8,.45))}
@@ -7535,5 +7568,5 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-navbtn.active{color:var(--red-hi)}
 .wcf-navbtn svg{opacity:.9}
 
-@media (max-width:400px){ .wcf-sheet{grid-template-columns:1fr} .wcf-edit{grid-template-columns:1fr} }
+@media (max-width:400px){ .wcf-edit{grid-template-columns:1fr} }
 `;
