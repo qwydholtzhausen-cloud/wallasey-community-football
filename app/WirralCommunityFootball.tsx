@@ -4602,6 +4602,8 @@ function AccountPanel({
   const [name, setName] = useState(profile.display_name);
   const myMessages = messages.filter((m) => m.recipient_id === profile.id);
   const unreadMessages = myMessages.filter((m) => !m.read_at);
+  const readMessages = myMessages.filter((m) => m.read_at);
+  const [openReadMessages, setOpenReadMessages] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
   const [roleSearch, setRoleSearch] = useState("");
   const [renamingPlayerId, setRenamingPlayerId] = useState<string | null>(null);
@@ -4649,22 +4651,45 @@ function AccountPanel({
               </span>
             )}
           </div>
-          {myMessages.map((m) => (
-            <div key={m.id} className={"wcf-inbox-msg" + (m.read_at ? "" : " unread")}>
+          {unreadMessages.map((m) => (
+            <div key={m.id} className="wcf-inbox-msg unread">
               <div className="wcf-inbox-msg-top">
                 <span className="wcf-inbox-msg-tile">✎</span>
                 <div className="wcf-acc-section-body">
                   <div className="wcf-inbox-msg-from">From an admin</div>
                   <div className="wcf-inbox-msg-when">{fmtDateTime(m.created_at)}</div>
                 </div>
-                {!m.read_at && <span className="wcf-inbox-new">NEW</span>}
+                <span className="wcf-inbox-new">NEW</span>
               </div>
               <div className="wcf-inbox-msg-body">{m.message}</div>
-              {!m.read_at && (
-                <button className="wcf-inbox-mark-read" onClick={() => onMarkMessageRead(m.id)}>Mark as read</button>
-              )}
+              <button className="wcf-inbox-mark-read" onClick={() => onMarkMessageRead(m.id)}>Mark as read</button>
             </div>
           ))}
+          {unreadMessages.length === 0 && (
+            <p className="wcf-empty small">No new messages.</p>
+          )}
+          {readMessages.length > 0 && (
+            <AccordionSection
+              icon="✓"
+              title="Read messages"
+              meta={`${readMessages.length} message${readMessages.length === 1 ? "" : "s"}`}
+              open={openReadMessages}
+              onToggle={() => setOpenReadMessages((v) => !v)}
+            >
+              {readMessages.map((m) => (
+                <div key={m.id} className="wcf-inbox-msg">
+                  <div className="wcf-inbox-msg-top">
+                    <span className="wcf-inbox-msg-tile">✎</span>
+                    <div className="wcf-acc-section-body">
+                      <div className="wcf-inbox-msg-from">From an admin</div>
+                      <div className="wcf-inbox-msg-when">{fmtDateTime(m.created_at)}</div>
+                    </div>
+                  </div>
+                  <div className="wcf-inbox-msg-body">{m.message}</div>
+                </div>
+              ))}
+            </AccordionSection>
+          )}
         </>
       )}
 
