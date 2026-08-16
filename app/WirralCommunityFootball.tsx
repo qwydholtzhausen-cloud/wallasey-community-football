@@ -6535,7 +6535,7 @@ const css = `
   --mono:ui-monospace,"SF Mono","Roboto Mono",Menlo,monospace;
   --display:var(--font-sora),-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   --sans:var(--font-inter),-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  max-width:520px;margin:0 auto;height:100vh;height:100dvh;height:100svh;overflow:hidden;background:var(--bg);
+  max-width:520px;margin:0 auto;height:100vh;height:100dvh;overflow:hidden;background:var(--bg);
   color:var(--white);font-family:var(--sans);display:flex;flex-direction:column;
   border-left:1px solid var(--line);border-right:1px solid var(--line);
 }
