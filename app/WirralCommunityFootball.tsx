@@ -6535,7 +6535,7 @@ const css = `
   --mono:ui-monospace,"SF Mono","Roboto Mono",Menlo,monospace;
   --display:var(--font-sora),-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   --sans:var(--font-inter),-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  max-width:520px;margin:0 auto;height:100vh;height:100dvh;overflow:hidden;background:var(--bg);
+  max-width:520px;margin:0 auto;height:100vh;height:100dvh;height:100svh;overflow:hidden;background:var(--bg);
   color:var(--white);font-family:var(--sans);display:flex;flex-direction:column;
   border-left:1px solid var(--line);border-right:1px solid var(--line);
 }
@@ -6548,7 +6548,7 @@ const css = `
 .wcf-signin{position:relative;flex:1;overflow-y:auto;display:flex;flex-direction:column;background:var(--bg)}
 .wcf-signin-photo{position:absolute;left:0;right:0;top:0;width:100%;height:72%;object-fit:cover;object-position:50% 55%}
 .wcf-signin-scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(13,13,26,.6) 0%,rgba(13,13,26,.34) 20%,rgba(13,13,26,.6) 52%,rgba(13,13,26,.86) 66%,var(--bg) 80%)}
-.wcf-signin-head{position:relative;padding:36px 22px 0;flex:0 0 auto}
+.wcf-signin-head{position:relative;padding:calc(36px + env(safe-area-inset-top,0px)) 22px 0;flex:0 0 auto}
 .wcf-signin-brand-row{display:flex;align-items:center;gap:10px}
 .wcf-signin-crest{display:block;width:34px;height:34px;border-radius:10px;overflow:hidden;border:1px solid rgba(230,57,70,.4);flex:0 0 auto;box-shadow:0 2px 10px rgba(0,0,0,.5)}
 .wcf-signin-crest img{display:block;width:100%;height:100%;object-fit:cover;object-position:50% 43%}
@@ -6556,7 +6556,7 @@ const css = `
 .wcf-signin-wordmark{font-family:var(--display);font-weight:800;font-size:52px;line-height:.86;letter-spacing:-1px;color:var(--white);margin-top:22px;text-shadow:0 6px 30px rgba(0,0,0,.6)}
 .wcf-signin-wordmark-dim1{font-family:var(--display);color:rgba(245,246,248,.34)}
 .wcf-signin-wordmark-dim2{font-family:var(--display);color:rgba(245,246,248,.16)}
-.wcf-signin-bottom{position:relative;flex:1;display:flex;flex-direction:column;justify-content:flex-end;padding:0 22px 40px;box-sizing:border-box;gap:15px}
+.wcf-signin-bottom{position:relative;flex:1;display:flex;flex-direction:column;justify-content:flex-end;padding:0 22px calc(40px + env(safe-area-inset-bottom,0px));box-sizing:border-box;gap:15px}
 .wcf-signin-steps{display:flex;gap:8px;align-items:center}
 .wcf-signin-step-bar{flex:1;height:3px;border-radius:2px;background:rgba(148,163,184,.2)}
 .wcf-signin-step-bar.on{background:linear-gradient(90deg,var(--red),rgba(230,57,70,.4))}
@@ -6579,7 +6579,7 @@ const css = `
 .wcf-privacy-note{color:var(--dim);font-size:11px;max-width:280px;margin:0;line-height:1.5;opacity:.8}
 
 .wcf-top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
-  padding:14px 16px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  padding:calc(14px + env(safe-area-inset-top,0px)) 16px 14px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .wcf-brand{display:flex;align-items:center;gap:11px;background:none;border:none;padding:0;margin:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
 .wcf-logo{display:block;width:42px;height:42px;flex:0 0 auto;border-radius:11px;overflow:hidden;
   border:1px solid rgba(230,57,70,.4);box-shadow:0 2px 10px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.05)}
