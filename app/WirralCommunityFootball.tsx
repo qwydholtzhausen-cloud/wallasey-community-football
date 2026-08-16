@@ -4985,6 +4985,8 @@ function AccountPanel({
             <button
               className={"wcf-push-toggle " + (pushOn ? "on" : "")}
               disabled={pushBusy}
+              aria-label={pushOn ? "Turn off notifications" : "Turn on notifications"}
+              aria-pressed={pushOn}
               onClick={async () => {
                 setPushBusy(true);
                 if (pushOn) await onDisablePush();
@@ -4992,7 +4994,7 @@ function AccountPanel({
                 setPushBusy(false);
               }}
             >
-              {pushBusy ? "…" : pushOn ? "On" : "Off"}
+              <span className="wcf-push-toggle-knob" />
             </button>
           </div>
           {pushOn && (
@@ -6839,7 +6841,6 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-glance-label{margin-top:10px;font-family:var(--sans);font-weight:700;font-size:11.5px;line-height:1.3;color:#f1f5f9}
 .wcf-glance-card.clear .wcf-glance-label{color:var(--dim)}
 .wcf-glance-names{margin-top:6px;font-size:10.5px;line-height:1.4;color:#64748b}
-.wcf-overdue-row{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid rgba(230,57,70,.35);border-radius:12px;padding:11px 13px;margin-bottom:9px;flex-wrap:wrap}
 .wcf-overdue-banner{background:linear-gradient(135deg,rgba(230,57,70,.18),rgba(230,57,70,.06));border:1px solid rgba(230,57,70,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5;color:var(--white)}
 .wcf-overdue-banner strong{color:var(--red-hi)}
 .wcf-overdue-note{font-size:12px;color:var(--red-hi);font-weight:700;text-align:center;margin:0;flex:1}
@@ -6851,7 +6852,6 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-nudge-actions{display:flex;gap:8px;flex-shrink:0}
 .wcf-nudge-actions button{font-size:12px;font-weight:800;padding:8px 14px;border-radius:20px;border:none;background:var(--blue);color:#fff;cursor:pointer}
 .wcf-nudge-actions button.wcf-ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
-.wcf-overdue-row>div:first-child{flex:1;min-width:120px}
 .wcf-tab{border-radius:16px;overflow:hidden;margin-bottom:9px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line)}
 .wcf-tab.claiming{border-color:rgba(234,179,8,.28)}
 .wcf-tab-summary{width:100%;min-height:52px;display:flex;align-items:center;gap:10px;background:none;border:none;color:var(--white);padding:12px 13px;cursor:pointer;text-align:left}
@@ -6861,7 +6861,6 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-tab-summary-sub{margin-top:4px;font-size:10.5px;color:var(--dim)}
 .wcf-tab-claimed{flex:none;font-weight:800;font-size:9px;letter-spacing:.1em;color:#f5d97a;background:rgba(234,179,8,.14);border:1px solid rgba(234,179,8,.36);padding:5px 8px;border-radius:20px}
 .wcf-tab-amount{font-family:var(--display);font-weight:800;font-size:15px;font-variant-numeric:tabular-nums;color:var(--red-hi);flex:none}
-.wcf-tab-chevron{font-size:10px;color:var(--dim);flex:none}
 .wcf-tab-detail{padding:0 13px 13px}
 .wcf-tab-line{display:flex;align-items:center;gap:9px;padding-top:9px;border-top:1px solid rgba(148,163,184,.12)}
 .wcf-tab-line-desc{flex:1;min-width:0}
