@@ -135,6 +135,7 @@ interface GameRow {
   published: boolean;
   team_method: "generated" | "manual" | null;
   team_balance_score: number | null;
+  lineup_positions: Record<string, { x: number; y: number }> | null;
   bookings: BookingRow[];
 }
 
@@ -914,6 +915,10 @@ function App({ session }: { session: Session }) {
   const [lineupDisplayView, setLineupDisplayView] = useState<"pitch" | "list">("pitch");
   const [selectedLineupPlayerId, setSelectedLineupPlayerId] = useState<string | null>(null);
   const [teamDraft, setTeamDraft] = useState<Record<string, Team | null>>({});
+  const [editingPositions, setEditingPositions] = useState(false);
+  const [positionDraft, setPositionDraft] = useState<Record<string, { x: number; y: number }>>({});
+  const [draggingPlayerId, setDraggingPlayerId] = useState<string | null>(null);
+  const pitchCardRef = useRef<HTMLDivElement | null>(null);
   const [clipTitle, setClipTitle] = useState("");
   const [clipUrl, setClipUrl] = useState("");
   const [feedView, setFeedView] = useState<"feed" | "clips">("feed");
@@ -947,7 +952,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, bookings(id, player_id, status, waiting, team, created_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, lineup_positions, bookings(id, player_id, status, waiting, team, created_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -1571,6 +1576,44 @@ function App({ session }: { session: Session }) {
     }
     setEditingLineup(false);
     await loadGames();
+  }
+
+  // Drag-and-drop pitch positions: dragging only ever touches local
+  // positionDraft state (same "nothing reaches other players until Save"
+  // rule as the team-assignment editor above) until an admin explicitly
+  // locks it in, which writes the whole current layout as one snapshot.
+  function startEditingPositions() {
+    const draft: Record<string, { x: number; y: number }> = {};
+    pitchTokens.forEach((t) => { draft[t.booking.player_id] = { x: t.x, y: t.y }; });
+    setPositionDraft(draft);
+    setEditingPositions(true);
+  }
+  function cancelEditingPositions() {
+    setEditingPositions(false);
+    setDraggingPlayerId(null);
+  }
+  async function savePositions() {
+    if (!nextGame) return;
+    const { error } = await supabase.from("games").update({ lineup_positions: positionDraft }).eq("id", nextGame.id);
+    if (error) { notifyError(error.message); return; }
+    setEditingPositions(false);
+    setDraggingPlayerId(null);
+    await loadGames();
+  }
+  async function resetPositions() {
+    if (!nextGame) return;
+    if (!(await askConfirm("Reset to auto layout?", "This clears everyone's manually placed positions for this game and goes back to the automatic formation.", "Reset", true))) return;
+    const { error } = await supabase.from("games").update({ lineup_positions: null }).eq("id", nextGame.id);
+    if (error) { notifyError(error.message); return; }
+    await loadGames();
+  }
+  function movePlayerTo(playerId: string, clientX: number, clientY: number) {
+    const card = pitchCardRef.current;
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    const x = Math.min(96, Math.max(4, ((clientX - rect.left) / rect.width) * 100));
+    const y = Math.min(96, Math.max(4, ((clientY - rect.top) / rect.height) * 100));
+    setPositionDraft((prev) => ({ ...prev, [playerId]: { x, y } }));
   }
 
   async function copyLineup() {
@@ -2311,6 +2354,28 @@ function App({ session }: { session: Session }) {
     }),
     [nextConfirmed]
   );
+  // Pitch-view token positions: a locked-in admin position (nextGame.lineup_positions)
+  // wins if one exists for that player, otherwise falls back to the auto
+  // formationSlots() layout - so a player added to the roster after the
+  // last "lock in" still shows up somewhere sensible instead of vanishing.
+  // While actively dragging (editingPositions), the local positionDraft
+  // takes priority over the saved value so the drag feels live.
+  const pitchTokens = useMemo(() => {
+    const redSlots = formationSlots(nextGrouped.red.length);
+    const whiteSlots = formationSlots(nextGrouped.white.length);
+    const saved = nextGame?.lineup_positions ?? null;
+    const posFor = (playerId: string, auto: { x: number; y: number }) =>
+      editingPositions ? positionDraft[playerId] ?? saved?.[playerId] ?? auto : saved?.[playerId] ?? auto;
+    const redTokens = nextGrouped.red.map((b, i) => {
+      const pos = posFor(b.player_id, { x: redSlots[i].x, y: redSlots[i].y });
+      return { booking: b, isRed: true, x: pos.x, y: pos.y, role: redSlots[i].role };
+    });
+    const whiteTokens = nextGrouped.white.map((b, i) => {
+      const pos = posFor(b.player_id, { x: whiteSlots[i].x, y: 100 - whiteSlots[i].y });
+      return { booking: b, isRed: false, x: pos.x, y: pos.y, role: whiteSlots[i].role };
+    });
+    return [...redTokens, ...whiteTokens];
+  }, [nextGrouped, nextGame?.lineup_positions, editingPositions, positionDraft]);
   // Same grouping as above but reading the local edit draft instead of the
   // saved team - lets the Team Sheet stay grouped-by-team (matching what
   // players see) even while an admin's mid-edit.
@@ -3302,14 +3367,7 @@ function App({ session }: { session: Session }) {
                 )}
 
                 {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (() => {
-                  const redSlots = formationSlots(nextGrouped.red.length);
-                  const whiteSlots = formationSlots(nextGrouped.white.length);
-                  // Every red label sits above its chip, every white label sits below -
-                  // consistent per team (not just the front row), and each points away
-                  // from the halfway line so neither ever eats into that gap.
-                  const redTokens = nextGrouped.red.map((b, i) => ({ booking: b, isRed: true, x: redSlots[i].x, y: redSlots[i].y, role: redSlots[i].role }));
-                  const whiteTokens = nextGrouped.white.map((b, i) => ({ booking: b, isRed: false, x: whiteSlots[i].x, y: 100 - whiteSlots[i].y, role: whiteSlots[i].role }));
-                  const allTokens = [...redTokens, ...whiteTokens];
+                  const allTokens = pitchTokens;
                   const selected = allTokens.find((t) => t.booking.player_id === selectedLineupPlayerId);
                   const selectedStats = selected ? playerStats.find((p) => p.id === selected.booking.player_id) : null;
                   const selectColor = (isRed: boolean) => (isRed ? cs.team_red_color : cs.team_white_color);
@@ -3317,12 +3375,29 @@ function App({ session }: { session: Session }) {
                   const renderToken = (t: (typeof allTokens)[number]) => {
                     const me = t.booking.player_id === myId;
                     const color = selectColor(t.isRed);
+                    const draggable = isAdmin && editingPositions;
                     return (
                       <button
                         key={t.booking.id}
-                        className={"wcf-lineup-token" + ((t.role === "Goalkeeper" ? !t.isRed : t.isRed) ? " flip" : "")}
+                        className={"wcf-lineup-token" + ((t.role === "Goalkeeper" ? !t.isRed : t.isRed) ? " flip" : "") + (draggable ? " draggable" : "") + (draggingPlayerId === t.booking.player_id ? " dragging" : "")}
                         style={{ left: `${t.x}%`, top: `${t.y}%` }}
-                        onClick={() => setSelectedLineupPlayerId((v) => (v === t.booking.player_id ? null : t.booking.player_id))}
+                        onClick={() => { if (!draggable) setSelectedLineupPlayerId((v) => (v === t.booking.player_id ? null : t.booking.player_id)); }}
+                        onPointerDown={
+                          draggable
+                            ? (e) => {
+                                e.preventDefault();
+                                (e.target as HTMLElement).setPointerCapture(e.pointerId);
+                                setDraggingPlayerId(t.booking.player_id);
+                                movePlayerTo(t.booking.player_id, e.clientX, e.clientY);
+                              }
+                            : undefined
+                        }
+                        onPointerMove={
+                          draggable
+                            ? (e) => { if (draggingPlayerId === t.booking.player_id) movePlayerTo(t.booking.player_id, e.clientX, e.clientY); }
+                            : undefined
+                        }
+                        onPointerUp={draggable ? () => setDraggingPlayerId(null) : undefined}
                       >
                         <span
                           className="wcf-lineup-token-chip"
@@ -3337,8 +3412,25 @@ function App({ session }: { session: Session }) {
 
                   return (
                     <>
+                      {lineupDisplayView === "pitch" && isAdmin && (
+                        <div className="wcf-lineup-position-controls">
+                          {editingPositions ? (
+                            <>
+                              <button className="wcf-ghost" onClick={cancelEditingPositions}>Cancel</button>
+                              <button className="wcf-save-red" style={{ flex: 1 }} onClick={savePositions}>Lock in positions</button>
+                            </>
+                          ) : (
+                            <>
+                              <button className="wcf-ghost" onClick={startEditingPositions}>✋ Drag to arrange</button>
+                              {nextGame?.lineup_positions && (
+                                <button className="wcf-ghost danger" onClick={resetPositions}>Reset to auto</button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
                       {lineupDisplayView === "pitch" && (
-                        <div className="wcf-lineup-pitch-card">
+                        <div className="wcf-lineup-pitch-card" ref={pitchCardRef}>
                           <svg viewBox="0 0 200 300" preserveAspectRatio="none" className="wcf-lineup-pitch-lines">
                             <rect x="10" y="8" width="180" height="284" rx="2" />
                             <line x1="10" y1="150" x2="190" y2="150" />
@@ -3354,9 +3446,14 @@ function App({ session }: { session: Session }) {
                           </div>
                         </div>
                       )}
-                      {lineupDisplayView === "pitch" && (
+                      {lineupDisplayView === "pitch" && !editingPositions && (
                         <p className="wcf-lineup-pitch-note">
                           {cs.team_red_name} attack down, {cs.team_white_name} attack up. Tap a shirt for that player&apos;s season stats.
+                        </p>
+                      )}
+                      {lineupDisplayView === "pitch" && editingPositions && (
+                        <p className="wcf-lineup-pitch-note">
+                          Drag any player to reposition them, then Lock in positions to save it for everyone.
                         </p>
                       )}
 
@@ -6858,6 +6955,12 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-token-chip{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:13px;box-shadow:0 6px 14px -6px rgba(0,0,0,.85)}
 .wcf-lineup-token-label{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:5px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:var(--white);text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap;pointer-events:none}
 .wcf-lineup-token.flip .wcf-lineup-token-label{top:auto;bottom:100%;margin-top:0;margin-bottom:5px}
+.wcf-lineup-token.draggable{cursor:grab;touch-action:none}
+.wcf-lineup-token.draggable .wcf-lineup-token-chip{box-shadow:0 0 0 2px rgba(46,116,204,.5),0 6px 14px -6px rgba(0,0,0,.85)}
+.wcf-lineup-token.dragging{cursor:grabbing;z-index:5}
+.wcf-lineup-token.dragging .wcf-lineup-token-chip{transform:scale(1.12);box-shadow:0 0 0 2px var(--blue),0 10px 22px -8px rgba(0,0,0,.9)}
+.wcf-lineup-position-controls{display:flex;gap:8px;margin-bottom:10px}
+.wcf-lineup-position-controls .wcf-ghost.danger{color:var(--red-hi);border-color:rgba(230,57,70,.35)}
 .wcf-lineup-pitch-note{margin:12px 2px 0;font-size:11.5px;line-height:1.5;color:var(--dim)}
 
 .wcf-lineup-list-wrap{position:relative;display:flex;gap:10px;border-radius:18px;overflow:hidden;padding:10px;background-image:linear-gradient(180deg,rgba(13,13,26,.5),rgba(13,13,26,.85)),url('/floodlight-haze.jpg');background-size:cover;background-position:50% 30%}

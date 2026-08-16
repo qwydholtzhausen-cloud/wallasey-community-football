@@ -1065,3 +1065,12 @@ as $$
       and g.date < (now() at time zone 'Europe/London')::date
   );
 $$;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Admin drag-and-drop pitch positions. Keyed by player_id:
+-- { "<player_id>": { "x": 0-100, "y": 0-100 } }. A player missing
+-- from this map (new booking since the last "lock in", or the map
+-- itself is null) falls back to the auto-generated formationSlots()
+-- layout for that one player, same as before this existed.
+-- ─────────────────────────────────────────────────────────────────
+alter table public.games add column lineup_positions jsonb;
