@@ -57,21 +57,41 @@ function RatingForm({
   const [attack, setAttack] = useState(initial?.attack ?? 3);
   const [defence, setDefence] = useState(initial?.defence ?? 3);
   const [position, setPosition] = useState<PlayerPosition>(initial?.position ?? "midfield");
+  const metrics: { label: string; value: number; onChange: (n: number) => void }[] = [
+    { label: "Fitness", value: fitness, onChange: setFitness },
+    { label: "Attack", value: attack, onChange: setAttack },
+    { label: "Defence", value: defence, onChange: setDefence },
+  ];
 
   return (
     <div className="wcf-rating-form">
-      <div className="wcf-rating-row"><span>Fitness</span><StarPicker value={fitness} onChange={setFitness} /></div>
-      <div className="wcf-rating-row"><span>Attack</span><StarPicker value={attack} onChange={setAttack} /></div>
-      <div className="wcf-rating-row"><span>Defence</span><StarPicker value={defence} onChange={setDefence} /></div>
+      {metrics.map((m) => (
+        <div key={m.label} className="wcf-rating-row">
+          <div className="wcf-rating-row-top">
+            <span>{m.label}</span>
+            <b>{m.value.toFixed(1)}</b>
+          </div>
+          <div className="wcf-rating-track">
+            <div
+              className="wcf-rating-fill"
+              style={{
+                width: `${(m.value / 5) * 100}%`,
+                background: `linear-gradient(90deg,${ratingFillColor(m.value)}99,${ratingFillColor(m.value)})`,
+              }}
+            />
+          </div>
+          <StarPicker value={m.value} onChange={m.onChange} />
+        </div>
+      ))}
       <div className="wcf-rating-row">
-        <span>Position</span>
+        <div className="wcf-rating-row-top"><span>Position</span></div>
         <select value={position} onChange={(e) => setPosition(e.target.value as PlayerPosition)}>
           {POSITIONS.map((p) => (
             <option key={p} value={p}>{POSITION_LABEL[p]}</option>
           ))}
         </select>
       </div>
-      <button className="wcf-save" onClick={() => onSave(fitness, attack, defence, position)}>{saveLabel}</button>
+      <button className="wcf-save-red" onClick={() => onSave(fitness, attack, defence, position)}>{saveLabel}</button>
     </div>
   );
 }
@@ -4463,24 +4483,39 @@ function PlayerCardModal({
 // awards) rather than each hand-rolling its own toggle button.
 function AccordionSection({
   icon,
+  tone,
   title,
+  meta,
+  value,
   open,
   onToggle,
   children,
 }: {
   icon: string;
+  tone?: "blue" | "amber" | "red";
   title: string;
+  meta?: string;
+  value?: string;
   open: boolean;
   onToggle: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <div className="wcf-accordion">
-      <button className="wcf-accordion-head" onClick={onToggle}>
-        <span>{icon} {title}</span>
-        <span className="wcf-accordion-chevron">{open ? "▲" : "▼"}</span>
+    <div className="wcf-acc-section">
+      <button className="wcf-acc-section-head" onClick={onToggle}>
+        <span className={"wcf-acc-section-tile" + (tone ? " " + tone : "")}>{icon}</span>
+        <span className="wcf-acc-section-body">
+          <span className="wcf-acc-section-title">{title}</span>
+          {meta && <span className="wcf-acc-section-meta">{meta}</span>}
+        </span>
+        {value && <span className="wcf-acc-section-value">{value}</span>}
+        <span className="wcf-acc-section-chevron">{open ? "▲" : "▼"}</span>
       </button>
-      {open && <div className="wcf-accordion-body">{children}</div>}
+      {open && (
+        <div className="wcf-acc-section-panel">
+          <div className="wcf-acc-section-panel-inner">{children}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4603,67 +4638,121 @@ function AccountPanel({
       </div>
 
       {myMessages.length > 0 && (
-        <div className="wcf-inbox">
-          <div className="wcf-inbox-head">
-            <h4>✉️ Messages</h4>
-            {unreadMessages.length > 0 && <span className="wcf-inbox-unread-pill">{unreadMessages.length}</span>}
+        <>
+          <div className="wcf-console-section">
+            <span className="wcf-console-section-label">Inbox</span>
+            <span className="wcf-console-section-rule" />
+            {unreadMessages.length > 0 && (
+              <span className="wcf-inbox-unread-pill">
+                <span className="wcf-inbox-unread-dot" />
+                {unreadMessages.length} UNREAD
+              </span>
+            )}
           </div>
           {myMessages.map((m) => (
-            <div key={m.id} className={"wcf-msg-card " + (m.read_at ? "" : "unread")}>
-              <div className="wcf-msg-from">From an admin · {fmtDateTime(m.created_at)}</div>
-              <div className="wcf-msg-text">{m.message}</div>
-              {m.read_at ? (
-                <p className="wcf-msg-read-note">Marked as read</p>
-              ) : (
-                <button className="wcf-msg-ack" onClick={() => onMarkMessageRead(m.id)}>Got it 👍 Mark as read</button>
+            <div key={m.id} className={"wcf-inbox-msg" + (m.read_at ? "" : " unread")}>
+              <div className="wcf-inbox-msg-top">
+                <span className="wcf-inbox-msg-tile">✎</span>
+                <div className="wcf-acc-section-body">
+                  <div className="wcf-inbox-msg-from">From an admin</div>
+                  <div className="wcf-inbox-msg-when">{fmtDateTime(m.created_at)}</div>
+                </div>
+                {!m.read_at && <span className="wcf-inbox-new">NEW</span>}
+              </div>
+              <div className="wcf-inbox-msg-body">{m.message}</div>
+              {!m.read_at && (
+                <button className="wcf-inbox-mark-read" onClick={() => onMarkMessageRead(m.id)}>Mark as read</button>
               )}
             </div>
           ))}
-        </div>
+        </>
       )}
 
-      {(myTabOwed.length > 0 || myTabPending.length > 0) && (
-        <div className="wcf-upcoming">
-          <h4>💷 Your tab</h4>
-          {myTabOwed.map(({ game, booking }) => (
-            <div key={booking.id} className="wcf-upcoming-row">
-              <div className="wcf-upcoming-body">
-                <div className="wcf-upcoming-venue">{game.venue}</div>
-                <div className="wcf-upcoming-date">{fmtDate(game.date)} · £{game.price} owed</div>
-              </div>
-              <button className="wcf-tab-self-pay" onClick={() => onMarkPaid(booking.id)}>I&apos;ve paid</button>
+      {(myTabOwed.length > 0 || myTabPending.length > 0) && (() => {
+        const owedTotal = myTabOwed.reduce((sum, { game }) => sum + game.price, 0);
+        return (
+          <>
+            <div className="wcf-console-section">
+              <span className="wcf-console-section-label">Your tab</span>
+              <span className="wcf-console-section-rule" />
+              {owedTotal > 0 && <span className="wcf-console-section-meta warn">£{owedTotal} OWED</span>}
             </div>
-          ))}
-          {myTabPending.map(({ game, booking }) => (
-            <div key={booking.id} className="wcf-upcoming-row">
-              <div className="wcf-upcoming-body">
-                <div className="wcf-upcoming-venue">{game.venue}</div>
-                <div className="wcf-upcoming-date">{fmtDate(game.date)} · £{game.price}</div>
+            <div className="wcf-tab-hero">
+              <div className="wcf-tab-hero-top">
+                <div>
+                  <span className="wcf-tab-hero-amount">£{owedTotal}</span>
+                  <span className="wcf-tab-hero-summary">
+                    {myTabOwed.length > 0 && `${myTabOwed.length} game${myTabOwed.length === 1 ? "" : "s"} owed`}
+                    {myTabOwed.length > 0 && myTabPending.length > 0 && " · "}
+                    {myTabPending.length > 0 && `${myTabPending.length} awaiting confirmation`}
+                  </span>
+                </div>
+                <span className="wcf-tab-hero-icon">£</span>
               </div>
-              <span className="wcf-tab-self-pending">⏳ Awaiting confirmation</span>
+              <div className="wcf-tab-hero-items">
+                {myTabOwed.map(({ game, booking }) => (
+                  <div key={booking.id} className="wcf-tab-hero-item">
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="wcf-tab-hero-item-venue">{game.venue}</div>
+                      <div className="wcf-tab-hero-item-date">{fmtDate(game.date)}</div>
+                    </div>
+                    <span className="wcf-tab-hero-item-price">£{game.price}</span>
+                    <button className="wcf-tab-hero-pay" onClick={() => onMarkPaid(booking.id)}>I&apos;ve paid</button>
+                  </div>
+                ))}
+                {myTabPending.map(({ game, booking }) => (
+                  <div key={booking.id} className="wcf-tab-hero-item">
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="wcf-tab-hero-item-venue">{game.venue}</div>
+                      <div className="wcf-tab-hero-item-date">{fmtDate(game.date)}</div>
+                    </div>
+                    <span className="wcf-tab-hero-item-price">£{game.price}</span>
+                    <span className="wcf-tab-hero-claimed">AWAITING</span>
+                  </div>
+                ))}
+              </div>
+              <p className="wcf-tab-hero-note">Bank transfer to the club account. An admin confirms it here once it lands.</p>
             </div>
-          ))}
-        </div>
-      )}
+          </>
+        );
+      })()}
 
       {myUpcomingBookings.length > 0 && (
-        <div className="wcf-upcoming">
-          <h4>📅 Your upcoming bookings</h4>
-          {myUpcomingBookings.map(({ game, booking }) => (
-            <div key={game.id} className="wcf-upcoming-row">
-              <div className="wcf-upcoming-body">
-                <div className="wcf-upcoming-venue">{game.venue}</div>
-                <div className="wcf-upcoming-date">{fmtDate(game.date)} · {game.kickoff}</div>
+        <>
+          <div className="wcf-console-section">
+            <span className="wcf-console-section-label">Your bookings</span>
+            <span className="wcf-console-section-rule" />
+            <span className="wcf-console-section-meta">{myUpcomingBookings.length}</span>
+          </div>
+          {myUpcomingBookings.map(({ game, booking }) => {
+            const d = new Date(game.date + "T00:00:00");
+            return (
+              <div key={game.id} className="wcf-booking-row">
+                <div className="wcf-booking-date-tile">
+                  <span className="wcf-booking-day">{d.getDate()}</span>
+                  <span className="wcf-booking-month">{d.toLocaleDateString("en-GB", { month: "short" }).toUpperCase()}</span>
+                </div>
+                <div className="wcf-booking-info">
+                  <div className="wcf-booking-venue">{game.venue}</div>
+                  <div className="wcf-booking-meta">{fmtDate(game.date)} · {game.kickoff}</div>
+                </div>
+                {booking.waiting ? (
+                  <span className="wcf-booking-badge amber">WAITING LIST</span>
+                ) : (
+                  <StatusBadge status={booking.status} />
+                )}
               </div>
-              {booking.waiting ? <span className="wcf-upcoming-waiting">Waiting list</span> : <StatusBadge status={booking.status} />}
-            </div>
-          ))}
-        </div>
+            );
+          })}
+        </>
       )}
 
-      <div className="wcf-account-always">Settings &amp; reference</div>
+      <div className="wcf-console-section">
+        <span className="wcf-console-section-label">Settings &amp; reference</span>
+        <span className="wcf-console-section-rule" />
+      </div>
 
-      <AccordionSection icon="⚙️" title="Account settings" open={openAccountSettings} onToggle={() => setOpenAccountSettings((v) => !v)}>
+      <AccordionSection icon="◆" tone="blue" title="Account settings" meta={pushOn ? "Notifications on" : "Notifications off"} open={openAccountSettings} onToggle={() => setOpenAccountSettings((v) => !v)}>
         <label className="wcf-account-field">
           Display name
           <div className="wcf-account-rename">
@@ -4713,7 +4802,15 @@ function AccountPanel({
         <button className="wcf-signout" onClick={onSignOut}>Sign out</button>
       </AccordionSection>
 
-      <AccordionSection icon="⭐" title="Your rating &amp; record" open={openRating} onToggle={() => setOpenRating((v) => !v)}>
+      <AccordionSection
+        icon="★"
+        tone="amber"
+        title="Your rating &amp; record"
+        meta={myRecord.played > 0 ? `${myRecord.played} played · ${myRecord.winPct}% win rate` : "No games yet"}
+        value={myRating ? ((myRating.fitness + myRating.attack + myRating.defence) / 3).toFixed(1) : undefined}
+        open={openRating}
+        onToggle={() => setOpenRating((v) => !v)}
+      >
         <div className="wcf-rating-section">
           <h3>Rate yourself</h3>
           <p className="wcf-rating-note">
@@ -4741,13 +4838,15 @@ function AccountPanel({
         </div>
       </AccordionSection>
 
-      <AccordionSection icon="📖" title="Getting set up" open={openGuides} onToggle={() => setOpenGuides((v) => !v)}>
+      <AccordionSection icon="◎" tone="blue" title="Getting set up" meta="Home screen &amp; notifications" open={openGuides} onToggle={() => setOpenGuides((v) => !v)}>
         <button className="wcf-guide-row" onClick={() => setOpenGuide("install")}>
-          <span>📱 Add to your home screen</span>
+          <span className="wcf-guide-tile">📱</span>
+          <span className="wcf-guide-title">Add to your home screen</span>
           <span className="wcf-guide-arrow">›</span>
         </button>
         <button className="wcf-guide-row" onClick={() => setOpenGuide("notifications")}>
-          <span>🔔 Enable notifications</span>
+          <span className="wcf-guide-tile">🔔</span>
+          <span className="wcf-guide-title">Enable notifications</span>
           <span className="wcf-guide-arrow">›</span>
         </button>
       </AccordionSection>
@@ -4764,13 +4863,25 @@ function AccountPanel({
         </div>
       )}
 
-      {isAdmin && <div className="wcf-account-always">Admin</div>}
+      {isAdmin && (
+        <div className="wcf-console-section">
+          <span className="wcf-console-section-label">Admin</span>
+          <span className="wcf-console-section-rule" />
+        </div>
+      )}
 
       {isAdmin && (
-        <AccordionSection icon="👥" title={`Manage roles · ${profiles.length}`} open={showRoles} onToggle={() => setShowRoles((v) => !v)}>
+        <AccordionSection icon="◈" tone="blue" title="Manage roles" meta={`${profiles.length} players`} open={showRoles} onToggle={() => setShowRoles((v) => !v)}>
           {pushStats && (
-            <div className="wcf-push-stat">
-              🔔 {pushStats.subscribed} of {pushStats.total} players have notifications on
+            <div className="wcf-roles-stats">
+              <div className="wcf-roles-stat blue">
+                <span className="wcf-roles-stat-num">{pushStats.subscribed}</span>
+                <span className="wcf-roles-stat-label">of {pushStats.total} subscribed</span>
+              </div>
+              <div className="wcf-roles-stat dim">
+                <span className="wcf-roles-stat-num">{profiles.length}</span>
+                <span className="wcf-roles-stat-label">total players</span>
+              </div>
             </div>
           )}
           <AddPlayerForm onAdd={onAddPlayer} />
@@ -4815,7 +4926,10 @@ function AccountPanel({
                     <button className="wcf-ghost" onClick={() => setRenamingPlayerId(null)}>Cancel</button>
                   </div>
                 ) : (
-                  <span>{p.display_name}{isSelf ? " (you)" : ""} <span className={"wcf-role-badge small " + p.role}>{ROLE_LABEL[p.role]}</span></span>
+                  <div className="wcf-roles-row-top">
+                    <span className="wcf-roles-avatar">{p.display_name.slice(0, 1).toUpperCase()}</span>
+                    <span>{p.display_name}{isSelf ? " (you)" : ""} <span className={"wcf-role-badge small " + p.role}>{ROLE_LABEL[p.role]}</span></span>
+                  </div>
                 )}
                 <div className="wcf-roles-actions">
                   {renamingPlayerId !== p.id && (
@@ -4918,17 +5032,20 @@ function AccountPanel({
       )}
 
       {isAdmin && (
-        <AccordionSection icon="📋" title="Activity log" open={showAuditLog} onToggle={onToggleAuditLog}>
+        <AccordionSection icon="≡" tone="blue" title="Activity log" meta={`${auditLog.length} entries`} open={showAuditLog} onToggle={onToggleAuditLog}>
           {auditLog.length === 0 && <p className="wcf-empty">No activity logged yet.</p>}
           <div className="wcf-audit-list">
             {auditLog.map((entry) => (
               <div key={entry.id} className="wcf-audit-row">
-                <div className="wcf-audit-line">
-                  <strong>{entry.actor?.display_name ?? "Someone"}</strong> {entry.action.toLowerCase()}
-                  {entry.details ? ` — ${entry.details}` : ""}
-                </div>
-                <div className="wcf-audit-time">
-                  {new Date(entry.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                <span className="wcf-audit-dot" style={{ background: "var(--blue)" }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="wcf-audit-line">
+                    <strong>{entry.actor?.display_name ?? "Someone"}</strong> {entry.action.toLowerCase()}
+                    {entry.details ? ` — ${entry.details}` : ""}
+                  </div>
+                  <div className="wcf-audit-time">
+                    {new Date(entry.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </div>
                 </div>
               </div>
             ))}
@@ -4937,13 +5054,13 @@ function AccountPanel({
       )}
 
       {isAdmin && (
-        <AccordionSection icon="⚙️" title="Club settings" open={openClubSettings} onToggle={() => setOpenClubSettings((v) => !v)}>
+        <AccordionSection icon="⚙" tone="blue" title="Club settings" meta={`${clubSettings.team_white_name} vs ${clubSettings.team_red_name}`} open={openClubSettings} onToggle={() => setOpenClubSettings((v) => !v)}>
           <ClubSettingsForm settings={clubSettings} onSave={onSaveClubSettings} />
         </AccordionSection>
       )}
 
       {isAdmin && (
-        <AccordionSection icon="🏆" title="Awards" open={openAwards} onToggle={() => setOpenAwards((v) => !v)}>
+        <AccordionSection icon="🏆" tone="amber" title="Awards" meta={`${awards.length} published`} open={openAwards} onToggle={() => setOpenAwards((v) => !v)}>
           <AwardsForm awards={awards} onAdd={onAddAward} onDelete={onDeleteAward} askConfirm={askConfirm} />
         </AccordionSection>
       )}
@@ -5042,22 +5159,26 @@ function ClubSettingsForm({ settings, onSave }: { settings: ClubSettings; onSave
       <h3>Club settings</h3>
 
       <div className="wcf-team-settings">
-        <label className="wcf-team-field">
-          Team A name
-          <input value={form.team_white_name} onChange={(e) => setForm({ ...form, team_white_name: e.target.value })} />
-        </label>
-        <label className="wcf-team-field color">
-          Colour
-          <input type="color" value={form.team_white_color} onChange={(e) => setForm({ ...form, team_white_color: e.target.value })} />
-        </label>
-        <label className="wcf-team-field">
-          Team B name
-          <input value={form.team_red_name} onChange={(e) => setForm({ ...form, team_red_name: e.target.value })} />
-        </label>
-        <label className="wcf-team-field color">
-          Colour
-          <input type="color" value={form.team_red_color} onChange={(e) => setForm({ ...form, team_red_color: e.target.value })} />
-        </label>
+        <div className="wcf-team-row">
+          <label className="wcf-team-field">
+            Team A name
+            <input value={form.team_white_name} onChange={(e) => setForm({ ...form, team_white_name: e.target.value })} />
+          </label>
+          <label className="wcf-team-field color">
+            Colour
+            <input type="color" value={form.team_white_color} onChange={(e) => setForm({ ...form, team_white_color: e.target.value })} />
+          </label>
+        </div>
+        <div className="wcf-team-row">
+          <label className="wcf-team-field">
+            Team B name
+            <input value={form.team_red_name} onChange={(e) => setForm({ ...form, team_red_name: e.target.value })} />
+          </label>
+          <label className="wcf-team-field color">
+            Colour
+            <input type="color" value={form.team_red_color} onChange={(e) => setForm({ ...form, team_red_color: e.target.value })} />
+          </label>
+        </div>
         <label className="wcf-team-field wide">
           Default venue for new fixtures
           <input value={form.default_venue} onChange={(e) => setForm({ ...form, default_venue: e.target.value })} placeholder="e.g. Guinea Gap" />
@@ -5143,20 +5264,25 @@ function AwardsForm({
 
       {awards.map((a) => (
         <div key={a.id} className="wcf-award-row">
-          <span>
-            {a.title} — <strong>{a.value}</strong>{a.note ? ` · ${a.note}` : ""}
-            {a.image_url && <span className="wcf-award-media-tag">📷</span>}
-            {a.video_url && <span className="wcf-award-media-tag">🎥</span>}
-          </span>
-          <button
-            className="wcf-admin-remove"
-            onClick={async () => {
-              if (await askConfirm(`Remove "${a.title}"?`, "This also deletes any photo/video attached to it.", "Remove")) onDelete(a.id);
-            }}
-            aria-label="Remove award"
-          >
-            ×
-          </button>
+          <div className="wcf-award-top">
+            <span className="wcf-award-title">{a.title}</span>
+            <span className="wcf-award-value">{a.value}</span>
+          </div>
+          {a.note && <div className="wcf-award-note">{a.note}</div>}
+          <div className="wcf-award-bottom">
+            {a.image_url && <span className="wcf-award-tag">📷 Photo</span>}
+            {a.video_url && <span className="wcf-award-tag">🎥 Video</span>}
+            <button
+              className="wcf-admin-remove"
+              style={{ marginLeft: "auto" }}
+              onClick={async () => {
+                if (await askConfirm(`Remove "${a.title}"?`, "This also deletes any photo/video attached to it.", "Remove")) onDelete(a.id);
+              }}
+              aria-label="Remove award"
+            >
+              ×
+            </button>
+          </div>
         </div>
       ))}
 
@@ -5174,17 +5300,23 @@ function AwardsForm({
             Note (optional)
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. voted by the squad" />
           </label>
-          <label className="wcf-team-field wide">
-            Photo (optional)
-            <input type="file" accept="image/*" onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
+        </div>
+        <div className="wcf-upload-row">
+          <label className="wcf-upload-box">
+            <span className="wcf-upload-glyph">📷</span>
+            <span className="wcf-upload-label">Photo</span>
+            <span className="wcf-upload-state">{imageFile ? imageFile.name : "Optional"}</span>
+            <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
           </label>
-          <label className="wcf-team-field wide">
-            Video (optional, under {MAX_AWARD_VIDEO_MB}MB)
-            <input type="file" accept="video/*" onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)} />
+          <label className="wcf-upload-box">
+            <span className="wcf-upload-glyph">🎥</span>
+            <span className="wcf-upload-label">Video</span>
+            <span className="wcf-upload-state">{videoFile ? videoFile.name : `Under ${MAX_AWARD_VIDEO_MB}MB`}</span>
+            <input type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)} />
           </label>
         </div>
-        <button className="wcf-save" type="submit" disabled={adding || !title.trim() || !value.trim()}>
-          {adding ? "Adding…" : "Add award"}
+        <button className="wcf-save-amber" style={{ marginTop: 10 }} type="submit" disabled={adding || !title.trim() || !value.trim()}>
+          {adding ? "Publishing…" : "Publish award"}
         </button>
       </form>
     </div>
@@ -6368,6 +6500,8 @@ const css = `
 .wcf-edit label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-edit input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans)}
 .wcf-save{grid-column:1/-1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
+.wcf-save-red{width:100%;min-height:46px;padding:13px;border-radius:12px;cursor:pointer;font-weight:800;font-size:12px;color:#fff;border:1px solid rgba(230,57,70,.5);background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5))}
+.wcf-save-amber{width:100%;min-height:48px;padding:14px;border-radius:14px;cursor:pointer;font-weight:800;font-size:13px;color:#fff;border:1px solid rgba(234,179,8,.5);background:linear-gradient(135deg,var(--amber),rgba(234,179,8,.45))}
 .wcf-console-section{display:flex;align-items:center;gap:10px;padding:26px 2px 12px}
 .wcf-console-section:first-child{padding-top:4px}
 .wcf-console-section-label{font-family:var(--sans);font-weight:700;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
@@ -6873,7 +7007,6 @@ button.wcf-glance-card:disabled{cursor:default}
 
 .wcf-shoutout{background:linear-gradient(135deg,rgba(228,42,54,.16),rgba(51,169,87,.1));border:1px solid rgba(228,42,54,.35);border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
 .wcf-award-media{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:10px;margin-top:10px}
-.wcf-award-media-tag{margin-left:6px;font-size:12px;vertical-align:middle}
 .wcf-potm{background:linear-gradient(135deg,rgba(224,167,51,.2),rgba(224,167,51,.06));border-color:rgba(224,167,51,.4)}
 
 .wcf-pot-total{background:linear-gradient(135deg,rgba(51,169,87,.16),rgba(46,116,204,.1));border:1px solid rgba(51,169,87,.35);border-radius:16px;padding:18px;margin-bottom:16px;text-align:center}
@@ -7009,12 +7142,21 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-motm-bar-fill{height:100%;border-radius:5px;background:var(--dim)}
 .wcf-motm-bar-fill.winner{background:var(--amber)}
 
-.wcf-account{display:flex;flex-direction:column;gap:16px}
-.wcf-account-always{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin:-6px 2px -8px}
-.wcf-accordion{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
-.wcf-accordion-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;color:var(--white);padding:13px 14px;font-weight:800;font-size:13px;cursor:pointer;text-align:left}
-.wcf-accordion-chevron{font-size:10px;color:var(--dim);flex:0 0 auto}
-.wcf-accordion-body{padding:0 14px 14px;display:flex;flex-direction:column;gap:16px}
+.wcf-account{display:flex;flex-direction:column;gap:0}
+.wcf-acc-section{border-radius:18px;overflow:hidden;margin-bottom:9px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line)}
+.wcf-acc-section-head{display:flex;align-items:center;gap:11px;width:100%;padding:13px;background:none;border:none;cursor:pointer;min-height:56px;text-align:left}
+.wcf-acc-section-tile{flex:none;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font-size:14px;background:rgba(148,163,184,.1);border:1px solid rgba(148,163,184,.2);color:var(--dim)}
+.wcf-acc-section-tile.blue{background:rgba(46,116,204,.15);border-color:rgba(46,116,204,.3);color:var(--blue)}
+.wcf-acc-section-tile.amber{background:rgba(234,179,8,.15);border-color:rgba(234,179,8,.3);color:var(--amber)}
+.wcf-acc-section-tile.red{background:rgba(230,57,70,.15);border-color:rgba(230,57,70,.3);color:var(--red)}
+.wcf-acc-section-body{flex:1;min-width:0;text-align:left}
+.wcf-acc-section-title{font-family:var(--sans);font-weight:800;font-size:13px;color:#f1f5f9}
+.wcf-acc-section-meta{margin-top:4px;font-size:10.5px;color:var(--dim)}
+.wcf-acc-section-value{flex:none;font-family:var(--display);font-weight:800;font-size:15px;font-variant-numeric:tabular-nums;color:var(--blue)}
+.wcf-acc-section-chevron{flex:none;font-size:11px;color:var(--dim);margin-left:4px}
+.wcf-acc-section-panel{padding:0 13px 13px;animation:wcfAccIn .18s ease-out}
+.wcf-acc-section-panel-inner{padding-top:13px;border-top:1px solid var(--line)}
+@keyframes wcfAccIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .wcf-account-card{
   display:flex;align-items:center;gap:12px;
   background-image:linear-gradient(135deg,rgba(13,13,26,.55) 0%,rgba(13,13,26,.88) 55%,rgba(13,13,26,.97) 100%),url('/bench-kit.jpg');
@@ -7027,67 +7169,87 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-role-badge.co-owner{color:var(--blue);border:1px solid rgba(46,116,204,.4)}
 .wcf-role-badge.owner{color:var(--red-hi);border:1px solid rgba(228,42,54,.4)}
 .wcf-role-badge.small{margin-left:4px;padding:2px 7px;font-size:9px}
-.wcf-inbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 13px}
-.wcf-inbox-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.wcf-inbox-head h4{margin:0;font-size:13px;font-weight:800}
-.wcf-inbox-unread-pill{background:var(--red);color:#fff;font-family:var(--mono);font-weight:800;font-size:11px;padding:2px 9px;border-radius:20px}
-.wcf-msg-card{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 13px}
-.wcf-msg-card + .wcf-msg-card{margin-top:9px}
-.wcf-msg-card.unread{border-color:rgba(228,42,54,.4);background:linear-gradient(135deg,rgba(228,42,54,.1),var(--bg))}
-.wcf-msg-from{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
-.wcf-msg-text{font-size:13.5px;line-height:1.5;margin:6px 0 10px;color:var(--white)}
-.wcf-msg-ack{width:100%;background:var(--green);color:#04140a;border:none;padding:10px;border-radius:9px;font-weight:800;font-size:12.5px;cursor:pointer}
-.wcf-msg-read-note{font-size:11px;color:var(--dim);text-align:center;margin:0}
+.wcf-inbox-msg{border-radius:16px;padding:13px;margin-bottom:9px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line)}
+.wcf-inbox-msg.unread{border-color:rgba(230,57,70,.32)}
+.wcf-inbox-msg-top{display:flex;align-items:center;gap:9px}
+.wcf-inbox-msg-tile{flex:none;width:26px;height:26px;border-radius:9px;display:grid;place-items:center;font-size:12px;background:rgba(46,116,204,.15);border:1px solid rgba(46,116,204,.3);color:var(--blue)}
+.wcf-inbox-msg-from{flex:1;min-width:0;font-family:var(--sans);font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-inbox-msg-when{margin-top:5px;font-size:10.5px;color:#64748b}
+.wcf-inbox-new{flex:none;font-weight:800;font-size:9px;letter-spacing:.1em;color:#f8b3b8;background:rgba(230,57,70,.14);border:1px solid rgba(230,57,70,.36);padding:5px 8px;border-radius:20px}
+.wcf-inbox-msg-body{margin-top:10px;font-size:12.5px;line-height:1.5;color:var(--white)}
+.wcf-inbox-mark-read{width:100%;margin-top:11px;min-height:44px;padding:12px;border-radius:12px;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.36);color:#7fb0ec;font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-inbox-unread-pill{display:flex;align-items:center;gap:5px;padding:5px 9px;border-radius:20px;background:rgba(230,57,70,.16);border:1px solid rgba(230,57,70,.42);font-weight:800;font-size:9px;letter-spacing:.1em;color:#f8b3b8;white-space:nowrap}
+.wcf-inbox-unread-dot{width:5px;height:5px;border-radius:50%;background:var(--red)}
 .wcf-role-unread{background:var(--red);color:#fff;font-family:var(--mono);font-weight:800;font-size:10px;padding:1px 6px;border-radius:20px;flex:0 0 auto}
-.wcf-upcoming{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 13px}
-.wcf-upcoming h4{margin:0 0 4px;font-size:13px;font-weight:800}
-.wcf-upcoming-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
-.wcf-upcoming-row:last-child{border-bottom:none}
-.wcf-upcoming-venue{font-weight:700;font-size:13px}
-.wcf-upcoming-date{font-size:11px;color:var(--dim);margin-top:1px}
-.wcf-upcoming-waiting{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;padding:3px 8px;border-radius:999px;background:rgba(224,167,51,.16);color:var(--amber);white-space:nowrap;flex:0 0 auto}
-.wcf-tab-self-pay{background:var(--red);color:#fff;border:none;padding:8px 12px;border-radius:8px;font-weight:800;font-size:11px;cursor:pointer;flex:0 0 auto;white-space:nowrap}
-.wcf-tab-self-pending{font-size:10px;font-weight:800;color:#7CAEF0;white-space:nowrap;flex:0 0 auto}
-.wcf-account-field{display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.wcf-tab-hero{margin:0 2px 9px;padding:14px;border-radius:20px;background:linear-gradient(155deg,rgba(240,82,94,.14),rgba(19,22,38,.98) 62%);border:1px solid rgba(240,82,94,.34);box-shadow:0 20px 40px -30px rgba(240,82,94,.6)}
+.wcf-tab-hero-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.wcf-tab-hero-amount{display:block;font-family:var(--display);font-size:30px;font-weight:800;letter-spacing:-.025em;font-variant-numeric:tabular-nums;color:#f8fafc}
+.wcf-tab-hero-summary{display:block;margin-top:9px;font-weight:700;font-size:11.5px;color:#f1f5f9}
+.wcf-tab-hero-icon{flex:none;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:14px;background:rgba(240,82,94,.18);border:1px solid rgba(240,82,94,.42);color:var(--red-hi)}
+.wcf-tab-hero-items{display:flex;flex-direction:column;gap:7px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.wcf-tab-hero-item{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:12px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.12)}
+.wcf-tab-hero-item-venue{font-weight:700;font-size:12px;color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-tab-hero-item-date{margin-top:4px;font-size:10.5px;color:#64748b}
+.wcf-tab-hero-item-price{flex:none;font-family:var(--mono);font-weight:600;font-size:12px;color:#cbd5e1}
+.wcf-tab-hero-claimed{flex:none;font-weight:800;font-size:9px;letter-spacing:.1em;color:#f5d97a;background:rgba(234,179,8,.14);border:1px solid rgba(234,179,8,.36);padding:6px 8px;border-radius:20px}
+.wcf-tab-hero-pay{flex:none;min-height:44px;padding:0 12px;border-radius:12px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.34);color:#86efac;font-weight:800;font-size:10.5px;cursor:pointer}
+.wcf-tab-hero-note{margin:12px 2px 0;font-size:10.5px;line-height:1.5;color:var(--dim)}
+.wcf-booking-row{display:flex;align-items:center;gap:11px;padding:14px;border-radius:18px;margin-bottom:10px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);box-shadow:0 18px 38px -30px rgba(0,0,0,.9)}
+.wcf-booking-date-tile{flex:none;width:46px;height:46px;border-radius:13px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(13,13,26,.7);border:1px solid rgba(148,163,184,.16)}
+.wcf-booking-day{font-family:var(--display);font-weight:800;font-size:15px;color:#f8fafc}
+.wcf-booking-month{margin-top:3px;font-weight:700;font-size:8.5px;letter-spacing:.12em;color:var(--dim)}
+.wcf-booking-info{flex:1;min-width:0}
+.wcf-booking-venue{font-family:var(--display);font-weight:800;font-size:13.5px;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-booking-meta{margin-top:5px;font-size:11px;color:var(--dim)}
+.wcf-booking-badge{flex:none;font-weight:800;font-size:9px;letter-spacing:.1em;padding:6px 9px;border-radius:20px;white-space:nowrap}
+.wcf-booking-badge.green{color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.35)}
+.wcf-booking-badge.amber{color:var(--amber);background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.35)}
+.wcf-account-field{display:flex;flex-direction:column;gap:8px;font-family:var(--sans);font-weight:800;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
 .wcf-account-rename{display:flex;gap:8px}
-.wcf-account-rename input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:10px;border-radius:9px;font-size:13px;font-family:var(--sans);text-transform:none}
-.wcf-account-rename button{background:var(--red);color:#fff;border:none;padding:0 14px;border-radius:9px;font-weight:800;cursor:pointer}
-.wcf-account-rename button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
-.wcf-signout{background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px;border-radius:10px;font-weight:700;cursor:pointer}
-.wcf-signout:hover{color:var(--red-hi);border-color:rgba(228,42,54,.5)}
-.wcf-push-section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 13px;display:flex;flex-direction:column;gap:9px}
-.wcf-rating-section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:16px}
-.wcf-rating-section h3{font-size:13px;font-weight:800;color:var(--white);margin:0 0 4px}
-.wcf-rating-note{font-size:11px;color:var(--dim);line-height:1.5;margin:0 0 12px}
-.wcf-record-section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:16px}
-.wcf-record-section h3{font-size:13px;font-weight:800;color:var(--white);margin:0 0 4px}
+.wcf-account-rename input{flex:1;min-width:0;min-height:46px;box-sizing:border-box;background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:13px;border-radius:12px;font-size:13px;font-weight:600;font-family:var(--sans);text-transform:none;letter-spacing:normal}
+.wcf-account-rename button{flex:none;min-height:46px;padding:0 15px;border-radius:12px;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.36);color:#7fb0ec;font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-account-rename button:disabled{opacity:.5;cursor:not-allowed}
+.wcf-signout{width:100%;margin-top:14px;min-height:46px;padding:13px;border-radius:12px;background:rgba(240,82,94,.1);border:1px solid rgba(240,82,94,.3);color:var(--red-hi);font-weight:700;font-size:12px;cursor:pointer}
+.wcf-signout:hover{background:rgba(240,82,94,.16)}
+.wcf-push-section{display:flex;align-items:center;gap:11px;margin-top:14px;padding:12px 13px;border-radius:14px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.12)}
+.wcf-rating-section{margin-bottom:0}
+.wcf-rating-section h3,.wcf-record-section h3{display:none}
+.wcf-rating-note{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin:0 0 14px}
+.wcf-record-section{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
 .wcf-record-empty{font-size:11px;color:var(--dim);margin:0}
-.wcf-record-pct{font-size:32px;font-weight:800;color:var(--white);text-align:center;margin:6px 0 12px}
-.wcf-record-pct span{display:block;font-size:11px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
-.wcf-record-row{display:flex;justify-content:space-around;text-align:center;border-top:1px solid var(--line);padding-top:10px}
-.wcf-record-row>div{display:flex;flex-direction:column;gap:2px}
-.wcf-record-row strong{font-size:16px;color:var(--white)}
-.wcf-record-row span{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.03em}
-.wcf-rating-form{display:flex;flex-direction:column;gap:10px}
-.wcf-rating-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.wcf-rating-row>span:first-child{font-size:12.5px;font-weight:700;color:var(--white);flex-shrink:0}
-.wcf-rating-row select{background:var(--panel2);border:1px solid var(--line);color:var(--white);padding:7px 10px;border-radius:8px;font-size:12.5px;font-family:var(--sans)}
-.wcf-star-picker{display:flex;gap:3px}
-.wcf-star{background:none;border:none;font-size:20px;color:var(--line);cursor:pointer;padding:0;line-height:1}
+.wcf-record-pct{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;padding-top:11px;border-top:1px solid rgba(148,163,184,.12)}
+.wcf-record-pct b{font-family:var(--display);font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--green)}
+.wcf-record-pct span{font-family:var(--sans);font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.wcf-record-row{display:flex;padding:13px 0;border-radius:14px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.12)}
+.wcf-record-row>div{flex:1;text-align:center}
+.wcf-record-row strong{display:block;font-family:var(--display);font-size:19px;font-weight:800;font-variant-numeric:tabular-nums;color:#f8fafc}
+.wcf-record-row span{display:block;margin-top:6px;font-family:var(--sans);font-size:9px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.wcf-rating-form{display:flex;flex-direction:column;gap:14px}
+.wcf-rating-row{display:flex;flex-direction:column}
+.wcf-rating-row-top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:7px}
+.wcf-rating-row-top>span{font-family:var(--sans);font-weight:600;font-size:11px;letter-spacing:.02em;color:var(--dim)}
+.wcf-rating-row-top>b{font-family:var(--mono);font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;color:#cbd5e1}
+.wcf-rating-track{height:5px;border-radius:5px;background:var(--panel2);overflow:hidden}
+.wcf-rating-fill{height:100%;border-radius:5px}
+.wcf-rating-row select{margin-top:10px;width:100%;box-sizing:border-box;appearance:none;background:var(--bg);color:var(--white);border:1px solid rgba(148,163,184,.2);padding:13px;border-radius:12px;font-size:13px;font-weight:600;font-family:var(--sans);outline:none;cursor:pointer;min-height:46px}
+.wcf-star-picker{display:flex;gap:4px;margin-top:8px}
+.wcf-star{background:none;border:none;font-size:18px;color:var(--line);cursor:pointer;padding:0;line-height:1}
 .wcf-star.on{color:var(--amber)}
-.wcf-push-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.wcf-push-label{font-size:13px;font-weight:700;color:var(--white)}
-.wcf-push-sub{font-size:11px;color:var(--dim);margin-top:2px}
-.wcf-push-toggle{flex:0 0 auto;background:var(--panel2);border:1px solid var(--line);color:var(--dim);font-weight:800;font-size:12px;padding:7px 16px;border-radius:20px;cursor:pointer}
-.wcf-push-toggle.on{background:var(--green);border-color:var(--green);color:var(--bg)}
+.wcf-push-row{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.wcf-push-label{font-weight:700;font-size:12px;color:#f1f5f9}
+.wcf-push-sub{margin-top:5px;font-size:10.5px;line-height:1.35;color:var(--dim)}
+.wcf-push-toggle{flex:none;width:44px;height:26px;border-radius:20px;background:var(--panel2);border:1px solid var(--line);cursor:pointer;position:relative;padding:0}
+.wcf-push-toggle.on{background:rgba(34,197,94,.3);border-color:rgba(34,197,94,.5)}
 .wcf-push-toggle:disabled{opacity:.6;cursor:not-allowed}
-.wcf-push-test{align-self:flex-start;font-size:11.5px;padding:7px 12px}
-.wcf-push-note{font-size:11px;color:var(--dim);line-height:1.5;margin:0}
-.wcf-guides{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px;display:flex;flex-direction:column}
-.wcf-guides h3{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--dim);margin:8px 10px 4px}
-.wcf-guide-row{display:flex;align-items:center;justify-content:space-between;background:transparent;border:none;color:var(--white);font-size:13.5px;font-weight:600;font-family:var(--sans);padding:11px 10px;border-radius:9px;cursor:pointer;text-align:left}
-.wcf-guide-row:hover{background:var(--panel2)}
-.wcf-guide-arrow{color:var(--dim);font-size:18px}
+.wcf-push-toggle-knob{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--dim);transition:transform .15s ease,background .15s ease}
+.wcf-push-toggle.on .wcf-push-toggle-knob{transform:translateX(18px);background:var(--green)}
+.wcf-push-test{width:100%;margin-top:9px;min-height:44px;padding:12px;border-radius:12px;background:rgba(148,163,184,.07);border:1px solid rgba(148,163,184,.18);color:#cbd5e1;font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-push-note{margin-top:9px;font-size:11px;color:var(--dim);line-height:1.5}
+.wcf-guide-row{display:flex;align-items:center;gap:11px;padding:12px 13px;border-radius:14px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.12);text-decoration:none;min-height:52px;box-sizing:border-box;cursor:pointer;text-align:left;width:100%;color:inherit;font:inherit}
+.wcf-guide-row + .wcf-guide-row{margin-top:7px}
+.wcf-guide-tile{flex:none;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:13px;background:rgba(46,116,204,.16);border:1px solid rgba(46,116,204,.36);color:#7fb0ec}
+.wcf-guide-title{flex:1;min-width:0;font-weight:700;font-size:12px;color:#f1f5f9}
+.wcf-guide-arrow{flex:none;font-size:14px;color:#64748b}
 .wcf-lightbox{position:fixed;inset:0;background:rgba(4,9,20,.92);z-index:100;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 12px 40px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
 .wcf-lightbox-img{max-width:min(480px,100%);width:100%;border-radius:14px;box-shadow:0 20px 60px -20px rgba(0,0,0,.6)}
 .wcf-modal-overlay{position:fixed;inset:0;background:rgba(3,7,15,.7);z-index:110;display:flex;align-items:center;justify-content:center;padding:20px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
@@ -7136,30 +7298,55 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pcard-private{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);text-align:center}
 .wcf-pcard-private span{font-size:10.5px;line-height:1.5;color:#64748b}
 .wcf-lightbox-close{position:fixed;top:16px;right:16px;width:38px;height:38px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-size:22px;line-height:1;cursor:pointer;z-index:101}
-.wcf-push-stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:12.5px;color:var(--dim);font-weight:600}
-.wcf-audit-row{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px}
-.wcf-audit-line{font-size:12.5px;color:var(--white);line-height:1.4}
+.wcf-roles-stats{display:flex;gap:9px}
+.wcf-roles-stat{flex:1;padding:12px 13px;border-radius:14px}
+.wcf-roles-stat.blue{background:linear-gradient(155deg,rgba(46,116,204,.16),rgba(19,22,38,.96) 64%);border:1px solid rgba(46,116,204,.36)}
+.wcf-roles-stat.dim{background:linear-gradient(180deg,rgba(30,41,59,.72),rgba(19,22,38,.9));border:1px solid var(--line)}
+.wcf-roles-stat-num{display:block;font-family:var(--display);font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;color:#f8fafc}
+.wcf-roles-stat-label{display:block;margin-top:7px;font-weight:700;font-size:10px;line-height:1.3;color:var(--dim)}
+.wcf-audit-row{display:flex;gap:10px;padding:10px 11px;border-radius:12px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.1);margin-top:8px}
+.wcf-audit-row:first-child{margin-top:0}
+.wcf-audit-dot{flex:none;width:7px;height:7px;border-radius:50%;margin-top:5px}
+.wcf-audit-line{flex:1;min-width:0;font-weight:700;font-size:11.5px;line-height:1.35;color:#f1f5f9}
 .wcf-audit-line strong{font-weight:800}
-.wcf-audit-time{font-size:10.5px;color:var(--dim);font-family:var(--mono);margin-top:3px}
-.wcf-roles-search{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px 11px;border-radius:9px;font-size:12.5px;font-family:var(--sans);margin:8px 0 2px}
-.wcf-roles-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line);flex-wrap:wrap;min-width:0}
-.wcf-roles-row:last-child{border-bottom:none}
-.wcf-roles-row>span{min-width:0;overflow-wrap:break-word}
-.wcf-roles-actions{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+.wcf-audit-time{margin-top:5px;font-size:10px;color:#64748b}
+.wcf-roles-search{width:100%;box-sizing:border-box;min-height:44px;background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:12px;border-radius:12px;font-size:12.5px;font-family:var(--sans);margin:14px 0 2px}
+.wcf-roles-row{border-radius:14px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.12);padding:10px 11px;margin-top:8px}
+.wcf-roles-row:first-of-type{margin-top:8px}
+.wcf-roles-row-top{display:flex;align-items:center;gap:9px}
+.wcf-roles-avatar{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:12px;color:#f8fafc;background:linear-gradient(150deg,var(--blue),#1e3a8a);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+.wcf-roles-row>span{min-width:0;overflow-wrap:break-word;flex:1}
+.wcf-roles-actions{display:flex;gap:6px;flex-wrap:wrap;min-width:0;margin-top:9px}
+.wcf-roles-actions .wcf-ghost{min-height:38px;padding:0 12px;border-radius:11px;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.18);color:#cbd5e1;font-weight:700;font-size:10.5px}
+.wcf-roles-actions .wcf-ghost.danger{background:rgba(240,82,94,.1);border-color:rgba(240,82,94,.3);color:var(--red-hi)}
 
-.wcf-club-settings,.wcf-add-player{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:16px}
-.wcf-club-settings h3,.wcf-add-player h3{margin:0 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
-.wcf-award-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line)}
-.wcf-award-row:last-of-type{border-bottom:none;margin-bottom:10px}
-.wcf-team-settings{display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:6px}
-.wcf-team-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700;min-width:0}
+.wcf-club-settings,.wcf-add-player{margin-top:18px}
+.wcf-club-settings:first-child,.wcf-add-player:first-child{margin-top:0}
+.wcf-club-settings h3,.wcf-add-player h3{margin:0 0 9px;font-family:var(--sans);font-weight:800;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.wcf-award-row{padding:12px 13px;border-radius:14px;background:linear-gradient(155deg,rgba(234,179,8,.13),rgba(19,22,38,.96) 66%);border:1px solid rgba(234,179,8,.3);margin-top:8px}
+.wcf-award-row:first-of-type{margin-top:0}
+.wcf-award-top{display:flex;align-items:baseline;gap:9px}
+.wcf-award-title{flex:1;min-width:0;font-family:var(--display);font-weight:800;font-size:13px;color:#f8fafc}
+.wcf-award-value{flex:none;font-family:var(--display);font-weight:800;font-size:14px;font-variant-numeric:tabular-nums;color:#f5d97a}
+.wcf-award-note{margin-top:7px;font-size:11px;line-height:1.45;color:#cbd5e1}
+.wcf-award-bottom{display:flex;align-items:center;gap:6px;margin-top:10px}
+.wcf-award-tag{font-weight:800;font-size:9px;letter-spacing:.08em;color:#7fb0ec;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.32);padding:5px 8px;border-radius:20px}
+.wcf-team-settings{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
+.wcf-team-field{display:flex;flex-direction:column;gap:6px;font-family:var(--sans);font-weight:800;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);min-width:0}
 .wcf-team-field.wide{grid-column:1/-1}
-.wcf-team-field input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:8px;font-size:13px;font-family:var(--sans);text-transform:none;width:100%;max-width:100%;min-width:0;box-sizing:border-box;display:block}
-.wcf-team-field.color input{width:52px;padding:2px;height:38px;cursor:pointer}
+.wcf-team-field input{background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:12px;border-radius:12px;font-size:13px;font-weight:600;font-family:var(--sans);text-transform:none;letter-spacing:normal;width:100%;max-width:100%;min-width:0;box-sizing:border-box;display:block;min-height:46px}
+.wcf-team-field.color input{width:44px;padding:2px;height:44px;min-height:0;border-radius:50%;cursor:pointer}
 .wcf-team-field.narrow input{width:70px}
+.wcf-team-row{display:flex;align-items:center;gap:9px}
+.wcf-team-row .wcf-team-field{flex:1}
 .wcf-field-error{text-transform:none;letter-spacing:normal;font-weight:600;font-size:11px;color:var(--red-hi);margin-top:2px}
-.wcf-club-settings .wcf-save,.wcf-add-player .wcf-save{margin-top:10px}
-.wcf-club-settings .wcf-save:disabled,.wcf-add-player .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
+.wcf-club-settings .wcf-save,.wcf-add-player .wcf-save{width:100%;margin-top:10px;min-height:48px;padding:14px;border-radius:14px;cursor:pointer;font-weight:800;font-size:12.5px;color:#fff;border:1px solid rgba(230,57,70,.5);background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5))}
+.wcf-club-settings .wcf-save:disabled,.wcf-add-player .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed;border-color:var(--line)}
+.wcf-upload-row{display:flex;gap:8px;margin-top:8px}
+.wcf-upload-box{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-height:70px;border-radius:14px;background:rgba(13,13,26,.6);border:1px dashed rgba(148,163,184,.3);cursor:pointer;padding:10px;text-align:center}
+.wcf-upload-glyph{font-family:var(--display);font-weight:700;font-size:15px;color:#7fb0ec}
+.wcf-upload-label{font-weight:700;font-size:9.5px;letter-spacing:.06em;color:var(--dim)}
+.wcf-upload-state{font-size:9px;color:#64748b}
 .wcf-login-code{margin-top:12px;background:var(--panel2);border:1px solid rgba(51,169,87,.4);border-radius:10px;padding:14px;text-align:center}
 .wcf-login-code-value{display:block;font-family:var(--mono);font-weight:800;font-size:28px;letter-spacing:4px;color:var(--green)}
 .wcf-login-code-note{display:block;font-size:11px;color:var(--dim);margin-top:6px;line-height:1.4}
