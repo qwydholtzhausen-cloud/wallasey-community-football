@@ -274,9 +274,9 @@ function teamGradient(hex: string) {
 // where. This is a purely cosmetic arrangement (booking order -> slot),
 // generalised to whatever squad size a fixture actually has rather than
 // assuming exactly 8-a-side.
-function formationSlots(n: number): { x: number; y: number; role: string }[] {
+function formationSlots(n: number): { x: number; y: number; role: string; isFront: boolean }[] {
   if (n <= 0) return [];
-  const slots: { x: number; y: number; role: string }[] = [{ x: 50, y: 6, role: "Goalkeeper" }];
+  const slots: { x: number; y: number; role: string; isFront: boolean }[] = [{ x: 50, y: 6, role: "Goalkeeper", isFront: false }];
   const outfield = n - 1;
   if (outfield <= 0) return slots;
   let rows: { count: number; role: string }[];
@@ -297,18 +297,21 @@ function formationSlots(n: number): { x: number; y: number; role: string }[] {
       : [{ count: back, role: "Defence" }, { count: mid, role: "Midfield" }];
   }
   // Each team spreads across nearly its whole half, back row close to the
-  // keeper (20) through front row right up against the halfway line (48) -
-  // matching a real tactics-board lineup, where a team's shape reaches
-  // deep into their attacking half rather than sitting bunched near their
-  // own goal with a gap before the center circle.
+  // keeper (20) through front row right up against the halfway line (46).
+  // The front row's name label is flagged (isFront) so the caller can flip
+  // it to sit above the chip instead of below - fixed-size chips need ~8%
+  // of pitch height to clear each other at the halfway line on a real
+  // phone width, and a label pointing into that gap eats into it further
+  // (this is what caused the old "names hidden behind circles" bug at 48).
   const backY = 20;
-  const frontY = 45;
+  const frontY = 46;
   const rowYs = rows.length === 1 ? [frontY] : rows.map((_, i) => backY + (i * (frontY - backY)) / (rows.length - 1));
   rows.forEach((row, ri) => {
     const y = rowYs[ri];
+    const isFront = ri === rows.length - 1 && rows.length > 1;
     for (let i = 0; i < row.count; i++) {
       const x = row.count === 1 ? 50 : 16 + i * (68 / (row.count - 1));
-      slots.push({ x, y, role: row.role });
+      slots.push({ x, y, role: row.role, isFront });
     }
   });
   return slots;
@@ -3309,8 +3312,11 @@ function App({ session }: { session: Session }) {
                 {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (() => {
                   const redSlots = formationSlots(nextGrouped.red.length);
                   const whiteSlots = formationSlots(nextGrouped.white.length);
-                  const redTokens = nextGrouped.red.map((b, i) => ({ booking: b, isRed: true, x: redSlots[i].x, y: redSlots[i].y, role: redSlots[i].role }));
-                  const whiteTokens = nextGrouped.white.map((b, i) => ({ booking: b, isRed: false, x: whiteSlots[i].x, y: 100 - whiteSlots[i].y, role: whiteSlots[i].role }));
+                  // Only red's front-row label flips above its chip - red sits in the
+                  // top half so a below-chip label points down into the halfway gap;
+                  // white's already points down away from it, so it's left alone.
+                  const redTokens = nextGrouped.red.map((b, i) => ({ booking: b, isRed: true, x: redSlots[i].x, y: redSlots[i].y, role: redSlots[i].role, labelFlip: redSlots[i].isFront }));
+                  const whiteTokens = nextGrouped.white.map((b, i) => ({ booking: b, isRed: false, x: whiteSlots[i].x, y: 100 - whiteSlots[i].y, role: whiteSlots[i].role, labelFlip: false }));
                   const allTokens = [...redTokens, ...whiteTokens];
                   const selected = allTokens.find((t) => t.booking.player_id === selectedLineupPlayerId);
                   const selectedStats = selected ? playerStats.find((p) => p.id === selected.booking.player_id) : null;
@@ -3322,7 +3328,7 @@ function App({ session }: { session: Session }) {
                     return (
                       <button
                         key={t.booking.id}
-                        className="wcf-lineup-token"
+                        className={"wcf-lineup-token" + (t.labelFlip ? " flip" : "")}
                         style={{ left: `${t.x}%`, top: `${t.y}%` }}
                         onClick={() => setSelectedLineupPlayerId((v) => (v === t.booking.player_id ? null : t.booking.player_id))}
                       >
@@ -6857,6 +6863,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-pitch-lines{position:relative;width:100%;aspect-ratio:0.56;opacity:.3;stroke:#e2e8f0;stroke-width:0.9;fill:none;display:block}
 .wcf-lineup-pitch-tokens{position:absolute;inset:0}
 .wcf-lineup-token{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:none;padding:2px;cursor:pointer;min-width:44px}
+.wcf-lineup-token.flip{flex-direction:column-reverse}
 .wcf-lineup-token-chip{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:13px;box-shadow:0 6px 14px -6px rgba(0,0,0,.85)}
 .wcf-lineup-token-label{font-size:9.5px;font-weight:700;letter-spacing:.02em;color:var(--white);text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap}
 .wcf-lineup-pitch-note{margin:12px 2px 0;font-size:11.5px;line-height:1.5;color:var(--dim)}
