@@ -666,6 +666,28 @@ const Icon = {
   ),
 };
 
+function SplashScreen() {
+  return (
+    <div className="wcf-splash">
+      <img className="wcf-splash-photo" src="/tunnel.jpg" alt="" />
+      <div className="wcf-splash-scrim" />
+      <div className="wcf-splash-body">
+        <div className="wcf-splash-est">EST. 2026</div>
+        <div className="wcf-splash-wordmark">
+          WIRRAL
+          <br />
+          <span className="dim">COMMUNITY FOOTBALL</span>
+        </div>
+        <div className="wcf-splash-loader">
+          <span className="wcf-splash-dot" />
+          <span className="wcf-splash-dot" />
+          <span className="wcf-splash-dot" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function WirralCommunityFootball() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
 
@@ -679,11 +701,7 @@ export default function WirralCommunityFootball() {
     <div className="wcf-root">
       <style>{css}</style>
       {session === undefined ? (
-        <div className="wcf-splash">
-          <span className="wcf-logo big">
-            <img src="/logo.png" alt="Wirral Community Football crest" />
-          </span>
-        </div>
+        <SplashScreen />
       ) : session ? (
         <App session={session} />
       ) : (
@@ -2805,13 +2823,7 @@ function App({ session }: { session: Session }) {
   }[tab];
 
   if (loading || !myProfile) {
-    return (
-      <div className="wcf-splash">
-        <span className="wcf-logo big">
-          <img src="/logo.png" alt="Wirral Community Football crest" />
-        </span>
-      </div>
-    );
+    return <SplashScreen />;
   }
 
   return (
@@ -6589,8 +6601,28 @@ const css = `
 .wcf-root *{box-sizing:border-box}
 .wcf-root path{stroke-linecap:round}
 
-.wcf-splash{flex:1;display:flex;align-items:center;justify-content:center}
-.wcf-splash .wcf-logo.big{width:96px;height:96px;border-radius:24px}
+.wcf-splash{position:relative;flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.wcf-splash-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 38%;
+  animation:wcfSplashZoom 9s ease-in-out infinite alternate}
+.wcf-splash-scrim{position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(5,5,10,.55) 0%,rgba(5,5,10,.15) 30%,rgba(5,5,10,.35) 55%,rgba(5,5,10,.92) 82%,var(--bg) 100%),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%)}
+.wcf-splash-body{position:relative;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
+  padding:0 24px 15%;text-align:center}
+.wcf-splash-est{font-family:var(--mono);font-weight:600;font-size:10px;letter-spacing:3px;color:var(--red-hi);margin-bottom:10px;opacity:.9}
+.wcf-splash-wordmark{font-family:var(--display);font-weight:800;font-size:34px;letter-spacing:-.5px;line-height:1.15;
+  color:var(--white);text-shadow:0 4px 20px rgba(0,0,0,.6)}
+.wcf-splash-wordmark .dim{color:rgba(245,246,248,.4)}
+.wcf-splash-loader{margin-top:26px;display:flex;align-items:center;justify-content:center;gap:7px}
+.wcf-splash-dot{width:6px;height:6px;border-radius:50%;background:rgba(245,246,248,.35);animation:wcfSplashDot 1.2s ease-in-out infinite}
+.wcf-splash-dot:nth-child(2){animation-delay:.15s}
+.wcf-splash-dot:nth-child(3){animation-delay:.3s}
+@keyframes wcfSplashZoom{from{transform:scale(1.05)}to{transform:scale(1.16)}}
+@keyframes wcfSplashDot{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
+@media (prefers-reduced-motion: reduce){
+  .wcf-splash-photo{animation:none;transform:scale(1.08)}
+  .wcf-splash-dot{animation:none;opacity:.7}
+}
 
 .wcf-signin{position:relative;flex:1;overflow-y:auto;display:flex;flex-direction:column;background:var(--bg)}
 .wcf-signin-photo{position:absolute;left:0;right:0;top:0;width:100%;height:72%;object-fit:cover;object-position:50% 55%}
