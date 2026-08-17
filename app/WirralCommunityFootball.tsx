@@ -4002,8 +4002,10 @@ function App({ session }: { session: Session }) {
                       {me && (
                         <div className="wcf-lb-me-card">
                           <div className="wcf-lb-me-rank">{myIdx + 1}</div>
-                          <div className="wcf-lb-me-label">Your<br />rank</div>
-                          <div className="wcf-lb-me-name">{me.name}</div>
+                          <div className="wcf-lb-me-body">
+                            <div className="wcf-lb-me-label">Your rank</div>
+                            <div className="wcf-lb-me-name">{me.name}</div>
+                          </div>
                           <div className="wcf-lb-me-stat"><div>{me.apps}</div><span>apps</span></div>
                           <div className="wcf-lb-me-stat"><div>{me.goals}</div><span>goals</span></div>
                         </div>
@@ -7198,8 +7200,9 @@ button.wcf-glance-card:disabled{cursor:default}
   border-radius:18px;background:rgba(46,116,204,.13);border:1px solid rgba(46,116,204,.32)}
 .wcf-lb-me-rank{width:40px;height:40px;border-radius:50%;background:rgba(46,116,204,.22);display:grid;place-items:center;
   font-family:var(--display);font-weight:700;font-size:15px;color:#7fb0ec;flex:0 0 auto}
-.wcf-lb-me-label{flex:1;min-width:0;font-family:var(--sans);font-size:10px;font-weight:800;letter-spacing:.16em;color:var(--blue)}
-.wcf-lb-me-name{margin-top:4px;font-family:var(--display);font-weight:800;font-size:15px;color:var(--white)}
+.wcf-lb-me-body{flex:1;min-width:0}
+.wcf-lb-me-label{font-family:var(--sans);font-size:10px;font-weight:800;letter-spacing:.16em;color:var(--blue);white-space:nowrap}
+.wcf-lb-me-name{margin-top:4px;font-family:var(--display);font-weight:800;font-size:15px;color:var(--white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wcf-lb-me-stat{text-align:center;flex:0 0 auto}
 .wcf-lb-me-stat div{font-family:var(--display);font-weight:700;font-size:20px;color:var(--white)}
 .wcf-lb-me-stat span{display:block;margin-top:4px;font-size:11px;color:var(--dim)}
