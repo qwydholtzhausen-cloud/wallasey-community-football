@@ -102,6 +102,7 @@ interface Profile {
   role: Role;
   created_at?: string;
   push_opt_in?: boolean;
+  avatar_url?: string | null;
 }
 
 type Team = "white" | "red";
@@ -254,6 +255,33 @@ function avatarFor(name: string) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
   return { initial, gradient: AVATAR_GRADIENTS[hash % AVATAR_GRADIENTS.length] };
+}
+
+// A real uploaded photo, when set, always wins over the generated
+// initial+gradient chip - same className either way so every existing
+// avatar-chip CSS rule (size/shape/centering) just works for both.
+function Avatar({
+  name,
+  avatarUrl,
+  className,
+  background,
+  style,
+}: {
+  name: string;
+  avatarUrl?: string | null;
+  className: string;
+  background?: string;
+  style?: React.CSSProperties;
+}) {
+  if (avatarUrl) {
+    return <img className={className} src={avatarUrl} alt={name} style={style} />;
+  }
+  const initial = (name.trim()[0] || "?").toUpperCase();
+  return (
+    <span className={className} style={background ? { background, ...style } : style}>
+      {initial}
+    </span>
+  );
 }
 
 // Derives a light/dark gradient pair from a club's configured team colour so
@@ -987,12 +1015,12 @@ function App({ session }: { session: Session }) {
   };
 
   const loadProfile = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id, display_name, role, push_opt_in").eq("id", myId).single();
+    const { data } = await supabase.from("profiles").select("id, display_name, role, push_opt_in, avatar_url").eq("id", myId).single();
     if (data) setMyProfile(data as Profile);
   }, [myId]);
 
   const loadProfiles = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id, display_name, role, created_at").order("display_name");
+    const { data } = await supabase.from("profiles").select("id, display_name, role, created_at, avatar_url").order("display_name");
     if (data) setProfiles(data as Profile[]);
   }, []);
 
@@ -1000,7 +1028,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, lineup_positions, bookings(id, player_id, status, waiting, team, created_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, lineup_positions, bookings(id, player_id, status, waiting, team, created_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -1861,6 +1889,43 @@ function App({ session }: { session: Session }) {
     if (id === myId) await loadProfile();
     logAction("Renamed player", `${oldName} → ${name.trim()}`);
   }
+  // One canonical file per player (path is just their id), overwritten on
+  // every re-upload via upsert - no orphaned old photos to clean up. The
+  // path itself never changes on re-upload, so a cache-busting query param
+  // is needed or the browser (and other players' already-loaded pages)
+  // would keep showing the old cached image at that URL.
+  async function uploadMyAvatar(file: File) {
+    try {
+      const compressed = await compressImage(file, 480, 0.85);
+      const path = `${myId}.jpg`;
+      const { error: upErr } = await supabase.storage.from("avatars").upload(path, compressed, { contentType: "image/jpeg", upsert: true });
+      if (upErr) return notifyError(upErr.message);
+      const url = `${supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl}?v=${Date.now()}`;
+      const { error } = await supabase.from("profiles").update({ avatar_url: url }).eq("id", myId);
+      if (error) return notifyError(error.message);
+      await Promise.all([loadProfile(), loadProfiles()]);
+      notifySuccess("Photo updated");
+    } catch (err) {
+      notifyError(err instanceof Error ? err.message : "Couldn't process that photo");
+    }
+  }
+  async function removeMyAvatar() {
+    await supabase.storage.from("avatars").remove([`${myId}.jpg`]);
+    const { error } = await supabase.from("profiles").update({ avatar_url: null }).eq("id", myId);
+    if (error) return notifyError(error.message);
+    await Promise.all([loadProfile(), loadProfiles()]);
+  }
+  // Admin moderation override - remove someone else's photo without
+  // needing to reach them first, same trust level already extended to
+  // rename/role changes on other players.
+  async function adminRemovePlayerAvatar(id: string) {
+    const targetName = profiles.find((p) => p.id === id)?.display_name ?? "someone";
+    await supabase.storage.from("avatars").remove([`${id}.jpg`]);
+    const { error } = await supabase.from("profiles").update({ avatar_url: null }).eq("id", id);
+    if (error) return notifyError(error.message);
+    await loadProfiles();
+    logAction("Removed profile photo", targetName);
+  }
   async function setRole(id: string, role: Role) {
     const targetName = profiles.find((p) => p.id === id)?.display_name ?? "someone";
     const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
@@ -2389,6 +2454,11 @@ function App({ session }: { session: Session }) {
     set.add(currentSeasonYear);
     return Array.from(set).sort((a, b) => b - a);
   }, [pastGames, currentSeasonYear]);
+
+  // Stats/Predictions render off computed rollups keyed by player id+name,
+  // not full Profile rows, so avatar photos need a side lookup rather than
+  // being threaded through those computations.
+  const avatarByPlayerId = useMemo(() => new Map(profiles.map((p) => [p.id, p.avatar_url])), [profiles]);
 
   const playerStats = useMemo(() => {
     const tally: Record<string, { name: string; apps: number; goals: number; lastPlayed: string }> = {};
@@ -3476,12 +3546,13 @@ function App({ session }: { session: Session }) {
                         }
                         onPointerUp={draggable ? () => setDraggingPlayerId(null) : undefined}
                       >
-                        <span
+                        <Avatar
+                          name={t.booking.player.display_name}
+                          avatarUrl={t.booking.player.avatar_url}
                           className="wcf-lineup-token-chip"
-                          style={{ background: teamGradient(color), color: readableTextColor(color), boxShadow: me ? "0 0 0 2px var(--blue), 0 6px 14px -6px rgba(0,0,0,.85)" : undefined }}
-                        >
-                          {t.booking.player.display_name[0]?.toUpperCase()}
-                        </span>
+                          background={teamGradient(color)}
+                          style={{ color: readableTextColor(color), boxShadow: me ? "0 0 0 2px var(--blue), 0 6px 14px -6px rgba(0,0,0,.85)" : undefined }}
+                        />
                         <span className="wcf-lineup-token-label">{t.booking.player.display_name.split(" ")[0]}</span>
                       </button>
                     );
@@ -3545,9 +3616,13 @@ function App({ session }: { session: Session }) {
                                   className="wcf-lineup-list-row"
                                   onClick={() => setSelectedLineupPlayerId((v) => (v === b.player_id ? null : b.player_id))}
                                 >
-                                  <span className="wcf-lineup-list-chip" style={{ background: teamGradient(color), color: readableTextColor(color) }}>
-                                    {b.player.display_name[0]?.toUpperCase()}
-                                  </span>
+                                  <Avatar
+                                    name={b.player.display_name}
+                                    avatarUrl={b.player.avatar_url}
+                                    className="wcf-lineup-list-chip"
+                                    background={teamGradient(color)}
+                                    style={{ color: readableTextColor(color) }}
+                                  />
                                   <span className="wcf-lineup-list-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
                                 </button>
                               ))}
@@ -3558,12 +3633,13 @@ function App({ session }: { session: Session }) {
 
                       {selected && (
                         <div className="wcf-lineup-selected">
-                          <span
+                          <Avatar
+                            name={selected.booking.player.display_name}
+                            avatarUrl={selected.booking.player.avatar_url}
                             className="wcf-lineup-selected-chip"
-                            style={{ background: teamGradient(selectColor(selected.isRed)), color: readableTextColor(selectColor(selected.isRed)) }}
-                          >
-                            {selected.booking.player.display_name[0]?.toUpperCase()}
-                          </span>
+                            background={teamGradient(selectColor(selected.isRed))}
+                            style={{ color: readableTextColor(selectColor(selected.isRed)) }}
+                          />
                           <div className="wcf-lineup-selected-body">
                             <div
                               className="wcf-lineup-selected-name clickable"
@@ -3599,7 +3675,7 @@ function App({ session }: { session: Session }) {
                     <div className="wcf-lineup-group-label">Unassigned · {nextGrouped.unassigned.length}</div>
                     {nextGrouped.unassigned.map((b) => (
                       <div key={b.id} className={"wcf-lineup-row" + (b.player_id === myId ? " me" : "")}>
-                        <span className="wcf-lineup-avatar">{b.player.display_name[0]?.toUpperCase()}</span>
+                        <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-lineup-avatar" />
                         <button className="wcf-lineup-name wcf-name-link" onClick={() => openPlayerCard(b.player_id)}>
                           {b.player.display_name}{b.player_id === myId ? " (you)" : ""}
                         </button>
@@ -3667,9 +3743,12 @@ function App({ session }: { session: Session }) {
                     <div className="wcf-pl-leader-card">
                       <div className="wcf-pl-leader-eyebrow">Leader · {isSeason ? "This season" : monthLabel}</div>
                       <div className="wcf-pl-leader-row">
-                        <span className="wcf-pl-leader-avatar" style={{ background: avatarFor(leader.playerName).gradient }}>
-                          {avatarFor(leader.playerName).initial}
-                        </span>
+                        <Avatar
+                          name={leader.playerName}
+                          avatarUrl={avatarByPlayerId.get(leader.playerId)}
+                          className="wcf-pl-leader-avatar"
+                          background={avatarFor(leader.playerName).gradient}
+                        />
                         <div className="wcf-pl-leader-body">
                           <div className="wcf-pl-leader-name">{leader.playerName}</div>
                           <div className="wcf-pl-leader-sub">
@@ -3725,7 +3804,7 @@ function App({ session }: { session: Session }) {
                               onClick={() => setPredictOpenId((v) => (v === row.playerId ? null : row.playerId))}
                             >
                               <span className={"wcf-lb-rank" + (inPrizes ? " top" : "")}>{inPrizes ? medal : i + 1}</span>
-                              <span className="wcf-pl-avatar" style={{ background: a.gradient }}>{a.initial}</span>
+                              <Avatar name={row.playerName} avatarUrl={avatarByPlayerId.get(row.playerId)} className="wcf-pl-avatar" background={a.gradient} />
                               <div className="wcf-pl-body">
                                 <div className="wcf-pl-name">{row.playerName}{row.playerId === myId ? " (you)" : ""}</div>
                                 <div className="wcf-pl-sub-row">
@@ -3897,7 +3976,11 @@ function App({ session }: { session: Session }) {
                                 className={"wcf-lb-podium-avatar " + (lead ? "lead" : "")}
                                 style={{ borderColor: ring, width: lead ? 96 : 74, height: lead ? 96 : 74 }}
                               >
-                                <span style={{ fontSize: lead ? 26 : 20 }}>{a.initial}</span>
+                                {avatarByPlayerId.get(p.id) ? (
+                                  <img className="wcf-lb-podium-photo" src={avatarByPlayerId.get(p.id) ?? undefined} alt={p.name} />
+                                ) : (
+                                  <span style={{ fontSize: lead ? 26 : 20 }}>{a.initial}</span>
+                                )}
                                 <span className="wcf-lb-podium-badge" style={{ background: ring }}>{rank}</span>
                               </div>
                               <div className="wcf-lb-podium-name">{p.name.split(" ")[0]}</div>
@@ -3973,7 +4056,7 @@ function App({ session }: { session: Session }) {
                             onClick={() => setStatsOpenId((v) => (v === row.id ? null : row.id))}
                           >
                             <span className="wcf-rank">{isLead ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
-                            <span className="wcf-lb-row-avatar" style={{ background: a.gradient }}>{a.initial}</span>
+                            <Avatar name={row.name} avatarUrl={avatarByPlayerId.get(row.id)} className="wcf-lb-row-avatar" background={a.gradient} />
                             <button
                               className="wcf-board-name wcf-name-link"
                               onClick={(e) => { e.stopPropagation(); openPlayerCard(row.id); }}
@@ -4452,6 +4535,9 @@ function App({ session }: { session: Session }) {
             clubSettings={cs}
             awards={awards}
             onRename={renameSelf}
+            onUploadAvatar={uploadMyAvatar}
+            onRemoveAvatar={removeMyAvatar}
+            onAdminRemoveAvatar={adminRemovePlayerAvatar}
             onSetRole={setRole}
             onAdminRename={adminRenamePlayer}
             onDeleteProfile={deleteProfile}
@@ -4590,7 +4676,7 @@ function PlayerCardModal({
             </span>
           )}
           <div className="wcf-pcard-avatar-wrap">
-            <span className="wcf-pcard-avatar" style={{ background: a.gradient }}>{a.initial}</span>
+            <Avatar name={profile.display_name} avatarUrl={profile.avatar_url} className="wcf-pcard-avatar" background={a.gradient} />
             {rank != null && <span className="wcf-pcard-rank">#{rank}</span>}
           </div>
           <div className="wcf-pcard-name">{profile.display_name}</div>
@@ -4712,6 +4798,9 @@ function AccountPanel({
   clubSettings,
   awards,
   onRename,
+  onUploadAvatar,
+  onRemoveAvatar,
+  onAdminRemoveAvatar,
   onSetRole,
   onAdminRename,
   onDeleteProfile,
@@ -4767,6 +4856,9 @@ function AccountPanel({
   pushStats: { total: number; subscribed: number } | null;
   awards: AwardRow[];
   onRename: (name: string) => void;
+  onUploadAvatar: (file: File) => Promise<void>;
+  onRemoveAvatar: () => Promise<void>;
+  onAdminRemoveAvatar: (id: string) => Promise<void>;
   onSetRole: (id: string, role: Role) => void;
   onAdminRename: (id: string, name: string) => void;
   onDeleteProfile: (id: string, name: string) => void;
@@ -4814,7 +4906,25 @@ function AccountPanel({
   return (
     <div className="wcf-account">
       <div className="wcf-account-card">
-        <span className="wcf-avatar big">{profile.display_name[0]?.toUpperCase()}</span>
+        <div className="wcf-account-avatar-wrap">
+          <Avatar name={profile.display_name} avatarUrl={profile.avatar_url} className="wcf-avatar big" />
+          <label className="wcf-account-avatar-edit" aria-label="Change profile photo">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) await onUploadAvatar(file);
+              }}
+            />
+          </label>
+          {profile.avatar_url && (
+            <button className="wcf-account-avatar-remove" onClick={() => onRemoveAvatar()} aria-label="Remove photo">×</button>
+          )}
+        </div>
         <div>
           <div className="wcf-account-name">{profile.display_name}</div>
           <div className="wcf-account-email">{email}</div>
@@ -5137,7 +5247,7 @@ function AccountPanel({
                   </div>
                 ) : (
                   <div className="wcf-roles-row-top">
-                    <span className="wcf-roles-avatar">{p.display_name.slice(0, 1).toUpperCase()}</span>
+                    <Avatar name={p.display_name} avatarUrl={p.avatar_url} className="wcf-roles-avatar" />
                     <span>{p.display_name}{isSelf ? " (you)" : ""} <span className={"wcf-role-badge small " + p.role}>{ROLE_LABEL[p.role]}</span></span>
                   </div>
                 )}
@@ -5148,6 +5258,11 @@ function AccountPanel({
                       onClick={() => { setRenamingPlayerId(p.id); setRenameDraft(p.display_name); }}
                     >
                       Rename
+                    </button>
+                  )}
+                  {p.avatar_url && (
+                    <button className="wcf-ghost" onClick={() => onAdminRemoveAvatar(p.id)}>
+                      Remove photo
                     </button>
                   )}
                   {p.role === "player" && (
@@ -5955,7 +6070,7 @@ function AdminConsole({
         return (
           <div key={row.playerId} className={"wcf-tab" + (row.pending.length > 0 ? " claiming" : "")}>
             <button className="wcf-tab-summary" onClick={() => setExpandedTabId(expanded ? null : row.playerId)}>
-              <span className="wcf-tab-avatar">{row.playerName[0]?.toUpperCase()}</span>
+              <Avatar name={row.playerName} avatarUrl={profiles.find((p) => p.id === row.playerId)?.avatar_url} className="wcf-tab-avatar" />
               <span className="wcf-tab-summary-body">
                 <span className="wcf-tab-summary-name">{row.playerName}</span>
                 <span className="wcf-tab-summary-sub">{row.owed.length} game{row.owed.length === 1 ? "" : "s"} outstanding</span>
@@ -6406,9 +6521,13 @@ function GameCard({
               {confirmed.slice(0, 5).map((b) => {
                 const a = avatarFor(b.player.display_name);
                 return (
-                  <span key={b.id} className="wcf-avatar-chip lg" style={{ background: a.gradient }}>
-                    {a.initial}
-                  </span>
+                  <Avatar
+                    key={b.id}
+                    name={b.player.display_name}
+                    avatarUrl={b.player.avatar_url}
+                    className="wcf-avatar-chip lg"
+                    background={a.gradient}
+                  />
                 );
               })}
               {confirmed.length > 5 && <span className="wcf-avatar-chip lg more">+{confirmed.length - 5}</span>}
@@ -6483,7 +6602,7 @@ function GameCard({
                   <div key={b.id} className="wcf-sheet-row">
                     <button className="wcf-sheet-row-main" onClick={() => onOpenPlayerCard(b.player_id)}>
                       <span className="wcf-sheet-row-n">{String(i + 1).padStart(2, "0")}</span>
-                      <span className="wcf-sheet-row-avatar" style={{ background: a.gradient }}>{a.initial}</span>
+                      <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-sheet-row-avatar" background={a.gradient} />
                       <span className="wcf-sheet-row-body">
                         <span className="wcf-sheet-row-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
                         <span className="wcf-sheet-row-sub">
@@ -6732,7 +6851,7 @@ const css = `
 .wcf-status-pill.full{color:#fff;border-color:var(--red);background:var(--red)}
 .wcf-status-pill.open{color:var(--green);border-color:var(--green);background:transparent}
 .wcf-avatars{display:flex;background:none;border:none;padding:0;cursor:pointer}
-.wcf-avatar-chip{width:24px;height:24px;border-radius:50%;border:2px solid var(--panel);margin-left:-8px;display:grid;place-items:center;font-size:9px;font-weight:800;color:#fff;background:var(--panel2)}
+.wcf-avatar-chip{width:24px;height:24px;border-radius:50%;border:2px solid var(--panel);margin-left:-8px;display:grid;place-items:center;font-size:9px;font-weight:800;color:#fff;background:var(--panel2);object-fit:cover}
 .wcf-avatar-chip:first-child{margin-left:0}
 .wcf-avatar-chip.more{color:var(--dim);background:var(--panel2)}
 
@@ -6771,7 +6890,7 @@ const css = `
 .wcf-sheet-row{display:flex;align-items:center;gap:8px;background:rgba(13,13,26,.45);border:1px solid var(--line);border-radius:14px;padding:6px}
 .wcf-sheet-row-main{flex:1;min-width:0;display:flex;align-items:center;gap:12px;background:none;border:none;padding:5px 6px;cursor:pointer;text-align:left;font:inherit;color:inherit}
 .wcf-sheet-row-n{font-family:var(--mono);font-weight:600;font-size:10px;color:var(--dim);width:16px;flex:0 0 auto}
-.wcf-sheet-row-avatar{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:11px;color:#fff;flex:0 0 auto}
+.wcf-sheet-row-avatar{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:11px;color:#fff;flex:0 0 auto;object-fit:cover}
 .wcf-sheet-row-body{flex:1;min-width:0;display:flex;flex-direction:column}
 .wcf-sheet-row-name{font-weight:700;font-size:13.5px;color:var(--white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wcf-sheet-row-sub{font-size:10.5px;color:var(--dim);margin-top:3px}
@@ -6855,7 +6974,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-tab{border-radius:16px;overflow:hidden;margin-bottom:9px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line)}
 .wcf-tab.claiming{border-color:rgba(234,179,8,.28)}
 .wcf-tab-summary{width:100%;min-height:52px;display:flex;align-items:center;gap:10px;background:none;border:none;color:var(--white);padding:12px 13px;cursor:pointer;text-align:left}
-.wcf-tab-avatar{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:12px;color:#f8fafc;background:linear-gradient(150deg,var(--red),#7f1d1d);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+.wcf-tab-avatar{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:12px;color:#f8fafc;background:linear-gradient(150deg,var(--red),#7f1d1d);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);object-fit:cover}
 .wcf-tab-summary-body{flex:1;min-width:0;text-align:left}
 .wcf-tab-summary-name{font-weight:800;font-size:13px;color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wcf-tab-summary-sub{margin-top:4px;font-size:10.5px;color:var(--dim)}
@@ -7061,6 +7180,7 @@ button.wcf-glance-card:disabled{cursor:default}
   background:linear-gradient(160deg,var(--panel2),var(--bg));display:grid;place-items:center;
   box-shadow:0 0 0 6px rgba(13,13,26,.6);font-family:var(--display);font-weight:700;color:var(--dim)}
 .wcf-lb-podium-avatar.lead{box-shadow:0 0 0 6px rgba(13,13,26,.6),0 0 26px -4px rgba(234,179,8,.55)}
+.wcf-lb-podium-photo{position:absolute;inset:0;width:100%;height:100%;border-radius:50%;object-fit:cover}
 .wcf-lb-podium-badge{position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:26px;height:26px;
   border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:12px;
   color:var(--bg);border:2px solid var(--bg)}
@@ -7087,7 +7207,7 @@ button.wcf-glance-card:disabled{cursor:default}
   letter-spacing:.08em;text-transform:uppercase;background:rgba(148,163,184,.07);border:1px solid var(--line);color:var(--dim)}
 .wcf-lb-sort-btn.on{background:rgba(230,57,70,.16);border-color:rgba(230,57,70,.42);color:#f8b3b8}
 .wcf-lb-row-avatar{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;
-  font-family:var(--display);font-weight:700;font-size:9.5px;color:#fff}
+  font-family:var(--display);font-weight:700;font-size:9.5px;color:#fff;object-fit:cover}
 .wcf-lb-you-badge{flex:none;font-size:10px;font-weight:700;color:var(--blue);background:rgba(46,116,204,.18);
   border:1px solid rgba(46,116,204,.4);padding:1px 6px;border-radius:20px;margin-left:6px}
 .wcf-lb-row-detail{display:flex;gap:16px;padding:2px 8px 12px 46px;font-family:var(--mono);font-size:11px;color:var(--dim)}
@@ -7096,8 +7216,13 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lb-footer span{font-size:11px;color:var(--dim)}
 .wcf-lb-footer button{background:none;border:none;padding:0;cursor:pointer;font-size:11px;font-weight:600;color:var(--blue)}
 
-.wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue)}
+.wcf-avatar{width:26px;height:26px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:800;font-size:12px;color:var(--blue);object-fit:cover}
 .wcf-avatar.big{width:44px;height:44px;font-size:18px}
+.wcf-account-avatar-wrap{position:relative;flex:0 0 auto}
+.wcf-account-avatar-edit{position:absolute;bottom:-3px;right:-3px;width:20px;height:20px;border-radius:50%;background:var(--red);color:#fff;
+  display:grid;place-items:center;border:2px solid var(--bg);cursor:pointer}
+.wcf-account-avatar-remove{position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:var(--panel2);color:var(--dim);
+  border:2px solid var(--bg);font-size:12px;line-height:1;cursor:pointer;display:grid;place-items:center;padding:0}
 
 .wcf-lineup-head{
   position:relative;overflow:hidden;min-height:264px;border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:14px;
@@ -7114,7 +7239,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-row{display:flex;align-items:center;gap:11px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:9px;transition:box-shadow .2s}
 .wcf-lineup-row.me{border-color:transparent}
 .wcf-lineup-row.me-edit{background:rgba(46,116,204,.14);border-color:var(--blue)}
-.wcf-lineup-avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;flex:0 0 auto;background:var(--panel2);color:var(--dim)}
+.wcf-lineup-avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;flex:0 0 auto;background:var(--panel2);color:var(--dim);object-fit:cover}
 .wcf-lineup-name{font-weight:700;font-size:14px;flex:1;min-width:0}
 .wcf-name-link{background:none;border:none;padding:0;margin:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
 .wcf-lineup-picks{display:flex;gap:6px}
@@ -7134,7 +7259,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-pitch-lines{position:absolute;inset:0;width:100%;height:100%;opacity:.3;stroke:#e2e8f0;stroke-width:0.9;fill:none;display:block}
 .wcf-lineup-pitch-tokens{position:absolute;inset:0}
 .wcf-lineup-token{position:absolute;transform:translate(-50%,-50%);width:44px;height:44px;display:grid;place-items:center;background:none;border:none;padding:0;cursor:pointer}
-.wcf-lineup-token-chip{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:13px;box-shadow:0 6px 14px -6px rgba(0,0,0,.85)}
+.wcf-lineup-token-chip{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:13px;box-shadow:0 6px 14px -6px rgba(0,0,0,.85);object-fit:cover}
 .wcf-lineup-token-label{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:5px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:var(--white);text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap;pointer-events:none}
 .wcf-lineup-token.draggable{cursor:grab;touch-action:none}
 .wcf-lineup-token.draggable .wcf-lineup-token-chip{box-shadow:0 0 0 2px rgba(46,116,204,.5),0 6px 14px -6px rgba(0,0,0,.85)}
@@ -7148,11 +7273,11 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-list-card{flex:1;min-width:0;border-radius:14px;padding:6px 8px 10px;backdrop-filter:blur(14px);background:linear-gradient(180deg,rgba(30,41,59,.7),rgba(19,22,38,.82));border:1px solid var(--line)}
 .wcf-lineup-list-head{padding:9px 4px;font-family:var(--sans);font-weight:800;font-size:10px;letter-spacing:.16em}
 .wcf-lineup-list-row{width:100%;display:flex;align-items:center;gap:8px;padding:8px 4px;background:none;border:none;border-top:1px solid var(--line);cursor:pointer;min-height:40px}
-.wcf-lineup-list-chip{flex:0 0 auto;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:10.5px}
+.wcf-lineup-list-chip{flex:0 0 auto;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:10.5px;object-fit:cover}
 .wcf-lineup-list-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700;font-size:12.5px;color:var(--white);text-align:left}
 
 .wcf-lineup-selected{margin-top:14px;padding:14px 16px;border-radius:18px;background:rgba(46,116,204,.13);border:1px solid rgba(46,116,204,.32);display:flex;align-items:center;gap:13px}
-.wcf-lineup-selected-chip{flex:0 0 auto;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:15px}
+.wcf-lineup-selected-chip{flex:0 0 auto;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:15px;object-fit:cover}
 .wcf-lineup-selected-body{flex:1;min-width:0}
 .wcf-lineup-selected-name{font-family:var(--display);font-weight:800;font-size:14px;color:var(--white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wcf-lineup-selected-name.clickable{cursor:pointer}
@@ -7259,7 +7384,7 @@ button.wcf-glance-card:disabled{cursor:default}
   background-image:linear-gradient(180deg,rgba(11,16,32,.42),rgba(11,16,32,.82) 72%,rgba(11,16,32,.96)),url('/floodlight-haze.jpg');background-size:cover;background-position:50% 26%}
 .wcf-pl-leader-eyebrow{font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.22em;color:#cbd5e1}
 .wcf-pl-leader-row{display:flex;align-items:center;gap:14px;margin-top:16px}
-.wcf-pl-leader-avatar{flex:0 0 auto;width:56px;height:56px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:20px;color:#fff}
+.wcf-pl-leader-avatar{flex:0 0 auto;width:56px;height:56px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:20px;color:#fff;object-fit:cover}
 .wcf-pl-leader-body{flex:1;min-width:0}
 .wcf-pl-leader-name{font-family:var(--display);font-weight:800;font-size:20px;color:var(--white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wcf-pl-leader-sub{margin-top:6px;font-size:12px;color:#cbd5e1}
@@ -7276,7 +7401,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pl-row:last-child{border-bottom:none}
 .wcf-pl-row.lead{background:rgba(234,179,8,.08);margin:0 -14px;padding:11px 14px;border-radius:10px;border-bottom:none}
 .wcf-pl-row.me{background:rgba(46,116,204,.1);margin:0 -14px;padding:11px 14px;border-radius:10px;border-bottom:1px solid rgba(46,116,204,.25)}
-.wcf-pl-avatar{flex:0 0 auto;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:12px;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+.wcf-pl-avatar{flex:0 0 auto;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:12px;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);object-fit:cover}
 .wcf-pl-body{flex:1;min-width:0}
 .wcf-pl-name{font-size:13.5px;font-weight:800;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--white)}
 .wcf-pl-sub-row{display:flex;align-items:center;gap:8px;margin-top:5px}
@@ -7579,7 +7704,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pcard-privacy{position:absolute;top:14px;left:14px;display:flex;align-items:center;gap:5px;padding:5px 9px;border-radius:20px;background:rgba(46,116,204,.18);border:1px solid rgba(46,116,204,.42);font-size:8.5px;font-weight:800;letter-spacing:.14em;color:#7fb0ec}
 .wcf-pcard-privacy-dot{width:5px;height:5px;border-radius:50%;background:var(--blue)}
 .wcf-pcard-avatar-wrap{position:relative;width:88px;height:88px;margin:8px auto 0}
-.wcf-pcard-avatar{width:88px;height:88px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:32px;color:#f8fafc;box-shadow:inset 0 0 0 1px rgba(255,255,255,.16),0 0 0 5px rgba(13,13,26,.55),0 0 34px -8px rgba(0,0,0,.7)}
+.wcf-pcard-avatar{width:88px;height:88px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:32px;color:#f8fafc;box-shadow:inset 0 0 0 1px rgba(255,255,255,.16),0 0 0 5px rgba(13,13,26,.55),0 0 34px -8px rgba(0,0,0,.7);object-fit:cover}
 .wcf-pcard-rank{position:absolute;bottom:-4px;right:-4px;width:30px;height:30px;border-radius:50%;background:var(--bg);border:1px solid var(--line);display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:11px;color:var(--amber)}
 .wcf-pcard-name{margin-top:14px;font-family:var(--display);font-weight:800;font-size:19px;letter-spacing:-.02em;color:#f8fafc}
 .wcf-pcard-badges{display:flex;justify-content:center;gap:6px;margin-top:9px}
@@ -7624,7 +7749,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-roles-row{border-radius:14px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.12);padding:10px 11px;margin-top:8px}
 .wcf-roles-row:first-of-type{margin-top:8px}
 .wcf-roles-row-top{display:flex;align-items:center;gap:9px}
-.wcf-roles-avatar{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:12px;color:#f8fafc;background:linear-gradient(150deg,var(--blue),#1e3a8a);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+.wcf-roles-avatar{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:12px;color:#f8fafc;background:linear-gradient(150deg,var(--blue),#1e3a8a);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);object-fit:cover}
 .wcf-roles-row>span{min-width:0;overflow-wrap:break-word;flex:1}
 .wcf-roles-actions{display:flex;gap:6px;flex-wrap:wrap;min-width:0;margin-top:9px}
 .wcf-roles-actions .wcf-ghost{min-height:38px;padding:0 12px;border-radius:11px;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.18);color:#cbd5e1;font-weight:700;font-size:10.5px}

@@ -1087,3 +1087,27 @@ $$;
 -- run this manually in the Supabase SQL editor:
 --   alter table public.games alter column pitch_cost set default 55;
 alter table public.games add column lineup_positions jsonb;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Profile pictures. One file per player at a stable path (their own
+-- id, e.g. "<uuid>.jpg"), overwritten on every re-upload via upsert -
+-- no orphaned old photos, and the RLS predicate just checks the path
+-- matches the uploader's own id. Bucket itself already created via
+-- the service-role client (supabase.storage.createBucket), same as
+-- this file always documents storage setup even where it wasn't run
+-- as raw SQL. Run this block in the Supabase SQL editor.
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.profiles add column avatar_url text;
+
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('avatars', 'avatars', true, 2097152)
+on conflict (id) do nothing;
+
+create policy "avatars_read" on storage.objects for select using (bucket_id = 'avatars');
+create policy "avatars_own_insert" on storage.objects for insert
+  with check (bucket_id = 'avatars' and name = auth.uid()::text || '.jpg');
+create policy "avatars_own_update" on storage.objects for update
+  using (bucket_id = 'avatars' and name = auth.uid()::text || '.jpg');
+create policy "avatars_own_or_admin_delete" on storage.objects for delete
+  using (bucket_id = 'avatars' and (name = auth.uid()::text || '.jpg' or public.is_admin()));
