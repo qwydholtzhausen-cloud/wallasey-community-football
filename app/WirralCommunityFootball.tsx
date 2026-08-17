@@ -797,23 +797,25 @@ function SignIn() {
             <p className="wcf-signin-sub">
               We sent a six-digit code to <strong>{email}</strong>.
             </p>
-            <div className="wcf-signin-cells">
-              {Array.from({ length: 6 }, (_, i) => (
-                <div key={i} className={"wcf-signin-cell" + (code.length === i ? " active" : "")}>
-                  {code[i] || ""}
-                </div>
-              ))}
+            <div className="wcf-signin-cells-wrap">
+              <div className="wcf-signin-cells">
+                {Array.from({ length: 6 }, (_, i) => (
+                  <div key={i} className={"wcf-signin-cell" + (code.length === i ? " active" : "")}>
+                    {code[i] || ""}
+                  </div>
+                ))}
+              </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoFocus
+                required
+                aria-label="Six-digit code"
+                className="wcf-signin-hidden-input"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              />
             </div>
-            <input
-              type="text"
-              inputMode="numeric"
-              autoFocus
-              required
-              className="wcf-signin-hidden-input"
-              placeholder="tap and type your code"
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            />
             <button type="submit" className="wcf-signin-cta" disabled={verifying || !code.trim()}>
               {verifying ? "Checking…" : "Verify code"}
             </button>
@@ -6767,10 +6769,11 @@ const css = `
 .wcf-signin-email-pill input{flex:1;min-width:0;background:transparent;border:none;color:var(--white);padding:11px 0;font-size:15px;font-family:var(--sans)}
 .wcf-signin-email-pill button{background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5));color:#fff;border:none;padding:12px 16px;border-radius:11px;font-weight:800;font-size:12.5px;cursor:pointer;flex:0 0 auto;white-space:nowrap}
 .wcf-signin-email-pill button:disabled{opacity:.5;cursor:not-allowed}
+.wcf-signin-cells-wrap{position:relative}
 .wcf-signin-cells{display:flex;gap:7px;justify-content:space-between}
 .wcf-signin-cell{flex:1;height:56px;border-radius:13px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:21px;color:var(--white);box-shadow:0 14px 30px -24px rgba(0,0,0,.9)}
 .wcf-signin-cell.active{border-color:rgba(240,82,94,.6)}
-.wcf-signin-hidden-input{background:transparent;border:none;border-bottom:1px solid rgba(148,163,184,.18);color:transparent;caret-color:var(--red-hi);padding:6px 2px;font-size:12px;text-align:center;font-family:var(--sans);width:100%;box-sizing:border-box}
+.wcf-signin-hidden-input{position:absolute;inset:0;width:100%;height:100%;opacity:0;border:none;background:transparent;font-size:16px;caret-color:transparent;padding:0;box-sizing:border-box;cursor:text}
 .wcf-signin-cta{background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5));color:#fff;border:none;padding:15px;border-radius:13px;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 12px 28px -14px rgba(230,57,70,.9)}
 .wcf-signin-cta:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
 .wcf-signin-error{background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.3);border-radius:10px;padding:10px 12px;color:var(--red-hi);font-size:12px;line-height:1.45;margin:0}
