@@ -1111,3 +1111,18 @@ create policy "avatars_own_update" on storage.objects for update
   using (bucket_id = 'avatars' and name = auth.uid()::text || '.jpg');
 create policy "avatars_own_or_admin_delete" on storage.objects for delete
   using (bucket_id = 'avatars' and (name = auth.uid()::text || '.jpg' or public.is_admin()));
+
+-- ─────────────────────────────────────────────────────────────────
+-- Goalkeeping added as its own rated skill, alongside fitness/attack/
+-- defence - a strong outfield player isn't necessarily a good keeper
+-- and vice versa, so it needs to be trackable independently rather
+-- than folded into the general fitness/attack/defence average used
+-- for team-balance math (which stays exactly as it was - goalkeeping
+-- is informational for picking who plays keeper, not a team-strength
+-- input, since keepers are already alternated one-per-team regardless
+-- of outfield stats). default 3 backfills existing rows with the same
+-- neutral "unrated" value already used for unrated players elsewhere.
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.player_self_ratings add column goalkeeping int not null default 3 check (goalkeeping between 1 and 5);
+alter table public.player_admin_ratings add column goalkeeping int not null default 3 check (goalkeeping between 1 and 5);

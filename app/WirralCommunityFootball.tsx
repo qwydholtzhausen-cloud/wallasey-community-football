@@ -50,17 +50,19 @@ function RatingForm({
   saveLabel,
 }: {
   initial: PlayerRating | null;
-  onSave: (fitness: number, attack: number, defence: number, position: PlayerPosition) => void;
+  onSave: (fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) => void;
   saveLabel: string;
 }) {
   const [fitness, setFitness] = useState(initial?.fitness ?? 3);
   const [attack, setAttack] = useState(initial?.attack ?? 3);
   const [defence, setDefence] = useState(initial?.defence ?? 3);
+  const [goalkeeping, setGoalkeeping] = useState(initial?.goalkeeping ?? 3);
   const [position, setPosition] = useState<PlayerPosition>(initial?.position ?? "midfield");
   const metrics: { label: string; value: number; onChange: (n: number) => void }[] = [
     { label: "Fitness", value: fitness, onChange: setFitness },
     { label: "Attack", value: attack, onChange: setAttack },
     { label: "Defence", value: defence, onChange: setDefence },
+    { label: "Goalkeeping", value: goalkeeping, onChange: setGoalkeeping },
   ];
 
   return (
@@ -91,7 +93,7 @@ function RatingForm({
           ))}
         </select>
       </div>
-      <button className="wcf-save-red" onClick={() => onSave(fitness, attack, defence, position)}>{saveLabel}</button>
+      <button className="wcf-save-red" onClick={() => onSave(fitness, attack, defence, goalkeeping, position)}>{saveLabel}</button>
     </div>
   );
 }
@@ -151,6 +153,7 @@ interface PlayerRating {
   fitness: number;
   attack: number;
   defence: number;
+  goalkeeping: number;
   position: PlayerPosition;
 }
 const POT_CATEGORY_LABEL: Record<PotCategory, string> = {
@@ -1094,11 +1097,11 @@ function App({ session }: { session: Session }) {
   // (admin-ratings, never visible to players) - no client-side filtering
   // needed on top of that.
   const loadSelfRatings = useCallback(async () => {
-    const { data } = await supabase.from("player_self_ratings").select("player_id, fitness, attack, defence, position");
+    const { data } = await supabase.from("player_self_ratings").select("player_id, fitness, attack, defence, goalkeeping, position");
     if (data) setSelfRatings(data as PlayerRating[]);
   }, []);
   const loadAdminRatings = useCallback(async () => {
-    const { data } = await supabase.from("player_admin_ratings").select("player_id, fitness, attack, defence, position");
+    const { data } = await supabase.from("player_admin_ratings").select("player_id, fitness, attack, defence, goalkeeping, position");
     if (data) setAdminRatings(data as PlayerRating[]);
   }, []);
 
@@ -1280,19 +1283,19 @@ function App({ session }: { session: Session }) {
     setShowAuditLog((v) => !v);
   }
 
-  async function saveSelfRating(fitness: number, attack: number, defence: number, position: PlayerPosition) {
+  async function saveSelfRating(fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) {
     const { error } = await supabase
       .from("player_self_ratings")
-      .upsert({ player_id: myId, fitness, attack, defence, position, updated_at: new Date().toISOString() });
+      .upsert({ player_id: myId, fitness, attack, defence, goalkeeping, position, updated_at: new Date().toISOString() });
     if (error) return notifyError(error.message);
     notifySuccess("Saved your self-rating");
     await loadSelfRatings();
   }
 
-  async function saveAdminRating(playerId: string, fitness: number, attack: number, defence: number, position: PlayerPosition) {
+  async function saveAdminRating(playerId: string, fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) {
     const { error } = await supabase
       .from("player_admin_ratings")
-      .upsert({ player_id: playerId, fitness, attack, defence, position, updated_by: myId, updated_at: new Date().toISOString() });
+      .upsert({ player_id: playerId, fitness, attack, defence, goalkeeping, position, updated_by: myId, updated_at: new Date().toISOString() });
     if (error) return notifyError(error.message);
     notifySuccess("Rating saved");
     logAction("Rated player", profiles.find((p) => p.id === playerId)?.display_name ?? "someone");
@@ -2657,6 +2660,7 @@ function App({ session }: { session: Session }) {
           fitness: effective?.fitness ?? null,
           attack: effective?.attack ?? null,
           defence: effective?.defence ?? null,
+          goalkeeping: effective?.goalkeeping ?? null,
           overall: effective ? (effective.fitness + effective.attack + effective.defence) / 3 : null,
         };
       })
@@ -3277,6 +3281,7 @@ function App({ session }: { session: Session }) {
                               <span>F {r.fitness}</span>
                               <span>A {r.attack}</span>
                               <span>D {r.defence}</span>
+                              <span>GK {r.goalkeeping}</span>
                               <span className={"wcf-ratings-source " + r.source}>{r.source === "admin" ? "Admin" : "Self"}</span>
                             </div>
                           )}
@@ -4718,7 +4723,7 @@ function PlayerCardModal({
                   {isOwnCard ? "ONLY YOU" : "ADMIN ONLY"}
                 </span>
               </div>
-              {(["fitness", "attack", "defence"] as const).map((k) => (
+              {(["fitness", "attack", "defence", "goalkeeping"] as const).map((k) => (
                 <div key={k} className="wcf-pcard-metric">
                   <div className="wcf-pcard-metric-top">
                     <span>{k[0].toUpperCase()}{k.slice(1)}</span>
@@ -4852,9 +4857,9 @@ function AccountPanel({
   showAuditLog: boolean;
   onToggleAuditLog: () => void;
   myRating: PlayerRating | null;
-  onSaveSelfRating: (fitness: number, attack: number, defence: number, position: PlayerPosition) => void;
+  onSaveSelfRating: (fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) => void;
   adminRatings: PlayerRating[];
-  onSaveAdminRating: (playerId: string, fitness: number, attack: number, defence: number, position: PlayerPosition) => void;
+  onSaveAdminRating: (playerId: string, fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) => void;
   ratingPlayerId: string | null;
   onToggleRatingPlayer: (id: string) => void;
   clubSettings: ClubSettings;
@@ -5347,8 +5352,8 @@ function AccountPanel({
                 {ratingPlayerId === p.id && (
                   <RatingForm
                     initial={adminRatings.find((r) => r.player_id === p.id) ?? null}
-                    onSave={(fitness, attack, defence, position) => {
-                      onSaveAdminRating(p.id, fitness, attack, defence, position);
+                    onSave={(fitness, attack, defence, goalkeeping, position) => {
+                      onSaveAdminRating(p.id, fitness, attack, defence, goalkeeping, position);
                       onToggleRatingPlayer(p.id);
                     }}
                     saveLabel={`Save ${p.display_name}'s rating`}
