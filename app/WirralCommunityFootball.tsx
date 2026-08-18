@@ -1565,12 +1565,13 @@ function App({ session }: { session: Session }) {
     await loadPotEntries();
   }
 
-  async function castMotmVote(gameId: string, candidateId: string) {
+  async function castMotmVote(gameId: string, candidateId: string, candidateName: string) {
     const { error } = await supabase
       .from("motm_votes")
       .upsert({ game_id: gameId, voter_id: myId, candidate_id: candidateId }, { onConflict: "game_id,voter_id" });
     if (error) return notifyError(error.message);
     await loadMotmVotes();
+    notifySuccess(`Voted for ${candidateName} — tap another name to change your pick`);
   }
 
   // RLS enforces the real rules (booked on this game, before kickoff) -
@@ -4172,7 +4173,7 @@ function App({ session }: { session: Session }) {
                                   <button
                                     key={c.id}
                                     className={"wcf-motm-vote" + (myVote === c.player_id ? " voted" : "")}
-                                    onClick={() => castMotmVote(g.id, c.player_id)}
+                                    onClick={() => castMotmVote(g.id, c.player_id, c.player.display_name)}
                                   >
                                     {c.player.display_name}{myVote === c.player_id ? " ✓" : ""}
                                   </button>
