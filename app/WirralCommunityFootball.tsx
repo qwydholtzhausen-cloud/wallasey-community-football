@@ -6146,7 +6146,8 @@ function AdminConsole({
                     <button
                       className="wcf-tab-line-remove"
                       onClick={async () => {
-                        if (await askConfirm(`Remove ${row.playerName} from this game?`, `${g.venue} · ${fmtDate(g.date)}. Their spot opens up to the waiting list.`, "Remove")) {
+                        const msg = `${g.venue} · ${fmtDate(g.date)}. This deletes their booking entirely - no appearance, no pot charge, nothing left behind.`;
+                        if (await askConfirm(`Remove ${row.playerName} from this game?`, msg, "Remove")) {
                           onRemoveBooking(b.id);
                         }
                       }}
@@ -6415,7 +6416,10 @@ function AdminGameRow({
                 <button
                   className="wcf-admin-remove"
                   onClick={async () => {
-                    if (await askConfirm(`Remove ${b.player.display_name} from this game?`, "Their spot opens up to the waiting list.", "Remove")) {
+                    const msg = past
+                      ? "This deletes their booking for this game entirely - no appearance, no pot charge, nothing left behind."
+                      : "Their spot opens up to the waiting list.";
+                    if (await askConfirm(`Remove ${b.player.display_name} from this game?`, msg, "Remove")) {
                       onRemoveBooking(b.id);
                     }
                   }}
