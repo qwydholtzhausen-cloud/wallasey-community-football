@@ -6246,6 +6246,7 @@ function AdminGameRow({
   const [ownGoalDraft, setOwnGoalDraft] = useState<Record<string, number>>(ownGoalsByPlayer);
   const [addPlayerId, setAddPlayerId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [showSettled, setShowSettled] = useState(false);
   useEffect(() => {
     setWhiteScore(game.team_white_score?.toString() ?? "");
     setRedScore(game.team_red_score?.toString() ?? "");
@@ -6384,45 +6385,69 @@ function AdminGameRow({
           )}
 
           {confirmed.length === 0 && <p className="wcf-empty small">No one booked in.</p>}
-          {confirmed.map((b) => (
-            <div key={b.id} className="wcf-admin-player-row">
-              <span className={"wcf-admin-player-dot " + (b.status === "confirmed" ? "confirmed" : "pending")} />
-              <span className="wcf-admin-player-name">
-                {b.player.display_name}
-                {b.status === "confirmed" && b.confirmer && <span className="wcf-confirmed-by">by {b.confirmer.display_name}</span>}
-              </span>
-              <div className="wcf-admin-status">
-                <StatusBadge status={b.status} />
-                {b.status !== "confirmed" ? (
-                  <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Approve</button>
-                ) : (
-                  <button className="wcf-admin-undo" onClick={() => onSetStatus(b.id, "unpaid")}>Undo</button>
-                )}
+          {(() => {
+            const renderRow = (b: BookingRow) => (
+              <div key={b.id} className="wcf-admin-player-row">
+                <span className={"wcf-admin-player-dot " + (b.status === "confirmed" ? "confirmed" : "pending")} />
+                <span className="wcf-admin-player-name">
+                  {b.player.display_name}
+                  {b.status === "confirmed" && b.confirmer && <span className="wcf-confirmed-by">by {b.confirmer.display_name}</span>}
+                </span>
+                <div className="wcf-admin-status">
+                  <StatusBadge status={b.status} />
+                  {b.status !== "confirmed" ? (
+                    <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Approve</button>
+                  ) : (
+                    <button className="wcf-admin-undo" onClick={() => onSetStatus(b.id, "unpaid")}>Undo</button>
+                  )}
+                </div>
+                <select
+                  className={"wcf-admin-pot-select" + (b.pot_exempt_reason ? " exempt" : "")}
+                  value={b.pot_exempt_reason ?? ""}
+                  onChange={(e) => onSetPotExempt(b.id, (e.target.value || null) as PotExemptReason | null)}
+                  title="Whether this booking counts toward pot income"
+                >
+                  <option value="">Pays</option>
+                  <option value="prize">Free — prize</option>
+                  <option value="carried_over">Free — carried over</option>
+                  <option value="other">Free — other</option>
+                </select>
+                <button
+                  className="wcf-admin-remove"
+                  onClick={async () => {
+                    if (await askConfirm(`Remove ${b.player.display_name} from this game?`, "Their spot opens up to the waiting list.", "Remove")) {
+                      onRemoveBooking(b.id);
+                    }
+                  }}
+                  aria-label="Remove from game"
+                >
+                  ×
+                </button>
               </div>
-              <select
-                className={"wcf-admin-pot-select" + (b.pot_exempt_reason ? " exempt" : "")}
-                value={b.pot_exempt_reason ?? ""}
-                onChange={(e) => onSetPotExempt(b.id, (e.target.value || null) as PotExemptReason | null)}
-                title="Whether this booking counts toward pot income"
-              >
-                <option value="">Pays</option>
-                <option value="prize">Free — prize</option>
-                <option value="carried_over">Free — carried over</option>
-                <option value="other">Free — other</option>
-              </select>
-              <button
-                className="wcf-admin-remove"
-                onClick={async () => {
-                  if (await askConfirm(`Remove ${b.player.display_name} from this game?`, "Their spot opens up to the waiting list.", "Remove")) {
-                    onRemoveBooking(b.id);
-                  }
-                }}
-                aria-label="Remove from game"
-              >
-                ×
-              </button>
-            </div>
-          ))}
+            );
+
+            // Past games only - once most players are paid up, their rows
+            // are just clutter on top of the new scorer-entry card above.
+            // Still fully reachable (remove/pot-exempt etc. all still
+            // work), just collapsed by default - same pattern as archived
+            // feed items / older messages elsewhere in the app.
+            if (!past) return confirmed.map(renderRow);
+            const outstanding = confirmed.filter((b) => b.status !== "confirmed");
+            const settled = confirmed.filter((b) => b.status === "confirmed");
+            return (
+              <>
+                {outstanding.map(renderRow)}
+                {settled.length > 0 && (
+                  <>
+                    <button className="wcf-admin-settled-toggle" onClick={() => setShowSettled((v) => !v)}>
+                      {showSettled ? "Hide" : "Show"} {settled.length} settled {settled.length === 1 ? "player" : "players"}
+                    </button>
+                    {showSettled && settled.map(renderRow)}
+                  </>
+                )}
+              </>
+            );
+          })()}
 
           {past && confirmed.length > 0 && (
             <button className="wcf-save" onClick={submitResult} disabled={!dirty || saving}>
@@ -7171,6 +7196,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-admin-pot-select.exempt{border-color:rgba(234,179,8,.4);color:var(--amber)}
 .wcf-admin-undo:hover{color:var(--red-hi)}
 .wcf-admin-remove{flex:none;width:32px;height:32px;border-radius:10px;background:rgba(240,82,94,.1);border:1px solid rgba(240,82,94,.3);color:var(--red-hi);font-size:16px;cursor:pointer;line-height:1;display:grid;place-items:center}
+.wcf-admin-settled-toggle{width:100%;background:none;border:none;color:var(--dim);font-size:11.5px;font-weight:700;padding:10px 0;cursor:pointer;text-align:center}
 
 .wcf-recon{margin-top:11px;display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;padding:5px 11px;border-radius:20px}
 .wcf-recon.ok{background:rgba(34,197,94,.14);color:#86efac;border:1px solid rgba(34,197,94,.32)}
