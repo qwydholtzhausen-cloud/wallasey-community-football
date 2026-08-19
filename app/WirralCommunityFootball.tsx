@@ -6105,7 +6105,7 @@ function AdminConsole({
                 </div>
               ))}
               {!showOlderMessages && olderMessageCount > 0 && (
-                <button className="wcf-msg-log-more" onClick={() => setShowOlderMessages(true)}>
+                <button className="wcf-show-more-toggle" onClick={() => setShowOlderMessages(true)}>
                   Show {olderMessageCount} older
                 </button>
               )}
@@ -6443,7 +6443,7 @@ function AdminGameRow({
                 {outstanding.map(renderRow)}
                 {settled.length > 0 && (
                   <>
-                    <button className="wcf-admin-settled-toggle" onClick={() => setShowSettled((v) => !v)}>
+                    <button className="wcf-show-more-toggle" onClick={() => setShowSettled((v) => !v)}>
                       {showSettled ? "Hide" : "Show"} {settled.length} settled {settled.length === 1 ? "player" : "players"}
                     </button>
                     {showSettled && settled.map(renderRow)}
@@ -6506,13 +6506,14 @@ function AdminGameRow({
             className="wcf-admin-delete-game"
             onClick={async () => {
               const when = past ? "past" : "upcoming";
-              if (
-                await askConfirm(
-                  `Delete this ${when} fixture?`,
-                  `${game.venue} on ${fmtDate(game.date)} — this removes it completely, along with everyone's bookings.`,
-                  "Delete"
-                )
-              ) {
+              const hasBookings = confirmed.length > 0 || waitingList.length > 0;
+              const title = scored ? "Delete this scored fixture?" : `Delete this ${when} fixture?`;
+              const message = scored
+                ? `${game.venue} on ${fmtDate(game.date)} — this permanently deletes the ${game.team_white_score}–${game.team_red_score} result, every goal and own goal logged against it, and any pot income it earned. This can't be undone.`
+                : hasBookings
+                ? `${game.venue} on ${fmtDate(game.date)} — this removes it completely, along with everyone's bookings and payment records.`
+                : `${game.venue} on ${fmtDate(game.date)} — this removes it completely.`;
+              if (await askConfirm(title, message, "Delete")) {
                 onDeleteGame(game.id);
               }
             }}
@@ -7200,7 +7201,6 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-admin-pot-select.exempt{border-color:rgba(234,179,8,.4);color:var(--amber)}
 .wcf-admin-undo:hover{color:var(--red-hi)}
 .wcf-admin-remove{flex:none;width:32px;height:32px;border-radius:10px;background:rgba(240,82,94,.1);border:1px solid rgba(240,82,94,.3);color:var(--red-hi);font-size:16px;cursor:pointer;line-height:1;display:grid;place-items:center}
-.wcf-admin-settled-toggle{width:100%;background:none;border:none;color:var(--dim);font-size:11.5px;font-weight:700;padding:10px 0;cursor:pointer;text-align:center}
 
 .wcf-recon{margin-top:11px;display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;padding:5px 11px;border-radius:20px}
 .wcf-recon.ok{background:rgba(34,197,94,.14);color:#86efac;border:1px solid rgba(34,197,94,.32)}
@@ -7244,8 +7244,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-msg-log-status.unread{color:var(--dim);background:rgba(148,163,184,.1);border:1px solid rgba(148,163,184,.2)}
 .wcf-msg-log-text{margin-top:8px;font-size:12.5px;line-height:1.45;color:#F5F6F8}
 .wcf-msg-log-when{margin-top:7px;font-size:10.5px;color:#64748b}
-.wcf-msg-log-more{width:100%;background:none;border:none;color:var(--dim);font-size:11.5px;font-weight:700;padding:10px 0;cursor:pointer;text-align:center}
-.wcf-msg-log-more:hover{color:var(--white)}
+.wcf-show-more-toggle{width:100%;background:none;border:none;color:var(--dim);font-size:11.5px;font-weight:700;padding:10px 0;cursor:pointer;text-align:center}
+.wcf-show-more-toggle:hover{color:var(--white)}
 .wcf-admin-delete-game{width:100%;min-height:44px;background:rgba(240,82,94,.1);border:1px dashed rgba(240,82,94,.3);color:var(--red-hi);padding:10px;border-radius:12px;font-weight:700;font-size:11.5px;cursor:pointer;margin-top:12px}
 .wcf-admin-game-body > .wcf-save{width:100%;margin:12px 0}
 .wcf-admin-game-body > .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
