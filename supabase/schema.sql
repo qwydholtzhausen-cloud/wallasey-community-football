@@ -1126,3 +1126,15 @@ create policy "avatars_own_or_admin_delete" on storage.objects for delete
 
 alter table public.player_self_ratings add column goalkeeping int not null default 3 check (goalkeeping between 1 and 5);
 alter table public.player_admin_ratings add column goalkeeping int not null default 3 check (goalkeeping between 1 and 5);
+
+-- ─────────────────────────────────────────────────────────────────
+-- Own goals, tracked per player alongside real goals. Deliberately
+-- NOT auto-credited to "the opposing team" anywhere - players
+-- sometimes swap sides mid-match, so which team an own goal actually
+-- benefited isn't reliably derivable from a single team assignment.
+-- It's purely informational (who to blame / stats transparency),
+-- never added to a player's real `goals` tally used by the Stats
+-- leaderboard. default 0 backfills every existing game_stats row.
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.game_stats add column own_goals int not null default 0;

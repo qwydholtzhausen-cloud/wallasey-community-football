@@ -365,6 +365,7 @@ interface GoalRow {
   game_id: string;
   player_id: string;
   goals: number;
+  own_goals: number;
   player: Profile;
 }
 
@@ -488,6 +489,7 @@ async function drawResultCard(opts: {
   redScore: number;
   whiteScorers: { name: string; goals: number }[];
   redScorers: { name: string; goals: number }[];
+  ownGoals: { name: string; goals: number }[];
   motmWinner: string | null;
 }): Promise<Blob> {
   const W = 1080;
@@ -598,8 +600,20 @@ async function drawResultCard(opts: {
     ctx.fillText(String(s.goals), W - pad, rowsY + i * rowH);
   });
 
+  let afterGoalsY = rowsY + maxRows * rowH;
+  if (opts.ownGoals.length > 0) {
+    afterGoalsY += 20;
+    ctx.textAlign = "left";
+    ctx.font = "700 22px -apple-system, Helvetica, Arial, sans-serif";
+    ctx.fillStyle = "#eab308";
+    const label = opts.ownGoals.length > 1 || opts.ownGoals[0].goals > 1 ? "OWN GOALS: " : "OWN GOAL: ";
+    const names = opts.ownGoals.map((s) => (s.goals > 1 ? `${s.name} (${s.goals})` : s.name)).join(", ");
+    ctx.fillText(label + names, pad, afterGoalsY);
+    afterGoalsY += 40;
+  }
+
   if (opts.motmWinner) {
-    let motmY = rowsY + maxRows * rowH + 70;
+    let motmY = afterGoalsY + 50;
     motmY = Math.max(motmY, scoreY + 500);
     motmY = Math.min(motmY, H - 210);
 
@@ -1116,7 +1130,7 @@ function App({ session }: { session: Session }) {
   const loadGoals = useCallback(async () => {
     const { data } = await supabase
       .from("game_stats")
-      .select("id, game_id, player_id, goals, player:profiles(id, display_name, role)")
+      .select("id, game_id, player_id, goals, own_goals, player:profiles(id, display_name, role)")
       .order("goals", { ascending: false });
     if (data) setGoalRows(data as unknown as GoalRow[]);
   }, []);
@@ -1485,14 +1499,26 @@ function App({ session }: { session: Session }) {
     await loadGames();
     if (game) logAction("Deleted fixture", `${game.venue} — ${fmtDate(game.date)}`);
   }
-  async function saveResult(gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) {
+  async function saveResult(
+    gameId: string,
+    whiteScore: number | null,
+    redScore: number | null,
+    goals: Record<string, number>,
+    ownGoals: Record<string, number>
+  ) {
     const { error: scoreErr } = await supabase
       .from("games")
       .update({ team_white_score: whiteScore, team_red_score: redScore })
       .eq("id", gameId);
     if (scoreErr) return notifyError(scoreErr.message);
 
-    const rows = Object.entries(goals).map(([player_id, goals]) => ({ game_id: gameId, player_id, goals }));
+    const playerIds = new Set([...Object.keys(goals), ...Object.keys(ownGoals)]);
+    const rows = Array.from(playerIds).map((player_id) => ({
+      game_id: gameId,
+      player_id,
+      goals: goals[player_id] ?? 0,
+      own_goals: ownGoals[player_id] ?? 0,
+    }));
     if (rows.length) {
       const { error: goalsErr } = await supabase.from("game_stats").upsert(rows, { onConflict: "game_id,player_id" });
       if (goalsErr) return notifyError(goalsErr.message);
@@ -1810,6 +1836,9 @@ function App({ session }: { session: Session }) {
     const teamOf = (playerId: string) => game.bookings.find((b) => b.player_id === playerId)?.team;
     const whiteScorers = scorers.filter((r) => teamOf(r.player_id) === "white").map((r) => ({ name: r.player.display_name, goals: r.goals }));
     const redScorers = scorers.filter((r) => teamOf(r.player_id) === "red").map((r) => ({ name: r.player.display_name, goals: r.goals }));
+    const ownGoals = goalRows
+      .filter((r) => r.game_id === game.id && r.own_goals > 0)
+      .map((r) => ({ name: r.player.display_name, goals: r.own_goals }));
 
     // Same reveal rule as the in-app MOTM display - never share a winner
     // before voting's actually closed.
@@ -1832,6 +1861,7 @@ function App({ session }: { session: Session }) {
         redScore: game.team_red_score ?? 0,
         whiteScorers,
         redScorers,
+        ownGoals,
         motmWinner,
       });
       const file = new File([blob], `${game.venue.replace(/\s+/g, "-")}-${game.date}.png`, { type: "image/png" });
@@ -4114,6 +4144,9 @@ function App({ session }: { session: Session }) {
                   const teamOf = (playerId: string) => g.bookings.find((b) => b.player_id === playerId)?.team;
                   const whiteScorers = scorers.filter((s) => teamOf(s.player_id) === "white");
                   const redScorers = scorers.filter((s) => teamOf(s.player_id) === "red");
+                  // Not split by team - which side an own goal benefited isn't
+                  // reliably knowable if the scorer switched teams mid-match.
+                  const ownGoalScorers = goalRows.filter((r) => r.game_id === g.id && r.own_goals > 0);
                   // Who actually played, not who's been payment-confirmed -
                   // those often lag behind by days, and voting closes hours
                   // after kickoff.
@@ -4168,6 +4201,19 @@ function App({ session }: { session: Session }) {
                                 </div>
                               </div>
                             </>
+                          )}
+
+                          {ownGoalScorers.length > 0 && (
+                            <div className="wcf-result-og">
+                              Own goal{ownGoalScorers.length > 1 || ownGoalScorers[0].own_goals > 1 ? "s" : ""}:{" "}
+                              {ownGoalScorers.map((s, i) => (
+                                <span key={s.id}>
+                                  {i > 0 && ", "}
+                                  <button className="wcf-name-link" onClick={() => openPlayerCard(s.player_id)}>{s.player.display_name}</button>
+                                  {s.own_goals > 1 && ` (${s.own_goals})`}
+                                </span>
+                              ))}
+                            </div>
                           )}
 
                           {candidates.length > 0 && votingOpen && (
@@ -5788,7 +5834,7 @@ function AdminConsole({
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
-  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) => Promise<void>;
+  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
   onGoToLineup: () => void;
@@ -6178,7 +6224,7 @@ function AdminGameRow({
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
-  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>) => Promise<void>;
+  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
@@ -6187,16 +6233,24 @@ function AdminGameRow({
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const waitingList = game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const goalsByPlayer: Record<string, number> = {};
-  goalRows.filter((r) => r.game_id === game.id).forEach((r) => (goalsByPlayer[r.player_id] = r.goals));
+  const ownGoalsByPlayer: Record<string, number> = {};
+  goalRows
+    .filter((r) => r.game_id === game.id)
+    .forEach((r) => {
+      goalsByPlayer[r.player_id] = r.goals;
+      ownGoalsByPlayer[r.player_id] = r.own_goals;
+    });
   const [whiteScore, setWhiteScore] = useState(game.team_white_score?.toString() ?? "");
   const [redScore, setRedScore] = useState(game.team_red_score?.toString() ?? "");
   const [goalDraft, setGoalDraft] = useState<Record<string, number>>(goalsByPlayer);
+  const [ownGoalDraft, setOwnGoalDraft] = useState<Record<string, number>>(ownGoalsByPlayer);
   const [addPlayerId, setAddPlayerId] = useState("");
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     setWhiteScore(game.team_white_score?.toString() ?? "");
     setRedScore(game.team_red_score?.toString() ?? "");
     setGoalDraft(goalsByPlayer);
+    setOwnGoalDraft(ownGoalsByPlayer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.team_white_score, game.team_red_score, goalRows, expanded]);
 
@@ -6206,7 +6260,21 @@ function AdminGameRow({
   const dirty =
     whiteScore !== (game.team_white_score?.toString() ?? "") ||
     redScore !== (game.team_red_score?.toString() ?? "") ||
-    confirmed.some((b) => (goalDraft[b.player_id] ?? 0) !== (goalsByPlayer[b.player_id] ?? 0));
+    confirmed.some(
+      (b) =>
+        (goalDraft[b.player_id] ?? 0) !== (goalsByPlayer[b.player_id] ?? 0) ||
+        (ownGoalDraft[b.player_id] ?? 0) !== (ownGoalsByPlayer[b.player_id] ?? 0)
+    );
+
+  // Own goals are tracked purely for who-to-blame banter and never touch a
+  // player's real Goals stat - deliberately NOT auto-credited to "the other
+  // team", since a player who switches sides mid-match makes that guess
+  // unreliable. The reconciliation check below is a single combined total
+  // rather than a per-team split for the same reason.
+  const attributedTotal =
+    Object.values(goalDraft).reduce((sum, n) => sum + n, 0) + Object.values(ownGoalDraft).reduce((sum, n) => sum + n, 0);
+  const enteredTotal = (whiteScore === "" ? 0 : Number(whiteScore)) + (redScore === "" ? 0 : Number(redScore));
+  const scoreEntered = whiteScore !== "" && redScore !== "";
 
   async function submitResult() {
     setSaving(true);
@@ -6214,7 +6282,8 @@ function AdminGameRow({
       game.id,
       whiteScore === "" ? null : Number(whiteScore),
       redScore === "" ? null : Number(redScore),
-      goalDraft
+      goalDraft,
+      ownGoalDraft
     );
     setSaving(false);
   }
@@ -6253,8 +6322,67 @@ function AdminGameRow({
                 <input type="number" min={0} value={redScore} onChange={(e) => setRedScore(e.target.value)} />
                 <span style={{ color: cs.team_red_color }}>{cs.team_red_name.toUpperCase()}</span>
               </div>
+              {scoreEntered && (
+                <div className={"wcf-recon " + (attributedTotal === enteredTotal ? "ok" : "pending")}>
+                  <span className="wcf-recon-dot" />
+                  {attributedTotal} of {enteredTotal} attributed to scorers
+                </div>
+              )}
             </div>
           )}
+
+          {past && confirmed.length > 0 && (
+            <div className="wcf-scorers-card">
+              {([
+                ["white", confirmed.filter((b) => b.team === "white"), cs.team_white_name, cs.team_white_color],
+                ["red", confirmed.filter((b) => b.team === "red"), cs.team_red_name, cs.team_red_color],
+                ["unassigned", confirmed.filter((b) => !b.team), "Unassigned", "#94a3b8"],
+              ] as const)
+                .filter(([, group]) => group.length > 0)
+                .map(([key, group, name, color]) => (
+                  <div key={key} className="wcf-scorers-team">
+                    <div className="wcf-scorers-team-head">
+                      <span className="wcf-scorers-team-swatch" style={{ background: color }} />
+                      <span className="wcf-scorers-team-name" style={{ color }}>{name}</span>
+                    </div>
+                    <div className="wcf-scorers-col-head">
+                      <span />
+                      <small>Goals</small>
+                      <small>OG</small>
+                    </div>
+                    {group.map((b) => (
+                      <div key={b.id} className="wcf-scorers-row">
+                        <span className="wcf-scorers-name">
+                          {b.player.display_name}
+                          {(ownGoalDraft[b.player_id] ?? 0) > 0 && <span className="wcf-scorers-og-flag">Own goal</span>}
+                        </span>
+                        <div className="wcf-scorers-stepper">
+                          <button
+                            onClick={() => setGoalDraft((g) => ({ ...g, [b.player_id]: Math.max(0, (g[b.player_id] ?? 0) - 1) }))}
+                            disabled={(goalDraft[b.player_id] ?? 0) <= 0}
+                          >
+                            −
+                          </button>
+                          <span>{goalDraft[b.player_id] ?? 0}</span>
+                          <button onClick={() => setGoalDraft((g) => ({ ...g, [b.player_id]: (g[b.player_id] ?? 0) + 1 }))}>+</button>
+                        </div>
+                        <div className="wcf-scorers-stepper og">
+                          <button
+                            onClick={() => setOwnGoalDraft((g) => ({ ...g, [b.player_id]: Math.max(0, (g[b.player_id] ?? 0) - 1) }))}
+                            disabled={(ownGoalDraft[b.player_id] ?? 0) <= 0}
+                          >
+                            −
+                          </button>
+                          <span>{ownGoalDraft[b.player_id] ?? 0}</span>
+                          <button onClick={() => setOwnGoalDraft((g) => ({ ...g, [b.player_id]: (g[b.player_id] ?? 0) + 1 }))}>+</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+            </div>
+          )}
+
           {confirmed.length === 0 && <p className="wcf-empty small">No one booked in.</p>}
           {confirmed.map((b) => (
             <div key={b.id} className="wcf-admin-player-row">
@@ -6282,19 +6410,6 @@ function AdminGameRow({
                 <option value="carried_over">Free — carried over</option>
                 <option value="other">Free — other</option>
               </select>
-              {past && (
-                <div className="wcf-admin-goals">
-                  <button
-                    className="minus"
-                    onClick={() => setGoalDraft((g) => ({ ...g, [b.player_id]: Math.max(0, (g[b.player_id] ?? 0) - 1) }))}
-                    disabled={(goalDraft[b.player_id] ?? 0) <= 0}
-                  >
-                    −
-                  </button>
-                  <span>{goalDraft[b.player_id] ?? 0}</span>
-                  <button className="plus" onClick={() => setGoalDraft((g) => ({ ...g, [b.player_id]: (g[b.player_id] ?? 0) + 1 }))}>+</button>
-                </div>
-              )}
               <button
                 className="wcf-admin-remove"
                 onClick={async () => {
@@ -7055,13 +7170,33 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-admin-pot-select{background:rgba(13,13,26,.7);border:1px solid rgba(148,163,184,.2);color:var(--dim);padding:6px 8px;border-radius:10px;font-size:10.5px;font-weight:700;font-family:var(--sans);cursor:pointer;flex:0 0 auto}
 .wcf-admin-pot-select.exempt{border-color:rgba(234,179,8,.4);color:var(--amber)}
 .wcf-admin-undo:hover{color:var(--red-hi)}
-.wcf-admin-goals{display:flex;align-items:center;gap:7px}
-.wcf-admin-goals button{width:32px;height:32px;border-radius:10px;cursor:pointer;font-size:15px;line-height:1;display:grid;place-items:center;font-weight:600}
-.wcf-admin-goals button.minus{background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.18);color:#cbd5e1}
-.wcf-admin-goals button.plus{background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.34);color:#7fb0ec}
-.wcf-admin-goals button:disabled{opacity:.4;cursor:not-allowed}
-.wcf-admin-goals span{width:18px;text-align:center;font-family:var(--display);font-weight:800;font-size:13px;font-variant-numeric:tabular-nums;color:#f8fafc}
 .wcf-admin-remove{flex:none;width:32px;height:32px;border-radius:10px;background:rgba(240,82,94,.1);border:1px solid rgba(240,82,94,.3);color:var(--red-hi);font-size:16px;cursor:pointer;line-height:1;display:grid;place-items:center}
+
+.wcf-recon{margin-top:11px;display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;padding:5px 11px;border-radius:20px}
+.wcf-recon.ok{background:rgba(34,197,94,.14);color:#86efac;border:1px solid rgba(34,197,94,.32)}
+.wcf-recon.pending{background:rgba(234,179,8,.14);color:#fde68a;border:1px solid rgba(234,179,8,.32)}
+.wcf-recon-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+
+.wcf-scorers-card{border-radius:14px;overflow:hidden;margin-bottom:14px;background:rgba(13,13,26,.55);border:1px solid rgba(148,163,184,.14)}
+.wcf-scorers-team{padding:11px 13px}
+.wcf-scorers-team + .wcf-scorers-team{border-top:1px solid var(--line)}
+.wcf-scorers-team-head{display:flex;align-items:center;gap:7px;margin-bottom:2px}
+.wcf-scorers-team-swatch{width:8px;height:8px;border-radius:3px;flex:0 0 auto}
+.wcf-scorers-team-name{font-family:var(--display);font-weight:700;font-size:11.5px}
+.wcf-scorers-col-head{display:flex;align-items:center;gap:8px;padding:4px 0 2px}
+.wcf-scorers-col-head span{flex:1}
+.wcf-scorers-col-head small{width:60px;text-align:center;font-family:var(--mono);font-size:8px;letter-spacing:.08em;color:var(--dim);text-transform:uppercase}
+.wcf-scorers-row{display:flex;align-items:center;gap:8px;padding:6px 0}
+.wcf-scorers-row + .wcf-scorers-row{border-top:1px solid rgba(148,163,184,.08)}
+.wcf-scorers-name{flex:1;min-width:0;font-weight:700;font-size:12px;color:#f1f5f9;line-height:1.25}
+.wcf-scorers-og-flag{display:block;margin-top:1px;font-size:9px;font-weight:700;color:var(--amber)}
+.wcf-scorers-stepper{width:60px;display:flex;align-items:center;justify-content:center;gap:4px}
+.wcf-scorers-stepper button{width:22px;height:22px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700;display:grid;place-items:center;flex:0 0 auto;
+  background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.18);color:#cbd5e1}
+.wcf-scorers-stepper button:disabled{opacity:.4;cursor:not-allowed}
+.wcf-scorers-stepper span{width:14px;text-align:center;font-family:var(--display);font-weight:800;font-size:12px;font-variant-numeric:tabular-nums;color:#f8fafc;flex:0 0 auto}
+.wcf-scorers-stepper.og button{background:rgba(234,179,8,.1);border-color:rgba(234,179,8,.3);color:#fde68a}
+.wcf-scorers-stepper.og span{color:#fde68a}
 .wcf-msg-compose{margin:0 0 12px;padding:14px;border-radius:20px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid rgba(148,163,184,.16);box-shadow:0 22px 44px -30px rgba(0,0,0,.95);display:flex;flex-direction:column;gap:10px}
 .wcf-msg-compose select{width:100%;appearance:none;background:var(--bg);color:#f1f5f9;border:1px solid rgba(148,163,184,.2);border-radius:12px;padding:13px;font-size:13px;font-weight:600;font-family:var(--sans);cursor:pointer;min-height:46px;box-sizing:border-box}
 .wcf-msg-compose-box{width:100%;background:var(--bg);border:1px solid rgba(148,163,184,.2);border-radius:12px;padding:13px;color:#f1f5f9;font-size:13px;font-family:var(--sans);min-height:64px;resize:vertical;box-sizing:border-box}
@@ -7567,6 +7702,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-result-goals-col{flex:1;min-width:0}
 .wcf-result-goal-row{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:3px 0}
 .wcf-result-goal-row b{font-family:var(--mono);color:var(--dim);font-weight:700}
+.wcf-result-og{margin-top:10px;font-size:11.5px;color:var(--amber);line-height:1.5}
 .wcf-result-share{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
 .wcf-result-share-btn{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-weight:800;font-size:12.5px;padding:10px;border-radius:10px;cursor:pointer}
 .wcf-result-admin-tag{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 8px;border-radius:20px;background:rgba(230,57,70,.16);color:var(--red-hi);white-space:nowrap}
