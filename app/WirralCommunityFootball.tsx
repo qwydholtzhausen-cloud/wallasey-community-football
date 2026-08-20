@@ -4787,7 +4787,7 @@ function PlayerCardModal({
                 </div>
               ))}
               <div className="wcf-pcard-overall">
-                <span>Overall</span>
+                <span>Outfield overall</span>
                 <b>{overall}</b>
               </div>
             </div>
