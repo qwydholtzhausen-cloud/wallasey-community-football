@@ -994,7 +994,7 @@ function App({ session }: { session: Session }) {
   }
 
   const [tab, setTab] = useState<"fixtures" | "feed" | "lineup" | "results" | "account" | "admin">("fixtures");
-  const [resultsView, setResultsView] = useState<"season" | "table" | "fixtures" | "pot" | "finances">("season");
+  const [resultsView, setResultsView] = useState<"season" | "table" | "fixtures" | "pot">("season");
   const [potAmount, setPotAmount] = useState("");
   const [potDescription, setPotDescription] = useState("");
   const [potEntryKind, setPotEntryKind] = useState<"add" | "deduct">("add");
@@ -3894,9 +3894,6 @@ function App({ session }: { session: Session }) {
               <button className={resultsView === "table" ? "active" : ""} onClick={() => setResultsView("table")}>Stats</button>
               <button className={resultsView === "fixtures" ? "active" : ""} onClick={() => setResultsView("fixtures")}>Scores</button>
               <button className={resultsView === "pot" ? "active" : ""} onClick={() => setResultsView("pot")}>Pot</button>
-              {isAdmin && (
-                <button className={resultsView === "finances" ? "active" : ""} onClick={() => setResultsView("finances")}>Finances</button>
-              )}
             </div>
 
             {resultsView === "season" && (() => {
@@ -4316,8 +4313,6 @@ function App({ session }: { session: Session }) {
             )}
 
             {resultsView === "pot" && (() => {
-              const totalIn = potLedger.filter((e) => e.amount > 0).reduce((a, e) => a + e.amount, 0);
-              const totalOut = potLedger.filter((e) => e.amount < 0).reduce((a, e) => a - e.amount, 0);
               const chronological = [...potLedger].sort((a, b) => a.date.localeCompare(b.date));
               const series = chronological.reduce<number[]>((acc, e) => {
                 acc.push((acc[acc.length - 1] ?? 0) + e.amount);
@@ -4332,15 +4327,6 @@ function App({ session }: { session: Session }) {
               };
               const sparkLine = series.map(pt).join(" ");
               const sparkFill = `0,70 ${sparkLine} 320,70`;
-              const byCat = (Object.keys(POT_CATEGORY_LABEL) as PotCategory[])
-                .map((k) => ({
-                  k,
-                  label: POT_CATEGORY_LABEL[k],
-                  net: potLedger.filter((e) => e.category === k).reduce((a, e) => a + e.amount, 0),
-                }))
-                .filter((c) => c.net !== 0)
-                .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
-              const widest = Math.max(...byCat.map((c) => Math.abs(c.net)), 1);
 
               return (
                 <>
@@ -4354,19 +4340,6 @@ function App({ session }: { session: Session }) {
                       Goes towards equipment, socials and running the club.
                     </p>
 
-                    {isAdmin && potLedger.length > 0 && (
-                      <>
-                        <div className="wcf-pot-inout">
-                          <span><span className="wcf-pot-inout-dot in" />In £{totalIn.toFixed(2)}</span>
-                          <span><span className="wcf-pot-inout-dot out" />Out £{totalOut.toFixed(2)}</span>
-                        </div>
-                        <svg viewBox="0 0 320 70" preserveAspectRatio="none" className="wcf-pot-spark">
-                          <polyline points={sparkFill} fill="rgba(34,197,94,.18)" stroke="none" />
-                          <polyline points={sparkLine} stroke="var(--green)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" fill="none" />
-                        </svg>
-                      </>
-                    )}
-
                     {!isAdmin && (
                       <div className="wcf-pot-tags">
                         <span className="wcf-pot-tag">Equipment</span>
@@ -4376,27 +4349,77 @@ function App({ session }: { session: Session }) {
                     )}
                   </div>
 
-                  {isAdmin && byCat.length > 0 && (
-                    <div className="wcf-pot-breakdown">
-                      {byCat.map((c) => (
-                        <div key={c.k} className="wcf-pot-breakdown-row">
-                          <span className="wcf-pot-breakdown-label">{c.label}</span>
-                          <span className="wcf-pot-breakdown-track">
-                            <span
-                              className="wcf-pot-breakdown-bar"
-                              style={{ width: `${Math.round((Math.abs(c.net) / widest) * 100)}%`, background: c.net < 0 ? "var(--red-hi)" : "var(--green)" }}
-                            />
-                          </span>
-                          <span className="wcf-pot-breakdown-amount" style={{ color: c.net < 0 ? "var(--red-hi)" : "var(--green)" }}>
-                            {c.net < 0 ? "−" : "+"}£{Math.abs(c.net).toFixed(2)}
+                {isAdmin && (
+                  <>
+                    <div className="wcf-fin-stats">
+                      <div className="wcf-fin-tile">
+                        <div className="wcf-fin-tile-label">Income</div>
+                        <div className="wcf-fin-tile-value green">£{financeSummary.income.toFixed(2)}</div>
+                      </div>
+                      <div className="wcf-fin-tile">
+                        <div className="wcf-fin-tile-label">Expenses</div>
+                        <div className="wcf-fin-tile-value red">£{financeSummary.expenses.toFixed(2)}</div>
+                      </div>
+                      <div className="wcf-fin-tile">
+                        <div className="wcf-fin-tile-label">Net</div>
+                        <div className={"wcf-fin-tile-value " + (potTotal < 0 ? "red" : "green")}>
+                          {potTotal < 0 ? "−" : ""}£{Math.abs(potTotal).toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {potLedger.length > 0 && (
+                      <div className="wcf-fin-card">
+                        <div className="wcf-fin-card-head">Balance over time</div>
+                        <svg viewBox="0 0 320 70" preserveAspectRatio="none" className="wcf-pot-spark">
+                          <polyline points={sparkFill} fill="rgba(34,197,94,.18)" stroke="none" />
+                          <polyline points={sparkLine} stroke="var(--green)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" fill="none" />
+                        </svg>
+                      </div>
+                    )}
+
+                    <div className="wcf-fin-card">
+                      <div className="wcf-fin-card-head">By fixture</div>
+                      {financeSummary.byFixture.length === 0 && <p className="wcf-empty small">No fixtures with confirmed payments yet.</p>}
+                      {financeSummary.byFixture.map((e) => (
+                        <div key={e.id} className="wcf-fin-fx-row">
+                          <div>
+                            <div className="wcf-fin-fx-desc">{e.description.split(" — ")[0]}</div>
+                            <div className="wcf-pitch">{fmtDate(e.date)}</div>
+                          </div>
+                          <span className={"wcf-fin-fx-net " + (e.amount < 0 ? "red" : "green")}>
+                            {e.amount < 0 ? "−" : "+"}£{Math.abs(e.amount).toFixed(2)}
                           </span>
                         </div>
                       ))}
                     </div>
-                  )}
 
-                {isAdmin && (
-                  <>
+                    <div className="wcf-fin-card">
+                      <div className="wcf-fin-card-head">Where it's gone</div>
+                      {(() => {
+                        const totalSpend = Object.values(financeSummary.byCategory).reduce((s, v) => s + v, 0);
+                        const cats = (Object.keys(financeSummary.byCategory) as PotCategory[]).filter((c) => financeSummary.byCategory[c] > 0);
+                        if (cats.length === 0) return <p className="wcf-empty small">Nothing spent yet.</p>;
+                        return cats
+                          .sort((a, b) => financeSummary.byCategory[b] - financeSummary.byCategory[a])
+                          .map((c) => {
+                            const amt = financeSummary.byCategory[c];
+                            const pct = totalSpend > 0 ? (amt / totalSpend) * 100 : 0;
+                            return (
+                              <div key={c} className="wcf-fin-cat-row">
+                                <div className="wcf-fin-cat-top">
+                                  <span>{POT_CATEGORY_LABEL[c]}</span>
+                                  <span>£{amt.toFixed(2)} · {pct.toFixed(0)}%</span>
+                                </div>
+                                <div className="wcf-fin-cat-track">
+                                  <div className="wcf-fin-cat-fill" style={{ width: `${pct}%` }} />
+                                </div>
+                              </div>
+                            );
+                          });
+                      })()}
+                    </div>
+
                     <form
                       className="wcf-pot-add"
                       onSubmit={async (e) => {
@@ -4490,94 +4513,13 @@ function App({ session }: { session: Session }) {
                       </div>
                     ))}
                     {potLedger.length > 0 && <p className="wcf-pot-auto-note">Match surpluses are added automatically the morning after each fixture.</p>}
+
+                    <button className="wcf-ghost wcf-fin-export" onClick={exportFinanceCsv}>⬇ Export season as CSV</button>
                   </>
                 )}
                 </>
               );
             })()}
-
-            {resultsView === "finances" && isAdmin && (
-              <>
-                <div className="wcf-fin-stats">
-                  <div className="wcf-fin-tile">
-                    <div className="wcf-fin-tile-label">Income</div>
-                    <div className="wcf-fin-tile-value green">£{financeSummary.income.toFixed(2)}</div>
-                  </div>
-                  <div className="wcf-fin-tile">
-                    <div className="wcf-fin-tile-label">Expenses</div>
-                    <div className="wcf-fin-tile-value red">£{financeSummary.expenses.toFixed(2)}</div>
-                  </div>
-                  <div className="wcf-fin-tile">
-                    <div className="wcf-fin-tile-label">Net</div>
-                    <div className={"wcf-fin-tile-value " + (potTotal < 0 ? "red" : "green")}>
-                      {potTotal < 0 ? "−" : ""}£{Math.abs(potTotal).toFixed(2)}
-                    </div>
-                  </div>
-                </div>
-
-                {financeSummary.balancePoints.length > 0 && (
-                  <div className="wcf-fin-card">
-                    <div className="wcf-fin-card-head">Balance over time</div>
-                    <div className="wcf-fin-chart">
-                      {financeSummary.balancePoints.slice(-8).map((p, i) => {
-                        const maxAbs = Math.max(1, ...financeSummary.balancePoints.slice(-8).map((q) => Math.abs(q.balance)));
-                        const height = (Math.abs(p.balance) / maxAbs) * 100;
-                        return (
-                          <div key={i} className="wcf-fin-bar-col">
-                            <div className={"wcf-fin-bar" + (p.balance < 0 ? " neg" : "")} style={{ height: `${height}%` }} />
-                            <div className="wcf-fin-bar-label">{fmtDate(p.date).slice(0, 6)}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                <div className="wcf-fin-card">
-                  <div className="wcf-fin-card-head">By fixture</div>
-                  {financeSummary.byFixture.length === 0 && <p className="wcf-empty small">No fixtures with confirmed payments yet.</p>}
-                  {financeSummary.byFixture.map((e) => (
-                    <div key={e.id} className="wcf-fin-fx-row">
-                      <div>
-                        <div className="wcf-fin-fx-desc">{e.description.split(" — ")[0]}</div>
-                        <div className="wcf-pitch">{fmtDate(e.date)}</div>
-                      </div>
-                      <span className={"wcf-fin-fx-net " + (e.amount < 0 ? "red" : "green")}>
-                        {e.amount < 0 ? "−" : "+"}£{Math.abs(e.amount).toFixed(2)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="wcf-fin-card">
-                  <div className="wcf-fin-card-head">Where it's gone</div>
-                  {(() => {
-                    const totalSpend = Object.values(financeSummary.byCategory).reduce((s, v) => s + v, 0);
-                    const cats = (Object.keys(financeSummary.byCategory) as PotCategory[]).filter((c) => financeSummary.byCategory[c] > 0);
-                    if (cats.length === 0) return <p className="wcf-empty small">Nothing spent yet.</p>;
-                    return cats
-                      .sort((a, b) => financeSummary.byCategory[b] - financeSummary.byCategory[a])
-                      .map((c) => {
-                        const amt = financeSummary.byCategory[c];
-                        const pct = totalSpend > 0 ? (amt / totalSpend) * 100 : 0;
-                        return (
-                          <div key={c} className="wcf-fin-cat-row">
-                            <div className="wcf-fin-cat-top">
-                              <span>{POT_CATEGORY_LABEL[c]}</span>
-                              <span>£{amt.toFixed(2)} · {pct.toFixed(0)}%</span>
-                            </div>
-                            <div className="wcf-fin-cat-track">
-                              <div className="wcf-fin-cat-fill" style={{ width: `${pct}%` }} />
-                            </div>
-                          </div>
-                        );
-                      });
-                  })()}
-                </div>
-
-                <button className="wcf-ghost wcf-fin-export" onClick={exportFinanceCsv}>⬇ Export season as CSV</button>
-              </>
-            )}
           </>
         )}
 
@@ -7625,20 +7567,9 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pot-total-amount.admin{font-size:36px;margin:4px 0 8px;text-shadow:none}
 .wcf-pot-total-amount.negative{color:var(--red-hi)}
 .wcf-pot-total-note{font-size:12px;color:var(--dim);line-height:1.5;margin:0;max-width:340px;margin-left:auto;margin-right:auto}
-.wcf-pot-inout{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:16px}
-.wcf-pot-inout span{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--dim)}
-.wcf-pot-inout-dot{width:7px;height:7px;border-radius:2px}
-.wcf-pot-inout-dot.in{background:var(--green)}
-.wcf-pot-inout-dot.out{background:var(--red-hi)}
-.wcf-pot-spark{display:block;width:100%;height:70px;margin-top:12px}
+.wcf-pot-spark{display:block;width:100%;height:70px}
 .wcf-pot-tags{display:flex;flex-wrap:wrap;justify-content:center;gap:7px;margin:18px 0 4px}
 .wcf-pot-tag{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#86efac;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);padding:8px 12px;border-radius:20px}
-.wcf-pot-breakdown{display:flex;flex-direction:column;gap:10px;margin:16px 2px}
-.wcf-pot-breakdown-row{display:flex;align-items:center;gap:10px}
-.wcf-pot-breakdown-label{flex:none;width:78px;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
-.wcf-pot-breakdown-track{flex:1;height:8px;border-radius:20px;background:rgba(148,163,184,.12);overflow:hidden}
-.wcf-pot-breakdown-bar{display:block;height:100%;border-radius:20px}
-.wcf-pot-breakdown-amount{flex:none;width:64px;text-align:right;font-family:var(--mono);font-weight:700;font-size:11.5px}
 .wcf-pot-ledger-head{display:flex;align-items:baseline;justify-content:space-between;margin:22px 2px 10px}
 .wcf-pot-ledger-head span:first-child{font-family:var(--display);font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
 .wcf-pot-ledger-head span:last-child{font-size:11px;color:#64748b}
@@ -7667,11 +7598,6 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-fin-tile-value.red{color:var(--red-hi)}
 .wcf-fin-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:14px}
 .wcf-fin-card-head{font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--dim);margin-bottom:12px}
-.wcf-fin-chart{display:flex;align-items:flex-end;gap:6px;height:80px}
-.wcf-fin-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
-.wcf-fin-bar{width:100%;border-radius:4px 4px 0 0;background:var(--blue);min-height:2px}
-.wcf-fin-bar.neg{background:var(--red-hi)}
-.wcf-fin-bar-label{font-size:8px;color:var(--dim);margin-top:5px;font-family:var(--mono)}
 .wcf-fin-fx-row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);gap:10px}
 .wcf-fin-fx-row:last-child{border-bottom:none;padding-bottom:0}
 .wcf-fin-fx-desc{font-size:12.5px;font-weight:700;color:var(--white)}
