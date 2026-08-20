@@ -6673,7 +6673,7 @@ function GameCard({
               </div>
             </div>
             <span className="wcf-avatars" style={{ pointerEvents: "none" }}>
-              {confirmed.slice(0, 5).map((b) => {
+              {confirmed.slice(0, 4).map((b) => {
                 const a = avatarFor(b.player.display_name);
                 return (
                   <Avatar
@@ -6685,7 +6685,7 @@ function GameCard({
                   />
                 );
               })}
-              {confirmed.length > 5 && <span className="wcf-avatar-chip lg more">+{confirmed.length - 5}</span>}
+              {confirmed.length > 4 && <span className="wcf-avatar-chip lg more">+{confirmed.length - 4}</span>}
             </span>
             <span className="wcf-hero-roster-chev">›</span>
           </button>
