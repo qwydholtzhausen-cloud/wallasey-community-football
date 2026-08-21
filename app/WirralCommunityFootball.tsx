@@ -1002,6 +1002,7 @@ function App({ session }: { session: Session }) {
   const [addingPotEntry, setAddingPotEntry] = useState(false);
   const [resultsMonth, setResultsMonth] = useState<string>("all");
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
+  const [motmVotersFor, setMotmVotersFor] = useState<{ gameId: string; candidateId: string; candidateName: string } | null>(null);
   const [playerCardId, setPlayerCardId] = useState<string | null>(null);
   const [playerCardTeam, setPlayerCardTeam] = useState<{ name: string; color: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -4161,6 +4162,15 @@ function App({ session }: { session: Session }) {
                     .sort((a, b) => b.votes - a.votes);
                   const topVotes = ranked[0]?.votes ?? 0;
                   const expanded = expandedResultId === g.id;
+                  // Only ever read once voting's closed (the vote buttons
+                  // above never surface this) - keeps voting itself
+                  // anonymous while letting the community see who backed
+                  // who once the result's out, per direct feedback.
+                  const votersFor = (candidateId: string) =>
+                    motmVotes
+                      .filter((v) => v.game_id === g.id && v.candidate_id === candidateId)
+                      .map((v) => profiles.find((p) => p.id === v.voter_id))
+                      .filter((p): p is Profile => !!p);
                   return (
                     <article key={g.id} className={"wcf-result" + (resultIndex === 0 ? " featured" : "")}>
                       <button className="wcf-result-toggle" onClick={() => setExpandedResultId(expanded ? null : g.id)}>
@@ -4239,20 +4249,37 @@ function App({ session }: { session: Session }) {
                               <div className="wcf-motm-winner">
                                 🏆 Man of the Match — <strong>{ranked[0].candidate.player.display_name}</strong>
                               </div>
-                              {ranked.filter((r) => r.votes > 0).map((r) => (
-                                <div key={r.candidate.id} className="wcf-motm-bar-row">
-                                  <div className="wcf-motm-bar-top">
-                                    <span className={r.votes === topVotes ? "winner" : ""}>{r.candidate.player.display_name}</span>
-                                    <span className="wcf-motm-count">{r.votes}</span>
+                              {ranked.filter((r) => r.votes > 0).map((r) => {
+                                const voters = votersFor(r.candidate.player_id);
+                                return (
+                                  <div key={r.candidate.id} className="wcf-motm-bar-row">
+                                    <div className="wcf-motm-bar-top">
+                                      <span className={r.votes === topVotes ? "winner" : ""}>{r.candidate.player.display_name}</span>
+                                      <span className="wcf-motm-count">{r.votes}</span>
+                                    </div>
+                                    <div className="wcf-motm-bar-track">
+                                      <div
+                                        className={"wcf-motm-bar-fill" + (r.votes === topVotes ? " winner" : "")}
+                                        style={{ width: `${Math.max(6, (r.votes / topVotes) * 100)}%` }}
+                                      />
+                                    </div>
+                                    <button
+                                      className="wcf-motm-voters-trigger"
+                                      onClick={() =>
+                                        setMotmVotersFor({ gameId: g.id, candidateId: r.candidate.player_id, candidateName: r.candidate.player.display_name })
+                                      }
+                                    >
+                                      <span className="wcf-avatars">
+                                        {voters.slice(0, 4).map((v) => (
+                                          <Avatar key={v.id} name={v.display_name} avatarUrl={v.avatar_url} className="wcf-avatar-chip" background={avatarFor(v.display_name).gradient} />
+                                        ))}
+                                        {voters.length > 4 && <span className="wcf-avatar-chip more">+{voters.length - 4}</span>}
+                                      </span>
+                                      <span className="wcf-motm-voters-label">See who voted</span>
+                                    </button>
                                   </div>
-                                  <div className="wcf-motm-bar-track">
-                                    <div
-                                      className={"wcf-motm-bar-fill" + (r.votes === topVotes ? " winner" : "")}
-                                      style={{ width: `${Math.max(6, (r.votes / topVotes) * 100)}%` }}
-                                    />
-                                  </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           )}
 
@@ -4604,6 +4631,18 @@ function App({ session }: { session: Session }) {
         );
       })()}
 
+      {motmVotersFor && (
+        <MotmVotersModal
+          candidateName={motmVotersFor.candidateName}
+          voters={motmVotes
+            .filter((v) => v.game_id === motmVotersFor.gameId && v.candidate_id === motmVotersFor.candidateId)
+            .map((v) => profiles.find((p) => p.id === v.voter_id))
+            .filter((p): p is Profile => !!p)}
+          onOpenPlayerCard={openPlayerCard}
+          onClose={() => setMotmVotersFor(null)}
+        />
+      )}
+
       {confirmState && (
         <div className="wcf-modal-overlay" onClick={() => resolveConfirm(false)}>
           <div className="wcf-modal" onClick={(e) => e.stopPropagation()}>
@@ -4640,6 +4679,37 @@ const ROLE_LABEL: Record<Role, string> = { player: "Player", admin: "Admin", "co
 function ratingFillColor(v: number) {
   // amber below 2.5, green above 4, blue in between - reads at a glance without a legend
   return v >= 4 ? "#22c55e" : v < 2.5 ? "#eab308" : "#2E74CC";
+}
+
+// Only ever rendered from the post-close results view - voting itself
+// stays anonymous, this is purely "see who backed who" once it's over.
+function MotmVotersModal({
+  candidateName,
+  voters,
+  onOpenPlayerCard,
+  onClose,
+}: {
+  candidateName: string;
+  voters: Profile[];
+  onOpenPlayerCard: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="wcf-lightbox" onClick={onClose}>
+      <button className="wcf-lightbox-close" onClick={onClose} aria-label="Close">×</button>
+      <div className="wcf-motm-voters-card" onClick={(e) => e.stopPropagation()}>
+        <div className="wcf-motm-voters-title">Voted for {candidateName}</div>
+        <div className="wcf-motm-voters-list">
+          {voters.map((v) => (
+            <button key={v.id} className="wcf-motm-voters-row" onClick={() => { onOpenPlayerCard(v.id); onClose(); }}>
+              <Avatar name={v.display_name} avatarUrl={v.avatar_url} className="wcf-avatar-chip lg" background={avatarFor(v.display_name).gradient} />
+              <span>{v.display_name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function PlayerCardModal({
@@ -7682,6 +7752,14 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-motm-bar-track{height:6px;border-radius:5px;background:var(--panel2);overflow:hidden}
 .wcf-motm-bar-fill{height:100%;border-radius:5px;background:var(--dim)}
 .wcf-motm-bar-fill.winner{background:var(--amber)}
+.wcf-motm-voters-trigger{display:flex;align-items:center;gap:8px;background:none;border:none;padding:0;margin-top:6px;cursor:pointer}
+.wcf-motm-voters-label{font-size:10.5px;font-weight:700;color:var(--dim);text-decoration:underline}
+.wcf-motm-voters-card{width:100%;max-width:300px;margin:auto;border-radius:20px;padding:20px;border:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(30,41,59,.98),rgba(19,22,38,1));box-shadow:0 26px 50px -30px rgba(0,0,0,.95);animation:wcfPcardIn .22s ease-out}
+.wcf-motm-voters-title{font-family:var(--display);font-weight:800;font-size:15px;color:var(--white);margin-bottom:14px;text-align:center}
+.wcf-motm-voters-list{display:flex;flex-direction:column;gap:4px}
+.wcf-motm-voters-row{display:flex;align-items:center;gap:10px;background:none;border:none;padding:8px 6px;border-radius:12px;cursor:pointer;text-align:left;font:inherit;color:var(--white)}
+.wcf-motm-voters-row:hover{background:rgba(148,163,184,.08)}
 
 .wcf-account{display:flex;flex-direction:column;gap:0}
 .wcf-acc-section{border-radius:18px;overflow:hidden;margin-bottom:9px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line)}
