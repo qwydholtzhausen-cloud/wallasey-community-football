@@ -4148,6 +4148,10 @@ function App({ session }: { session: Session }) {
                   // those often lag behind by days, and voting closes hours
                   // after kickoff.
                   const candidates = g.bookings.filter((b) => !b.waiting);
+                  // Can't vote for yourself, but you can still win it - so
+                  // this only trims the vote-button list, never `candidates`
+                  // itself (that still feeds the tally/winner below).
+                  const voteCandidates = candidates.filter((c) => c.player_id !== myId);
                   const votingOpen = motmVotingOpen(g);
                   const tally = motmTallyByGame[g.id] ?? {};
                   const totalVotes = Object.values(tally).reduce((sum, n) => sum + n, 0);
@@ -4213,11 +4217,11 @@ function App({ session }: { session: Session }) {
                             </div>
                           )}
 
-                          {candidates.length > 0 && votingOpen && (
+                          {voteCandidates.length > 0 && votingOpen && (
                             <div className="wcf-motm">
                               <div className="wcf-motm-label">Vote Man of the Match · results hidden until voting closes</div>
                               <div className="wcf-motm-candidates">
-                                {candidates.map((c) => (
+                                {voteCandidates.map((c) => (
                                   <button
                                     key={c.id}
                                     className={"wcf-motm-vote" + (myVote === c.player_id ? " voted" : "")}

@@ -1138,3 +1138,37 @@ alter table public.player_admin_ratings add column goalkeeping int not null defa
 -- ─────────────────────────────────────────────────────────────────
 
 alter table public.game_stats add column own_goals int not null default 0;
+
+-- ─────────────────────────────────────────────────────────────────
+-- MOTM voting never actually blocked voting for yourself - the app UI
+-- now filters your own name out of the vote buttons, but that's not
+-- a real guarantee (anyone hitting the API directly could still
+-- upsert a self-vote), so the real rule belongs here too, same as
+-- every other MOTM/booking rule in this file.
+-- ─────────────────────────────────────────────────────────────────
+
+drop policy if exists "motm_votes_insert_own" on public.motm_votes;
+create policy "motm_votes_insert_own" on public.motm_votes for insert with check (
+  voter_id = auth.uid()
+  and candidate_id != voter_id
+  and exists (
+    select 1 from public.bookings b
+    where b.game_id = motm_votes.game_id and b.player_id = voter_id and b.waiting = false
+  )
+  and exists (
+    select 1 from public.bookings b
+    where b.game_id = motm_votes.game_id and b.player_id = candidate_id and b.waiting = false
+  )
+);
+
+drop policy if exists "motm_votes_update_own" on public.motm_votes;
+create policy "motm_votes_update_own" on public.motm_votes for update
+  using (voter_id = auth.uid())
+  with check (
+    voter_id = auth.uid()
+    and candidate_id != voter_id
+    and exists (
+      select 1 from public.bookings b
+      where b.game_id = motm_votes.game_id and b.player_id = candidate_id and b.waiting = false
+    )
+  );
