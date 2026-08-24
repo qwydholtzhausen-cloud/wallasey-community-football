@@ -1047,7 +1047,7 @@ function App({ session }: { session: Session }) {
   };
 
   const loadProfile = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id, display_name, role, push_opt_in, avatar_url, payment_code").eq("id", myId).single();
+    const { data } = await supabase.from("profiles").select("id, display_name, role, push_opt_in, avatar_url").eq("id", myId).single();
     if (data) setMyProfile(data as Profile);
   }, [myId]);
 
@@ -1060,7 +1060,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, lineup_positions, bookings(id, player_id, status, waiting, team, created_at, pot_exempt_reason, auto_confirmed, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, lineup_positions, bookings(id, player_id, status, waiting, team, created_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -5144,8 +5144,14 @@ function AccountPanel({
                 ))}
               </div>
               <p className="wcf-tab-hero-note">
-                Bank transfer to the club account, reference <span className="wcf-tab-ref-code">{profile.payment_code}</span>. Payments with that
-                reference confirm automatically — no need to tell an admin.
+                {profile.payment_code ? (
+                  <>
+                    Bank transfer to the club account, reference <span className="wcf-tab-ref-code">{profile.payment_code}</span>. Payments with that
+                    reference confirm automatically — no need to tell an admin.
+                  </>
+                ) : (
+                  "Bank transfer to the club account. An admin confirms it here once it lands."
+                )}
               </p>
             </div>
           </>
