@@ -5,6 +5,13 @@
 
 export const MOTM_VOTE_WINDOW_MINUTES = 300;
 
+// How long after kickoff a fixture is treated as finished - drives when it
+// moves from "upcoming" to "past", when the score-entry/overdue-payment
+// reminders fire, and the timestamp on its "Full time" feed item. Not the
+// real match length (a 5-a-side rarely runs the full 90), just the buffer
+// this app waits before treating a game as over.
+export const MATCH_DURATION_MINUTES = 65;
+
 // Current UK wall-clock time as "YYYY-MM-DDTHH:MM", regardless of the
 // server/browser's own timezone.
 export function nowInLondon() {

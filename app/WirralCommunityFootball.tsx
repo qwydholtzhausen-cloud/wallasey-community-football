@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
-import { MOTM_VOTE_WINDOW_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey } from "../lib/time";
+import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey } from "../lib/time";
 import { predictionPoints, buildLeaderboard, buildMonthlyLeaderboards, topScorers, type ScoredPrediction } from "../lib/predictions";
 
 // The payment link is just config, not baked into booking logic (statuses
@@ -2082,7 +2082,7 @@ function App({ session }: { session: Session }) {
 
   const nowUk = nowInLondon();
   const upcomingGames = useMemo(
-    () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) > nowUk).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)),
+    () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) > nowUk).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)),
     [games, nowUk]
   );
   // Same YYYY-MM grouping key already used by copyFixtureUpdate() for the
@@ -2120,7 +2120,7 @@ function App({ session }: { session: Session }) {
     return { text: d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`, soon: totalMin < 60 };
   }, [nextFixtureForCountdown, nowUk]);
   const pastGames = useMemo(
-    () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, 90) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
+    () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
     [games, nowUk]
   );
 
@@ -2283,7 +2283,7 @@ function App({ session }: { session: Session }) {
       if (g.team_white_score == null || g.team_red_score == null) continue;
       items.push({
         key: `game-${g.id}-fulltime`,
-        ts: toMs(kickoffCutoff(g.date, g.kickoff, 90)),
+        ts: toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)),
         kind: "derived",
         icon: (
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">
@@ -2394,7 +2394,7 @@ function App({ session }: { session: Session }) {
         if (count % 5 === 0) {
           items.push({
             key: `apps-${b.player_id}-${count}`,
-            ts: toMs(kickoffCutoff(g.date, g.kickoff, 90)),
+            ts: toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)),
             kind: "derived",
             icon: (
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">

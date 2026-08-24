@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers } from "../../../../lib/push";
-import { kickoffCutoff, nowInLondon } from "../../../../lib/time";
+import { kickoffCutoff, nowInLondon, MATCH_DURATION_MINUTES } from "../../../../lib/time";
 
 // Both sides of this comparison come from the same "pretend UTC" trick in
 // lib/time.ts (real UK wall-clock digits, formatted as if they were UTC) -
@@ -213,8 +213,8 @@ export async function GET(req: Request) {
   // A second, later nudge before the hard booking-block kicks in (that
   // happens the day after the game - see has_overdue_payment() in SQL).
   // Fires same-evening, well before that block, using the same "game's
-  // finished" cutoff as the rest of the app (kickoff + 90 min) - so it's
-  // a heads-up, not just a restatement of a block that's already active.
+  // finished" cutoff as the rest of the app (kickoff + MATCH_DURATION_MINUTES)
+  // - so it's a heads-up, not just a restatement of a block that's already active.
   const { data: unconfirmedBookings } = await admin
     .from("bookings")
     .select("id, player_id, game:games(id, venue, date, kickoff, price)")
@@ -230,7 +230,7 @@ export async function GET(req: Request) {
       await markNotified(key);
       continue;
     }
-    if (toMs(kickoffCutoff(game.date, game.kickoff, 90)) > nowMs) continue;
+    if (toMs(kickoffCutoff(game.date, game.kickoff, MATCH_DURATION_MINUTES)) > nowMs) continue;
 
     await sendPushToUsers([b.player_id], {
       title: "Still unpaid ⚠️",
@@ -245,12 +245,12 @@ export async function GET(req: Request) {
   // has been entered - the player-facing voting UI only shows once a
   // result's in, so an admin being slow here can quietly cost the whole
   // MOTM window for that game. Nudges every admin as soon as the game's
-  // confirmed over (kickoff + 90min, same cutoff as everywhere else),
-  // giving the full ~3.5hr runway to MOTM's actual deadline.
+  // confirmed over (kickoff + MATCH_DURATION_MINUTES, same cutoff as
+  // everywhere else), giving the remaining runway to MOTM's actual deadline.
   for (const g of games ?? []) {
     const key = `score-reminder-${g.id}`;
     if (notifiedKeys.has(key)) continue;
-    if (toMs(kickoffCutoff(g.date, g.kickoff, 90)) > nowMs) continue;
+    if (toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) > nowMs) continue;
     if (g.team_white_score != null && g.team_red_score != null) continue;
 
     const { data: admins } = await admin.from("profiles").select("id").in("role", ["admin", "co-owner", "owner"]);
