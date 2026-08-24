@@ -1172,3 +1172,23 @@ create policy "motm_votes_update_own" on public.motm_votes for update
       where b.game_id = motm_votes.game_id and b.player_id = candidate_id and b.waiting = false
     )
   );
+
+-- ─────────────────────────────────────────────────────────────────
+-- Monzo auto-payment matching. One row (same singleton pattern as
+-- club_settings) holding the OAuth tokens for whichever Monzo account
+-- receives match fees - written by app/api/monzo/callback after the
+-- one-time approval, read/refreshed server-side only. Deliberately no
+-- RLS policies at all (not even admin-scoped): this is server-to-server
+-- secret material, nothing should ever read it through the normal
+-- client keys, only the service-role key used by the API routes.
+-- ─────────────────────────────────────────────────────────────────
+
+create table public.monzo_tokens (
+  id boolean primary key default true check (id),
+  access_token text not null,
+  refresh_token text not null,
+  expires_at timestamptz not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.monzo_tokens enable row level security;
