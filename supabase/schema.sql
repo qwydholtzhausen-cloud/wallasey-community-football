@@ -1183,7 +1183,7 @@ create policy "motm_votes_update_own" on public.motm_votes for update
 -- client keys, only the service-role key used by the API routes.
 -- ─────────────────────────────────────────────────────────────────
 
-create table public.monzo_tokens (
+create table if not exists public.monzo_tokens (
   id boolean primary key default true check (id),
   access_token text not null,
   refresh_token text not null,
@@ -1206,7 +1206,7 @@ alter table public.monzo_tokens add column if not exists webhook_registered bool
 -- below, new ones get one from handle_new_user) - never regenerated,
 -- since the whole point is it's the same reference every time someone
 -- pays. Charset skips 0/O/1/I/L to stay readable over text/WhatsApp.
-create function public.generate_payment_code()
+create or replace function public.generate_payment_code()
 returns text
 language plpgsql
 as $$
@@ -1227,7 +1227,7 @@ begin
 end;
 $$;
 
-alter table public.profiles add column payment_code text unique;
+alter table public.profiles add column if not exists payment_code text unique;
 update public.profiles set payment_code = public.generate_payment_code() where payment_code is null;
 alter table public.profiles alter column payment_code set not null;
 
@@ -1247,7 +1247,7 @@ $$;
 -- Distinguishes "an admin manually approved this" from "Monzo matched it
 -- automatically" - shown in the admin payment list so it's clear which
 -- happened, since confirmed_by stays null for an auto-match.
-alter table public.bookings add column auto_confirmed boolean not null default false;
+alter table public.bookings add column if not exists auto_confirmed boolean not null default false;
 
 -- Audit trail of every incoming payment the webhook looked at, matched or
 -- not. Matched rows are here for the record; unmatched ones (no code, code
@@ -1255,7 +1255,7 @@ alter table public.bookings add column auto_confirmed boolean not null default f
 -- combination of their outstanding bookings) are what the admin "Unmatched
 -- payments" list surfaces for manual reconciliation. No RLS write policy -
 -- only the service-role key (webhook route) ever inserts into this table.
-create table public.monzo_transactions (
+create table if not exists public.monzo_transactions (
   id text primary key,
   amount_pence int not null,
   code text,
@@ -1267,4 +1267,5 @@ create table public.monzo_transactions (
 );
 
 alter table public.monzo_transactions enable row level security;
+drop policy if exists "monzo_transactions_select_admin" on public.monzo_transactions;
 create policy "monzo_transactions_select_admin" on public.monzo_transactions for select using (public.is_admin());
