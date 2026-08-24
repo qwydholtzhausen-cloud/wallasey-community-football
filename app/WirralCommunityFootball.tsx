@@ -5941,6 +5941,16 @@ function AdminConsole({
       return byGame;
     }, {})
   ).sort((a, b) => a.game.date.localeCompare(b.game.date));
+  // Same breakdown, same reasoning, for the Overdue card - it only ever
+  // showed a flat names list with no way to actually act on it, so finding
+  // and confirming a specific overdue booking meant going hunting through
+  // Previous Fixtures by hand instead of using the dashboard shortcut.
+  const overdueByGame = Object.values(
+    overdue.reduce<Record<string, { game: GameRow; items: typeof overdue }>>((byGame, p) => {
+      (byGame[p.game.id] ??= { game: p.game, items: [] }).items.push(p);
+      return byGame;
+    }, {})
+  ).sort((a, b) => b.game.date.localeCompare(a.game.date));
   const nextGame = upcoming[0];
   const nextConfirmed = nextGame ? nextGame.bookings.filter((b) => !b.waiting) : [];
   const nextUnassigned = nextConfirmed.filter((b) => !b.team).length;
@@ -5959,6 +5969,7 @@ function AdminConsole({
   // the amount shown, same distinction the day-5 warning already makes.
   const [expandedTabId, setExpandedTabId] = useState<string | null>(null);
   const [showPendingDetail, setShowPendingDetail] = useState(false);
+  const [showOverdueDetail, setShowOverdueDetail] = useState(false);
   const playerTabs = useMemo(() => {
     const byPlayer: Record<string, { playerId: string; playerName: string; owed: typeof overdue; pending: typeof overdue }> = {};
     for (const row of overdue) {
@@ -6040,14 +6051,18 @@ function AdminConsole({
           <div className="wcf-glance-label">{unscored.length === 0 ? "Scores up to date" : "Scores to enter"}</div>
           <div className="wcf-glance-names">{unscored.length === 0 ? "All games scored" : namesList(unscored.map((g) => fmtDate(g.date)))}</div>
         </div>
-        <div className={"wcf-glance-card" + (overdue.length === 0 ? " clear" : " red")}>
+        <button
+          className={"wcf-glance-card" + (overdue.length === 0 ? " clear" : " red") + (overdue.length > 0 ? " expandable" : "")}
+          onClick={() => overdue.length > 0 && setShowOverdueDetail((v) => !v)}
+        >
           <div className="wcf-glance-top">
             <span className="wcf-glance-num">{overdue.length === 0 ? "" : overdue.length}</span>
             <span className="wcf-glance-tile">{overdue.length === 0 ? "✓" : "£"}</span>
           </div>
           <div className="wcf-glance-label">{overdue.length === 0 ? "Nothing overdue" : "Overdue payments"}</div>
           <div className="wcf-glance-names">{overdue.length === 0 ? "All settled up" : namesList(overdue.map((o) => o.booking.player.display_name.split(" ")[0]))}</div>
-        </div>
+          {overdue.length > 0 && <div className="wcf-glance-expand">{showOverdueDetail ? "Hide detail" : "Tap for detail"}</div>}
+        </button>
         <button
           className={"wcf-glance-card" + (pendingApproval.length === 0 ? " clear" : " amber") + (pendingApproval.length > 0 ? " expandable" : "")}
           onClick={() => pendingApproval.length > 0 && setShowPendingDetail((v) => !v)}
@@ -6076,6 +6091,52 @@ function AdminConsole({
           {nextGame && <div className="wcf-glance-names">{nextGame.venue} · {fmtDate(nextGame.date)}{!teamsSet ? ` — ${nextUnassigned} unassigned` : ""}</div>}
         </button>
       </div>
+
+      {showOverdueDetail && overdueByGame.length > 0 && (
+        <div className="wcf-pending-detail">
+          <div className="wcf-pending-head">
+            <span>OVERDUE PAYMENTS</span>
+            <span className="wcf-pending-head-rule" />
+          </div>
+          {overdueByGame.map(({ game, items }) => {
+            const claimedPaid = items.filter((i) => i.booking.status === "pending");
+            const notPaid = items.filter((i) => i.booking.status === "unpaid");
+            return (
+              <div key={game.id} className="wcf-pending-game">
+                <div className="wcf-pending-game-head">
+                  <span className="wcf-pending-game-venue">{game.venue}</span>
+                  <span className="wcf-pending-game-date">{fmtDate(game.date)}</span>
+                </div>
+                {claimedPaid.map(({ booking: b }) => (
+                  <div key={b.id} className="wcf-pending-row">
+                    <span className="wcf-pending-dot paid" />
+                    <span className="wcf-pending-name">{b.player.display_name}</span>
+                    <span className="wcf-pending-status paid">Says paid</span>
+                    <button className="wcf-pending-confirm" onClick={() => onSetStatus(b.id, "confirmed")}>Confirm</button>
+                  </div>
+                ))}
+                {notPaid.map(({ booking: b }) => (
+                  <div key={b.id} className="wcf-pending-row">
+                    <span className="wcf-pending-dot unpaid" />
+                    <span className="wcf-pending-name">{b.player.display_name}</span>
+                    <span className="wcf-pending-status unpaid">Not yet paid</span>
+                    <button
+                      className="wcf-admin-approve-override"
+                      onClick={async () => {
+                        if (await askConfirm(`Confirm ${b.player.display_name} as paid?`, "They haven't marked this as paid themselves.", "Confirm anyway")) {
+                          onSetStatus(b.id, "confirmed");
+                        }
+                      }}
+                    >
+                      Approve anyway
+                    </button>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {showPendingDetail && pendingByGame.length > 0 && (
         <div className="wcf-pending-detail">
