@@ -1192,3 +1192,79 @@ create table public.monzo_tokens (
 );
 
 alter table public.monzo_tokens enable row level security;
+
+-- Which Monzo account these tokens belong to, and whether we've already
+-- registered our webhook against it - lets the refresh cron retry
+-- registration if it failed the first time without spamming duplicate
+-- webhook registrations on every run.
+alter table public.monzo_tokens add column if not exists account_id text;
+alter table public.monzo_tokens add column if not exists webhook_registered boolean not null default false;
+
+-- Each player gets a short, stable code used as the bank transfer
+-- reference so an incoming Monzo payment can be matched back to them
+-- automatically. Generated once per profile (existing rows backfilled
+-- below, new ones get one from handle_new_user) - never regenerated,
+-- since the whole point is it's the same reference every time someone
+-- pays. Charset skips 0/O/1/I/L to stay readable over text/WhatsApp.
+create function public.generate_payment_code()
+returns text
+language plpgsql
+as $$
+declare
+  chars text := 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  code text;
+  taken boolean;
+begin
+  loop
+    code := '';
+    for i in 1..5 loop
+      code := code || substr(chars, floor(random() * length(chars) + 1)::int, 1);
+    end loop;
+    select exists(select 1 from public.profiles where payment_code = code) into taken;
+    exit when not taken;
+  end loop;
+  return code;
+end;
+$$;
+
+alter table public.profiles add column payment_code text unique;
+update public.profiles set payment_code = public.generate_payment_code() where payment_code is null;
+alter table public.profiles alter column payment_code set not null;
+
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (id, display_name, payment_code)
+  values (new.id, coalesce(new.raw_user_meta_data ->> 'display_name', split_part(new.email, '@', 1)), public.generate_payment_code());
+  return new;
+end;
+$$;
+
+-- Distinguishes "an admin manually approved this" from "Monzo matched it
+-- automatically" - shown in the admin payment list so it's clear which
+-- happened, since confirmed_by stays null for an auto-match.
+alter table public.bookings add column auto_confirmed boolean not null default false;
+
+-- Audit trail of every incoming payment the webhook looked at, matched or
+-- not. Matched rows are here for the record; unmatched ones (no code, code
+-- didn't map to a player, or the amount didn't line up with exactly one
+-- combination of their outstanding bookings) are what the admin "Unmatched
+-- payments" list surfaces for manual reconciliation. No RLS write policy -
+-- only the service-role key (webhook route) ever inserts into this table.
+create table public.monzo_transactions (
+  id text primary key,
+  amount_pence int not null,
+  code text,
+  player_id uuid references public.profiles (id) on delete set null,
+  outcome text not null check (outcome in ('confirmed', 'unmatched')),
+  reason text,
+  matched_booking_ids uuid[],
+  created_at timestamptz not null default now()
+);
+
+alter table public.monzo_transactions enable row level security;
+create policy "monzo_transactions_select_admin" on public.monzo_transactions for select using (public.is_admin());

@@ -105,6 +105,7 @@ interface Profile {
   created_at?: string;
   push_opt_in?: boolean;
   avatar_url?: string | null;
+  payment_code?: string;
 }
 
 type Team = "white" | "red";
@@ -122,6 +123,16 @@ interface BookingRow {
   player: Profile;
   confirmer: { display_name: string } | null;
   pot_exempt_reason: PotExemptReason | null;
+  auto_confirmed: boolean;
+}
+
+interface MonzoUnmatchedRow {
+  id: string;
+  amount_pence: number;
+  code: string | null;
+  reason: string;
+  created_at: string;
+  player: { display_name: string } | null;
 }
 
 interface GameRow {
@@ -875,6 +886,7 @@ function App({ session }: { session: Session }) {
   const myId = session.user.id;
   const [myProfile, setMyProfile] = useState<Profile | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [monzoUnmatched, setMonzoUnmatched] = useState<MonzoUnmatchedRow[]>([]);
   const [games, setGames] = useState<GameRow[]>([]);
   const [clips, setClips] = useState<ClipRow[]>([]);
   const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
@@ -1035,7 +1047,7 @@ function App({ session }: { session: Session }) {
   };
 
   const loadProfile = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id, display_name, role, push_opt_in, avatar_url").eq("id", myId).single();
+    const { data } = await supabase.from("profiles").select("id, display_name, role, push_opt_in, avatar_url, payment_code").eq("id", myId).single();
     if (data) setMyProfile(data as Profile);
   }, [myId]);
 
@@ -1048,7 +1060,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, lineup_positions, bookings(id, player_id, status, waiting, team, created_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, lineup_positions, bookings(id, player_id, status, waiting, team, created_at, pot_exempt_reason, auto_confirmed, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -1136,6 +1148,18 @@ function App({ session }: { session: Session }) {
     if (data) setGoalRows(data as unknown as GoalRow[]);
   }, []);
 
+  // RLS scopes this to admins only - a player's query just comes back
+  // empty, no error, so it's safe to always include in loadAll rather
+  // than branching on isAdmin here.
+  const loadMonzoUnmatched = useCallback(async () => {
+    const { data } = await supabase
+      .from("monzo_transactions")
+      .select("id, amount_pence, code, reason, created_at, player:profiles(display_name)")
+      .eq("outcome", "unmatched")
+      .order("created_at", { ascending: false });
+    if (data) setMonzoUnmatched(data as unknown as MonzoUnmatchedRow[]);
+  }, []);
+
   const loadAll = useCallback(
     () =>
       Promise.all([
@@ -1154,6 +1178,7 @@ function App({ session }: { session: Session }) {
         loadSelfRatings(),
         loadAdminRatings(),
         loadAdminMessages(),
+        loadMonzoUnmatched(),
       ]),
     [
       loadProfile,
@@ -1171,6 +1196,7 @@ function App({ session }: { session: Session }) {
       loadSelfRatings,
       loadAdminRatings,
       loadAdminMessages,
+      loadMonzoUnmatched,
     ]
   );
 
@@ -4399,6 +4425,22 @@ function App({ session }: { session: Session }) {
                       </div>
                     </div>
 
+                    {monzoUnmatched.length > 0 && (
+                      <div className="wcf-fin-card">
+                        <div className="wcf-fin-card-head">Unmatched Monzo payments</div>
+                        <p className="wcf-empty small" style={{ marginBottom: 10 }}>Came in but couldn&apos;t be confirmed automatically — check and mark manually.</p>
+                        {monzoUnmatched.map((m) => (
+                          <div key={m.id} className="wcf-fin-fx-row">
+                            <div>
+                              <div className="wcf-fin-fx-desc">{m.player?.display_name ?? (m.code ? `Code ${m.code}` : "No reference")}</div>
+                              <div className="wcf-pitch">{fmtDateTime(m.created_at)} · {m.reason}</div>
+                            </div>
+                            <span className="wcf-fin-fx-net red">£{(m.amount_pence / 100).toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     {potLedger.length > 0 && (
                       <div className="wcf-fin-card">
                         <div className="wcf-fin-card-head">Balance over time</div>
@@ -5101,7 +5143,10 @@ function AccountPanel({
                   </div>
                 ))}
               </div>
-              <p className="wcf-tab-hero-note">Bank transfer to the club account. An admin confirms it here once it lands.</p>
+              <p className="wcf-tab-hero-note">
+                Bank transfer to the club account, reference <span className="wcf-tab-ref-code">{profile.payment_code}</span>. Payments with that
+                reference confirm automatically — no need to tell an admin.
+              </p>
             </div>
           </>
         );
@@ -6409,6 +6454,7 @@ function AdminGameRow({
                 <span className="wcf-admin-player-name">
                   {b.player.display_name}
                   {b.status === "confirmed" && b.confirmer && <span className="wcf-confirmed-by">by {b.confirmer.display_name}</span>}
+                  {b.status === "confirmed" && b.auto_confirmed && <span className="wcf-confirmed-by">via Monzo</span>}
                 </span>
                 <div className="wcf-admin-status">
                   <StatusBadge status={b.status} />
@@ -7813,6 +7859,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-tab-hero-claimed{flex:none;font-weight:800;font-size:9px;letter-spacing:.1em;color:#f5d97a;background:rgba(234,179,8,.14);border:1px solid rgba(234,179,8,.36);padding:6px 8px;border-radius:20px}
 .wcf-tab-hero-pay{flex:none;min-height:44px;padding:0 12px;border-radius:12px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.34);color:#86efac;font-weight:800;font-size:10.5px;cursor:pointer}
 .wcf-tab-hero-note{margin:12px 2px 0;font-size:10.5px;line-height:1.5;color:var(--dim)}
+.wcf-tab-ref-code{font-family:var(--mono);font-weight:700;color:var(--white);background:var(--panel2);padding:1px 7px;border-radius:6px;letter-spacing:.5px}
 .wcf-booking-row{display:flex;align-items:center;gap:11px;padding:14px;border-radius:18px;margin-bottom:10px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);box-shadow:0 18px 38px -30px rgba(0,0,0,.9)}
 .wcf-booking-date-tile{flex:none;width:46px;height:46px;border-radius:13px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(13,13,26,.7);border:1px solid rgba(148,163,184,.16)}
 .wcf-booking-day{font-family:var(--display);font-weight:800;font-size:15px;color:#f8fafc}

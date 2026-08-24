@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers } from "../../../../lib/push";
 import { kickoffCutoff, nowInLondon, MATCH_DURATION_MINUTES } from "../../../../lib/time";
+import { ensureFreshMonzoToken, registerMonzoWebhook } from "../../../../lib/monzo";
 
 // Both sides of this comparison come from the same "pretend UTC" trick in
 // lib/time.ts (real UK wall-clock digits, formatted as if they were UTC) -
@@ -325,6 +326,18 @@ export async function GET(req: Request) {
       url: "/",
     });
     await markNotified(key);
+  }
+
+  // --- Monzo: keep the access token fresh, retry webhook registration ---
+  // ensureFreshMonzoToken silently no-ops until a Monzo account is
+  // actually connected, and only calls Monzo's refresh endpoint once the
+  // 30-hour access token is within 3 hours of expiring - so this runs
+  // every ~15 min but only does real work rarely. Registration is
+  // retried here in case it failed at OAuth-callback time (e.g. Monzo's
+  // API hiccuped right after approval).
+  const monzoToken = await ensureFreshMonzoToken(admin);
+  if (monzoToken?.account_id && !monzoToken.webhook_registered) {
+    await registerMonzoWebhook(admin, monzoToken.access_token, monzoToken.account_id);
   }
 
   return NextResponse.json({ ok: true });
