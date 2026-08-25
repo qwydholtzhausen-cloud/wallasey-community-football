@@ -1269,3 +1269,9 @@ create table if not exists public.monzo_transactions (
 alter table public.monzo_transactions enable row level security;
 drop policy if exists "monzo_transactions_select_admin" on public.monzo_transactions;
 create policy "monzo_transactions_select_admin" on public.monzo_transactions for select using (public.is_admin());
+
+-- Pitch cost dropped from £55 to £45 starting 7 Sep 2026 (same pattern as
+-- the earlier £55->£50 change: new default going forward, already-set
+-- fixtures on/after the change date bumped down too, anything before it
+-- left untouched as the historical record of what was actually paid).
+update public.games set pitch_cost = 45 where pitch_cost = 55 and date >= '2026-09-07';

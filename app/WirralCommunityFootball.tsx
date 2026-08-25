@@ -963,6 +963,14 @@ function defaultNewGameDate() {
   return d.toISOString().slice(0, 10);
 }
 
+// Pitch cost dropped from £55 to £45 starting 7 Sep 2026 - fixtures
+// before that date keep the old rate (both as historical record for
+// already-played games and for any new one-off added for an earlier
+// date), anything on or after gets the new one automatically.
+function defaultPitchCost(date: string) {
+  return date >= "2026-09-07" ? 45 : 55;
+}
+
 const Icon = {
   cal: (
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1799,16 +1807,17 @@ function App({ session }: { session: Session }) {
     // players glimpsing a "New venue" placeholder and the new-fixture push
     // firing with today's default date before anyone's actually set the
     // real details.
+    const date = defaultNewGameDate();
     const { data, error } = await supabase
       .from("games")
       .insert({
-        date: defaultNewGameDate(),
+        date,
         kickoff: cs.default_kickoff,
         venue: cs.default_venue,
         pitch: cs.default_pitch,
         price: cs.default_price,
         max_players: cs.default_max_players,
-        pitch_cost: 55,
+        pitch_cost: defaultPitchCost(date),
         published: false,
       })
       .select()
@@ -1830,7 +1839,7 @@ function App({ session }: { session: Session }) {
       pitch: cs.default_pitch,
       price: cs.default_price,
       max_players: cs.default_max_players,
-      pitch_cost: 55,
+      pitch_cost: defaultPitchCost(date),
       published: false,
     }));
     const { error } = await supabase.from("games").insert(rows);
