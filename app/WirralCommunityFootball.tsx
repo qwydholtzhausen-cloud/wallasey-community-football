@@ -7752,7 +7752,7 @@ const css = `
   border:1px dashed var(--line);color:var(--dim);padding:12px;border-radius:14px;font-weight:700;font-size:12.5px;
   font-family:var(--sans);cursor:pointer;margin-bottom:12px}
 .wcf-multibook-note{font-size:12px;color:var(--dim);line-height:1.5;margin:0 0 12px;padding:0 2px}
-.wcf-multibook-row{display:block;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;padding-bottom:13px}
+.wcf-multibook-row{display:flex;flex-direction:column;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
 .wcf-multibook-row:disabled{cursor:default;opacity:.55}
 .wcf-multibook-row.selected{border-color:rgba(230,57,70,.5);box-shadow:0 18px 38px -34px rgba(0,0,0,.9),0 0 34px 2px rgba(230,57,70,.22)}
 .wcf-multibook-row .wcf-fx-row-top{cursor:inherit}
@@ -7760,7 +7760,7 @@ const css = `
   display:grid;place-items:center;font-size:13px;font-weight:800;color:transparent;margin-left:6px}
 .wcf-multibook-check.on{background:var(--red);border-color:var(--red);color:#fff}
 .wcf-multibook-check.booked{background:var(--green);border-color:var(--green);color:#fff}
-.wcf-multibook-booked-note{font-size:11px;font-weight:700;color:var(--green);margin:-4px 0 0}
+.wcf-multibook-booked-note{font-size:11px;font-weight:700;color:var(--green)}
 .wcf-multibook-bar{position:sticky;bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;
   margin-top:6px;padding:12px 14px;border-radius:16px;background:linear-gradient(180deg,rgba(30,41,59,.98),rgba(19,22,38,1));
   border:1px solid var(--line);box-shadow:0 20px 40px -20px rgba(0,0,0,.9)}
