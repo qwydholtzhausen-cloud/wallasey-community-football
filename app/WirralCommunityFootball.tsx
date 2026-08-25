@@ -5055,8 +5055,8 @@ const BATCH_WEEKDAYS: { value: number; label: string }[] = [
   { value: 0, label: "Sun" },
 ];
 
-function defaultBatchEnd() {
-  const d = new Date();
+function oneMonthAfter(dateStr: string) {
+  const d = new Date(dateStr + "T00:00:00");
   d.setMonth(d.getMonth() + 1);
   return d.toISOString().slice(0, 10);
 }
@@ -5074,10 +5074,19 @@ function BatchGenerateModal({
   onGenerate: (dates: string[]) => Promise<void>;
   onClose: () => void;
 }) {
-  const [start, setStart] = useState(new Date().toISOString().slice(0, 10));
-  const [end, setEnd] = useState(defaultBatchEnd());
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [start, setStart] = useState(todayStr);
+  const [end, setEnd] = useState(oneMonthAfter(todayStr));
   const [days, setDays] = useState<Set<number>>(new Set([1, 4]));
   const [generating, setGenerating] = useState(false);
+
+  // "To" tracks a rolling month from "From" rather than staying pinned
+  // to today - picking a later start date should move the whole window
+  // with it, not leave you with two weeks (or a backwards range).
+  function onStartChange(value: string) {
+    setStart(value);
+    if (value) setEnd(oneMonthAfter(value));
+  }
 
   const allDates = useMemo(() => {
     const result: string[] = [];
@@ -5116,7 +5125,7 @@ function BatchGenerateModal({
         <div className="wcf-batchgen-dates">
           <label>
             From
-            <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+            <input type="date" value={start} onChange={(e) => onStartChange(e.target.value)} />
           </label>
           <label>
             To
