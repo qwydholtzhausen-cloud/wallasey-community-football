@@ -1304,6 +1304,7 @@ function App({ session }: { session: Session }) {
   const [playerCardId, setPlayerCardId] = useState<string | null>(null);
   const [playerCardTeam, setPlayerCardTeam] = useState<{ name: string; color: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [showBatchGen, setShowBatchGen] = useState(false);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
   const [editingLineup, setEditingLineup] = useState(false);
   const [lineupDisplayView, setLineupDisplayView] = useState<"pitch" | "list">("pitch");
@@ -1790,6 +1791,28 @@ function App({ session }: { session: Session }) {
     if (error) return notifyError(error.message);
     await loadGames();
     if (data) setEditingId(data.id);
+  }
+  // Same shape as addGame, just N rows in one insert instead of one -
+  // still lands as unpublished drafts, so a batch of placeholder dates
+  // never surprises players; each one still needs its own "Confirm &
+  // post" before it's real, same as a single fixture.
+  async function batchAddGames(dates: string[]) {
+    if (dates.length === 0) return;
+    const rows = dates.map((date) => ({
+      date,
+      kickoff: cs.default_kickoff,
+      venue: cs.default_venue,
+      pitch: cs.default_pitch,
+      price: cs.default_price,
+      max_players: cs.default_max_players,
+      pitch_cost: 55,
+      published: false,
+    }));
+    const { error } = await supabase.from("games").insert(rows);
+    if (error) return notifyError(error.message);
+    await loadGames();
+    setShowBatchGen(false);
+    notifySuccess(`${dates.length} fixture${dates.length === 1 ? "" : "s"} added as drafts`);
   }
   async function saveGame(id: string, patch: Partial<GameRow>) {
     const { bookings: _bookings, published: _published, ...rest } = patch as GameRow;
@@ -3288,6 +3311,10 @@ function App({ session }: { session: Session }) {
               <button className="wcf-addbtn ghost" onClick={copyFixtureUpdate} title="Copy a WhatsApp fixture update">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/></svg>
                 Update
+              </button>
+              <button className="wcf-addbtn ghost" onClick={() => setShowBatchGen(true)} title="Add a batch of fixtures at once">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/></svg>
+                Month
               </button>
               <button
                 className="wcf-addbtn"
@@ -4960,6 +4987,14 @@ function App({ session }: { session: Session }) {
         );
       })()}
 
+      {showBatchGen && (
+        <BatchGenerateModal
+          existingDates={new Set(games.map((g) => g.date))}
+          onGenerate={batchAddGames}
+          onClose={() => setShowBatchGen(false)}
+        />
+      )}
+
       {motmVotersFor && (
         <MotmVotersModal
           candidateName={motmVotersFor.candidateName}
@@ -5008,6 +5043,120 @@ const ROLE_LABEL: Record<Role, string> = { player: "Player", admin: "Admin", "co
 function ratingFillColor(v: number) {
   // amber below 2.5, green above 4, blue in between - reads at a glance without a legend
   return v >= 4 ? "#22c55e" : v < 2.5 ? "#eab308" : "#2E74CC";
+}
+
+const BATCH_WEEKDAYS: { value: number; label: string }[] = [
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+  { value: 0, label: "Sun" },
+];
+
+function defaultBatchEnd() {
+  const d = new Date();
+  d.setMonth(d.getMonth() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// Turns "every Monday and Thursday for the next month" into a batch of
+// draft fixtures in one go, instead of an admin adding each one by hand -
+// club plays a fixed weekly pattern and books about a month out, so this
+// is a recurring batch job, not a one-off.
+function BatchGenerateModal({
+  existingDates,
+  onGenerate,
+  onClose,
+}: {
+  existingDates: Set<string>;
+  onGenerate: (dates: string[]) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [start, setStart] = useState(new Date().toISOString().slice(0, 10));
+  const [end, setEnd] = useState(defaultBatchEnd());
+  const [days, setDays] = useState<Set<number>>(new Set([1, 4]));
+  const [generating, setGenerating] = useState(false);
+
+  const allDates = useMemo(() => {
+    const result: string[] = [];
+    if (!start || !end || start > end) return result;
+    const d = new Date(start + "T00:00:00");
+    const endD = new Date(end + "T00:00:00");
+    while (d <= endD) {
+      if (days.has(d.getDay())) result.push(d.toISOString().slice(0, 10));
+      d.setDate(d.getDate() + 1);
+    }
+    return result;
+  }, [start, end, days]);
+
+  const newDates = allDates.filter((d) => !existingDates.has(d));
+  const skippedCount = allDates.length - newDates.length;
+
+  function toggleDay(v: number) {
+    setDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      return next;
+    });
+  }
+
+  return (
+    <div className="wcf-lightbox" onClick={onClose}>
+      <button className="wcf-lightbox-close" onClick={onClose} aria-label="Close">×</button>
+      <div className="wcf-batchgen-card" onClick={(e) => e.stopPropagation()}>
+        <div className="wcf-motm-voters-title">Generate fixtures</div>
+        <p className="wcf-batchgen-note">
+          Adds a draft fixture for every day picked below, using your current defaults. Nothing&apos;s visible to
+          players until you confirm and post each one.
+        </p>
+
+        <div className="wcf-batchgen-dates">
+          <label>
+            From
+            <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+          </label>
+          <label>
+            To
+            <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
+          </label>
+        </div>
+
+        <div className="wcf-batchgen-days">
+          {BATCH_WEEKDAYS.map((d) => (
+            <button key={d.value} type="button" className={days.has(d.value) ? "active" : ""} onClick={() => toggleDay(d.value)}>
+              {d.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="wcf-batchgen-preview">
+          {newDates.length === 0
+            ? "No fixtures to add for this range."
+            : `${newDates.length} fixture${newDates.length === 1 ? "" : "s"} will be added${
+                skippedCount > 0 ? ` (${skippedCount} already exist${skippedCount === 1 ? "" : "s"} and will be skipped)` : ""
+              }.`}
+        </div>
+
+        <div className="wcf-batchgen-actions">
+          <button className="wcf-ghost" onClick={onClose}>Cancel</button>
+          <button
+            className="wcf-batchgen-save"
+            disabled={newDates.length === 0 || generating}
+            onClick={async () => {
+              setGenerating(true);
+              await onGenerate(newDates);
+              setGenerating(false);
+            }}
+          >
+            {generating ? "Adding…" : `Add ${newDates.length || ""} fixture${newDates.length === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Only ever rendered from the post-close results view - voting itself
@@ -8161,6 +8310,21 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-motm-voters-row{display:flex;align-items:center;gap:10px;background:none;border:none;padding:8px 6px;border-radius:12px;cursor:pointer;text-align:left;font:inherit;color:var(--white)}
 .wcf-motm-voters-row:hover{background:rgba(148,163,184,.08)}
 
+.wcf-batchgen-card{width:100%;max-width:360px;margin:auto;border-radius:20px;padding:22px;border:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(30,41,59,.98),rgba(19,22,38,1));box-shadow:0 26px 50px -30px rgba(0,0,0,.95);animation:wcfPcardIn .22s ease-out}
+.wcf-batchgen-note{font-size:12.5px;color:var(--dim);line-height:1.5;margin:0 0 18px;text-align:center}
+.wcf-batchgen-dates{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.wcf-batchgen-dates label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.wcf-batchgen-dates input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:10px;font-size:13px;font-family:var(--sans)}
+.wcf-batchgen-days{display:flex;gap:6px;margin-bottom:16px}
+.wcf-batchgen-days button{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);color:var(--dim);padding:9px 0;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;font-family:var(--sans)}
+.wcf-batchgen-days button.active{background:rgba(230,57,70,.18);border-color:rgba(230,57,70,.5);color:#fff}
+.wcf-batchgen-preview{font-size:12px;color:var(--dim);line-height:1.5;margin-bottom:16px;padding:10px 12px;background:rgba(148,163,184,.08);border-radius:10px}
+.wcf-batchgen-actions{display:flex;gap:8px}
+.wcf-batchgen-actions .wcf-ghost{flex:1}
+.wcf-batchgen-save{flex:1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
+.wcf-batchgen-save:disabled{opacity:.5;cursor:not-allowed}
+
 .wcf-account{display:flex;flex-direction:column;gap:0}
 .wcf-acc-section{border-radius:18px;overflow:hidden;margin-bottom:9px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line)}
 .wcf-acc-section-head{display:flex;align-items:center;gap:11px;width:100%;padding:13px;background:none;border:none;cursor:pointer;min-height:56px;text-align:left}
@@ -8381,4 +8545,14 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-navbtn svg{opacity:.9}
 
 @media (max-width:400px){ .wcf-edit{grid-template-columns:1fr} }
+
+/* Three pill buttons (Update/Month/Fixture) in the fixtures header don't
+   fit their natural width on the narrowest phones (iPhone SE and similar,
+   ~375px) - .wcf-root clips overflow rather than scrolling, so the last
+   button silently loses its label instead of erroring. Tightens padding
+   and gap rather than shortening labels, so it still reads the same. */
+@media (max-width:400px){
+  .wcf-heading-actions{gap:5px}
+  .wcf-addbtn{padding:8px 10px;font-size:11px;gap:4px}
+}
 `;
