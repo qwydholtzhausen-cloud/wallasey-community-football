@@ -957,12 +957,6 @@ function urlBase64ToUint8Array(base64String: string) {
   return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
-function defaultNewGameDate() {
-  const d = new Date();
-  d.setDate(d.getDate() + 7);
-  return d.toISOString().slice(0, 10);
-}
-
 // Pitch cost dropped from £55 to £45 starting 7 Sep 2026 - fixtures
 // before that date keep the old rate (both as historical record for
 // already-played games and for any new one-off added for an earlier
@@ -1801,35 +1795,13 @@ function App({ session }: { session: Session }) {
     if (error) return notifyError(error.message);
   }
 
-  async function addGame() {
-    // Created unpublished - only visible to admins until the first Save,
-    // which is when it actually becomes real (see saveGame). Avoids both
-    // players glimpsing a "New venue" placeholder and the new-fixture push
-    // firing with today's default date before anyone's actually set the
-    // real details.
-    const date = defaultNewGameDate();
-    const { data, error } = await supabase
-      .from("games")
-      .insert({
-        date,
-        kickoff: cs.default_kickoff,
-        venue: cs.default_venue,
-        pitch: cs.default_pitch,
-        price: cs.default_price,
-        max_players: cs.default_max_players,
-        pitch_cost: defaultPitchCost(date),
-        published: false,
-      })
-      .select()
-      .single();
-    if (error) return notifyError(error.message);
-    await loadGames();
-    if (data) setEditingId(data.id);
-  }
-  // Same shape as addGame, just N rows in one insert instead of one -
-  // still lands as unpublished drafts, so a batch of placeholder dates
-  // never surprises players; each one still needs its own "Confirm &
-  // post" before it's real, same as a single fixture.
+  // The one way to add fixtures now, whether that's a single one-off
+  // (pick the same date for From/To in the modal) or a whole month's
+  // Mon/Thu batch - bulk is the actual common case, so there's no
+  // separate "just one" button to keep in sync with this. Still lands
+  // as unpublished drafts; each one still needs its own "Confirm & post"
+  // before it's real. When it's exactly one fixture, jump straight into
+  // editing it - the same convenience the old single-add button had.
   async function batchAddGames(dates: string[]) {
     if (dates.length === 0) return;
     const rows = dates.map((date) => ({
@@ -1842,11 +1814,12 @@ function App({ session }: { session: Session }) {
       pitch_cost: defaultPitchCost(date),
       published: false,
     }));
-    const { error } = await supabase.from("games").insert(rows);
+    const { data, error } = await supabase.from("games").insert(rows).select("id");
     if (error) return notifyError(error.message);
     await loadGames();
     setShowBatchGen(false);
     notifySuccess(`${dates.length} fixture${dates.length === 1 ? "" : "s"} added as drafts`);
+    if (data && data.length === 1) setEditingId(data[0].id);
   }
   async function saveGame(id: string, patch: Partial<GameRow>) {
     const { bookings: _bookings, published: _published, ...rest } = patch as GameRow;
@@ -3346,16 +3319,9 @@ function App({ session }: { session: Session }) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/></svg>
                 Update
               </button>
-              <button className="wcf-addbtn ghost" onClick={() => setShowBatchGen(true)} title="Add a batch of fixtures at once">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/></svg>
-                Month
-              </button>
-              <button
-                className="wcf-addbtn"
-                onClick={async () => { if (await askConfirm("Add a new fixture?", "You can fill in the details and post it once it's ready.", "Add", false)) addGame(); }}
-              >
+              <button className="wcf-addbtn" onClick={() => setShowBatchGen(true)} title="Add one or more fixtures">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                Fixture
+                Fixtures
               </button>
             </div>
           )}
@@ -5158,8 +5124,13 @@ function BatchGenerateModal({
   }
 
   const allDates = useMemo(() => {
+    if (!start || !end || start > end) return [];
+    // A single-day range (From = To) is a one-off add, not a weekly
+    // pattern - always include it regardless of which weekday boxes
+    // happen to be ticked, rather than making someone figure out which
+    // checkbox matches an arbitrary date just to add one fixture.
+    if (start === end) return [start];
     const result: string[] = [];
-    if (!start || !end || start > end) return result;
     const d = new Date(start + "T00:00:00");
     const endD = new Date(end + "T00:00:00");
     while (d <= endD) {
