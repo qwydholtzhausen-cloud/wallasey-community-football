@@ -1305,6 +1305,9 @@ function App({ session }: { session: Session }) {
   const [playerCardTeam, setPlayerCardTeam] = useState<{ name: string; color: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showBatchGen, setShowBatchGen] = useState(false);
+  const [multiBookMode, setMultiBookMode] = useState(false);
+  const [multiBookSelected, setMultiBookSelected] = useState<Set<string>>(new Set());
+  const [multiBooking, setMultiBooking] = useState(false);
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
   const [editingLineup, setEditingLineup] = useState(false);
   const [lineupDisplayView, setLineupDisplayView] = useState<"pitch" | "list">("pitch");
@@ -1728,6 +1731,28 @@ function App({ session }: { session: Session }) {
     // than on payment confirmation, which could happen long after the
     // game's already full.
     if (data && !data.waiting) pushNotify("notify-last-spot", { gameId });
+  }
+  // Same insert as book(), just every selected game in one round trip
+  // instead of N. RLS's overdue check runs per row regardless of batch
+  // size, and the waiting-list trigger already handles each row on its
+  // own merits - so a mixed batch (some games open, some already full)
+  // resolves exactly as if each had been booked one at a time.
+  async function bookMany(gameIds: string[]) {
+    if (gameIds.length === 0) return;
+    setMultiBooking(true);
+    const { data, error } = await supabase
+      .from("bookings")
+      .insert(gameIds.map((gameId) => ({ game_id: gameId, player_id: myId })))
+      .select("game_id, waiting");
+    setMultiBooking(false);
+    if (error) {
+      if (error.code === "42501") return notifyError("You have an overdue payment — speak to an admin to confirm it before booking again.");
+      return notifyError(error.message);
+    }
+    (data ?? []).filter((d) => !d.waiting).forEach((d) => pushNotify("notify-last-spot", { gameId: d.game_id }));
+    setMultiBookMode(false);
+    setMultiBookSelected(new Set());
+    notifySuccess(`Booked into ${gameIds.length} game${gameIds.length === 1 ? "" : "s"}`);
   }
   async function addBooking(gameId: string, playerId: string) {
     const { data, error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: playerId }).select("waiting").single();
@@ -3367,60 +3392,95 @@ function App({ session }: { session: Session }) {
             )}
             {upcomingGames.length === 0 && <p className="wcf-empty">No games on. {isAdmin ? "Add one above." : "Check back soon."}</p>}
 
-            {nextFixtureForCountdown && (
-              <>
-                <div className="wcf-eyebrow">Next match</div>
-                <GameCard
-                  featured
-                  countdownText={fixtureCountdown?.text}
-                  game={nextFixtureForCountdown}
-                  myId={myId}
-                  isAdmin={isAdmin}
-                  overdue={iAmOverdue}
-                  editing={editingId === nextFixtureForCountdown.id}
-                  onBook={() => book(nextFixtureForCountdown.id)}
-                  onCancel={(bookingId) => cancel(bookingId)}
-                  onMarkPaid={(bookingId) => markPaid(bookingId)}
-                  onEdit={() => setEditingId(editingId === nextFixtureForCountdown.id ? null : nextFixtureForCountdown.id)}
-                  onSave={(patch) => saveGame(nextFixtureForCountdown.id, patch)}
-                  onDelete={() => deleteGame(nextFixtureForCountdown.id)}
-                  onOpenPlayerCard={openPlayerCard}
-                  onSetStatus={setBookingStatus}
-                  weather={weatherFor(nextFixtureForCountdown.date, nextFixtureForCountdown.kickoff)}
-                  askConfirm={askConfirm}
-                />
-              </>
-            )}
+            {(() => {
+              const publishedUpcoming = upcomingGames.filter((g) => g.published);
+              const selectableCount = publishedUpcoming.filter((g) => !g.bookings.some((b) => b.player_id === myId)).length;
+              if (!iAmOverdue && !multiBookMode && selectableCount > 1) {
+                return (
+                  <button className="wcf-multibook-entry" onClick={() => setMultiBookMode(true)}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+                    Book multiple games
+                  </button>
+                );
+              }
+              return null;
+            })()}
 
-            {upcomingByMonth.map((group) => {
-              const games = group.games.filter((g) => g.id !== nextFixtureForCountdown?.id);
-              if (games.length === 0) return null;
-              return (
-                <div key={group.key}>
-                  {upcomingByMonth.length > 1 && <h4 className="wcf-month-head">{group.label}</h4>}
-                  {games.map((g) => (
+            {multiBookMode ? (
+              <MultiBookPanel
+                games={upcomingGames.filter((g) => g.published)}
+                myId={myId}
+                selected={multiBookSelected}
+                onToggle={(gameId) =>
+                  setMultiBookSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(gameId)) next.delete(gameId);
+                    else next.add(gameId);
+                    return next;
+                  })
+                }
+                onBookAll={() => bookMany([...multiBookSelected])}
+                onCancel={() => { setMultiBookMode(false); setMultiBookSelected(new Set()); }}
+                booking={multiBooking}
+              />
+            ) : (
+              <>
+                {nextFixtureForCountdown && (
+                  <>
+                    <div className="wcf-eyebrow">Next match</div>
                     <GameCard
-                      key={g.id}
-                      game={g}
+                      featured
+                      countdownText={fixtureCountdown?.text}
+                      game={nextFixtureForCountdown}
                       myId={myId}
                       isAdmin={isAdmin}
                       overdue={iAmOverdue}
-                      editing={editingId === g.id}
-                      onBook={() => book(g.id)}
+                      editing={editingId === nextFixtureForCountdown.id}
+                      onBook={() => book(nextFixtureForCountdown.id)}
                       onCancel={(bookingId) => cancel(bookingId)}
                       onMarkPaid={(bookingId) => markPaid(bookingId)}
-                      onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
-                      onSave={(patch) => saveGame(g.id, patch)}
-                      onDelete={() => deleteGame(g.id)}
+                      onEdit={() => setEditingId(editingId === nextFixtureForCountdown.id ? null : nextFixtureForCountdown.id)}
+                      onSave={(patch) => saveGame(nextFixtureForCountdown.id, patch)}
+                      onDelete={() => deleteGame(nextFixtureForCountdown.id)}
                       onOpenPlayerCard={openPlayerCard}
                       onSetStatus={setBookingStatus}
-                      weather={weatherFor(g.date, g.kickoff)}
+                      weather={weatherFor(nextFixtureForCountdown.date, nextFixtureForCountdown.kickoff)}
                       askConfirm={askConfirm}
                     />
-                  ))}
-                </div>
-              );
-            })}
+                  </>
+                )}
+
+                {upcomingByMonth.map((group) => {
+                  const games = group.games.filter((g) => g.id !== nextFixtureForCountdown?.id);
+                  if (games.length === 0) return null;
+                  return (
+                    <div key={group.key}>
+                      {upcomingByMonth.length > 1 && <h4 className="wcf-month-head">{group.label}</h4>}
+                      {games.map((g) => (
+                        <GameCard
+                          key={g.id}
+                          game={g}
+                          myId={myId}
+                          isAdmin={isAdmin}
+                          overdue={iAmOverdue}
+                          editing={editingId === g.id}
+                          onBook={() => book(g.id)}
+                          onCancel={(bookingId) => cancel(bookingId)}
+                          onMarkPaid={(bookingId) => markPaid(bookingId)}
+                          onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
+                          onSave={(patch) => saveGame(g.id, patch)}
+                          onDelete={() => deleteGame(g.id)}
+                          onOpenPlayerCard={openPlayerCard}
+                          onSetStatus={setBookingStatus}
+                          weather={weatherFor(g.date, g.kickoff)}
+                          askConfirm={askConfirm}
+                        />
+                      ))}
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </>
         )}
 
@@ -7100,6 +7160,89 @@ function AdminGameRow({
   );
 }
 
+// Reuses the compact fixture-row visual language (.wcf-fx-*) from GameCard
+// rather than a new layout, so select mode reads as a variant of the
+// normal list, not a bolted-on foreign screen. Deliberately its own
+// component instead of a GameCard prop, since threading select-mode state
+// through GameCard's already-large prop surface (admin editing, weather,
+// the squad sheet, etc.) would tangle two unrelated concerns together.
+function MultiBookRow({ game, myId, selected, onToggle }: { game: GameRow; myId: string; selected: boolean; onToggle: () => void }) {
+  const confirmed = game.bookings.filter((b) => !b.waiting);
+  const waitingList = game.bookings.filter((b) => b.waiting);
+  const alreadyBooked = game.bookings.some((b) => b.player_id === myId);
+  const full = confirmed.length >= game.max_players;
+  const spotsLeft = Math.max(0, game.max_players - confirmed.length);
+  const fillPct = Math.min(100, (confirmed.length / game.max_players) * 100);
+
+  return (
+    <button
+      type="button"
+      className={"wcf-fx-row wcf-multibook-row" + (alreadyBooked ? " booked" : selected ? " selected" : "")}
+      disabled={alreadyBooked}
+      onClick={onToggle}
+    >
+      <div className="wcf-fx-row-top">
+        <div className="wcf-fx-date">
+          <div className="wcf-fx-day">{fmtDate(game.date).split(",")[0]?.toUpperCase()}</div>
+          <div className="wcf-fx-num">{new Date(game.date + "T00:00:00").getDate()}</div>
+        </div>
+        <div className="wcf-fx-divider" />
+        <div className="wcf-fx-info">
+          <div className="wcf-fx-title">{game.kickoff} · {game.venue}</div>
+          <div className="wcf-fx-meta">{game.pitch} · £{game.price} · {confirmed.length}/{game.max_players}</div>
+          <div className="wcf-fx-bar-track">
+            <div className="wcf-fx-bar-fill" style={{ width: `${fillPct}%` }} />
+          </div>
+        </div>
+        <div className="wcf-fx-status">
+          {waitingList.length > 0 && <span className="wcf-hero-waiting-chip">+{waitingList.length} WAITING</span>}
+          <span className={"wcf-fx-pill " + (full ? "full" : "open")}>{full ? "FULL" : `${spotsLeft} LEFT`}</span>
+        </div>
+        <span className={"wcf-multibook-check" + (alreadyBooked ? " booked" : selected ? " on" : "")}>
+          {alreadyBooked || selected ? "✓" : ""}
+        </span>
+      </div>
+      {alreadyBooked && <div className="wcf-multibook-booked-note">Already booked</div>}
+    </button>
+  );
+}
+
+function MultiBookPanel({
+  games,
+  myId,
+  selected,
+  onToggle,
+  onBookAll,
+  onCancel,
+  booking,
+}: {
+  games: GameRow[];
+  myId: string;
+  selected: Set<string>;
+  onToggle: (gameId: string) => void;
+  onBookAll: () => void;
+  onCancel: () => void;
+  booking: boolean;
+}) {
+  return (
+    <div className="wcf-multibook">
+      <p className="wcf-multibook-note">Tap the games you want in on, then confirm them all in one go.</p>
+      {games.map((g) => (
+        <MultiBookRow key={g.id} game={g} myId={myId} selected={selected.has(g.id)} onToggle={() => onToggle(g.id)} />
+      ))}
+      <div className="wcf-multibook-bar">
+        <span className="wcf-multibook-count">{selected.size} selected</span>
+        <div className="wcf-multibook-bar-actions">
+          <button className="wcf-ghost" onClick={onCancel}>Cancel</button>
+          <button className="wcf-batchgen-save" disabled={selected.size === 0 || booking} onClick={onBookAll}>
+            {booking ? "Booking…" : `Book ${selected.size || ""} game${selected.size === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GameCard({
   game,
   myId,
@@ -7604,6 +7747,26 @@ const css = `
 .wcf-fx-pill{flex:0 0 auto;font-family:var(--sans);font-weight:800;font-size:9.5px;letter-spacing:.5px;padding:5px 9px;border-radius:999px;white-space:nowrap}
 .wcf-fx-pill.full{background:rgba(230,57,70,.16);border:1px solid rgba(230,57,70,.4);color:var(--red-hi)}
 .wcf-fx-pill.open{background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.35);color:var(--green)}
+
+.wcf-multibook-entry{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;background:none;
+  border:1px dashed var(--line);color:var(--dim);padding:12px;border-radius:14px;font-weight:700;font-size:12.5px;
+  font-family:var(--sans);cursor:pointer;margin-bottom:12px}
+.wcf-multibook-note{font-size:12px;color:var(--dim);line-height:1.5;margin:0 0 12px;padding:0 2px}
+.wcf-multibook-row{display:block;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;padding-bottom:13px}
+.wcf-multibook-row:disabled{cursor:default;opacity:.55}
+.wcf-multibook-row.selected{border-color:rgba(230,57,70,.5);box-shadow:0 18px 38px -34px rgba(0,0,0,.9),0 0 34px 2px rgba(230,57,70,.22)}
+.wcf-multibook-row .wcf-fx-row-top{cursor:inherit}
+.wcf-multibook-check{flex:0 0 auto;width:26px;height:26px;border-radius:50%;border:1.5px solid var(--line);
+  display:grid;place-items:center;font-size:13px;font-weight:800;color:transparent;margin-left:6px}
+.wcf-multibook-check.on{background:var(--red);border-color:var(--red);color:#fff}
+.wcf-multibook-check.booked{background:var(--green);border-color:var(--green);color:#fff}
+.wcf-multibook-booked-note{font-size:11px;font-weight:700;color:var(--green);margin:-4px 0 0}
+.wcf-multibook-bar{position:sticky;bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;
+  margin-top:6px;padding:12px 14px;border-radius:16px;background:linear-gradient(180deg,rgba(30,41,59,.98),rgba(19,22,38,1));
+  border:1px solid var(--line);box-shadow:0 20px 40px -20px rgba(0,0,0,.9)}
+.wcf-multibook-count{font-size:12.5px;font-weight:700;color:var(--dim);white-space:nowrap}
+.wcf-multibook-bar-actions{display:flex;gap:8px}
+.wcf-multibook-bar-actions .wcf-batchgen-save{padding:10px 16px}
 
 .wcf-sheet-overlay{position:fixed;inset:0;background:rgba(6,7,14,.6);z-index:60;display:flex;align-items:flex-end;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 .wcf-squad-sheet{position:relative;width:100%;max-width:520px;margin:0 auto;max-height:82vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(30,41,59,.99),rgba(19,22,38,1));border-top:1px solid rgba(148,163,184,.2);border-radius:24px 24px 0 0;box-shadow:0 -18px 48px -20px rgba(0,0,0,.95)}
