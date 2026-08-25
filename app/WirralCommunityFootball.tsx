@@ -485,12 +485,17 @@ function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: n
   ctx.closePath();
 }
 
-// Draws the shareable post-match result card. Sizing verified against
-// several scorer-count and no-scorer/no-MOTM cases in a standalone test
-// (scratchpad, not part of the app) before wiring in, since canvas text
-// layout bugs are easy to get wrong and don't show up until rendered.
+// Draws the shareable post-match result card. Layout constants below were
+// measured (not eyeballed) from a real rendered HTML/CSS version of this
+// design at the same 1080x1350 size - getBoundingClientRect() on every
+// element gave exact pixel offsets, since canvas has no flexbox to fall
+// back on and hand-guessing this many nested paddings/gaps is exactly how
+// subtle misalignments creep in. Sizing verified against several
+// scorer-count and no-scorer/no-MOTM cases in that same standalone test
+// (scratchpad, not part of the app) before porting the numbers in here.
 async function drawResultCard(opts: {
   venue: string;
+  pitch: string;
   dateLabel: string;
   whiteName: string;
   redName: string;
@@ -508,153 +513,434 @@ async function drawResultCard(opts: {
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas isn't supported on this device");
+  const ctx2d = canvas.getContext("2d");
+  if (!ctx2d) throw new Error("Canvas isn't supported on this device");
+  // Bound to a non-nullable type (not just narrowed) so the nested
+  // drawScorerColumn closure below can use it - TS drops null-narrowing
+  // across closure boundaries, but a genuinely non-nullable const is fine.
+  const ctx: CanvasRenderingContext2D = ctx2d;
+
+  // Real brand fonts (already loaded app-wide via next/font) rather than
+  // system-font fallbacks - canvas text needs the resolved family name
+  // since ctx.font can't consume a CSS var(), and needs document.fonts
+  // ready so the first card generated in a session isn't drawn before the
+  // font's actually available.
+  await document.fonts.ready;
+  const rootStyle = getComputedStyle(document.documentElement);
+  const sora = rootStyle.getPropertyValue("--font-sora").trim() || "sans-serif";
+  const inter = rootStyle.getPropertyValue("--font-inter").trim() || "sans-serif";
+  const soraFont = (weight: number, size: number) => `${weight} ${size}px ${sora}`;
+  const interFont = (weight: number, size: number) => `${weight} ${size}px ${inter}`;
+  function letterSpaced(px: number) {
+    // Canvas2D letterSpacing (Chrome/Edge/Safari 17+) - unsupported
+    // browsers just ignore the assignment and draw with no spacing,
+    // which still reads fine, so no fallback branch needed.
+    (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${px}px`;
+  }
+  function resetLetterSpacing() {
+    letterSpaced(0);
+  }
+  // Free-text fields (team names especially, since admins can rename
+  // them to anything) have no natural length limit - shrinks the font
+  // until it fits maxWidth rather than letting a long one run off the
+  // card, capped at minSize so it never gets illegibly small. Leaves
+  // ctx.font set to the returned size. letterSpacingEm matters here:
+  // ctx.measureText() ignores the canvas letterSpacing property entirely,
+  // so a label drawn with positive letter-spacing (the SCORERS labels use
+  // +0.16em) measures shorter than it actually renders - without adding
+  // that overhead back in here, "fits" text still overflows once drawn.
+  function fitFontSize(text: string, maxWidth: number, fontFn: (weight: number, size: number) => string, weight: number, maxSize: number, minSize: number, letterSpacingEm = 0) {
+    let size = maxSize;
+    ctx.font = fontFn(weight, size);
+    const w = ctx.measureText(text).width + letterSpacingEm * size * Math.max(text.length - 1, 0);
+    if (w > maxWidth) size = Math.max(minSize, Math.floor(maxSize * (maxWidth / w)));
+    ctx.font = fontFn(weight, size);
+    return size;
+  }
 
   ctx.fillStyle = "#0d0d1a";
   ctx.fillRect(0, 0, W, H);
-  const grad = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, W * 0.75);
-  grad.addColorStop(0, "rgba(230,57,70,0.20)");
-  grad.addColorStop(1, "rgba(230,57,70,0)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H * 0.55);
 
   const pad = 64;
+  const white = "#F5F6F8";
+  const dim = "#94a3b8";
+  const red = "#e63946";
+  const redHi = "#f0525e";
+  const amber = "#eab308";
+  const green = "#22c55e";
 
+  // ── Header: crest, wordmark, "FULL TIME" pill ──────────────────────
+  const crestBox = { x: pad, y: 52, w: 78, h: 86 };
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(crestBox.x, crestBox.y, crestBox.w, crestBox.h, [6, 6, 34, 34]);
+  ctx.fillStyle = "#1e293b";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(230,57,70,0.85)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.clip();
   try {
     const crest = await loadImage("/logo.png");
-    const crestSize = 78;
-    ctx.save();
-    roundRectPath(ctx, pad, pad, crestSize, crestSize, 20);
-    ctx.clip();
-    ctx.drawImage(crest, pad, pad, crestSize, crestSize);
-    ctx.restore();
+    ctx.drawImage(crest, crestBox.x, crestBox.y, crestBox.w, crestBox.h);
   } catch {
-    // Crest failed to load (offline etc.) - card still works without it.
+    // Crest failed to load (offline etc.) - shield shape still shows.
   }
+  const glow = ctx.createLinearGradient(0, crestBox.y + crestBox.h - 34, 0, crestBox.y + crestBox.h);
+  glow.addColorStop(0, "rgba(230,57,70,0)");
+  glow.addColorStop(1, "rgba(230,57,70,0.28)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(crestBox.x, crestBox.y + crestBox.h - 34, crestBox.w, 34);
+  ctx.restore();
 
+  const textX = crestBox.x + crestBox.w + 22;
   ctx.textBaseline = "top";
   ctx.textAlign = "left";
-  ctx.fillStyle = "#F5F6F8";
-  ctx.font = "800 32px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillText("WIRRAL", pad + 96, pad + 8);
-  ctx.fillStyle = "#e63946";
-  ctx.font = "800 16px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillText("C O M M U N I T Y   F O O T B A L L", pad + 96, pad + 48);
+  ctx.fillStyle = white;
+  ctx.font = soraFont(800, 31);
+  letterSpaced(31 * 0.03);
+  ctx.fillText("WIRRAL COMMUNITY FOOTBALL", textX, 66);
+  ctx.fillStyle = dim;
+  ctx.font = interFont(600, 17);
+  letterSpaced(17 * 0.32);
+  ctx.fillText(opts.pitch.toUpperCase() + " LEAGUE", textX, 104);
+  resetLetterSpacing();
 
-  ctx.textAlign = "center";
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "800 24px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillText("F U L L   T I M E", W / 2, 300);
+  const pillH = 53;
+  const pillY = crestBox.y + crestBox.h / 2 - pillH / 2;
+  const pillTextSize = 20;
+  ctx.font = soraFont(800, pillTextSize);
+  letterSpaced(pillTextSize * 0.2);
+  const pillTextW = ctx.measureText("FULL TIME").width;
+  resetLetterSpacing();
+  const dotSize = 11;
+  const pillPadL = 16;
+  const pillGap = 12;
+  const pillPadR = 20;
+  const pillW = pillPadL + dotSize + pillGap + pillTextW + pillPadR;
+  const pillX = W - pad - pillW;
+  ctx.beginPath();
+  ctx.roundRect(pillX, pillY, pillW, pillH, 4);
+  ctx.fillStyle = "rgba(230,57,70,0.14)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(240,82,94,0.5)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.fillStyle = redHi;
+  ctx.shadowColor = "rgba(240,82,94,0.6)";
+  ctx.shadowBlur = 10;
+  ctx.arc(pillX + pillPadL + dotSize / 2, pillY + pillH / 2, dotSize / 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = redHi;
+  ctx.font = soraFont(800, pillTextSize);
+  letterSpaced(pillTextSize * 0.2);
+  ctx.fillText("FULL TIME", pillX + pillPadL + dotSize + pillGap, pillY + pillH / 2 + 1);
+  resetLetterSpacing();
 
-  const scoreY = 350;
-  const colW = 260;
+  // ── Bottom-up layout: the score/background section is the only
+  // flexible-height piece (mirrors the source design's flex:1), so its
+  // height is whatever's left after every fixed-or-content-driven block
+  // below it is subtracted from the card height - same reflow the CSS
+  // version gets for free, computed by hand here.
+  const scoreSectionTop = crestBox.y + crestBox.h + 18;
+  const venueLineH = 53;
+  const footerH = 99;
+
+  const colPadX = 34;
+  const colPadTop = 30;
+  const colPadBottom = 32;
+  const scorerRowH = 30;
+  const scorerRowGap = 13;
+  const labelRowH = 24;
+  const labelToRowsGap = 18;
+  function colHeight(rows: number) {
+    const rowsH = rows > 0 ? rows * scorerRowH + (rows - 1) * scorerRowGap : 0;
+    return colPadTop + labelRowH + labelToRowsGap + rowsH + colPadBottom;
+  }
+  const panelH = Math.max(colHeight(opts.whiteScorers.length), colHeight(opts.redScorers.length));
+
+  const ownGoalsH = opts.ownGoals.length > 0 ? 58 : 0;
+  const motmH = opts.motmWinner ? 130 : 0;
+  const motmMarginTop = opts.motmWinner ? 26 : 0;
+
+  const footerTop = H - footerH;
+  const motmTop = footerTop - motmH - motmMarginTop;
+  const ownGoalsTop = motmTop - ownGoalsH;
+  const panelTop = ownGoalsTop - panelH;
+  const venueLineTop = panelTop - venueLineH;
+  const scoreSectionBottom = venueLineTop;
+
+  // ── Score section: photo (if one's been dropped in), dark vignette,
+  // team names, big score ──────────────────────────────────────────
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, scoreSectionTop, W, scoreSectionBottom - scoreSectionTop);
+  ctx.clip();
+  try {
+    // Optional: drop a background photo at public/results-bg.jpg (e.g.
+    // a generated pitch/floodlight texture) and it appears automatically
+    // - nothing else here needs to change. Falls back to the radial glow
+    // below when it's missing, so the card still looks intentional either way.
+    const bg = await loadImage("/results-bg.jpg");
+    const sectionH = scoreSectionBottom - scoreSectionTop;
+    const scale = Math.max(W / bg.width, sectionH / bg.height);
+    const bw = bg.width * scale;
+    const bh = bg.height * scale;
+    ctx.drawImage(bg, W / 2 - bw / 2, scoreSectionTop + sectionH * 0.3 - bh / 2, bw, bh);
+  } catch {
+    const radial = ctx.createRadialGradient(W / 2, scoreSectionTop, 0, W / 2, scoreSectionTop, W * 0.75);
+    radial.addColorStop(0, "rgba(230,57,70,0.20)");
+    radial.addColorStop(1, "rgba(230,57,70,0)");
+    ctx.fillStyle = radial;
+    ctx.fillRect(0, scoreSectionTop, W, scoreSectionBottom - scoreSectionTop);
+  }
+  const vignetteH = (scoreSectionBottom - scoreSectionTop) * 0.66;
+  const vignette = ctx.createLinearGradient(0, scoreSectionBottom, 0, scoreSectionBottom - vignetteH);
+  vignette.addColorStop(0, "#0d0d1a");
+  vignette.addColorStop(0.28, "rgba(13,13,26,0.86)");
+  vignette.addColorStop(0.62, "rgba(13,13,26,0.35)");
+  vignette.addColorStop(1, "rgba(13,13,26,0)");
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, scoreSectionBottom - vignetteH, W, vignetteH);
+  ctx.restore();
+
+  const contentBottom = scoreSectionBottom - 44;
+  const nameTop = contentBottom - 107;
+  const dashTop = contentBottom - 124;
+  const barTop = contentBottom - 51;
+  const scoreDigitsBaseline = contentBottom - 10;
+
+  // The score block's width depends on the actual digits (a 2-digit
+  // scoreline is wider than a 1-digit one), so its edges - and therefore
+  // where the name columns and underline bars stop - are measured, not
+  // assumed to sit a fixed distance from the card's centreline.
+  const whiteScoreStr = String(opts.whiteScore);
+  const redScoreStr = String(opts.redScore);
+  const scoreDigitFont = soraFont(800, 184);
+  const scoreGap = 26;
+  ctx.font = scoreDigitFont;
+  const whiteScoreW = ctx.measureText(whiteScoreStr).width;
+  const redScoreW = ctx.measureText(redScoreStr).width;
+  ctx.font = soraFont(800, 84);
+  const dashW = ctx.measureText("–").width;
+  const scoreBlockW = whiteScoreW + scoreGap + dashW + scoreGap + redScoreW;
+  const scoreBlockLeft = W / 2 - scoreBlockW / 2;
+  const scoreBlockRight = W / 2 + scoreBlockW / 2;
+  const colGap = 24;
+
+  const fitNameFont = (name: string, maxWidth: number) => fitFontSize(name, maxWidth, soraFont, 800, 38, 20, -0.01);
+  const whiteNameStr = opts.whiteName.toUpperCase();
+  const redNameStr = opts.redName.toUpperCase();
+  const whiteNameSize = fitNameFont(whiteNameStr, scoreBlockLeft - colGap - pad);
+  const redNameSize = fitNameFont(redNameStr, W - pad - (scoreBlockRight + colGap));
+
   ctx.textBaseline = "top";
-  ctx.font = "800 30px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillStyle = "#F5F6F8";
-  ctx.fillText(opts.whiteName.toUpperCase(), W / 2 - colW, scoreY);
-  ctx.fillStyle = "#f0525e";
-  ctx.fillText(opts.redName.toUpperCase(), W / 2 + colW, scoreY);
+  ctx.font = soraFont(800, whiteNameSize);
+  letterSpaced(whiteNameSize * -0.01);
+  ctx.textAlign = "right";
+  ctx.fillStyle = white;
+  ctx.fillText(whiteNameStr, scoreBlockLeft - colGap, nameTop);
+  resetLetterSpacing();
+  ctx.font = soraFont(800, redNameSize);
+  letterSpaced(redNameSize * -0.01);
+  ctx.textAlign = "left";
+  ctx.fillStyle = redHi;
+  ctx.fillText(redNameStr, scoreBlockRight + colGap, nameTop);
+  resetLetterSpacing();
+
+  ctx.fillStyle = white;
+  ctx.shadowColor = "rgba(248,250,252,0.35)";
+  ctx.shadowBlur = 12;
+  ctx.fillRect(scoreBlockLeft - colGap - 118, barTop, 118, 7);
+  ctx.fillStyle = red;
+  ctx.shadowColor = "rgba(230,57,70,0.45)";
+  ctx.fillRect(scoreBlockRight + colGap, barTop, 118, 7);
+  ctx.shadowBlur = 0;
 
   ctx.textBaseline = "alphabetic";
-  ctx.font = "800 150px ui-monospace, SFMono-Regular, Menlo, monospace";
-  ctx.fillStyle = opts.whiteColor;
-  ctx.fillText(String(opts.whiteScore), W / 2 - colW, scoreY + 175);
-  ctx.fillStyle = opts.redColor;
-  ctx.fillText(String(opts.redScore), W / 2 + colW, scoreY + 175);
-  ctx.strokeStyle = "#94a3b8";
-  ctx.lineWidth = 8;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(W / 2 - 22, scoreY + 130);
-  ctx.lineTo(W / 2 + 22, scoreY + 130);
-  ctx.stroke();
-
-  ctx.textBaseline = "top";
-  ctx.font = "500 24px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillStyle = "#94a3b8";
-  ctx.fillText(`${opts.venue} · ${opts.dateLabel}`, W / 2, scoreY + 200);
-
-  ctx.strokeStyle = "rgba(148,163,184,.16)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(pad, scoreY + 260);
-  ctx.lineTo(W - pad, scoreY + 260);
-  ctx.stroke();
-
+  ctx.font = scoreDigitFont;
+  letterSpaced(184 * -0.05);
   ctx.textAlign = "left";
-  ctx.font = "800 20px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillStyle = "#94a3b8";
-  ctx.fillText("⚽  GOALS", pad, scoreY + 300);
-
-  const rowsY = scoreY + 350;
-  const rowH = 42;
-  const maxRows = Math.max(opts.whiteScorers.length, opts.redScorers.length, 1);
-  opts.whiteScorers.forEach((s, i) => {
-    ctx.font = "600 24px -apple-system, Helvetica, Arial, sans-serif";
-    ctx.fillStyle = "#F5F6F8";
-    ctx.textAlign = "left";
-    ctx.fillText(s.name, pad, rowsY + i * rowH);
-    ctx.font = "700 24px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#94a3b8";
-    ctx.textAlign = "right";
-    ctx.fillText(String(s.goals), pad + 400, rowsY + i * rowH);
-  });
-  opts.redScorers.forEach((s, i) => {
-    ctx.font = "600 24px -apple-system, Helvetica, Arial, sans-serif";
-    ctx.fillStyle = "#F5F6F8";
-    ctx.textAlign = "left";
-    ctx.fillText(s.name, W / 2 + 30, rowsY + i * rowH);
-    ctx.font = "700 24px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#94a3b8";
-    ctx.textAlign = "right";
-    ctx.fillText(String(s.goals), W - pad, rowsY + i * rowH);
-  });
-
-  let afterGoalsY = rowsY + maxRows * rowH;
-  if (opts.ownGoals.length > 0) {
-    afterGoalsY += 20;
-    ctx.textAlign = "left";
-    ctx.font = "700 22px -apple-system, Helvetica, Arial, sans-serif";
-    ctx.fillStyle = "#eab308";
-    const label = opts.ownGoals.length > 1 || opts.ownGoals[0].goals > 1 ? "OWN GOALS: " : "OWN GOAL: ";
-    const names = opts.ownGoals.map((s) => (s.goals > 1 ? `${s.name} (${s.goals})` : s.name)).join(", ");
-    ctx.fillText(label + names, pad, afterGoalsY);
-    afterGoalsY += 40;
-  }
-
-  if (opts.motmWinner) {
-    let motmY = afterGoalsY + 50;
-    motmY = Math.max(motmY, scoreY + 500);
-    motmY = Math.min(motmY, H - 210);
-
-    roundRectPath(ctx, pad, motmY, W - pad * 2, 110, 18);
-    ctx.fillStyle = "rgba(224,167,51,0.12)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(224,167,51,0.35)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.font = "40px -apple-system, Helvetica, Arial, sans-serif";
-    ctx.fillStyle = "#E0A733";
-    ctx.fillText("🏆", pad + 24, motmY + 30);
-
-    ctx.font = "800 15px -apple-system, Helvetica, Arial, sans-serif";
-    ctx.fillStyle = "#E0A733";
-    ctx.fillText("M A N   O F   T H E   M A T C H", pad + 100, motmY + 26);
-
-    ctx.font = "800 28px -apple-system, Helvetica, Arial, sans-serif";
-    ctx.fillStyle = "#F5F6F8";
-    ctx.fillText(opts.motmWinner, pad + 100, motmY + 54);
-  }
+  ctx.fillStyle = opts.whiteColor;
+  ctx.fillText(whiteScoreStr, scoreBlockLeft, scoreDigitsBaseline);
+  ctx.fillStyle = opts.redColor;
+  ctx.fillText(redScoreStr, scoreBlockRight - redScoreW, scoreDigitsBaseline);
+  resetLetterSpacing();
 
   ctx.textAlign = "center";
+  ctx.font = soraFont(800, 84);
+  ctx.fillStyle = "#475569";
   ctx.textBaseline = "top";
-  ctx.font = "800 15px -apple-system, Helvetica, Arial, sans-serif";
-  ctx.fillStyle = "#94a3b8";
-  ctx.fillText("W I R R A L C O M M U N I T Y F O O T B A L L", W / 2, H - 44);
+  ctx.fillText("–", scoreBlockLeft + whiteScoreW + scoreGap + dashW / 2, dashTop);
+
+  // ── Venue + date ────────────────────────────────────────────────
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  ctx.font = interFont(600, 19);
+  letterSpaced(19 * 0.1);
+  ctx.fillStyle = dim;
+  ctx.fillText(`${opts.venue.toUpperCase()} · ${opts.dateLabel.toUpperCase()}`, W / 2, venueLineTop + venueLineH / 2 + 3);
+  resetLetterSpacing();
+
+  // ── Scorers panel ───────────────────────────────────────────────
+  ctx.fillStyle = "#1e293b";
+  ctx.fillRect(pad, panelTop, W - pad * 2, panelH);
+  ctx.strokeStyle = "rgba(148,163,184,0.18)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, panelTop);
+  ctx.lineTo(W - pad, panelTop);
+  ctx.stroke();
+  const colW = (W - pad * 2) / 2;
+  ctx.strokeStyle = "rgba(148,163,184,0.2)";
+  ctx.beginPath();
+  ctx.moveTo(pad + colW, panelTop);
+  ctx.lineTo(pad + colW, panelTop + panelH);
+  ctx.stroke();
+
+  function drawScorerColumn(colX: number, label: string, color: string, scorers: { name: string; goals: number }[]) {
+    const innerX = colX + colPadX;
+    const innerRight = colX + colW - colPadX;
+    const labelY = panelTop + colPadTop;
+    ctx.fillStyle = color;
+    ctx.fillRect(innerX, labelY + (labelRowH - 20) / 2, 4, 20);
+    const labelSize = fitFontSize(label, innerRight - (innerX + 16), soraFont, 700, 19, 12, 0.16);
+    letterSpaced(labelSize * 0.16);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = color;
+    ctx.fillText(label, innerX + 16, labelY);
+    resetLetterSpacing();
+
+    const rowsTop = labelY + labelRowH + labelToRowsGap;
+    scorers.forEach((s, i) => {
+      const rowY = rowsTop + i * (scorerRowH + scorerRowGap);
+      ctx.font = soraFont(700, 22);
+      const countStr = `×${s.goals}`;
+      const countW = ctx.measureText(countStr).width;
+      // Goal count always stays full-size (it's never more than 2-3
+      // chars) - only the player name shrinks, and only if it would
+      // otherwise run into the count. fitFontSize leaves ctx.font set to
+      // the fitted size, so draw the name immediately while it's active.
+      fitFontSize(s.name, innerRight - innerX - countW - 12, interFont, 600, 25, 14);
+      ctx.fillStyle = white;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText(s.name, innerX, rowY + 20);
+      ctx.font = soraFont(700, 22);
+      ctx.fillStyle = green;
+      ctx.textAlign = "right";
+      ctx.fillText(countStr, innerRight, rowY + 20);
+    });
+  }
+  drawScorerColumn(pad, opts.whiteName.toUpperCase() + " SCORERS", white, opts.whiteScorers);
+  drawScorerColumn(pad + colW, opts.redName.toUpperCase() + " SCORERS", redHi, opts.redScorers);
+
+  // ── Own goals ───────────────────────────────────────────────────
+  if (opts.ownGoals.length > 0) {
+    ctx.fillStyle = "rgba(234,179,8,0.09)";
+    ctx.fillRect(pad, ownGoalsTop, W - pad * 2, ownGoalsH);
+    ctx.strokeStyle = "rgba(234,179,8,0.3)";
+    ctx.beginPath();
+    ctx.moveTo(pad, ownGoalsTop);
+    ctx.lineTo(W - pad, ownGoalsTop);
+    ctx.stroke();
+
+    const diamondCx = pad + colPadX + 4.5;
+    const diamondCy = ownGoalsTop + ownGoalsH / 2;
+    ctx.save();
+    ctx.translate(diamondCx, diamondCy);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = amber;
+    ctx.fillRect(-4.5, -4.5, 9, 9);
+    ctx.restore();
+
+    const label = opts.ownGoals.length > 1 || opts.ownGoals[0].goals > 1 ? "Own goals — " : "Own goal — ";
+    const names = opts.ownGoals.map((s) => (s.goals > 1 ? `${s.name} (${s.goals})` : s.name)).join(", ");
+    ctx.font = interFont(600, 19);
+    letterSpaced(19 * 0.04);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = amber;
+    ctx.fillText(label + names, pad + colPadX + 9 + 14, diamondCy + 1);
+    resetLetterSpacing();
+  }
+
+  // ── Man of the match ────────────────────────────────────────────
+  if (opts.motmWinner) {
+    ctx.beginPath();
+    ctx.roundRect(pad, motmTop, W - pad * 2, motmH, 2);
+    const motmGrad = ctx.createLinearGradient(0, motmTop, 0, motmTop + motmH);
+    motmGrad.addColorStop(0, "rgba(234,179,8,0.14)");
+    motmGrad.addColorStop(1, "rgba(234,179,8,0.04)");
+    ctx.fillStyle = motmGrad;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(234,179,8,0.45)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    const accentGrad = ctx.createLinearGradient(pad, 0, W - pad, 0);
+    accentGrad.addColorStop(0, amber);
+    accentGrad.addColorStop(0.5, "#fde68a");
+    accentGrad.addColorStop(1, amber);
+    ctx.fillStyle = accentGrad;
+    ctx.fillRect(pad, motmTop, W - pad * 2, 3);
+
+    const badgeCx = pad + 32 + 37;
+    const badgeCy = motmTop + 26 + 37;
+    ctx.beginPath();
+    ctx.arc(badgeCx, badgeCy, 37, 0, Math.PI * 2);
+    ctx.fillStyle = "#0d0d1a";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(234,179,8,0.5)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.font = "34px " + inter;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("🏆", badgeCx, badgeCy + 2);
+
+    const motmTextX = pad + 32 + 74 + 26;
+    ctx.font = soraFont(700, 18);
+    letterSpaced(18 * 0.22);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = amber;
+    ctx.fillText("MAN OF THE MATCH", motmTextX, motmTop + 27);
+    resetLetterSpacing();
+    ctx.font = soraFont(800, 42);
+    letterSpaced(42 * -0.015);
+    ctx.fillStyle = white;
+    ctx.fillText(opts.motmWinner, motmTextX, motmTop + 27 + 22 + 9);
+    resetLetterSpacing();
+  }
+
+  // ── Footer ──────────────────────────────────────────────────────
+  ctx.font = soraFont(800, 17);
+  letterSpaced(17 * 0.3);
+  const footerText = "WIRRAL COMMUNITY FOOTBALL";
+  const footerTextW = ctx.measureText(footerText).width;
+  resetLetterSpacing();
+  const footerY = footerTop + 34 + 10;
+  const ruleGap = 18;
+  const ruleY = footerY;
+  ctx.strokeStyle = "rgba(148,163,184,0.2)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, ruleY);
+  ctx.lineTo(W / 2 - footerTextW / 2 - ruleGap, ruleY);
+  ctx.moveTo(W / 2 + footerTextW / 2 + ruleGap, ruleY);
+  ctx.lineTo(W - pad, ruleY);
+  ctx.stroke();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = soraFont(800, 17);
+  letterSpaced(17 * 0.3);
+  ctx.fillStyle = dim;
+  ctx.fillText(footerText, W / 2, footerY + 1);
+  resetLetterSpacing();
 
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
@@ -1879,6 +2165,7 @@ function App({ session }: { session: Session }) {
     try {
       const blob = await drawResultCard({
         venue: game.venue,
+        pitch: game.pitch,
         dateLabel: fmtDate(game.date),
         whiteName: cs.team_white_name,
         redName: cs.team_red_name,
