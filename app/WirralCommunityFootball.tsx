@@ -1774,7 +1774,7 @@ function App({ session }: { session: Session }) {
         const b = g.bookings.find((bk) => bk.id === bookingId);
         if (b && b.player_id !== myId) {
           const listLabel = b.waiting ? "the waiting list" : "the match";
-          logDetails = `${b.player.display_name} — ${g.venue} ${fmtDate(g.date)} (booked onto ${listLabel} ${fmtDateTime(b.created_at)})`;
+          logDetails = `${b.player.display_name} — ${g.venue} ${fmtDate(g.date)} (they originally booked onto ${listLabel} ${fmtDateTime(b.created_at)})`;
           break;
         }
       }
