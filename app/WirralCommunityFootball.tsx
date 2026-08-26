@@ -7025,6 +7025,7 @@ function AdminGameRow({
                 <span className={"wcf-admin-player-dot " + (b.status === "confirmed" ? "confirmed" : "pending")} />
                 <span className="wcf-admin-player-name">
                   {b.player.display_name}
+                  <span className="wcf-confirmed-by">Booked {fmtDateTime(b.created_at)}</span>
                   {b.status === "confirmed" && b.confirmer && <span className="wcf-confirmed-by">by {b.confirmer.display_name}</span>}
                   {b.status === "confirmed" && b.auto_confirmed && <span className="wcf-confirmed-by">via Monzo</span>}
                 </span>
@@ -7098,7 +7099,10 @@ function AdminGameRow({
               <h4 className="wcf-edit-subhead">Waiting list · {waitingList.length}</h4>
               {waitingList.map((b, i) => (
                 <div key={b.id} className="wcf-admin-player-row">
-                  <span className="wcf-admin-player-name">{i + 1}. {b.player.display_name}</span>
+                  <span className="wcf-admin-player-name">
+                    {i + 1}. {b.player.display_name}
+                    <span className="wcf-confirmed-by">Joined {fmtDateTime(b.created_at)}</span>
+                  </span>
                   <button
                     className="wcf-admin-remove"
                     onClick={async () => {
