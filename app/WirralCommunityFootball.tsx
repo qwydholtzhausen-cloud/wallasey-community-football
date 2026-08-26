@@ -7026,8 +7026,8 @@ function AdminGameRow({
                 <span className="wcf-admin-player-name">
                   {b.player.display_name}
                   <span className="wcf-confirmed-by">Booked {fmtDateTime(b.created_at)}</span>
-                  {b.status === "confirmed" && b.confirmer && <span className="wcf-confirmed-by">by {b.confirmer.display_name}</span>}
-                  {b.status === "confirmed" && b.auto_confirmed && <span className="wcf-confirmed-by">via Monzo</span>}
+                  {b.status === "confirmed" && b.confirmer && <span className="wcf-confirmed-by">Payment approved by {b.confirmer.display_name}</span>}
+                  {b.status === "confirmed" && b.auto_confirmed && <span className="wcf-confirmed-by">Payment approved via Monzo</span>}
                 </span>
                 <div className="wcf-admin-status">
                   <StatusBadge status={b.status} />
