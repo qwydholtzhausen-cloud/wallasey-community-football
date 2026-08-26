@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { sendPushToUsers } from "../../../../lib/push";
+import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
 import { kickoffCutoff, nowInLondon, MATCH_DURATION_MINUTES } from "../../../../lib/time";
 import { ensureFreshMonzoToken, registerMonzoWebhook } from "../../../../lib/monzo";
 
@@ -300,6 +300,36 @@ export async function GET(req: Request) {
       url: "/",
     });
     await markNotified(key);
+  }
+
+  // --- New fixture announcements, batched ~30 min after publishing ---
+  // Publishing a fixture used to push instantly, which was fine one at a
+  // time but meant confirming a batch of drafts (the "Fixtures" bulk-add
+  // tool) fired one push per confirm - up to N notifications landing
+  // within a few minutes of each other. published_at (set once, when a
+  // draft is first confirmed - see saveGame) is real UTC, not the
+  // pretend-UTC trick nowUkStr/nowMs use above, so this deliberately
+  // compares against a genuine Date.now() rather than reusing nowMs.
+  const { data: unannounced } = await admin
+    .from("games")
+    .select("id, date, venue")
+    .eq("published", true)
+    .not("published_at", "is", null)
+    .lte("published_at", new Date(Date.now() - 30 * 60 * 1000).toISOString());
+  const dueGames = (unannounced ?? []).filter((g) => !notifiedKeys.has(`fixture-announced-${g.id}`));
+
+  if (dueGames.length === 1) {
+    const g = dueGames[0];
+    const dateLabel = new Date(g.date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+    await sendPushBroadcast({ title: "New fixture posted", body: `${g.venue}, ${dateLabel} — tap to grab a spot.`, url: "/" });
+    await markNotified(`fixture-announced-${g.id}`);
+  } else if (dueGames.length > 1) {
+    await sendPushBroadcast({
+      title: "New fixtures posted",
+      body: `${dueGames.length} new fixtures are up — tap to see them and grab a spot.`,
+      url: "/",
+    });
+    for (const g of dueGames) await markNotified(`fixture-announced-${g.id}`);
   }
 
   // --- Welcome message for new players, via inbox + push ---

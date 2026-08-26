@@ -1824,14 +1824,16 @@ function App({ session }: { session: Session }) {
   async function saveGame(id: string, patch: Partial<GameRow>) {
     const { bookings: _bookings, published: _published, ...rest } = patch as GameRow;
     const wasPublished = games.find((g) => g.id === id)?.published;
-    const { error } = await supabase.from("games").update({ ...rest, published: true }).eq("id", id);
+    // published_at (not published itself) is what the frequent cron uses
+    // to decide when to actually announce this - confirming a whole batch
+    // of drafts in one sitting sends one digest push ~30 min later
+    // instead of one push per confirm. See frequent/route.ts.
+    const publishPatch = wasPublished ? {} : { published_at: new Date().toISOString() };
+    const { error } = await supabase.from("games").update({ ...rest, ...publishPatch, published: true }).eq("id", id);
     if (error) return notifyError(error.message);
     await loadGames();
     setEditingId(null);
-    // First confirm of a draft fixture is what actually announces it -
-    // later edits to an already-published fixture don't re-announce.
     if (!wasPublished) {
-      pushNotify("notify-new-fixture", { gameId: id });
       logAction("Posted fixture", `${rest.venue} — ${fmtDate(rest.date)}`);
     }
   }

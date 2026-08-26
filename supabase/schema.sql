@@ -1275,3 +1275,10 @@ create policy "monzo_transactions_select_admin" on public.monzo_transactions for
 -- fixtures on/after the change date bumped down too, anything before it
 -- left untouched as the historical record of what was actually paid).
 update public.games set pitch_cost = 45 where pitch_cost = 55 and date >= '2026-09-07';
+
+-- When a draft fixture actually went live - used to batch the "new
+-- fixture" push (see the frequent cron job) so confirming several drafts
+-- in one sitting sends one digest ~30 min later instead of one push per
+-- confirm. Null for already-published fixtures from before this column
+-- existed; the cron only ever acts on rows where it's set.
+alter table public.games add column if not exists published_at timestamptz;
