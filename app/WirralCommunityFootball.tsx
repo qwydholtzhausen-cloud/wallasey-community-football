@@ -1762,8 +1762,26 @@ function App({ session }: { session: Session }) {
     if (data && !data.waiting) pushNotify("notify-last-spot", { gameId });
   }
   async function cancel(bookingId: string) {
+    // Capture what's about to be lost before the delete - once the row's
+    // gone, so is the answer to "did they even book, and when". Only
+    // logged when an admin removes someone ELSE's booking, not a player
+    // cancelling their own - that's routine and self-driven, logging it
+    // too would bury the rare, actually disputed case under noise (same
+    // reasoning as why payment-status changes aren't logged either).
+    let logDetails: string | null = null;
+    if (isAdmin) {
+      for (const g of games) {
+        const b = g.bookings.find((bk) => bk.id === bookingId);
+        if (b && b.player_id !== myId) {
+          const listLabel = b.waiting ? "the waiting list" : "the match";
+          logDetails = `${b.player.display_name} — ${g.venue} ${fmtDate(g.date)} (booked onto ${listLabel} ${fmtDateTime(b.created_at)})`;
+          break;
+        }
+      }
+    }
     const { error } = await supabase.from("bookings").delete().eq("id", bookingId);
-    if (error) notifyError(error.message);
+    if (error) return notifyError(error.message);
+    if (logDetails) logAction("Removed player from game", logDetails);
   }
   async function markPaid(bookingId: string) {
     const { error } = await supabase.from("bookings").update({ status: "pending" }).eq("id", bookingId);
