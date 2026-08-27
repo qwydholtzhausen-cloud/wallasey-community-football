@@ -5110,10 +5110,23 @@ const BATCH_WEEKDAYS: { value: number; label: string }[] = [
   { value: 0, label: "Sun" },
 ];
 
+// YYYY-MM-DD read back in local time, never via toISOString() - that
+// always returns UTC, which lands on the wrong calendar day the moment
+// local time and UTC disagree on what day it is (true for the UK for
+// roughly an hour around midnight, and for the entire day whenever local
+// midnight itself is being represented while BST is in effect, e.g. every
+// date this batch generator produces for as long as the clocks haven't
+// gone back). Confirmed this is exactly what broke the Oct batch-add:
+// Monday, constructed as 00:00 local BST, serialised via toISOString()
+// landed on Sunday.
+function localDateStr(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function oneMonthAfter(dateStr: string) {
   const d = new Date(dateStr + "T00:00:00");
   d.setMonth(d.getMonth() + 1);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 
 // Turns "every Monday and Thursday for the next month" into a batch of
@@ -5129,7 +5142,7 @@ function BatchGenerateModal({
   onGenerate: (dates: string[]) => Promise<void>;
   onClose: () => void;
 }) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateStr(new Date());
   const [start, setStart] = useState(todayStr);
   const [end, setEnd] = useState(oneMonthAfter(todayStr));
   const [days, setDays] = useState<Set<number>>(new Set([1, 4]));
@@ -5154,7 +5167,7 @@ function BatchGenerateModal({
     const d = new Date(start + "T00:00:00");
     const endD = new Date(end + "T00:00:00");
     while (d <= endD) {
-      if (days.has(d.getDay())) result.push(d.toISOString().slice(0, 10));
+      if (days.has(d.getDay())) result.push(localDateStr(d));
       d.setDate(d.getDate() + 1);
     }
     return result;
@@ -6459,7 +6472,12 @@ function AdminConsole({
   const nextGame = upcoming[0];
   const nextConfirmed = nextGame ? nextGame.bookings.filter((b) => !b.waiting) : [];
   const nextUnassigned = nextConfirmed.filter((b) => !b.team).length;
-  const teamsSet = !nextGame || nextConfirmed.length === 0 || nextUnassigned === 0;
+  // Zero bookings is not the same as "teams set" - there's trivially
+  // nothing unassigned on an empty fixture, but showing a green checkmark
+  // for a game nobody's even booked into yet reads as done when there's
+  // nothing to be done.
+  const noBookingsYet = !!nextGame && nextConfirmed.length === 0;
+  const teamsSet = !nextGame || (!noBookingsYet && nextUnassigned === 0);
 
   const namesList = (items: string[], max = 3) =>
     items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} +${items.length - max} more`;
@@ -6588,12 +6606,12 @@ function AdminConsole({
           <div className="wcf-glance-label">{drafts.length === 0 ? "No drafts" : drafts.length === 1 ? "Draft fixture" : "Draft fixtures"}</div>
           <div className="wcf-glance-names">{drafts.length === 0 ? "Nothing waiting" : namesList(drafts.map((g) => g.venue))}</div>
         </div>
-        <button className={"wcf-glance-card wide" + (teamsSet ? " clear" : " crimson")} onClick={onGoToLineup}>
+        <button className={"wcf-glance-card wide" + (teamsSet || noBookingsYet ? " clear" : " crimson")} onClick={onGoToLineup}>
           <div className="wcf-glance-top">
-            <span className="wcf-glance-num small">{teamsSet ? "Teams set" : "Teams not set"}</span>
-            <span className="wcf-glance-tile">{teamsSet ? "✓" : "⇄"}</span>
+            <span className="wcf-glance-num small">{noBookingsYet ? "No one booked yet" : teamsSet ? "Teams set" : "Teams not set"}</span>
+            <span className="wcf-glance-tile">{noBookingsYet ? "…" : teamsSet ? "✓" : "⇄"}</span>
           </div>
-          {nextGame && <div className="wcf-glance-names">{nextGame.venue} · {fmtDate(nextGame.date)}{!teamsSet ? ` — ${nextUnassigned} unassigned` : ""}</div>}
+          {nextGame && <div className="wcf-glance-names">{nextGame.venue} · {fmtDate(nextGame.date)}{!teamsSet && !noBookingsYet ? ` — ${nextUnassigned} unassigned` : ""}</div>}
         </button>
       </div>
 
