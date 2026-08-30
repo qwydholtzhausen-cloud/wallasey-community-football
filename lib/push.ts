@@ -38,7 +38,7 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
 
   const { data: subs } = await admin
     .from("push_subscriptions")
-    .select("id, endpoint, p256dh, auth_key")
+    .select("id, user_id, endpoint, p256dh, auth_key")
     .in("user_id", allowedIds);
   if (!subs || subs.length === 0) return { sent: 0, failed: 0 };
 
@@ -59,7 +59,12 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
         if (statusCode === 404 || statusCode === 410) {
           // Stale (uninstalled, permission revoked, storage cleared) -
           // clean it up rather than retrying a dead endpoint forever.
+          // Resetting push_opt_in alongside it matters just as much as
+          // the delete itself - without this, the toggle kept saying
+          // "on" for someone with zero working subscription behind it,
+          // which is exactly how it silently drifted out of sync before.
           await admin.from("push_subscriptions").delete().eq("id", sub.id);
+          await admin.from("profiles").update({ push_opt_in: false }).eq("id", sub.user_id);
         } else {
           console.error("Push send failed for subscription", sub.id, err);
         }
