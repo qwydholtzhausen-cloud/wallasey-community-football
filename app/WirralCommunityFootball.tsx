@@ -1673,7 +1673,7 @@ function App({ session }: { session: Session }) {
       const { error } = await supabase
         .from("push_subscriptions")
         .upsert(
-          { user_id: myId, endpoint: json.endpoint, p256dh: json.keys?.p256dh, auth_key: json.keys?.auth },
+          { user_id: myId, endpoint: json.endpoint, p256dh: json.keys?.p256dh, auth_key: json.keys?.auth, origin: window.location.origin },
           { onConflict: "endpoint" }
         );
       if (error) return notifyError(error.message), false;
@@ -1702,6 +1702,38 @@ function App({ session }: { session: Session }) {
     if (error) return notifyError(error.message);
     await loadProfile();
   }
+
+  // Backfills push_subscriptions.origin for anyone who already had push
+  // enabled before dual-domain existed - enablePush() only ever runs on an
+  // explicit tap, so without this, existing subscribers would stay
+  // unrecorded indefinitely rather than getting picked up the next time
+  // they open the app. Not surfaced anywhere in the app itself - this is
+  // purely a backend record for looking someone up directly if needed,
+  // same as the app's existing stance of never showing per-player push
+  // detail to admins through the UI. Silent by design: no permission
+  // prompt (already granted), no toast on failure, just a best-effort
+  // top-up using whatever's already subscribed.
+  useEffect(() => {
+    if (!myId || !myProfile?.push_opt_in) return;
+    if (typeof window === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (Notification.permission !== "granted") return;
+    (async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (!sub) return;
+        const json = sub.toJSON();
+        await supabase
+          .from("push_subscriptions")
+          .upsert(
+            { user_id: myId, endpoint: json.endpoint, p256dh: json.keys?.p256dh, auth_key: json.keys?.auth, origin: window.location.origin },
+            { onConflict: "endpoint" }
+          );
+      } catch {
+        // Best-effort only - a normal load shouldn't ever surface this.
+      }
+    })();
+  }, [myId, myProfile?.push_opt_in]);
 
   async function sendTestPush() {
     const token = await getFreshAccessToken();

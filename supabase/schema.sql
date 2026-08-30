@@ -1282,3 +1282,17 @@ update public.games set pitch_cost = 45 where pitch_cost = 55 and date >= '2026-
 -- confirm. Null for already-published fixtures from before this column
 -- existed; the cron only ever acts on rows where it's set.
 alter table public.games add column if not exists published_at timestamptz;
+
+-- Which domain a push subscription was registered from (vercel.app vs the
+-- custom domain, once there's more than one). Backend record only, never
+-- surfaced in the app - same stance as the existing push-stats route,
+-- which only ever gives admins an aggregate count, never per-player
+-- detail. Existing upsert(...,{onConflict:"endpoint"}) calls need a real
+-- UPDATE policy for the "on conflict" path to succeed under RLS - it was
+-- silently missing before (never noticed because in practice a given
+-- browser almost never re-hits an existing endpoint).
+alter table public.push_subscriptions add column if not exists origin text;
+drop policy if exists "push_subscriptions_update_own" on public.push_subscriptions;
+create policy "push_subscriptions_update_own" on public.push_subscriptions for update
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
