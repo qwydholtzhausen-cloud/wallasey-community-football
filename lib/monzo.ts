@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-const WEBHOOK_URL = "https://wirral-community-football.vercel.app/api/monzo/webhook";
+const WEBHOOK_URL = "https://www.wirral-community-football.com/api/monzo/webhook";
 
 interface MonzoTokenRow {
   access_token: string;

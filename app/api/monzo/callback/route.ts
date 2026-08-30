@@ -9,7 +9,7 @@ import { registerMonzoWebhook } from "../../../../lib/monzo";
 // access to it) for the background refresh job to use from here on. This
 // exact URL has to be registered character-for-character as the Redirect
 // URL on the OAuth client at developers.monzo.com.
-const REDIRECT_URI = "https://wirral-community-football.vercel.app/api/monzo/callback";
+const REDIRECT_URI = "https://www.wirral-community-football.com/api/monzo/callback";
 
 function htmlPage(title: string, body: string, ok: boolean) {
   return new NextResponse(

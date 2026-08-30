@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 // the OAuth client created at developers.monzo.com) - this route exists
 // purely to redirect to Monzo's real authorize screen with the right
 // client_id/redirect_uri baked in.
-const REDIRECT_URI = "https://wirral-community-football.vercel.app/api/monzo/callback";
+const REDIRECT_URI = "https://www.wirral-community-football.com/api/monzo/callback";
 
 export async function GET() {
   const clientId = process.env.MONZO_CLIENT_ID;
