@@ -2878,7 +2878,7 @@ function App({ session }: { session: Session }) {
   const SEASON_EPOCH_YEAR = 2026;
   const currentSeasonYear = Number(nowUk.slice(0, 4));
   const [statsSeasonYear, setStatsSeasonYear] = useState<number | null>(null);
-  const [statsSort, setStatsSort] = useState<"apps" | "goals">("apps");
+  const [statsSort, setStatsSort] = useState<"apps" | "goals">("goals");
   const [statsOpenId, setStatsOpenId] = useState<string | null>(null);
   const activeStatsYear = statsSeasonYear ?? currentSeasonYear;
   const seasonYears = useMemo(() => {
@@ -4405,10 +4405,13 @@ function App({ session }: { session: Session }) {
             })()}
 
             {resultsView === "table" && (() => {
+              // Tied on goals favours fewer games, not more - the better
+              // goals-per-game rate should rank above someone who just
+              // played more often to reach the same total.
               const sorted = [...playerStats].sort((a, b) =>
-                statsSort === "goals" ? b.goals - a.goals || b.apps - a.apps : b.apps - a.apps || b.goals - a.goals
+                statsSort === "goals" ? b.goals - a.goals || a.apps - b.apps : b.apps - a.apps || b.goals - a.goals
               );
-              const byGoals = [...playerStats].sort((a, b) => b.goals - a.goals || b.apps - a.apps).slice(0, 3);
+              const byGoals = [...playerStats].sort((a, b) => b.goals - a.goals || a.apps - b.apps).slice(0, 3);
               const podiumOrder = [byGoals[1], byGoals[0], byGoals[2]];
               const podiumRing = ["#eab308", "#cbd5e1", "#e63946"];
               const myIdx = sorted.findIndex((r) => r.id === myId);
