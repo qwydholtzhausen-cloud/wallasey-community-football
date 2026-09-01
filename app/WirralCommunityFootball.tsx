@@ -2829,9 +2829,9 @@ function App({ session }: { session: Session }) {
   }, [feedReactions]);
 
   // Player of the Month: computed, not stored - whoever won MOTM the most
-  // times in the last fully-completed calendar month, tie-broken by total
-  // votes received that month. Needs at least 2 voted games that month to
-  // mean anything, and only reveals once the month's over (not a mid-month
+  // times in the last fully-completed calendar month, tie-broken by goals
+  // scored that month. Needs at least 2 voted games that month to mean
+  // anything, and only reveals once the month's over (not a mid-month
   // leaderboard that flips around), staying up for the whole next month.
   const playerOfMonth = useMemo(() => {
     const monthKey = previousMonthKey(nowUk);
@@ -2841,15 +2841,20 @@ function App({ session }: { session: Session }) {
     if (monthGames.length < 2) return null;
 
     const wins: Record<string, number> = {};
-    const votes: Record<string, number> = {};
+    const goals: Record<string, number> = {};
     const names: Record<string, string> = {};
+
+    const monthGameIds = new Set(monthGames.map((g) => g.id));
+    for (const r of goalRows) {
+      if (!monthGameIds.has(r.game_id)) continue;
+      goals[r.player_id] = (goals[r.player_id] ?? 0) + r.goals;
+    }
 
     for (const g of monthGames) {
       const tally = motmTallyByGame[g.id] ?? {};
       const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
       const topCount = ranked[0]?.[1] ?? 0;
       for (const [playerId, count] of ranked) {
-        votes[playerId] = (votes[playerId] ?? 0) + count;
         names[playerId] ??= g.bookings.find((b) => b.player_id === playerId)?.player.display_name ?? "";
         if (topCount > 0 && count === topCount) wins[playerId] = (wins[playerId] ?? 0) + 1;
       }
@@ -2860,15 +2865,15 @@ function App({ session }: { session: Session }) {
     const maxWins = Math.max(...contenders.map((id) => wins[id]));
     let leaders = contenders.filter((id) => wins[id] === maxWins);
     if (leaders.length > 1) {
-      const maxVotes = Math.max(...leaders.map((id) => votes[id] ?? 0));
-      leaders = leaders.filter((id) => (votes[id] ?? 0) === maxVotes);
+      const maxGoals = Math.max(...leaders.map((id) => goals[id] ?? 0));
+      leaders = leaders.filter((id) => (goals[id] ?? 0) === maxGoals);
     }
 
     return {
       monthLabel: new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
       names: leaders.map((id) => names[id]).filter(Boolean),
     };
-  }, [pastGames, motmTallyByGame, nowUk]);
+  }, [pastGames, motmTallyByGame, goalRows, nowUk]);
 
   // Seasons run calendar-year, not the traditional Aug-May football season -
   // Season 1 is 2026 (the club's founding year), Season 2 starts 1 Jan
