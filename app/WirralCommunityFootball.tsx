@@ -2829,10 +2829,12 @@ function App({ session }: { session: Session }) {
   }, [feedReactions]);
 
   // Player of the Month: computed, not stored - whoever won MOTM the most
-  // times in the last fully-completed calendar month, tie-broken by goals
-  // scored that month. Needs at least 2 voted games that month to mean
-  // anything, and only reveals once the month's over (not a mid-month
-  // leaderboard that flips around), staying up for the whole next month.
+  // times in the last fully-completed calendar month, tie-broken first by
+  // total votes received that month, then by goals scored that month if
+  // still tied after that. Needs at least 2 voted games that month to
+  // mean anything, and only reveals once the month's over (not a
+  // mid-month leaderboard that flips around), staying up for the whole
+  // next month.
   const playerOfMonth = useMemo(() => {
     const monthKey = previousMonthKey(nowUk);
     const monthGames = pastGames.filter(
@@ -2841,6 +2843,7 @@ function App({ session }: { session: Session }) {
     if (monthGames.length < 2) return null;
 
     const wins: Record<string, number> = {};
+    const votes: Record<string, number> = {};
     const goals: Record<string, number> = {};
     const names: Record<string, string> = {};
 
@@ -2855,6 +2858,7 @@ function App({ session }: { session: Session }) {
       const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
       const topCount = ranked[0]?.[1] ?? 0;
       for (const [playerId, count] of ranked) {
+        votes[playerId] = (votes[playerId] ?? 0) + count;
         names[playerId] ??= g.bookings.find((b) => b.player_id === playerId)?.player.display_name ?? "";
         if (topCount > 0 && count === topCount) wins[playerId] = (wins[playerId] ?? 0) + 1;
       }
@@ -2864,6 +2868,10 @@ function App({ session }: { session: Session }) {
     if (contenders.length === 0) return null;
     const maxWins = Math.max(...contenders.map((id) => wins[id]));
     let leaders = contenders.filter((id) => wins[id] === maxWins);
+    if (leaders.length > 1) {
+      const maxVotes = Math.max(...leaders.map((id) => votes[id] ?? 0));
+      leaders = leaders.filter((id) => (votes[id] ?? 0) === maxVotes);
+    }
     if (leaders.length > 1) {
       const maxGoals = Math.max(...leaders.map((id) => goals[id] ?? 0));
       leaders = leaders.filter((id) => (goals[id] ?? 0) === maxGoals);
