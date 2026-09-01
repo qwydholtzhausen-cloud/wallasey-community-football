@@ -950,6 +950,248 @@ async function drawResultCard(opts: {
   });
 }
 
+// Draws the shareable "Player of the Month" card. Adapted from the design
+// import in two ways the source design didn't cover: real player names
+// don't reliably split into "first name / surname" (several profiles are
+// single-word nicknames, e.g. "Fletch"), so the name is drawn as one unit
+// and shrunk to fit rather than styled as two different-sized lines; and
+// the design's own iteration notes say joint-winner variants were
+// deliberately dropped, but the app's actual tiebreak logic can and does
+// produce joint winners for real (see playerOfMonth), so that case is
+// designed here rather than assumed away. Layout constants measured the
+// same way as the result card: a real rendered HTML version at 1080x1350,
+// getBoundingClientRect() on every element, for both the one-winner and
+// two-winner cases.
+async function drawPlayerOfMonthCard(opts: { monthLabel: string; names: string[] }): Promise<Blob> {
+  const W = 1080;
+  const H = 1350;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx2d = canvas.getContext("2d");
+  if (!ctx2d) throw new Error("Canvas isn't supported on this device");
+  const ctx: CanvasRenderingContext2D = ctx2d;
+
+  await document.fonts.ready;
+  const rootStyle = getComputedStyle(document.documentElement);
+  const sora = rootStyle.getPropertyValue("--font-sora").trim() || "sans-serif";
+  const inter = rootStyle.getPropertyValue("--font-inter").trim() || "sans-serif";
+  const soraFont = (weight: number, size: number) => `${weight} ${size}px ${sora}`;
+  const interFont = (weight: number, size: number) => `${weight} ${size}px ${inter}`;
+  function letterSpaced(px: number) {
+    (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${px}px`;
+  }
+  function resetLetterSpacing() {
+    letterSpaced(0);
+  }
+  // Same fit-to-width technique as the result card, including accounting
+  // for letterSpacing (which measureText() silently ignores).
+  function fitFontSize(text: string, maxWidth: number, fontFn: (weight: number, size: number) => string, weight: number, maxSize: number, minSize: number, letterSpacingEm = 0) {
+    let size = maxSize;
+    ctx.font = fontFn(weight, size);
+    const w = ctx.measureText(text).width + letterSpacingEm * size * Math.max(text.length - 1, 0);
+    if (w > maxWidth) size = Math.max(minSize, Math.floor(maxSize * (maxWidth / w)));
+    ctx.font = fontFn(weight, size);
+    return size;
+  }
+
+  const pad = 70;
+  const white = "#F5F6F8";
+  const amber = "#eab308";
+  const navy = "#0d0d1a";
+
+  ctx.fillStyle = navy;
+  ctx.fillRect(0, 0, W, H);
+
+  // Background photo (a generated floodlit-pitch shot) at 62% vertical
+  // anchor, brightened - matches the design's object-position/filter.
+  // Falls back to a plain gold-tinted glow if the asset's missing, so the
+  // card still looks intentional rather than broken.
+  ctx.save();
+  try {
+    const bg = await loadImage("/potm-bg.jpg");
+    const scale = Math.max(W / bg.width, H / bg.height);
+    const bw = bg.width * scale;
+    const bh = bg.height * scale;
+    ctx.filter = "brightness(1.5) contrast(1.05) saturate(1.15)";
+    ctx.drawImage(bg, W / 2 - bw / 2, H * 0.62 - bh * 0.62, bw, bh);
+    ctx.filter = "none";
+  } catch {
+    const radial = ctx.createRadialGradient(W / 2, H * 0.4, 0, W / 2, H * 0.4, W * 0.9);
+    radial.addColorStop(0, "rgba(234,179,8,0.16)");
+    radial.addColorStop(1, "rgba(234,179,8,0)");
+    ctx.fillStyle = radial;
+    ctx.fillRect(0, 0, W, H);
+  }
+  const scrim = ctx.createLinearGradient(0, 0, 0, H);
+  scrim.addColorStop(0, "rgba(13,13,26,0.78)");
+  scrim.addColorStop(0.24, "rgba(13,13,26,0.34)");
+  scrim.addColorStop(0.46, "rgba(13,13,26,0.66)");
+  scrim.addColorStop(0.62, "rgba(13,13,26,0.6)");
+  scrim.addColorStop(0.8, "rgba(13,13,26,0.14)");
+  scrim.addColorStop(1, "rgba(13,13,26,0.6)");
+  ctx.fillStyle = scrim;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+
+  ctx.fillStyle = amber;
+  ctx.fillRect(0, H - 6, W, 6);
+
+  // ── Header: crest, wordmark, month tab ─────────────────────────────
+  const crestSize = 74;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(pad + crestSize / 2, pad + crestSize / 2, crestSize / 2, 0, Math.PI * 2);
+  ctx.strokeStyle = amber;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.clip();
+  try {
+    const crest = await loadImage("/logo.png");
+    ctx.drawImage(crest, pad + 3, pad + 3, crestSize - 6, crestSize - 6);
+  } catch {
+    // Crest failed to load (offline etc.) - gold ring still shows.
+  }
+  ctx.restore();
+
+  const wordmarkX = pad + crestSize + 20;
+  ctx.textBaseline = "top";
+  ctx.textAlign = "left";
+  ctx.fillStyle = white;
+  ctx.font = interFont(700, 24);
+  letterSpaced(24 * 0.14);
+  ctx.shadowColor = "rgba(13,13,26,0.9)";
+  ctx.shadowBlur = 12;
+  ctx.fillText("WIRRAL COMMUNITY", wordmarkX, pad + 4);
+  ctx.fillText("FOOTBALL", wordmarkX, pad + 4 + 29);
+  resetLetterSpacing();
+  ctx.shadowBlur = 0;
+
+  const tabText = opts.monthLabel.toUpperCase();
+  const tabFontSize = 24;
+  ctx.font = interFont(700, tabFontSize);
+  letterSpaced(tabFontSize * 0.2);
+  const tabTextW = ctx.measureText(tabText).width;
+  resetLetterSpacing();
+  const tabPadX = 22;
+  const tabH = 61;
+  const tabW = tabTextW + tabPadX * 2;
+  const tabX = W - pad - tabW;
+  const tabY = pad + crestSize / 2 - tabH / 2;
+  ctx.fillStyle = amber;
+  ctx.fillRect(tabX, tabY, tabW, tabH);
+  ctx.fillStyle = navy;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.font = interFont(700, tabFontSize);
+  letterSpaced(tabFontSize * 0.2);
+  ctx.fillText(tabText, tabX + tabPadX, tabY + tabH / 2 + 1);
+  resetLetterSpacing();
+
+  // ── Label + name(s), vertically centred in the space between header
+  // and footer - same reflow principle as the result card's score
+  // section, just centred instead of bottom-anchored. ──────────────
+  const headerBottom = pad + crestSize;
+  const footerY = 1267;
+  const labelRowH = 29;
+  const labelToNameGap = 30;
+  const nameMaxW = W - pad * 2;
+  const names = opts.names.length > 0 ? opts.names : ["Nobody yet"];
+
+  ctx.font = interFont(700, 24);
+  letterSpaced(24 * 0.34);
+  const labelText = (names.length > 1 ? "PLAYERS OF THE MONTH" : "PLAYER OF THE MONTH");
+  resetLetterSpacing();
+
+  let contentH: number;
+  let nameSizes: number[] = [];
+  if (names.length <= 1) {
+    const size = fitFontSize(names[0].toUpperCase(), nameMaxW, soraFont, 800, 148, 40, -0.03);
+    nameSizes = [size];
+    contentH = labelRowH + labelToNameGap + size * 0.98;
+  } else {
+    const size1 = fitFontSize(names[0].toUpperCase(), nameMaxW, soraFont, 800, 108, 32, -0.02);
+    const size2 = fitFontSize(names[1].toUpperCase(), nameMaxW, soraFont, 800, 108, 32, -0.02);
+    nameSizes = [size1, size2];
+    const andRowH = 54; // measured: 14px margin + ~26px text + 14px margin
+    contentH = labelRowH + labelToNameGap + size1 * 1.05 + andRowH + size2 * 1.05;
+  }
+
+  const contentTop = headerBottom + (footerY - headerBottom - contentH) / 2;
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = amber;
+  ctx.fillRect(pad, contentTop + (labelRowH - 2) / 2, 56, 2);
+  ctx.font = interFont(700, 24);
+  letterSpaced(24 * 0.34);
+  ctx.shadowColor = "rgba(13,13,26,0.9)";
+  ctx.shadowBlur = 12;
+  ctx.fillText(labelText, pad + 56 + 18, contentTop);
+  resetLetterSpacing();
+  ctx.shadowBlur = 0;
+
+  let y = contentTop + labelRowH + labelToNameGap;
+  ctx.fillStyle = white;
+  ctx.shadowColor = "rgba(13,13,26,0.85)";
+  ctx.shadowBlur = 40;
+  if (names.length <= 1) {
+    ctx.font = soraFont(800, nameSizes[0]);
+    letterSpaced(nameSizes[0] * -0.03);
+    ctx.fillText(names[0].toUpperCase(), pad, y);
+    resetLetterSpacing();
+  } else {
+    ctx.font = soraFont(800, nameSizes[0]);
+    letterSpaced(nameSizes[0] * -0.02);
+    ctx.fillText(names[0].toUpperCase(), pad, y);
+    resetLetterSpacing();
+    y += nameSizes[0] * 1.05 + 14;
+    ctx.fillStyle = amber;
+    ctx.fillRect(pad, y + 11, 32, 2);
+    ctx.font = interFont(700, 22);
+    letterSpaced(22 * 0.2);
+    ctx.fillText("AND", pad + 32 + 16, y);
+    resetLetterSpacing();
+    y += 26 + 14;
+    ctx.fillStyle = white;
+    ctx.font = soraFont(800, nameSizes[1]);
+    letterSpaced(nameSizes[1] * -0.02);
+    ctx.fillText(names[1].toUpperCase(), pad, y);
+    resetLetterSpacing();
+  }
+  ctx.shadowBlur = 0;
+
+  // ── Footer ──────────────────────────────────────────────────────
+  const footerText = "WIRRAL COMMUNITY FOOTBALL";
+  ctx.font = interFont(600, 21);
+  letterSpaced(21 * 0.3);
+  const footerTextW = ctx.measureText(footerText).width;
+  resetLetterSpacing();
+  const footerTextX = W - pad - footerTextW;
+  ctx.strokeStyle = "rgba(248,250,252,0.2)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, footerY);
+  ctx.lineTo(footerTextX - 24, footerY);
+  ctx.stroke();
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "rgba(248,250,252,0.62)";
+  ctx.font = interFont(600, 21);
+  letterSpaced(21 * 0.3);
+  ctx.shadowColor = "rgba(13,13,26,0.9)";
+  ctx.shadowBlur = 12;
+  ctx.fillText(footerText, footerTextX, footerY + 1);
+  resetLetterSpacing();
+  ctx.shadowBlur = 0;
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Couldn't generate the image"));
+    }, "image/png");
+  });
+}
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -2261,6 +2503,29 @@ function App({ session }: { session: Session }) {
         motmWinner,
       });
       const file = new File([blob], `${game.venue.replace(/\s+/g, "-")}-${game.date}.png`, { type: "image/png" });
+
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file] });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name;
+        a.click();
+        URL.revokeObjectURL(url);
+        notifySuccess("Image downloaded");
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return; // user backed out of the share sheet
+      notifyError(err instanceof Error ? err.message : "Couldn't generate the image");
+    }
+  }
+
+  async function sharePlayerOfMonth() {
+    if (!playerOfMonth) return;
+    try {
+      const blob = await drawPlayerOfMonthCard({ monthLabel: playerOfMonth.monthLabel, names: playerOfMonth.names });
+      const file = new File([blob], `player-of-the-month-${playerOfMonth.monthLabel.replace(/\s+/g, "-")}.png`, { type: "image/png" });
 
       if (navigator.canShare?.({ files: [file] })) {
         await navigator.share({ files: [file] });
@@ -4349,6 +4614,9 @@ function App({ session }: { session: Session }) {
                 {playerOfMonth && (
                   <div className="wcf-shoutout wcf-potm">
                     🏅 Player of the Month — {playerOfMonth.monthLabel}: <strong>{playerOfMonth.names.join(" & ")}</strong>
+                    <div className="wcf-result-share">
+                      <button className="wcf-result-share-btn" onClick={sharePlayerOfMonth}>📤 Share</button>
+                    </div>
                   </div>
                 )}
                 {awards.map((a) => (
