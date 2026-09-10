@@ -1296,3 +1296,24 @@ drop policy if exists "push_subscriptions_update_own" on public.push_subscriptio
 create policy "push_subscriptions_update_own" on public.push_subscriptions for update
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
+
+-- Emergency contact details - a player's own next-of-kin name/number, so
+-- if something happens during a game the admins know who to call. Own
+-- table rather than columns on profiles: profiles_select lets every
+-- signed-in player read every other player's row, and a family member's
+-- phone number has no business being that widely visible. Only the
+-- player themselves and admins can read or write a given row.
+create table public.emergency_contacts (
+  player_id uuid primary key references public.profiles (id) on delete cascade,
+  contact_name text not null,
+  contact_phone text not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.emergency_contacts enable row level security;
+create policy "emergency_contacts_select" on public.emergency_contacts for select
+  using (player_id = auth.uid() or public.is_admin());
+create policy "emergency_contacts_insert_own_or_admin" on public.emergency_contacts for insert
+  with check (player_id = auth.uid() or public.is_admin());
+create policy "emergency_contacts_update_own_or_admin" on public.emergency_contacts for update
+  using (player_id = auth.uid() or public.is_admin())
+  with check (player_id = auth.uid() or public.is_admin());

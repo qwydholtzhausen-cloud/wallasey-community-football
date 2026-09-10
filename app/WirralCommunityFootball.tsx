@@ -167,6 +167,11 @@ interface PlayerRating {
   goalkeeping: number;
   position: PlayerPosition;
 }
+interface EmergencyContact {
+  player_id: string;
+  contact_name: string;
+  contact_phone: string;
+}
 const POT_CATEGORY_LABEL: Record<PotCategory, string> = {
   pitch: "Pitch hire",
   socials: "Socials",
@@ -1433,6 +1438,7 @@ function App({ session }: { session: Session }) {
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
   const [selfRatings, setSelfRatings] = useState<PlayerRating[]>([]);
   const [adminRatings, setAdminRatings] = useState<PlayerRating[]>([]);
+  const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([]);
   const [lineupView, setLineupView] = useState<"sheet" | "fairness" | "predict">("sheet");
   const [predictView, setPredictView] = useState<string>("season");
   const [predictOpenId, setPredictOpenId] = useState<string | null>(null);
@@ -1666,6 +1672,13 @@ function App({ session }: { session: Session }) {
     if (data) setAdminRatings(data as PlayerRating[]);
   }, []);
 
+  // RLS scopes this the same way as self-ratings: a player's query only
+  // ever returns their own row, an admin's returns everyone's.
+  const loadEmergencyContacts = useCallback(async () => {
+    const { data } = await supabase.from("emergency_contacts").select("player_id, contact_name, contact_phone");
+    if (data) setEmergencyContacts(data as EmergencyContact[]);
+  }, []);
+
   const loadClips = useCallback(async () => {
     const { data } = await supabase
       .from("clips")
@@ -1711,6 +1724,7 @@ function App({ session }: { session: Session }) {
         loadHiddenFeedItems(),
         loadSelfRatings(),
         loadAdminRatings(),
+        loadEmergencyContacts(),
         loadAdminMessages(),
         loadMonzoUnmatched(),
       ]),
@@ -1729,6 +1743,7 @@ function App({ session }: { session: Session }) {
       loadHiddenFeedItems,
       loadSelfRatings,
       loadAdminRatings,
+      loadEmergencyContacts,
       loadAdminMessages,
       loadMonzoUnmatched,
     ]
@@ -1865,6 +1880,15 @@ function App({ session }: { session: Session }) {
     if (error) return notifyError(error.message);
     notifySuccess("Saved your self-rating");
     await loadSelfRatings();
+  }
+
+  async function saveEmergencyContact(contactName: string, contactPhone: string) {
+    const { error } = await supabase
+      .from("emergency_contacts")
+      .upsert({ player_id: myId, contact_name: contactName, contact_phone: contactPhone, updated_at: new Date().toISOString() });
+    if (error) return notifyError(error.message);
+    notifySuccess("Emergency contact saved");
+    await loadEmergencyContacts();
   }
 
   async function saveAdminRating(playerId: string, fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) {
@@ -5331,6 +5355,8 @@ function App({ session }: { session: Session }) {
             onSaveSelfRating={saveSelfRating}
             adminRatings={adminRatings}
             onSaveAdminRating={saveAdminRating}
+            myEmergencyContact={emergencyContacts.find((c) => c.player_id === myId) ?? null}
+            onSaveEmergencyContact={saveEmergencyContact}
             ratingPlayerId={ratingPlayerId}
             onToggleRatingPlayer={(id) => setRatingPlayerId((cur) => (cur === id ? null : id))}
             myRecord={myRecord}
@@ -5360,12 +5386,14 @@ function App({ session }: { session: Session }) {
         const stats = playerCardStats[playerCardId] ?? { apps: 0, goals: 0, motm: 0 };
         const canSeeRating = isAdmin || playerCardId === myId;
         const rating = canSeeRating ? ratingByPlayer[playerCardId] ?? null : null;
+        const emergencyContact = canSeeRating ? emergencyContacts.find((c) => c.player_id === playerCardId) ?? null : null;
         const appsRank = playerStats.findIndex((p) => p.id === playerCardId) + 1;
         return (
           <PlayerCardModal
             profile={cardProfile}
             stats={stats}
             rating={rating}
+            emergencyContact={emergencyContact}
             canSeeRating={canSeeRating}
             isOwnCard={playerCardId === myId}
             rank={appsRank > 0 ? appsRank : null}
@@ -5609,6 +5637,7 @@ function PlayerCardModal({
   profile,
   stats,
   rating,
+  emergencyContact,
   canSeeRating,
   isOwnCard,
   rank,
@@ -5618,6 +5647,7 @@ function PlayerCardModal({
   profile: Profile;
   stats: { apps: number; goals: number; motm: number };
   rating: PlayerRating | null;
+  emergencyContact: EmergencyContact | null;
   canSeeRating: boolean;
   isOwnCard: boolean;
   rank: number | null;
@@ -5705,6 +5735,26 @@ function PlayerCardModal({
               <span>Ratings are private to {firstName} and the admins.</span>
             </div>
           )}
+
+          {canSeeRating && (
+            <div className="wcf-pcard-ratings">
+              <div className="wcf-pcard-ratings-top">
+                <span className="wcf-pcard-ratings-label">Emergency contact</span>
+                <span className="wcf-pcard-ratings-divider" />
+                <span className="wcf-pcard-ratings-visibility">{isOwnCard ? "ONLY YOU" : "ADMIN ONLY"}</span>
+              </div>
+              {emergencyContact ? (
+                <a className="wcf-pcard-emergency" href={`tel:${emergencyContact.contact_phone.replace(/\s+/g, "")}`}>
+                  <span className="wcf-pcard-emergency-name">{emergencyContact.contact_name}</span>
+                  <span className="wcf-pcard-emergency-phone">{emergencyContact.contact_phone}</span>
+                </a>
+              ) : (
+                <div className="wcf-pcard-private" style={{ marginTop: 0, paddingTop: 0, borderTop: "none" }}>
+                  <span>{isOwnCard ? "Not added yet — add it in Account settings." : "Not added yet."}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -5786,6 +5836,8 @@ function AccountPanel({
   onSaveSelfRating,
   adminRatings,
   onSaveAdminRating,
+  myEmergencyContact,
+  onSaveEmergencyContact,
   ratingPlayerId,
   onToggleRatingPlayer,
   myRecord,
@@ -5815,6 +5867,8 @@ function AccountPanel({
   onSaveSelfRating: (fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) => void;
   adminRatings: PlayerRating[];
   onSaveAdminRating: (playerId: string, fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) => void;
+  myEmergencyContact: EmergencyContact | null;
+  onSaveEmergencyContact: (contactName: string, contactPhone: string) => void;
   ratingPlayerId: string | null;
   onToggleRatingPlayer: (id: string) => void;
   clubSettings: ClubSettings;
@@ -5840,6 +5894,8 @@ function AccountPanel({
   onMarkMessageRead: (id: string) => void;
 }) {
   const [name, setName] = useState(profile.display_name);
+  const [contactName, setContactName] = useState(myEmergencyContact?.contact_name ?? "");
+  const [contactPhone, setContactPhone] = useState(myEmergencyContact?.contact_phone ?? "");
   const myMessages = messages.filter((m) => m.recipient_id === profile.id);
   const unreadMessages = myMessages.filter((m) => !m.read_at);
   const readMessages = myMessages.filter((m) => m.read_at);
@@ -5867,6 +5923,10 @@ function AccountPanel({
   const pushOn = !!profile.push_opt_in && pushGranted;
 
   useEffect(() => setName(profile.display_name), [profile.display_name]);
+  useEffect(() => {
+    setContactName(myEmergencyContact?.contact_name ?? "");
+    setContactPhone(myEmergencyContact?.contact_phone ?? "");
+  }, [myEmergencyContact]);
 
   return (
     <div className="wcf-account">
@@ -6058,6 +6118,26 @@ function AccountPanel({
               Save
             </button>
           </div>
+        </label>
+
+        <label className="wcf-account-field">
+          Emergency contact
+          <div className="wcf-account-emergency">
+            <input placeholder="Contact name" value={contactName} onChange={(e) => setContactName(e.target.value)} />
+            <input placeholder="Phone number" type="tel" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
+            <button
+              onClick={() => onSaveEmergencyContact(contactName.trim(), contactPhone.trim())}
+              disabled={
+                !contactName.trim() ||
+                !contactPhone.trim() ||
+                (contactName.trim() === (myEmergencyContact?.contact_name ?? "") &&
+                  contactPhone.trim() === (myEmergencyContact?.contact_phone ?? ""))
+              }
+            >
+              Save
+            </button>
+          </div>
+          <span className="wcf-push-sub">Who to call if something happens during a game. Only you and admins can see this.</span>
         </label>
 
         <div className="wcf-push-section">
@@ -8920,6 +9000,10 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-account-rename input{flex:1;min-width:0;min-height:46px;box-sizing:border-box;background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:13px;border-radius:12px;font-size:13px;font-weight:600;font-family:var(--sans);text-transform:none;letter-spacing:normal}
 .wcf-account-rename button{flex:none;min-height:46px;padding:0 15px;border-radius:12px;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.36);color:#7fb0ec;font-weight:700;font-size:11.5px;cursor:pointer}
 .wcf-account-rename button:disabled{opacity:.5;cursor:not-allowed}
+.wcf-account-emergency{display:flex;flex-direction:column;gap:8px}
+.wcf-account-emergency input{min-width:0;min-height:46px;box-sizing:border-box;background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:13px;border-radius:12px;font-size:13px;font-weight:600;font-family:var(--sans);text-transform:none;letter-spacing:normal}
+.wcf-account-emergency button{min-height:46px;padding:0 15px;border-radius:12px;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.36);color:#7fb0ec;font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-account-emergency button:disabled{opacity:.5;cursor:not-allowed}
 .wcf-signout{width:100%;margin-top:14px;min-height:46px;padding:13px;border-radius:12px;background:rgba(240,82,94,.1);border:1px solid rgba(240,82,94,.3);color:var(--red-hi);font-weight:700;font-size:12px;cursor:pointer}
 .wcf-signout:hover{background:rgba(240,82,94,.16)}
 .wcf-push-section{display:flex;flex-direction:column;gap:11px;margin-top:14px;padding:12px 13px;border-radius:14px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.12)}
@@ -9010,6 +9094,9 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pcard-overall b{font-family:var(--display);font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--blue)}
 .wcf-pcard-private{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);text-align:center}
 .wcf-pcard-private span{font-size:10.5px;line-height:1.5;color:#64748b}
+.wcf-pcard-emergency{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-radius:12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.28);text-decoration:none}
+.wcf-pcard-emergency-name{font-weight:700;font-size:12.5px;color:#f1f5f9}
+.wcf-pcard-emergency-phone{font-family:var(--mono);font-weight:700;font-size:12.5px;font-variant-numeric:tabular-nums;color:#fca5a5}
 .wcf-lightbox-close{position:fixed;top:16px;right:16px;width:38px;height:38px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-size:22px;line-height:1;cursor:pointer;z-index:101}
 .wcf-roles-stats{display:flex;gap:9px}
 .wcf-roles-stat{flex:1;padding:12px 13px;border-radius:14px}
