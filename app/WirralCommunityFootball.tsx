@@ -6120,7 +6120,7 @@ function AccountPanel({
           </div>
         </label>
 
-        <label className="wcf-account-field">
+        <label className="wcf-account-field" style={{ marginTop: 14 }}>
           Emergency contact
           <div className="wcf-account-emergency">
             <input placeholder="Contact name" value={contactName} onChange={(e) => setContactName(e.target.value)} />
