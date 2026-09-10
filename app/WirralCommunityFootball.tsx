@@ -910,8 +910,8 @@ async function drawResultCard(opts: {
     ctx.fillStyle = amber;
     ctx.fillText("MAN OF THE MATCH", motmTextX, motmTop + 27);
     resetLetterSpacing();
-    ctx.font = soraFont(800, 42);
-    letterSpaced(42 * -0.015);
+    const motmSize = fitFontSize(opts.motmWinner, W - pad - motmTextX, soraFont, 800, 42, 24, -0.015);
+    letterSpaced(motmSize * -0.015);
     ctx.fillStyle = white;
     ctx.fillText(opts.motmWinner, motmTextX, motmTop + 27 + 22 + 9);
     resetLetterSpacing();
@@ -2484,7 +2484,11 @@ function App({ session }: { session: Session }) {
     const ranked = candidates
       .map((c) => ({ name: c.player.display_name, votes: tally[c.player_id] ?? 0 }))
       .sort((a, b) => b.votes - a.votes);
-    const motmWinner = !motmVotingOpen(game) && ranked[0]?.votes > 0 ? ranked[0].name : null;
+    const motmTopVotes = ranked[0]?.votes ?? 0;
+    const motmWinner =
+      !motmVotingOpen(game) && motmTopVotes > 0
+        ? ranked.filter((r) => r.votes === motmTopVotes).map((r) => r.name).join(" & ")
+        : null;
 
     try {
       const blob = await drawResultCard({
@@ -2968,9 +2972,11 @@ function App({ session }: { session: Session }) {
       if (!motmVotingOpen(g)) {
         const tally = motmTallyByGame[g.id] ?? {};
         const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-        const winnerId = ranked[0]?.[0];
-        const winner = winnerId ? g.bookings.find((b) => b.player_id === winnerId)?.player : undefined;
-        if (winner) {
+        const topVotes = ranked[0]?.[1] ?? 0;
+        const winners = (topVotes > 0 ? ranked.filter(([, votes]) => votes === topVotes) : [])
+          .map(([id]) => g.bookings.find((b) => b.player_id === id)?.player)
+          .filter((p): p is Profile => !!p);
+        if (winners.length > 0) {
           items.push({
             key: `motm-${g.id}`,
             ts: toMs(kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES)),
@@ -2985,7 +2991,7 @@ function App({ session }: { session: Session }) {
             tone: "amber",
             text: (
               <>
-                <strong>{winner.display_name}</strong> voted Man of the Match
+                <strong>{winners.map((w) => w.display_name).join(" & ")}</strong> voted Man of the Match
               </>
             ),
           });
@@ -3273,7 +3279,12 @@ function App({ session }: { session: Session }) {
       if (motmVotingOpen(g)) return;
       const tally = motmTallyByGame[g.id] ?? {};
       const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-      if (ranked.length > 0 && ranked[0][1] > 0) bump(ranked[0][0], "motm", 1);
+      const topVotes = ranked[0]?.[1] ?? 0;
+      if (topVotes > 0) {
+        for (const [playerId, votes] of ranked) {
+          if (votes === topVotes) bump(playerId, "motm", 1);
+        }
+      }
     });
     return stats;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4958,7 +4969,13 @@ function App({ session }: { session: Session }) {
                           {!votingOpen && totalVotes > 0 && (
                             <div className="wcf-motm wcf-motm-closed">
                               <div className="wcf-motm-winner">
-                                🏆 Man of the Match — <strong>{ranked[0].candidate.player.display_name}</strong>
+                                🏆 Man of the Match —{" "}
+                                <strong>
+                                  {ranked
+                                    .filter((r) => r.votes === topVotes)
+                                    .map((r) => r.candidate.player.display_name)
+                                    .join(" & ")}
+                                </strong>
                               </div>
                               {ranked.filter((r) => r.votes > 0).map((r) => {
                                 const voters = votersFor(r.candidate.player_id);
