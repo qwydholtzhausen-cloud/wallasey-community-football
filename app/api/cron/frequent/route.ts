@@ -151,12 +151,24 @@ export async function GET(req: Request) {
   // above, and if still unpaid once the game's played, the post-game
   // overdue flow (below) picks it up from there instead.
   //
+  // Just outside that window is its own edge case: a booking made at,
+  // say, 48h01m before kickoff would otherwise see both the 72h warning
+  // and 48h removal deadlines already in the past the moment it's made,
+  // so it'd get warned and removed within minutes of being booked -
+  // exactly the kind of last-minute punishment the exemption above
+  // exists to prevent. MIN_GRACE_HOURS floors both deadlines off the
+  // booking time itself, so anyone this close to the boundary still gets
+  // a real warning-then-removal ramp instead of an instant hit. It only
+  // ever pushes the deadlines later, never earlier, so it has no effect
+  // on a normal booking make weeks out.
+  //
   // The 72h warning is a notification only - it never deletes anything.
   // The ONLY code path anywhere in the app that removes someone from a
   // booking for non-payment is the 48h block below; this just gives them
   // a heads-up a day ahead of it.
   const REMOVAL_HOURS_BEFORE_KICKOFF = 48;
   const WARNING_HOURS_BEFORE_KICKOFF = 72;
+  const MIN_GRACE_HOURS = 3;
 
   const { data: staleUnpaid } = await admin
     .from("bookings")
@@ -173,13 +185,16 @@ export async function GET(req: Request) {
     if (kickoffMs <= nowMs) continue; // already past - overdue flow below handles it instead
 
     // promoted_at, not created_at, when this booking came off the
-    // waiting list - exemption is based on when they actually got a
-    // real, payable spot, not from when they first joined the queue.
+    // waiting list - exemption/grace is based on when they actually got
+    // a real, payable spot, not from when they first joined the queue.
     const windowStartMs = new Date(b.promoted_at ?? b.created_at).getTime();
     if (kickoffMs - windowStartMs <= REMOVAL_HOURS_BEFORE_KICKOFF * 3600000) continue; // booked within the window - exempt, always
 
-    const removalAtMs = kickoffMs - REMOVAL_HOURS_BEFORE_KICKOFF * 3600000;
-    const warnAtMs = kickoffMs - WARNING_HOURS_BEFORE_KICKOFF * 3600000;
+    const warnAtMs = Math.max(kickoffMs - WARNING_HOURS_BEFORE_KICKOFF * 3600000, windowStartMs + MIN_GRACE_HOURS * 3600000);
+    const removalAtMs = Math.max(
+      kickoffMs - REMOVAL_HOURS_BEFORE_KICKOFF * 3600000,
+      warnAtMs + (WARNING_HOURS_BEFORE_KICKOFF - REMOVAL_HOURS_BEFORE_KICKOFF) * 3600000
+    );
 
     if (nowMs < warnAtMs) continue;
 
