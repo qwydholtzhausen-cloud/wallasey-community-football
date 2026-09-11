@@ -6902,7 +6902,8 @@ function AdminConsole({
   // Regroups the flat overdue list by player - "owed" (unpaid, real
   // debt) sorted to the top by amount, "pending" (already marked paid,
   // just awaiting confirmation) kept separate and never counted toward
-  // the amount shown, same distinction the day-5 warning already makes.
+  // the amount shown, same distinction the pre-removal warning already
+  // makes (see the frequent cron job).
   const [expandedTabId, setExpandedTabId] = useState<string | null>(null);
   const [showPendingDetail, setShowPendingDetail] = useState(false);
   const [showOverdueDetail, setShowOverdueDetail] = useState(false);
