@@ -130,105 +130,15 @@ export async function GET(req: Request) {
     await markNotified(key);
   }
 
-  // --- Unpaid bookings on upcoming games: warn at 72h, remove at 48h
-  // before kickoff ---
-  // Anchored off kickoff, not booking time. Fixtures often get posted
-  // weeks ahead, and the old day-5/day-7 rule (clock starting the moment
-  // someone booked) meant a spot reserved a month out - not yet paid
-  // because it wasn't due yet - got silently removed while the game was
-  // still ages away. That's exactly the "putting people back on games"
-  // busywork this replaces: nothing happens at all until the game's
-  // actually close. Scoped to "unpaid" specifically, not "pending" -
-  // someone who's already tapped "I've paid" has taken action and
-  // shouldn't be punished for admin not having gotten to confirming it
-  // yet. Only touches games that haven't kicked off yet - once a game's
-  // played, the existing overdue reminder + booking-block flow takes
-  // over instead, which is a warning rather than a removal.
-  //
-  // A grace floor off the booking time (not just kickoff) stops this
-  // punishing a last-minute booking: once kickoff-minus-48h has already
-  // passed, a fresh booking gets REMOVAL_GRACE_HOURS from when THEY
-  // booked before either a warning or a removal can fire - and if
-  // kickoff itself arrives first, the "already past" guard below means
-  // it never fires at all, deliberately, rather than blocking someone
-  // who books close to kickoff.
-  //
-  // The 72h warning is a notification only - it never deletes anything.
-  // The ONLY code path anywhere in the app that removes someone from a
-  // booking for non-payment is the 48h block below; this just gives them
-  // a heads-up a day ahead of it.
-  const REMOVAL_HOURS_BEFORE_KICKOFF = 48;
-  const WARNING_HOURS_BEFORE_KICKOFF = 72;
-  const REMOVAL_GRACE_HOURS = 3;
-
-  const { data: staleUnpaid } = await admin
-    .from("bookings")
-    .select(
-      "id, player_id, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name), game:games(id, venue, date, kickoff, price)"
-    )
-    .eq("status", "unpaid")
-    .eq("waiting", false);
-
-  for (const b of staleUnpaid ?? []) {
-    const game = (Array.isArray(b.game) ? b.game[0] : b.game) as GameRefWithKickoff | null;
-    if (!game) continue;
-    const kickoffMs = toMs(kickoffCutoff(game.date, game.kickoff, 0));
-    if (kickoffMs <= nowMs) continue; // already past - overdue flow below handles it instead
-
-    // promoted_at, not created_at, when this booking came off the
-    // waiting list - the grace floor should start from when they got a
-    // real, payable spot, not from when they first joined the queue.
-    const windowStartMs = new Date(b.promoted_at ?? b.created_at).getTime();
-    const graceFloorMs = windowStartMs + REMOVAL_GRACE_HOURS * 3600000;
-    const removalAtMs = Math.max(kickoffMs - REMOVAL_HOURS_BEFORE_KICKOFF * 3600000, graceFloorMs);
-    const warnAtMs = Math.max(kickoffMs - WARNING_HOURS_BEFORE_KICKOFF * 3600000, graceFloorMs);
-
-    if (nowMs < warnAtMs) continue;
-
-    if (nowMs < removalAtMs) {
-      // Warning - notification only, no delete. Also drops a copy into
-      // the in-app inbox (sender_id null - system-generated, not from a
-      // specific admin) so it's still visible with a read receipt to
-      // players who don't have push working, which is exactly the gap
-      // the inbox exists to cover.
-      const key = `pre-removal-${b.id}`;
-      if (notifiedKeys.has(key)) continue;
-      const hoursLeft = Math.max(1, Math.round((removalAtMs - nowMs) / 3600000));
-      await sendPushToUsers([b.player_id], {
-        title: "You'll lose this spot soon ⚠️",
-        body: `You'll be removed from ${game.venue} on ${fmtDateLabel(game.date)} in about ${hoursLeft}h unless you pay — pay now to keep your spot.`,
-        url: "/",
-      });
-      await admin.from("admin_messages").insert({
-        recipient_id: b.player_id,
-        sender_id: null,
-        message: `You're still down as owing £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)}. You'll be removed from the game in about ${hoursLeft}h unless you pay — sort it when you get a sec.`,
-      });
-      await markNotified(key);
-      continue;
-    }
-
-    // Removal - the one and only place that actually deletes a booking
-    // for non-payment.
-    const player = Array.isArray(b.player) ? b.player[0] : b.player;
-
-    const { error: deleteErr } = await admin.from("bookings").delete().eq("id", b.id);
-    if (deleteErr) {
-      console.error("frequent cron: failed to remove stale unpaid booking", b.id, deleteErr.message);
-      continue;
-    }
-
-    await sendPushToUsers([b.player_id], {
-      title: "Removed from booking",
-      body: `You were removed from ${game.venue} on ${fmtDateLabel(game.date)} — no payment within 48 hours of kick-off. Book again if you still want a spot.`,
-      url: "/",
-    });
-    await admin.from("audit_log").insert({
-      actor_id: null,
-      action: "Auto-removed unpaid booking",
-      details: `${player?.display_name ?? "Unknown player"} — ${game.venue}, ${fmtDateLabel(game.date)} (unpaid within 48h of kick-off)`,
-    });
-  }
+  // There's deliberately no pre-kickoff removal for non-payment anymore -
+  // fixtures get posted weeks ahead, and any fixed deadline (whether tied
+  // to booking time or to kickoff) ends up either nagging someone whose
+  // game is still ages off or catching a last-minute booker unfairly.
+  // Nobody now loses their spot automatically before a game. The
+  // enforcement is entirely post-game instead: the reminder just below,
+  // plus has_overdue_payment() in SQL, which blocks booking your *next*
+  // game while a past one's still unpaid - real teeth, without ever
+  // deleting someone's booking out from under them.
 
   // --- Overdue reminder, once the game's finished if still unconfirmed ---
   // A second, later nudge before the hard booking-block kicks in (that
