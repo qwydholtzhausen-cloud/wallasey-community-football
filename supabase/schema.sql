@@ -1317,3 +1317,49 @@ create policy "emergency_contacts_insert_own_or_admin" on public.emergency_conta
 create policy "emergency_contacts_update_own_or_admin" on public.emergency_contacts for update
   using (player_id = auth.uid() or public.is_admin())
   with check (player_id = auth.uid() or public.is_admin());
+
+-- Admin player ratings move to a 1-10 scale (self-ratings stay 1-5) for
+-- finer balancing precision when an admin rates someone - the app
+-- normalizes admin values back to a /5 equivalent wherever they're
+-- compared against self-ratings (team generator, fairness view, player
+-- cards), so this only changes the input resolution, not the meaning.
+-- Drops whichever existing check constraint sits on each of these four
+-- columns, found by matching pg_constraint's conkey against the column's
+-- attnum rather than pattern-matching the constraint body text - Postgres
+-- rewrites "between 1 and 5" into "(x >= 1) AND (x <= 5)" internally, so
+-- a text match against the original wording never actually finds it.
+do $$
+declare
+  col text;
+  c record;
+begin
+  foreach col in array array['fitness', 'attack', 'defence', 'goalkeeping']
+  loop
+    for c in
+      select con.conname
+      from pg_constraint con
+      join pg_attribute att on att.attrelid = con.conrelid and att.attnum = any(con.conkey)
+      where con.conrelid = 'public.player_admin_ratings'::regclass
+        and con.contype = 'c'
+        and att.attname = col
+    loop
+      execute format('alter table public.player_admin_ratings drop constraint %I', c.conname);
+    end loop;
+  end loop;
+end $$;
+
+-- Rescale every existing row so its real meaning is preserved, not just
+-- its raw number - a "5/5" rated before this change is a "10/10" now,
+-- not a "5/10" (which the app's new /2 normalization would otherwise
+-- read as half as good as it actually is). One-time, since every rating
+-- saved after this point is entered directly on the 1-10 scale already.
+update public.player_admin_ratings
+set fitness = least(fitness * 2, 10),
+    attack = least(attack * 2, 10),
+    defence = least(defence * 2, 10),
+    goalkeeping = least(goalkeeping * 2, 10);
+
+alter table public.player_admin_ratings add constraint player_admin_ratings_fitness_check check (fitness between 1 and 10);
+alter table public.player_admin_ratings add constraint player_admin_ratings_attack_check check (attack between 1 and 10);
+alter table public.player_admin_ratings add constraint player_admin_ratings_defence_check check (defence between 1 and 10);
+alter table public.player_admin_ratings add constraint player_admin_ratings_goalkeeping_check check (goalkeeping between 1 and 10);

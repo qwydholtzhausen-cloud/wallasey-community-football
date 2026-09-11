@@ -32,11 +32,11 @@ function StatusBadge({ status }: { status: PayStatus }) {
   return <span className={"wcf-status-badge " + status}>{STATUS_LABEL[status]}</span>;
 }
 
-function StarPicker({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+function StarPicker({ value, onChange, max = 5 }: { value: number; onChange: (n: number) => void; max?: number }) {
   return (
     <div className="wcf-star-picker">
-      {[1, 2, 3, 4, 5].map((n) => (
-        <button key={n} type="button" className={"wcf-star" + (n <= value ? " on" : "")} onClick={() => onChange(n)} aria-label={`${n} of 5`}>
+      {Array.from({ length: max }, (_, i) => i + 1).map((n) => (
+        <button key={n} type="button" className={"wcf-star" + (n <= value ? " on" : "")} onClick={() => onChange(n)} aria-label={`${n} of ${max}`}>
           ★
         </button>
       ))}
@@ -48,15 +48,21 @@ function RatingForm({
   initial,
   onSave,
   saveLabel,
+  max = 5,
 }: {
   initial: PlayerRating | null;
   onSave: (fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) => void;
   saveLabel: string;
+  // Admin ratings go out of 10 (self stays out of 5) for finer balancing
+  // precision - see the ratingByPlayer normalization where the two scales
+  // get reconciled back to one for actual use.
+  max?: number;
 }) {
-  const [fitness, setFitness] = useState(initial?.fitness ?? 3);
-  const [attack, setAttack] = useState(initial?.attack ?? 3);
-  const [defence, setDefence] = useState(initial?.defence ?? 3);
-  const [goalkeeping, setGoalkeeping] = useState(initial?.goalkeeping ?? 3);
+  const mid = Math.round(max / 2);
+  const [fitness, setFitness] = useState(initial?.fitness ?? mid);
+  const [attack, setAttack] = useState(initial?.attack ?? mid);
+  const [defence, setDefence] = useState(initial?.defence ?? mid);
+  const [goalkeeping, setGoalkeeping] = useState(initial?.goalkeeping ?? mid);
   const [position, setPosition] = useState<PlayerPosition>(initial?.position ?? "midfield");
   const metrics: { label: string; value: number; onChange: (n: number) => void }[] = [
     { label: "Fitness", value: fitness, onChange: setFitness },
@@ -71,18 +77,18 @@ function RatingForm({
         <div key={m.label} className="wcf-rating-row">
           <div className="wcf-rating-row-top">
             <span>{m.label}</span>
-            <b>{m.value.toFixed(1)}</b>
+            <b>{m.value.toFixed(1)} / {max}</b>
           </div>
           <div className="wcf-rating-track">
             <div
               className="wcf-rating-fill"
               style={{
-                width: `${(m.value / 5) * 100}%`,
-                background: `linear-gradient(90deg,${ratingFillColor(m.value)}99,${ratingFillColor(m.value)})`,
+                width: `${(m.value / max) * 100}%`,
+                background: `linear-gradient(90deg,${ratingFillColor((m.value / max) * 5)}99,${ratingFillColor((m.value / max) * 5)})`,
               }}
             />
           </div>
-          <StarPicker value={m.value} onChange={m.onChange} />
+          <StarPicker value={m.value} onChange={m.onChange} max={max} />
         </div>
       ))}
       <div className="wcf-rating-row">
@@ -3280,7 +3286,13 @@ function App({ session }: { session: Session }) {
   const ratingByPlayer = useMemo(() => {
     const map: Record<string, PlayerRating> = {};
     for (const r of selfRatings) map[r.player_id] = r;
-    for (const r of adminRatings) map[r.player_id] = r;
+    // Admin ratings are entered out of 10 (self stays out of 5) for finer
+    // balancing precision - normalized back to the same /5 scale here so
+    // every consumer downstream (fairness view, the team generator,
+    // player cards) keeps comparing like-for-like regardless of source.
+    for (const r of adminRatings) {
+      map[r.player_id] = { ...r, fitness: r.fitness / 2, attack: r.attack / 2, defence: r.defence / 2, goalkeeping: r.goalkeeping / 2 };
+    }
     return map;
   }, [selfRatings, adminRatings]);
 
@@ -3391,6 +3403,13 @@ function App({ session }: { session: Session }) {
         const admin = adminRatings.find((r) => r.player_id === b.player_id);
         const self = selfRatings.find((r) => r.player_id === b.player_id);
         const effective = admin ?? self ?? null;
+        // Sort key only, normalized to the same /5 scale as self-ratings -
+        // otherwise an admin-rated player (out of 10) would always outrank
+        // an equally-good self-rated one (out of 5) purely because the raw
+        // numbers sit on different scales. The per-metric numbers below
+        // stay raw; the Admin/Self badge on each row already gives the
+        // scale context.
+        const overall = effective ? (effective.fitness + effective.attack + effective.defence) / 3 / (admin ? 2 : 1) : null;
         return {
           id: b.player_id,
           name: b.player.display_name,
@@ -3400,7 +3419,7 @@ function App({ session }: { session: Session }) {
           attack: effective?.attack ?? null,
           defence: effective?.defence ?? null,
           goalkeeping: effective?.goalkeeping ?? null,
-          overall: effective ? (effective.fitness + effective.attack + effective.defence) / 3 : null,
+          overall,
         };
       })
       .sort((a, b) => (b.overall ?? -1) - (a.overall ?? -1));
@@ -6401,6 +6420,7 @@ function AccountPanel({
                       onToggleRatingPlayer(p.id);
                     }}
                     saveLabel={`Save ${p.display_name}'s rating`}
+                    max={10}
                   />
                 )}
               </div>
