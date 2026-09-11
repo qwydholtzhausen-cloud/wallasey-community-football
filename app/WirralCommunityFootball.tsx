@@ -6413,15 +6413,17 @@ function AccountPanel({
                   </button>
                 </div>
                 {ratingPlayerId === p.id && (
-                  <RatingForm
-                    initial={adminRatings.find((r) => r.player_id === p.id) ?? null}
-                    onSave={(fitness, attack, defence, goalkeeping, position) => {
-                      onSaveAdminRating(p.id, fitness, attack, defence, goalkeeping, position);
-                      onToggleRatingPlayer(p.id);
-                    }}
-                    saveLabel={`Save ${p.display_name}'s rating`}
-                    max={10}
-                  />
+                  <div style={{ marginTop: 14 }}>
+                    <RatingForm
+                      initial={adminRatings.find((r) => r.player_id === p.id) ?? null}
+                      onSave={(fitness, attack, defence, goalkeeping, position) => {
+                        onSaveAdminRating(p.id, fitness, attack, defence, goalkeeping, position);
+                        onToggleRatingPlayer(p.id);
+                      }}
+                      saveLabel={`Save ${p.display_name}'s rating`}
+                      max={10}
+                    />
+                  </div>
                 )}
               </div>
             );
