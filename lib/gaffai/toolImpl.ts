@@ -29,6 +29,48 @@ async function namesById(admin: SupabaseClient, ids: string[]): Promise<Record<s
   return Object.fromEntries((data ?? []).map((p) => [p.id, p.display_name]));
 }
 
+interface RatingSummary {
+  fitness: number;
+  attack: number;
+  defence: number;
+  goalkeeping: number;
+  overall: number;
+  source: "self" | "admin";
+}
+
+// Batch version of the same self/admin merge logic as the client's
+// ratingByPlayer useMemo (admin overrides self, normalized /2) - this is
+// what actually fixed the "highest rated player in the next fixture"
+// question, which previously required one get_player_detail call per
+// roster player (12-16 round trips) and both timed out and, when it
+// didn't, reasoned off an incomplete, inconsistent partial sample.
+// "overall" matches the app's own definition everywhere it's used
+// (fitness+attack+defence)/3 - goalkeeping deliberately excluded, same
+// as generateBalancedTeams/nextConfirmedRatings.
+async function ratingsById(admin: SupabaseClient, ids: string[]): Promise<Record<string, RatingSummary | null>> {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  const result: Record<string, RatingSummary | null> = {};
+  for (const id of uniqueIds) result[id] = null;
+  if (uniqueIds.length === 0) return result;
+
+  const [{ data: selfRatings }, { data: adminRatings }] = await Promise.all([
+    admin.from("player_self_ratings").select("player_id, fitness, attack, defence, goalkeeping").in("player_id", uniqueIds),
+    admin.from("player_admin_ratings").select("player_id, fitness, attack, defence, goalkeeping").in("player_id", uniqueIds),
+  ]);
+
+  for (const r of selfRatings ?? []) {
+    result[r.player_id] = { fitness: r.fitness, attack: r.attack, defence: r.defence, goalkeeping: r.goalkeeping, overall: (r.fitness + r.attack + r.defence) / 3, source: "self" };
+  }
+  for (const r of adminRatings ?? []) {
+    const fitness = r.fitness / 2;
+    const attack = r.attack / 2;
+    const defence = r.defence / 2;
+    const goalkeeping = r.goalkeeping / 2;
+    result[r.player_id] = { fitness, attack, defence, goalkeeping, overall: (fitness + attack + defence) / 3, source: "admin" };
+  }
+  return result;
+}
+
 export interface MarkPaidAction {
   kind: "mark_paid";
   bookingId: string;
@@ -48,7 +90,7 @@ export interface CreateFixtureAction {
 
 async function findGames(
   admin: SupabaseClient,
-  args: { date_from?: string; date_to?: string; venue_contains?: string; published_only?: boolean; limit?: number }
+  args: { date_from?: string; date_to?: string; venue_contains?: string; published_only?: boolean; sort?: "asc" | "desc"; limit?: number }
 ) {
   let query = admin
     .from("games")
@@ -57,7 +99,7 @@ async function findGames(
   if (args.date_to) query = query.lte("date", args.date_to);
   if (args.venue_contains) query = query.ilike("venue", `%${args.venue_contains}%`);
   if (args.published_only) query = query.eq("published", true);
-  query = query.order("date", { ascending: true }).limit(args.limit ?? 20);
+  query = query.order("date", { ascending: args.sort !== "desc" }).limit(args.limit ?? 20);
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -155,10 +197,8 @@ async function getGameDetail(admin: SupabaseClient, args: { game_id: string }) {
     .select("id, player_id, status, waiting, team, pot_exempt_reason, created_at, promoted_at")
     .eq("game_id", args.game_id);
   const bookingRows = bookingsRaw ?? [];
-  const bookingNames = await namesById(
-    admin,
-    bookingRows.map((b) => b.player_id)
-  );
+  const playerIds = bookingRows.map((b) => b.player_id);
+  const [bookingNames, bookingRatings] = await Promise.all([namesById(admin, playerIds), ratingsById(admin, playerIds)]);
   const bookings = bookingRows.map((b) => ({
     booking_id: b.id,
     player_name: bookingNames[b.player_id] ?? "Unknown",
@@ -168,6 +208,10 @@ async function getGameDetail(admin: SupabaseClient, args: { game_id: string }) {
     pot_exempt: !!b.pot_exempt_reason,
     created_at: b.created_at,
     promoted_at: b.promoted_at,
+    // Already normalized/merged (admin overrides self, /2 scaled) -
+    // don't re-derive this per player, use it directly, e.g. for
+    // "who's rated highest in this game's roster."
+    rating: bookingRatings[b.player_id] ?? null,
   }));
 
   const { data: goalRowsRaw } = await admin.from("game_stats").select("player_id, goals, own_goals").eq("game_id", args.game_id);
@@ -275,6 +319,27 @@ async function getPlayerDetail(admin: SupabaseClient, args: { player_id: string 
 // query rather than N RPC calls: waiting=false, status != 'confirmed',
 // and the game's calendar date has already passed (that function compares
 // against a plain date, not a kickoff-cutoff time - matching it exactly).
+// Two flat queries regardless of squad size, rather than get_player_detail
+// per player - that's the one that timed out asking this exact question
+// against a ~40-player squad (each detail call runs 5 sub-queries; N of
+// those blows both the tool-round cap and the request timeout).
+async function findUnratedPlayers(admin: SupabaseClient, args: { role?: string }) {
+  let profileQuery = admin.from("profiles").select("id, display_name, role");
+  if (args.role) profileQuery = profileQuery.eq("role", args.role);
+  const [{ data: profiles }, { data: selfRatings }, { data: adminRatings }] = await Promise.all([
+    profileQuery,
+    admin.from("player_self_ratings").select("player_id"),
+    admin.from("player_admin_ratings").select("player_id"),
+  ]);
+
+  const selfSet = new Set((selfRatings ?? []).map((r) => r.player_id));
+  const adminSet = new Set((adminRatings ?? []).map((r) => r.player_id));
+
+  return (profiles ?? [])
+    .filter((p) => !selfSet.has(p.id) || !adminSet.has(p.id))
+    .map((p) => ({ name: p.display_name, has_self_rating: selfSet.has(p.id), has_admin_rating: adminSet.has(p.id) }));
+}
+
 async function findOverduePlayers(admin: SupabaseClient) {
   const todayUk = nowInLondon().slice(0, 10);
   const { data } = await admin.from("bookings").select("player_id, status, games(date, venue)").eq("waiting", false).neq("status", "confirmed");
@@ -458,6 +523,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   get_game_detail: getGameDetail,
   find_players: findPlayers,
   get_player_detail: getPlayerDetail,
+  find_unrated_players: findUnratedPlayers,
   find_overdue_players: findOverduePlayers,
   get_payment_status: getPaymentStatus,
   get_motm_winner: getMotmWinner,

@@ -4,6 +4,7 @@ import { callClaude, type AnthropicMessage, type AnthropicContentBlock } from ".
 import { GAFFAI_TOOLS } from "../../../../lib/gaffai/tools";
 import { GAFFAI_SYSTEM_PROMPT } from "../../../../lib/gaffai/prompt";
 import { TOOL_IMPL, executeMarkPaid, executeCreateFixture, type MarkPaidAction, type CreateFixtureAction } from "../../../../lib/gaffai/toolImpl";
+import { nowInLondon } from "../../../../lib/time";
 
 // This app is on Vercel Hobby (see app/api/cron/frequent/route.ts's own
 // comment on why the 15-min poller runs via GitHub Actions instead of
@@ -75,7 +76,15 @@ export async function POST(req: Request) {
         { role: "user", content: text },
       ];
 
-      let response = await callClaude(messages, GAFFAI_TOOLS, GAFFAI_SYSTEM_PROMPT);
+      // The model has no inherent sense of "now" - without this, "last
+      // month," "the most recent game," "this week" are all guesses.
+      // Computed fresh per request rather than baked into the static
+      // prompt, since it has to stay current.
+      const nowUk = nowInLondon();
+      const weekday = new Date(nowUk + ":00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" });
+      const systemPrompt = `${GAFFAI_SYSTEM_PROMPT}\n\nCurrent date/time: ${weekday} ${nowUk.slice(0, 10)}, ${nowUk.slice(11)} (Europe/London). Use this as "now" for anything relative - "last month," "this week," "the most recent game," etc.`;
+
+      let response = await callClaude(messages, GAFFAI_TOOLS, systemPrompt);
       let rounds = 0;
       // Reset every round - only reflects whichever tools were called in
       // the round immediately before the model's final answer, not
@@ -107,7 +116,7 @@ export async function POST(req: Request) {
 
         messages.push({ role: "assistant", content: response.content });
         messages.push({ role: "user", content: toolResults });
-        response = await callClaude(messages, GAFFAI_TOOLS, GAFFAI_SYSTEM_PROMPT);
+        response = await callClaude(messages, GAFFAI_TOOLS, systemPrompt);
       }
 
       if (response.stop_reason === "tool_use") {

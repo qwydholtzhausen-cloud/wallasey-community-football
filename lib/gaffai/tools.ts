@@ -6,7 +6,7 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
   {
     name: "find_games",
     description:
-      "Look up fixtures by date range, venue, or published status. Returns each game's id, date, kickoff, venue, price, and booking counts (confirmed, unpaid, pending, waiting). Use this to find a game_id before calling get_game_detail or get_payment_status.",
+      "Look up fixtures by date range, venue, or published status. Returns each game's id, date, kickoff, venue, price, and booking counts (confirmed, unpaid, pending, waiting). Use this to find a game_id before calling get_game_detail or get_payment_status. For 'the last game,' 'most recent,' or 'who won MOTM last time' - set sort:\"desc\" and date_to to today (see the current date/time given to you) rather than leaving dates unbounded, otherwise you'll get the oldest fixtures on record, not the newest.",
     input_schema: {
       type: "object",
       properties: {
@@ -14,6 +14,7 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
         date_to: { type: "string", description: "YYYY-MM-DD, inclusive" },
         venue_contains: { type: "string" },
         published_only: { type: "boolean", description: "Only include fixtures already visible to players" },
+        sort: { type: "string", enum: ["asc", "desc"], description: "Sort by date - default asc (oldest first). Use desc for 'most recent'/'last game' questions." },
         limit: { type: "number", description: "Default 20" },
       },
     },
@@ -54,6 +55,12 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     description:
       "Full detail for one player: role, self and admin ratings (admin rating already normalized to the same /5 scale as self), emergency contact, whether they're currently blocked from booking due to an overdue payment, and this season's apps/goals/MOTM recognitions.",
     input_schema: { type: "object", properties: { player_id: { type: "string" } }, required: ["player_id"] },
+  },
+  {
+    name: "find_unrated_players",
+    description:
+      "Every player missing a self-rating and/or an admin-rating, in one efficient call. Use this instead of checking players one by one with get_player_detail - that's far too many round trips for this question and will time out.",
+    input_schema: { type: "object", properties: { role: { type: "string", enum: ["player", "admin", "co-owner", "owner"] } } },
   },
   {
     name: "find_overdue_players",
