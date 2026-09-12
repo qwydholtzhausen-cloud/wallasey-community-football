@@ -5,6 +5,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
 import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey } from "../lib/time";
 import { predictionPoints, buildLeaderboard, buildMonthlyLeaderboards, topScorers, type ScoredPrediction } from "../lib/predictions";
+import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer } from "../lib/teamBalance";
 
 // The payment link is just config, not baked into booking logic (statuses
 // below), so swapping providers later only touches this one env var.
@@ -3427,16 +3428,26 @@ function App({ session }: { session: Session }) {
 
   // Unrated players default to a neutral 3 rather than 0, so a handful of
   // unrated players don't get treated as "worst on the pitch" and all
-  // dumped on one team - they just don't move the needle either way.
-  // Keepers are alternated first since you basically always want exactly
-  // one specialist per team; everyone else is sorted by ability and
-  // greedily assigned to whichever team's running total is currently
-  // lower (a simple, explainable balance heuristic, not a black-box
-  // optimizer) with a size guard so squads don't end up lopsided.
+  // dumped on one team - they just don't move the needle either way. On
+  // top of the rated /5 score, a bounded performance bonus (goals/MOTM/
+  // clean-sheets per game, win% once someone's played 3+) nudges the
+  // ranking so one side doesn't end up with all the in-form players -
+  // shared with GaffAI's suggest_balanced_teams tool via lib/teamBalance,
+  // one calculation for both surfaces. Keepers are alternated first since
+  // you basically always want exactly one specialist per team; everyone
+  // else is sorted by ability and greedily assigned to whichever team's
+  // running total is currently lower (a simple, explainable balance
+  // heuristic, not a black-box optimizer) with a size guard so squads
+  // don't end up lopsided.
   function generateBalancedTeams(): { white: string[]; red: string[] } {
-    const players = nextConfirmed.map((b) => {
+    const playerIds = nextConfirmed.map((b) => b.player_id);
+    const performance = computePerformanceStats(pastGames, goalRows, motmVotes, playerIds);
+
+    const players: RatedPlayer[] = nextConfirmed.map((b) => {
       const r = ratingByPlayer[b.player_id];
-      return { id: b.player_id, overall: r ? (r.fitness + r.attack + r.defence) / 3 : 3, position: r?.position ?? null };
+      const base = r ? (r.fitness + r.attack + r.defence) / 3 : 3;
+      const overall = Math.max(0, Math.min(5, base + performanceBonus(performance[b.player_id])));
+      return { id: b.player_id, overall, position: r?.position ?? null };
     });
 
     // A small random jitter (sort-only, never affects the real balance
@@ -3453,33 +3464,10 @@ function App({ session }: { session: Session }) {
       .map((p) => ({ ...p, sortKey: p.overall + (Math.random() - 0.5) * 0.6 }))
       .sort((a, b) => b.sortKey - a.sortKey);
 
-    const keepers = ranked.filter((p) => p.position === "keeper");
-    const others = ranked.filter((p) => p.position !== "keeper");
-
-    const white: string[] = [];
-    const red: string[] = [];
-    let whiteTotal = 0;
-    let redTotal = 0;
-
     const keeperStartsWhite = Math.random() < 0.5;
-    keepers.forEach((k, i) => {
-      const onWhite = keeperStartsWhite ? i % 2 === 0 : i % 2 === 1;
-      if (onWhite) { white.push(k.id); whiteTotal += k.overall; }
-      else { red.push(k.id); redTotal += k.overall; }
-    });
+    const { white, red } = assignToTeams(ranked, keeperStartsWhite);
 
-    others.forEach((p) => {
-      const sizeDiff = white.length - red.length;
-      if (sizeDiff >= 2) { red.push(p.id); redTotal += p.overall; }
-      else if (sizeDiff <= -2) { white.push(p.id); whiteTotal += p.overall; }
-      else if (whiteTotal === redTotal ? Math.random() < 0.5 : whiteTotal < redTotal) {
-        white.push(p.id); whiteTotal += p.overall;
-      } else {
-        red.push(p.id); redTotal += p.overall;
-      }
-    });
-
-    return { white, red };
+    return { white: white.map((p) => p.id), red: red.map((p) => p.id) };
   }
 
   const overdueBookings = useMemo(() => {

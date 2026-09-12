@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { kickoffCutoff, nowInLondon, previousMonthKey, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../time";
+import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer, type GameForPerformance } from "../teamBalance";
 
 // Same "pretend UTC" trick as everywhere else this pattern's used
 // (app/api/cron/frequent/route.ts, app/WirralCommunityFootball.tsx) -
@@ -347,161 +348,57 @@ async function getPlayerDetail(admin: SupabaseClient, args: { player_id: string 
 // every scored game rather than per-player, so "who's got the highest
 // win percentage" or "who's lost the most" - across everyone, not one
 // player - is a single call, not one per player.
-// Pure rating (fitness/attack/defence) can still land one side with all
-// the in-form scorers - this folds in actual match performance too, all
-// deterministic arithmetic over data already fetched, no AI involved.
-// Bonus is capped and gated so it nudges rather than dominates: win% only
-// counts with 3+ games (a 1-game 100% record shouldn't swing anything),
-// goals/MOTM/clean-sheets are rates-per-game (not raw totals, which would
-// unfairly favour whoever's played the most), and the total bonus is
-// bounded well below the base rating's own 0-5 range.
-interface PerformanceStats {
-  played: number;
-  win_pct: number | null;
-  goals_per_game: number;
-  motm_per_game: number;
-  clean_sheet_rate: number;
-}
-
-async function getPerformanceStats(admin: SupabaseClient, playerIds: string[]): Promise<Record<string, PerformanceStats>> {
-  const idSet = new Set(playerIds);
-  const { data: games } = await admin
-    .from("games")
-    .select("id, team_white_score, team_red_score, bookings(player_id, waiting, team)")
-    .not("team_white_score", "is", null)
-    .not("team_red_score", "is", null);
-
-  type Row = { id: string; team_white_score: number | null; team_red_score: number | null; bookings: { player_id: string; waiting: boolean; team: "white" | "red" | null }[] | null };
-  const rows = (games ?? []) as Row[];
-
-  const acc: Record<string, { played: number; won: number; goals: number; motm: number; cleanSheets: number }> = {};
-  for (const id of playerIds) acc[id] = { played: 0, won: 0, goals: 0, motm: 0, cleanSheets: 0 };
-
-  const relevantGameIds: string[] = [];
-  for (const g of rows) {
-    if (g.team_white_score == null || g.team_red_score == null) continue;
-    let touchesRoster = false;
-    for (const b of g.bookings ?? []) {
-      if (b.waiting || !b.team || !idSet.has(b.player_id)) continue;
-      touchesRoster = true;
-      const rec = acc[b.player_id];
-      rec.played++;
-      const diff = b.team === "white" ? g.team_white_score - g.team_red_score : g.team_red_score - g.team_white_score;
-      if (diff > 0) rec.won++;
-      const concededZero = b.team === "white" ? g.team_red_score === 0 : g.team_white_score === 0;
-      if (concededZero) rec.cleanSheets++;
-    }
-    if (touchesRoster) relevantGameIds.push(g.id);
-  }
-
-  if (relevantGameIds.length > 0) {
-    const { data: goalRows } = await admin.from("game_stats").select("player_id, goals").in("game_id", relevantGameIds).in("player_id", playerIds);
-    for (const r of goalRows ?? []) acc[r.player_id].goals += r.goals;
-
-    const { data: votes } = await admin.from("motm_votes").select("game_id, candidate_id").in("game_id", relevantGameIds);
-    const tallyByGame: Record<string, Record<string, number>> = {};
-    for (const v of votes ?? []) (tallyByGame[v.game_id] ??= {})[v.candidate_id] = (tallyByGame[v.game_id][v.candidate_id] ?? 0) + 1;
-    for (const gid of relevantGameIds) {
-      const tally = tallyByGame[gid] ?? {};
-      const topVotes = Math.max(0, ...Object.values(tally));
-      if (topVotes === 0) continue;
-      for (const pid of playerIds) if (tally[pid] === topVotes) acc[pid].motm++;
-    }
-  }
-
-  const result: Record<string, PerformanceStats> = {};
-  for (const id of playerIds) {
-    const r = acc[id];
-    result[id] = {
-      played: r.played,
-      win_pct: r.played > 0 ? Math.round((r.won / r.played) * 100) : null,
-      goals_per_game: r.played > 0 ? r.goals / r.played : 0,
-      motm_per_game: r.played > 0 ? r.motm / r.played : 0,
-      clean_sheet_rate: r.played > 0 ? r.cleanSheets / r.played : 0,
-    };
-  }
-  return result;
-}
-
 // Splitting a squad into two balanced sides is a real constraint problem
 // (keep sizes even, alternate keepers, minimize the rating gap) - not
 // something to leave to the model's own reasoning. Tested it freeform
 // first and it duplicated players across both teams and reported an
-// "8.5/5" average on a 5-point scale. This mirrors generateBalancedTeams
-// in app/WirralCommunityFootball.tsx (unrated defaults to a neutral 3,
-// keepers alternate first, everyone else greedily joins whichever side
-// has the lower running total), minus that function's random
-// jitter/shuffle - deterministic on purpose, so the same question asked
-// twice gives the same answer instead of a different "recommended" split
-// each time. "overall" here is the rated /5 score plus the bounded
-// performance bonus above, not the raw rating alone.
+// "8.5/5" average on a 5-point scale. assignToTeams/computePerformanceStats
+// are shared with generateBalancedTeams in app/WirralCommunityFootball.tsx
+// (the real in-app "Generate recommended teams" button) via lib/teamBalance
+// - one source of truth for both surfaces. This version skips that
+// function's random jitter/shuffle - deterministic on purpose, so the
+// same question asked twice gives the same answer instead of a different
+// "recommended" split each time. "overall" here is the rated /5 score
+// plus the bounded performance bonus, not the raw rating alone.
 async function suggestBalancedTeams(admin: SupabaseClient, args: { game_id: string }) {
   const { data: bookingsRaw } = await admin.from("bookings").select("player_id").eq("game_id", args.game_id).eq("waiting", false);
   const bookingRows = bookingsRaw ?? [];
   if (bookingRows.length === 0) throw new Error("No confirmed players found for that game.");
-
   const playerIds = bookingRows.map((b) => b.player_id);
-  const [nameOf, ratings, performance] = await Promise.all([namesById(admin, playerIds), ratingsById(admin, playerIds), getPerformanceStats(admin, playerIds)]);
 
-  type P = { id: string; name: string; overall: number; position: string | null };
-  const players: P[] = playerIds.map((id) => {
+  const [nameOf, ratings, { data: games }, { data: goalRows }, { data: motmVotesRaw }] = await Promise.all([
+    namesById(admin, playerIds),
+    ratingsById(admin, playerIds),
+    admin.from("games").select("id, team_white_score, team_red_score, bookings(player_id, waiting, team)"),
+    admin.from("game_stats").select("game_id, player_id, goals"),
+    admin.from("motm_votes").select("game_id, candidate_id"),
+  ]);
+
+  const performance = computePerformanceStats(
+    (games ?? []) as GameForPerformance[],
+    goalRows ?? [],
+    motmVotesRaw ?? [],
+    playerIds
+  );
+
+  const players: RatedPlayer[] = playerIds.map((id) => {
     const base = ratings[id]?.overall_out_of_5 ?? 3; // unrated defaults to a neutral 3, same as generateBalancedTeams
-    const perf = performance[id];
-    let bonus = 0;
-    bonus += Math.min(perf.goals_per_game * 0.4, 0.6);
-    bonus += Math.min(perf.motm_per_game * 1.0, 0.6);
-    bonus += Math.min(perf.clean_sheet_rate * 0.4, 0.4);
-    if (perf.played >= 3 && perf.win_pct != null) bonus += ((perf.win_pct - 50) / 100) * 0.6;
-    return {
-      id,
-      name: nameOf[id] ?? "Unknown",
-      overall: Math.max(0, Math.min(5, base + bonus)),
-      position: ratings[id]?.position ?? null,
-    };
+    const overall = Math.max(0, Math.min(5, base + performanceBonus(performance[id])));
+    return { id, overall, position: ratings[id]?.position ?? null };
   });
 
   const ranked = [...players].sort((a, b) => b.overall - a.overall);
-  const keepers = ranked.filter((p) => p.position === "keeper");
-  const others = ranked.filter((p) => p.position !== "keeper");
-
-  const white: P[] = [];
-  const red: P[] = [];
-  let whiteTotal = 0;
-  let redTotal = 0;
-
-  keepers.forEach((k, i) => {
-    if (i % 2 === 0) {
-      white.push(k);
-      whiteTotal += k.overall;
-    } else {
-      red.push(k);
-      redTotal += k.overall;
-    }
-  });
-
-  others.forEach((p) => {
-    const sizeDiff = white.length - red.length;
-    if (sizeDiff >= 2) {
-      red.push(p);
-      redTotal += p.overall;
-    } else if (sizeDiff <= -2) {
-      white.push(p);
-      whiteTotal += p.overall;
-    } else if (whiteTotal <= redTotal) {
-      white.push(p);
-      whiteTotal += p.overall;
-    } else {
-      red.push(p);
-      redTotal += p.overall;
-    }
-  });
+  const { white, red } = assignToTeams(ranked);
 
   const round1 = (n: number) => Math.round(n * 10) / 10;
+  const label = (p: RatedPlayer) => ({ name: nameOf[p.id] ?? "Unknown", overall_out_of_5: round1(p.overall) });
+  const avg = (side: RatedPlayer[]) => (side.length ? round1(side.reduce((sum, p) => sum + p.overall, 0) / side.length) : null);
+
   return {
-    white: white.map((p) => ({ name: p.name, overall_out_of_5: round1(p.overall) })),
-    red: red.map((p) => ({ name: p.name, overall_out_of_5: round1(p.overall) })),
-    white_avg_out_of_5: white.length ? round1(whiteTotal / white.length) : null,
-    red_avg_out_of_5: red.length ? round1(redTotal / red.length) : null,
+    white: white.map(label),
+    red: red.map(label),
+    white_avg_out_of_5: avg(white),
+    red_avg_out_of_5: avg(red),
   };
 }
 
