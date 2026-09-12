@@ -113,6 +113,12 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     },
   },
   {
+    name: "suggest_balanced_teams",
+    description:
+      "Compute an actual balanced team split for a game's confirmed players - a real calculation (rating plus a bounded bonus for goals/MOTM/clean-sheets/win-rate, keepers alternated, sizes kept even), not something to estimate in your own reasoning. Splitting a squad into two fair sides is a constraint problem you will get wrong (duplicate players, impossible averages) if you try it freeform - always call this instead.",
+    input_schema: { type: "object", properties: { game_id: { type: "string" } }, required: ["game_id"] },
+  },
+  {
     name: "propose_mark_paid",
     description:
       "Prepare (but do NOT execute) marking a specific booking as paid. Returns a proposal for the admin to confirm - this never changes anything by itself. Get the booking_id from get_game_detail first.",
