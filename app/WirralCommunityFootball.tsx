@@ -5399,6 +5399,8 @@ function App({ session }: { session: Session }) {
         ))}
       </nav>
 
+      {isAdmin && <GaffAIChat getFreshAccessToken={getFreshAccessToken} onFixtureCreated={loadGames} />}
+
       {playerCardId && (() => {
         const cardProfile = profiles.find((p) => p.id === playerCardId);
         if (!cardProfile) return null;
@@ -5777,6 +5779,180 @@ function PlayerCardModal({
         </div>
       </div>
     </div>
+  );
+}
+
+type GaffAIAction =
+  | { kind: "mark_paid"; bookingId: string; playerName: string; gameLabel: string; amount: number }
+  | { kind: "create_fixture"; date: string; kickoff: string; venue: string; pitch: string; price: number; maxPlayers: number };
+
+interface GaffAIMessage {
+  role: "user" | "assistant";
+  text: string;
+  action?: GaffAIAction;
+  actionState?: "pending" | "confirmed" | "cancelled" | "failed";
+}
+
+const GAFFAI_SUGGESTIONS = [
+  "Who's unpaid for the next game?",
+  "Who's on the waiting list?",
+  "Who hasn't been rated yet?",
+  "Who won MOTM last month?",
+  "Is anyone currently blocked from booking?",
+];
+
+// Admin-only floating assistant. Reads anything, but can only ever change
+// two things (mark a booking paid, create a draft fixture) and always via
+// an explicit in-chat confirm/cancel card - never straight from a typed
+// sentence. See app/api/admin/gaffai/route.ts for why that split is
+// actually enforced structurally, not just by prompt.
+function GaffAIChat({ getFreshAccessToken, onFixtureCreated }: { getFreshAccessToken: () => Promise<string | null>; onFixtureCreated: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<GaffAIMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [messages, loading]);
+
+  async function callGaffAI(body: object) {
+    const token = await getFreshAccessToken();
+    if (!token) {
+      setMessages((cur) => [...cur, { role: "assistant", text: "Your session's expired — refresh the page and sign in again." }]);
+      return null;
+    }
+    try {
+      const res = await fetch("/api/admin/gaffai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      return await res.json();
+    } catch {
+      setMessages((cur) => [...cur, { role: "assistant", text: "Couldn't reach GaffAI just now — try again in a bit." }]);
+      return null;
+    }
+  }
+
+  async function send(text: string) {
+    if (!text.trim() || loading) return;
+    const history = messages.map((m) => ({ role: m.role, text: m.text }));
+    setMessages((cur) => [...cur, { role: "user", text }]);
+    setInput("");
+    setLoading(true);
+    const data = await callGaffAI({ type: "message", text, history });
+    setLoading(false);
+    if (!data) return;
+
+    if (data.type === "action_proposal") {
+      setMessages((cur) => [...cur, { role: "assistant", text: data.text, action: data.action, actionState: "pending" }]);
+    } else if (data.type === "answer") {
+      setMessages((cur) => [...cur, { role: "assistant", text: data.text }]);
+    } else {
+      setMessages((cur) => [...cur, { role: "assistant", text: data.error || "Something went wrong." }]);
+    }
+  }
+
+  async function confirmAction(index: number) {
+    const msg = messages[index];
+    if (!msg.action) return;
+    const data = await callGaffAI({ type: "confirm_action", action: msg.action });
+    if (!data) return;
+    setMessages((cur) => cur.map((m, i) => (i === index ? { ...m, actionState: data.ok ? "confirmed" : "failed", text: data.text ?? m.text } : m)));
+    if (data.ok && msg.action.kind === "create_fixture") onFixtureCreated();
+  }
+
+  function cancelAction(index: number) {
+    setMessages((cur) => cur.map((m, i) => (i === index ? { ...m, actionState: "cancelled" } : m)));
+  }
+
+  function resetChat() {
+    setMessages([]);
+    setInput("");
+  }
+
+  return (
+    <>
+      <div className="gaffai-fab-wrap">
+        <div className="gaffai-fab-ring" />
+        <button className="gaffai-fab" onClick={() => setOpen(true)} aria-label="Open GaffAI">
+          ✨
+        </button>
+      </div>
+
+      {open && (
+        <div className="gaffai-backdrop" onClick={() => setOpen(false)}>
+          <div className="gaffai-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="gaffai-sheet-handle" />
+            <div className="gaffai-sheet-head">
+              <div className="gaffai-sheet-ico">🧢</div>
+              <div className="gaffai-sheet-title">GaffAI</div>
+              <span className="gaffai-sheet-tag">Admin only</span>
+              <button className="gaffai-sheet-reset" onClick={resetChat} aria-label="Reset conversation" title="Reset">
+                ↺
+              </button>
+              <button className="gaffai-sheet-close" onClick={() => setOpen(false)} aria-label="Close">
+                ✕
+              </button>
+            </div>
+            <div className="gaffai-sheet-caption">Answers questions and can act on some things — anything that changes something asks first.</div>
+
+            <div className="gaffai-messages" ref={scrollRef}>
+              <div className="gaffai-msg bot">Alright — what do you need?</div>
+              {messages.map((m, i) => (
+                <div key={i} className={"gaffai-msg " + (m.role === "user" ? "user" : "bot") + (m.action ? " action-card" : "")}>
+                  {m.text}
+                  {m.action && m.actionState === "pending" && (
+                    <div className="gaffai-action-buttons">
+                      <button className="gaffai-action-confirm" onClick={() => confirmAction(i)}>
+                        ✓ Confirm
+                      </button>
+                      <button className="gaffai-action-cancel" onClick={() => cancelAction(i)}>
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                  {m.action && m.actionState === "cancelled" && <div className="gaffai-action-result cancel">Cancelled — no changes made.</div>}
+                  {m.action && m.actionState === "confirmed" && <div className="gaffai-action-result success">✅ Done</div>}
+                  {m.action && m.actionState === "failed" && <div className="gaffai-action-result cancel">Couldn't complete that.</div>}
+                </div>
+              ))}
+              {loading && (
+                <div className="gaffai-typing">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              )}
+            </div>
+
+            {messages.length === 0 && (
+              <div className="gaffai-chips">
+                {GAFFAI_SUGGESTIONS.map((s) => (
+                  <button key={s} className="gaffai-chip" onClick={() => send(s)}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="gaffai-composer">
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && send(input)}
+                placeholder="Ask something…"
+              />
+              <button className="gaffai-send" onClick={() => send(input)} aria-label="Send">
+                ➤
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -9182,6 +9358,58 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-navbtn svg{opacity:.9}
 
 @media (max-width:400px){ .wcf-edit{grid-template-columns:1fr} }
+
+/* GaffAI - admin-only assistant. Fixed above the bottom nav (z-index 5)
+   so it's reachable from every tab; sheet/backdrop sit above everything
+   else in the app (z-index 120, above .wcf-modal-overlay's 110) since
+   it's meant to be usable mid-task regardless of what else is open. */
+.gaffai-fab-wrap{position:fixed; right:18px; bottom:78px; z-index:25}
+.gaffai-fab-ring{position:absolute; inset:-6px; border-radius:50%; border:2px solid rgba(234,179,8,.55); animation:gaffaiPulse 2.2s ease-out infinite}
+@keyframes gaffaiPulse{0%{transform:scale(.85); opacity:.9}70%{transform:scale(1.35); opacity:0}100%{opacity:0}}
+.gaffai-fab{position:relative; width:52px; height:52px; border-radius:50%; border:none; cursor:pointer;
+  background:linear-gradient(145deg,var(--blue),#1a4d94); color:#fff; font-size:21px;
+  display:flex; align-items:center; justify-content:center; box-shadow:0 10px 24px -6px rgba(46,116,204,.6)}
+
+.gaffai-backdrop{position:fixed; inset:0; z-index:120; background:rgba(3,4,8,.6); display:flex; align-items:flex-end; justify-content:center;
+  -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px)}
+.gaffai-sheet{width:100%; max-width:520px; height:min(82vh,720px); background:#131624; border-radius:22px 22px 0 0;
+  box-shadow:0 -20px 50px -20px rgba(0,0,0,.6); display:flex; flex-direction:column; border:1px solid var(--line); border-bottom:none}
+.gaffai-sheet-handle{width:36px; height:4px; border-radius:4px; background:rgba(148,163,184,.3); margin:10px auto 2px}
+.gaffai-sheet-head{display:flex; align-items:center; gap:10px; padding:10px 16px 12px; border-bottom:1px solid var(--line)}
+.gaffai-sheet-ico{width:32px; height:32px; border-radius:10px; background:rgba(46,116,204,.16); border:1px solid rgba(46,116,204,.36);
+  display:flex; align-items:center; justify-content:center; font-size:15px}
+.gaffai-sheet-title{font-family:var(--display); font-weight:700; font-size:14.5px}
+.gaffai-sheet-tag{font-size:9px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--amber);
+  background:rgba(234,179,8,.12); border:1px solid rgba(234,179,8,.3); padding:2px 7px; border-radius:20px; margin-left:2px}
+.gaffai-sheet-reset,.gaffai-sheet-close{width:28px; height:28px; border-radius:50%; background:rgba(148,163,184,.1); border:none; color:#cbd5e1; font-size:15px; cursor:pointer}
+.gaffai-sheet-reset{margin-left:auto}
+.gaffai-sheet-caption{padding:10px 16px 2px; font-size:11.5px; color:var(--dim); line-height:1.5}
+
+.gaffai-messages{flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px}
+.gaffai-msg{max-width:84%; font-size:13px; line-height:1.5; padding:10px 13px; border-radius:14px; white-space:pre-wrap}
+.gaffai-msg.user{align-self:flex-end; background:var(--blue); color:#fff; border-bottom-right-radius:4px}
+.gaffai-msg.bot{align-self:flex-start; background:var(--panel2); color:var(--white); border:1px solid var(--line); border-bottom-left-radius:4px}
+.gaffai-msg.bot.action-card{border:1px solid rgba(234,179,8,.35); background:rgba(234,179,8,.06)}
+.gaffai-action-buttons{display:flex; gap:8px; margin-top:10px}
+.gaffai-action-confirm{flex:1; border:none; border-radius:10px; padding:8px 0; background:var(--green); color:#06210f; font-weight:800; font-size:12px; cursor:pointer}
+.gaffai-action-cancel{flex:none; border:1px solid rgba(148,163,184,.3); border-radius:10px; padding:8px 14px; background:transparent; color:#cbd5e1; font-weight:700; font-size:12px; cursor:pointer}
+.gaffai-action-result{margin-top:10px; font-size:12.5px; font-weight:600}
+.gaffai-action-result.success{color:#86efac}
+.gaffai-action-result.cancel{color:#8892a4}
+.gaffai-typing{align-self:flex-start; display:flex; gap:4px; padding:12px 14px; background:var(--panel2); border:1px solid var(--line); border-radius:14px; border-bottom-left-radius:4px}
+.gaffai-typing span{width:6px; height:6px; border-radius:50%; background:#7c8699; animation:gaffaiBounce 1.1s infinite ease-in-out}
+.gaffai-typing span:nth-child(2){animation-delay:.15s}
+.gaffai-typing span:nth-child(3){animation-delay:.3s}
+@keyframes gaffaiBounce{0%,80%,100%{transform:translateY(0); opacity:.5}40%{transform:translateY(-4px); opacity:1}}
+
+.gaffai-chips{display:flex; flex-wrap:wrap; gap:7px; padding:2px 16px 12px}
+.gaffai-chip{font-size:11.5px; font-weight:600; padding:8px 12px; border-radius:20px; background:rgba(148,163,184,.08); border:1px solid rgba(148,163,184,.2); color:#cbd5e1; cursor:pointer; text-align:left}
+.gaffai-chip:hover{background:rgba(148,163,184,.15)}
+
+.gaffai-composer{display:flex; gap:8px; padding:10px 14px calc(14px + env(safe-area-inset-bottom,0px)); border-top:1px solid var(--line)}
+.gaffai-composer input{flex:1; min-width:0; background:var(--bg); border:1px solid rgba(148,163,184,.2); color:var(--white); padding:11px 14px; border-radius:22px; font-size:13px; font-family:var(--sans); outline:none}
+.gaffai-composer input::placeholder{color:#5b6472}
+.gaffai-send{flex:none; width:40px; height:40px; border-radius:50%; border:none; background:var(--blue); color:#fff; font-size:15px; cursor:pointer; display:flex; align-items:center; justify-content:center}
 
 /* Three pill buttons (Update/Month/Fixture) in the fixtures header don't
    fit their natural width on the narrowest phones (iPhone SE and similar,
