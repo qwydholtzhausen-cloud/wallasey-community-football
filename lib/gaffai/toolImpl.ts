@@ -30,11 +30,12 @@ async function namesById(admin: SupabaseClient, ids: string[]): Promise<Record<s
 }
 
 interface RatingSummary {
+  scale: 5;
   fitness: number;
   attack: number;
   defence: number;
   goalkeeping: number;
-  overall: number;
+  overall_out_of_5: number;
   source: "self" | "admin";
 }
 
@@ -44,9 +45,13 @@ interface RatingSummary {
 // question, which previously required one get_player_detail call per
 // roster player (12-16 round trips) and both timed out and, when it
 // didn't, reasoned off an incomplete, inconsistent partial sample.
-// "overall" matches the app's own definition everywhere it's used
+// overall_out_of_5 matches the app's own definition everywhere it's used
 // (fitness+attack+defence)/3 - goalkeeping deliberately excluded, same
-// as generateBalancedTeams/nextConfirmedRatings.
+// as generateBalancedTeams/nextConfirmedRatings. Both the field name and
+// the explicit scale:5 exist so the model can't report this as if it
+// were the raw /10 admin scale - admins enter ratings out of 10, but
+// every number here (whether it started as self or admin) has already
+// been normalized down for direct comparison.
 async function ratingsById(admin: SupabaseClient, ids: string[]): Promise<Record<string, RatingSummary | null>> {
   const uniqueIds = [...new Set(ids)].filter(Boolean);
   const result: Record<string, RatingSummary | null> = {};
@@ -59,14 +64,22 @@ async function ratingsById(admin: SupabaseClient, ids: string[]): Promise<Record
   ]);
 
   for (const r of selfRatings ?? []) {
-    result[r.player_id] = { fitness: r.fitness, attack: r.attack, defence: r.defence, goalkeeping: r.goalkeeping, overall: (r.fitness + r.attack + r.defence) / 3, source: "self" };
+    result[r.player_id] = {
+      scale: 5,
+      fitness: r.fitness,
+      attack: r.attack,
+      defence: r.defence,
+      goalkeeping: r.goalkeeping,
+      overall_out_of_5: (r.fitness + r.attack + r.defence) / 3,
+      source: "self",
+    };
   }
   for (const r of adminRatings ?? []) {
     const fitness = r.fitness / 2;
     const attack = r.attack / 2;
     const defence = r.defence / 2;
     const goalkeeping = r.goalkeeping / 2;
-    result[r.player_id] = { fitness, attack, defence, goalkeeping, overall: (fitness + attack + defence) / 3, source: "admin" };
+    result[r.player_id] = { scale: 5, fitness, attack, defence, goalkeeping, overall_out_of_5: (fitness + attack + defence) / 3, source: "admin" };
   }
   return result;
 }
@@ -261,10 +274,12 @@ async function getPlayerDetail(admin: SupabaseClient, args: { player_id: string 
   // directly comparable raw numbers.
   const normalizedAdminRating = adminRating
     ? {
+        scale: 5 as const,
         fitness: adminRating.fitness / 2,
         attack: adminRating.attack / 2,
         defence: adminRating.defence / 2,
         goalkeeping: adminRating.goalkeeping / 2,
+        overall_out_of_5: (adminRating.fitness / 2 + adminRating.attack / 2 + adminRating.defence / 2) / 3,
         position: adminRating.position,
       }
     : null;
@@ -323,6 +338,47 @@ async function getPlayerDetail(admin: SupabaseClient, args: { player_id: string 
 // per player - that's the one that timed out asking this exact question
 // against a ~40-player squad (each detail call runs 5 sub-queries; N of
 // those blows both the tool-round cap and the request timeout).
+// Mirrors myRecord's exact definition in app/WirralCommunityFootball.tsx
+// (line ~3611) - all-time by default (that's what the app's own record
+// is), a booking only counts as "played" if it has a team assigned (not
+// just booked), and win% is round(won/played*100). One flat pass over
+// every scored game rather than per-player, so "who's got the highest
+// win percentage" or "who's lost the most" - across everyone, not one
+// player - is a single call, not one per player.
+async function getPlayerRecords(admin: SupabaseClient, args: { player_id?: string; season_year?: string }) {
+  const { data: games } = await admin
+    .from("games")
+    .select("date, team_white_score, team_red_score, bookings(player_id, waiting, team)")
+    .not("team_white_score", "is", null)
+    .not("team_red_score", "is", null);
+
+  type Row = { date: string; team_white_score: number | null; team_red_score: number | null; bookings: { player_id: string; waiting: boolean; team: "white" | "red" | null }[] | null };
+  const rows = (games ?? []) as Row[];
+
+  const byPlayer: Record<string, { played: number; won: number; drawn: number; lost: number }> = {};
+  for (const g of rows) {
+    if (g.team_white_score == null || g.team_red_score == null) continue;
+    if (args.season_year && g.date.slice(0, 4) !== args.season_year) continue;
+    for (const b of g.bookings ?? []) {
+      if (b.waiting || !b.team) continue;
+      if (args.player_id && b.player_id !== args.player_id) continue;
+      const rec = (byPlayer[b.player_id] ??= { played: 0, won: 0, drawn: 0, lost: 0 });
+      rec.played++;
+      const diff = b.team === "white" ? g.team_white_score - g.team_red_score : g.team_red_score - g.team_white_score;
+      if (diff > 0) rec.won++;
+      else if (diff < 0) rec.lost++;
+      else rec.drawn++;
+    }
+  }
+
+  const ids = Object.keys(byPlayer);
+  const nameOf = await namesById(admin, ids);
+  return ids.map((id) => {
+    const r = byPlayer[id];
+    return { name: nameOf[id] ?? "Unknown", played: r.played, won: r.won, drawn: r.drawn, lost: r.lost, win_pct: r.played > 0 ? Math.round((r.won / r.played) * 100) : null };
+  });
+}
+
 async function findUnratedPlayers(admin: SupabaseClient, args: { role?: string }) {
   let profileQuery = admin.from("profiles").select("id, display_name, role");
   if (args.role) profileQuery = profileQuery.eq("role", args.role);
@@ -523,6 +579,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   get_game_detail: getGameDetail,
   find_players: findPlayers,
   get_player_detail: getPlayerDetail,
+  get_player_records: getPlayerRecords,
   find_unrated_players: findUnratedPlayers,
   find_overdue_players: findOverduePlayers,
   get_payment_status: getPaymentStatus,

@@ -57,6 +57,18 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     input_schema: { type: "object", properties: { player_id: { type: "string" } }, required: ["player_id"] },
   },
   {
+    name: "get_player_records",
+    description:
+      "Win/loss/draw record and win percentage - pass player_id for one player, or omit it to get every player at once in one call (needed for 'who has the highest win percentage' or 'who's lost the most games' - don't call this per player, that's too many round trips). All-time by default; pass season_year to scope it, e.g. \"2026\".",
+    input_schema: {
+      type: "object",
+      properties: {
+        player_id: { type: "string" },
+        season_year: { type: "string", description: "e.g. '2026' - filters to games in that calendar year" },
+      },
+    },
+  },
+  {
     name: "find_unrated_players",
     description:
       "Every player missing a self-rating and/or an admin-rating, in one efficient call. Use this instead of checking players one by one with get_player_detail - that's far too many round trips for this question and will time out.",
