@@ -82,6 +82,42 @@ async function findGames(
   });
 }
 
+// find_games/get_game_detail both require a specific game to already be
+// known - this is the general "most recent activity" primitive that
+// isn't scoped to one fixture, e.g. "who booked most recently" or "last
+// N people to book" across the whole club.
+async function findRecentBookings(admin: SupabaseClient, args: { limit?: number; game_id?: string; waiting?: boolean }) {
+  let query = admin
+    .from("bookings")
+    .select("player_id, status, waiting, created_at, promoted_at, games(date, venue)")
+    .order("created_at", { ascending: false })
+    .limit(args.limit ?? 10);
+  if (args.game_id) query = query.eq("game_id", args.game_id);
+  if (args.waiting !== undefined) query = query.eq("waiting", args.waiting);
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  type Row = { player_id: string; status: string; waiting: boolean; created_at: string; promoted_at: string | null; games: { date: string; venue: string } | { date: string; venue: string }[] | null };
+  const rows = (data ?? []) as Row[];
+  const nameOf = await namesById(
+    admin,
+    rows.map((r) => r.player_id)
+  );
+  return rows.map((r) => {
+    const g = Array.isArray(r.games) ? r.games[0] : r.games;
+    return {
+      player_name: nameOf[r.player_id] ?? "Unknown",
+      game_date: g?.date ?? null,
+      game_venue: g?.venue ?? null,
+      status: r.status,
+      waiting: r.waiting,
+      booked_at: r.created_at,
+      promoted_at: r.promoted_at,
+    };
+  });
+}
+
 async function getMotmWinnerRaw(admin: SupabaseClient, gameId: string) {
   const { data: game } = await admin.from("games").select("id, date, kickoff").eq("id", gameId).single();
   if (!game) throw new Error("Game not found");
@@ -418,6 +454,7 @@ type ToolImplFn = (admin: SupabaseClient, args: any) => Promise<unknown>;
 
 export const TOOL_IMPL: Record<string, ToolImplFn> = {
   find_games: findGames,
+  find_recent_bookings: findRecentBookings,
   get_game_detail: getGameDetail,
   find_players: findPlayers,
   get_player_detail: getPlayerDetail,

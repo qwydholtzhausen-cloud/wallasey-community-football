@@ -19,6 +19,19 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     },
   },
   {
+    name: "find_recent_bookings",
+    description:
+      "The most recent booking events, newest first - who booked, when, for which game, and their status. Not scoped to one game unless game_id is given, so this is the right tool for 'who booked most recently' or 'last N people to book' across the whole club, not just one fixture.",
+    input_schema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Default 10" },
+        game_id: { type: "string", description: "Only bookings for this specific game" },
+        waiting: { type: "boolean", description: "Filter to only waiting-list (true) or only confirmed-spot (false) bookings" },
+      },
+    },
+  },
+  {
     name: "get_game_detail",
     description:
       "Full detail for one fixture: every booking (with its booking_id, player name, payment status, team, timestamps), goal scorers, and the resolved Man of the Match winner(s) for that game.",
