@@ -3,6 +3,7 @@ import { kickoffCutoff, nowInLondon, previousMonthKey, MOTM_VOTE_WINDOW_MINUTES,
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer, type GameForPerformance } from "../teamBalance";
 import { buildLeaderboard, topScorers, type ScoredPrediction } from "../predictions";
 import { sendPushToUsers } from "../push";
+import { defaultPitchCost } from "../pitchCost";
 
 // Same "pretend UTC" trick as everywhere else this pattern's used
 // (app/api/cron/frequent/route.ts, app/WirralCommunityFootball.tsx) -
@@ -11,12 +12,6 @@ import { sendPushToUsers } from "../push";
 // consistent regardless of what timezone this function runs in.
 function toMs(pseudoUtc: string) {
   return new Date(pseudoUtc + ":00Z").getTime();
-}
-
-// Mirrors the pure function of the same name in app/WirralCommunityFootball.tsx
-// (line ~1217) - a 2-line constant, not worth a shared-lib refactor for.
-function defaultPitchCost(date: string) {
-  return date >= "2026-09-07" ? 45 : 55;
 }
 
 // Deliberately not using embedded-relationship syntax (profiles!x_fkey(...))
@@ -977,6 +972,59 @@ async function forgetStandingFact(admin: SupabaseClient, args: { fact_id: string
   return { forgotten: true };
 }
 
+async function findClips(admin: SupabaseClient, args: { title_contains?: string; submitted_by_name_contains?: string; limit?: number }) {
+  let submitterIds: string[] | null = null;
+  if (args.submitted_by_name_contains) {
+    const { data: matches } = await admin.from("profiles").select("id").ilike("display_name", `%${args.submitted_by_name_contains}%`);
+    submitterIds = (matches ?? []).map((p) => p.id);
+    if (submitterIds.length === 0) return { count: 0, clips: [] };
+  }
+
+  let query = admin.from("clips").select("id, title, video_url, submitted_by, created_at").order("created_at", { ascending: false }).limit(args.limit ?? 30);
+  if (args.title_contains) query = query.ilike("title", `%${args.title_contains}%`);
+  if (submitterIds) query = query.in("submitted_by", submitterIds);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const rows = data ?? [];
+  const nameOf = await namesById(
+    admin,
+    rows.map((r) => r.submitted_by).filter((id): id is string => !!id)
+  );
+  const clips = rows.map((r) => ({
+    title: r.title,
+    video_url: r.video_url,
+    submitted_by: r.submitted_by ? nameOf[r.submitted_by] ?? "Unknown" : "Unknown",
+    submitted_at: r.created_at,
+  }));
+  return { count: clips.length, clips };
+}
+
+// Read-only close of the loop on the flag-a-wrong-answer feature - it
+// could always be written to (the client flag button), but nothing
+// could ever read it back until now, making it a write-only sink.
+async function findFlaggedFeedback(admin: SupabaseClient, args: { limit?: number }) {
+  const { data, error } = await admin
+    .from("gaffai_feedback")
+    .select("question, answer, flagged_by, created_at")
+    .order("created_at", { ascending: false })
+    .limit(args.limit ?? 30);
+  if (error) throw new Error(error.message);
+
+  const rows = data ?? [];
+  const nameOf = await namesById(
+    admin,
+    rows.map((r) => r.flagged_by).filter((id): id is string => !!id)
+  );
+  const feedback = rows.map((r) => ({
+    question: r.question,
+    answer: r.answer,
+    flagged_by: r.flagged_by ? nameOf[r.flagged_by] ?? "Unknown" : "Unknown",
+    flagged_at: r.created_at,
+  }));
+  return { count: feedback.length, feedback };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ToolImplFn = (admin: SupabaseClient, args: any, callerId?: string) => Promise<unknown>;
 
@@ -1011,6 +1059,8 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   propose_publish_fixture: proposePublishFixture,
   save_standing_fact: saveStandingFact,
   forget_standing_fact: forgetStandingFact,
+  find_clips: findClips,
+  find_flagged_feedback: findFlaggedFeedback,
 };
 
 export interface Nudge {

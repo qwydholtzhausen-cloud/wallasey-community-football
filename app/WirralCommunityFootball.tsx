@@ -6,6 +6,7 @@ import { supabase } from "../lib/supabase/client";
 import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey } from "../lib/time";
 import { predictionPoints, buildLeaderboard, buildMonthlyLeaderboards, topScorers, type ScoredPrediction } from "../lib/predictions";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer } from "../lib/teamBalance";
+import { defaultPitchCost } from "../lib/pitchCost";
 
 // The payment link is just config, not baked into booking logic (statuses
 // below), so swapping providers later only touches this one env var.
@@ -1211,13 +1212,6 @@ function urlBase64ToUint8Array(base64String: string) {
   return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
-// Pitch cost dropped from £55 to £45 starting 7 Sep 2026 - fixtures
-// before that date keep the old rate (both as historical record for
-// already-played games and for any new one-off added for an earlier
-// date), anything on or after gets the new one automatically.
-function defaultPitchCost(date: string) {
-  return date >= "2026-09-07" ? 45 : 55;
-}
 
 const Icon = {
   cal: (

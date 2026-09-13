@@ -242,4 +242,23 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
       "Remove a previously saved standing fact - e.g. it's out of date or was wrong. Use the internal [id:...] tag shown next to each fact in your system prompt, never a guessed id.",
     input_schema: { type: "object", properties: { fact_id: { type: "string" } }, required: ["fact_id"] },
   },
+  {
+    name: "find_clips",
+    description:
+      "Match highlight clips submitted via the Feed - title, video link, who submitted it, and when. Optionally filter by (partial) title or the submitter's name.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title_contains: { type: "string" },
+        submitted_by_name_contains: { type: "string" },
+        limit: { type: "number", description: "Default 30" },
+      },
+    },
+  },
+  {
+    name: "find_flagged_feedback",
+    description:
+      "Answers an admin has flagged as wrong for later review (via the flag button on a GaffAI reply) - the original question, the answer that was flagged, who flagged it, and when. Use this for anything like 'what have people flagged about you' or 'any known mistakes to review'.",
+    input_schema: { type: "object", properties: { limit: { type: "number", description: "Default 30" } } },
+  },
 ];
