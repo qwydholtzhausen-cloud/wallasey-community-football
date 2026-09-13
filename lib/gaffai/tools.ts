@@ -148,6 +148,46 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     input_schema: { type: "object", properties: { game_id: { type: "string" } }, required: ["game_id"] },
   },
   {
+    name: "get_club_settings",
+    description: "The club's current configured settings - team names/colours for the season, and the default venue/kickoff/price/pitch/squad size used for new fixtures.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "find_awards",
+    description: "Awards the club has handed out - title, value, and any note. Optionally filter by (partial) title.",
+    input_schema: { type: "object", properties: { title_contains: { type: "string" } } },
+  },
+  {
+    name: "find_admin_messages",
+    description:
+      "Messages an admin has sent to a player - who sent it, who received it, whether it's been read, and when. Every admin can see every message here (not just ones they personally sent), same as the in-app admin console. Filter by player name and/or unread_only. For 'how many total/unread' questions, quote total_count/unread_count directly - they're real counts, not the length of the messages list, which is capped.",
+    input_schema: {
+      type: "object",
+      properties: {
+        player_name_contains: { type: "string" },
+        unread_only: { type: "boolean" },
+        limit: { type: "number", description: "Default 30" },
+      },
+    },
+  },
+  {
+    name: "find_unmatched_payments",
+    description: "Monzo payments that came in but couldn't be automatically matched to a booking - amount, any reference code, and why it didn't match. If the response has connected:false, Monzo hasn't actually been connected yet (the setup guide hasn't been completed) - say so plainly, don't report that as zero unmatched payments.",
+    input_schema: { type: "object", properties: { limit: { type: "number", description: "Default 30" } } },
+  },
+  {
+    name: "get_prediction_leaderboard",
+    description:
+      "The score-prediction game leaderboard (3pts for an exact scoreline, 1pt for calling the right result, 0 otherwise) - only counts games that have actually been scored. Omit month for the all-time table, or pass one (\"2026-09\") to scope it.",
+    input_schema: { type: "object", properties: { month: { type: "string", description: "YYYY-MM" } } },
+  },
+  {
+    name: "get_pot_summary",
+    description:
+      "The club pot's real balance - not just manual entries, but the same auto-computed match-day surplus/deficit (confirmed payments minus pitch cost) the app itself tracks. Returns total balance, income vs expense, expense by category, and the most recent ledger entries.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "propose_mark_paid",
     description:
       "Prepare (but do NOT execute) marking a specific booking as paid. Returns a proposal for the admin to confirm - this never changes anything by itself. Get the booking_id from get_game_detail first.",

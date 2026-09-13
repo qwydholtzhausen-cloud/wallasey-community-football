@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { kickoffCutoff, nowInLondon, previousMonthKey, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../time";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer, type GameForPerformance } from "../teamBalance";
+import { buildLeaderboard, topScorers, type ScoredPrediction } from "../predictions";
 
 // Same "pretend UTC" trick as everywhere else this pattern's used
 // (app/api/cron/frequent/route.ts, app/WirralCommunityFootball.tsx) -
@@ -681,6 +682,207 @@ async function findAuditLogEntries(
   return rows.map((r) => ({ action: r.action, details: r.details, when: r.created_at, by: r.actor_id ? nameOf[r.actor_id] ?? "Unknown" : "System" }));
 }
 
+async function getClubSettings(admin: SupabaseClient) {
+  const { data, error } = await admin
+    .from("club_settings")
+    .select("team_white_name, team_white_color, team_red_name, team_red_color, default_venue, default_kickoff, default_price, default_pitch, default_max_players")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function findAwards(admin: SupabaseClient, args: { title_contains?: string }) {
+  let query = admin.from("awards").select("title, value, note, created_at").order("created_at", { ascending: false });
+  if (args.title_contains) query = query.ilike("title", `%${args.title_contains}%`);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  const awards = data ?? [];
+  return { count: awards.length, awards };
+}
+
+// player_name_contains resolves to recipient ids FIRST, then filters the
+// query itself - filtering the already-limited result set after the fact
+// would silently miss matches once there are more than `limit` messages
+// total (same class of bug as the earlier never-booked-players fix).
+async function findAdminMessages(admin: SupabaseClient, args: { player_name_contains?: string; unread_only?: boolean; limit?: number }) {
+  let recipientIds: string[] | null = null;
+  if (args.player_name_contains) {
+    const { data: matches } = await admin.from("profiles").select("id").ilike("display_name", `%${args.player_name_contains}%`);
+    recipientIds = (matches ?? []).map((p) => p.id);
+    if (recipientIds.length === 0) return { total_count: 0, unread_count: 0, messages: [] };
+  }
+
+  // total_count/unread_count come from their own exact head-counts,
+  // never from the length of the (limited) returned list - confirmed
+  // real failure mode: asked for a total+unread breakdown and the model
+  // reported 79 unread against an actual 47, having derived it from a
+  // capped 30-row page instead of a real count.
+  let totalQuery = admin.from("admin_messages").select("*", { count: "exact", head: true });
+  let unreadQuery = admin.from("admin_messages").select("*", { count: "exact", head: true }).is("read_at", null);
+  if (recipientIds) {
+    totalQuery = totalQuery.in("recipient_id", recipientIds);
+    unreadQuery = unreadQuery.in("recipient_id", recipientIds);
+  }
+  const [{ count: totalCount }, { count: unreadCount }] = await Promise.all([totalQuery, unreadQuery]);
+
+  let query = admin.from("admin_messages").select("recipient_id, sender_id, message, created_at, read_at").order("created_at", { ascending: false }).limit(args.limit ?? 30);
+  if (recipientIds) query = query.in("recipient_id", recipientIds);
+  if (args.unread_only) query = query.is("read_at", null);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const rows = data ?? [];
+  const ids = [...rows.map((r) => r.recipient_id), ...rows.map((r) => r.sender_id).filter((id): id is string => !!id)];
+  const nameOf = await namesById(admin, ids);
+  const messages = rows.map((r) => ({
+    recipient: nameOf[r.recipient_id] ?? "Unknown",
+    sender: r.sender_id ? nameOf[r.sender_id] ?? "Unknown" : "System",
+    message: r.message,
+    sent_at: r.created_at,
+    read_at: r.read_at,
+    is_read: !!r.read_at,
+  }));
+  return {
+    total_count: totalCount ?? 0,
+    unread_count: unreadCount ?? 0,
+    note: `messages below is the ${messages.length} most recent${args.unread_only ? " unread" : ""}, not necessarily all of them - use total_count/unread_count for the real totals`,
+    messages,
+  };
+}
+
+async function findUnmatchedPayments(admin: SupabaseClient, args: { limit?: number }) {
+  const { data, error } = await admin
+    .from("monzo_transactions")
+    .select("amount_pence, code, reason, player_id, created_at")
+    .eq("outcome", "unmatched")
+    .order("created_at", { ascending: false })
+    .limit(args.limit ?? 30);
+  // The table doesn't exist until Monzo's actually been connected (the
+  // holder still needs to complete that guide) - a clean, expected state
+  // to explain, not a real error to surface raw.
+  if (error?.code === "PGRST205") return { connected: false, count: 0, payments: [] };
+  if (error) throw new Error(error.message);
+
+  const rows = data ?? [];
+  const nameOf = await namesById(
+    admin,
+    rows.map((r) => r.player_id).filter((id): id is string => !!id)
+  );
+  const payments = rows.map((r) => ({
+    amount: r.amount_pence / 100,
+    code: r.code,
+    guessed_player: r.player_id ? nameOf[r.player_id] ?? "Unknown" : null,
+    reason_unmatched: r.reason,
+    received_at: r.created_at,
+  }));
+  return { connected: true, count: payments.length, payments };
+}
+
+// buildLeaderboard/topScorers are the exact same pure functions the
+// client uses (lib/predictions.ts) - framework/DB-free by design, so
+// reused directly rather than reimplemented here.
+async function getPredictionLeaderboard(admin: SupabaseClient, args: { month?: string }) {
+  const { data: predictions } = await admin.from("score_predictions").select("player_id, game_id, predicted_white, predicted_red");
+  const rows = predictions ?? [];
+  if (rows.length === 0) return { leaderboard: [], top_scorers: [] };
+
+  const gameIds = [...new Set(rows.map((r) => r.game_id))];
+  const [{ data: games }, nameOf] = await Promise.all([
+    admin.from("games").select("id, date, team_white_score, team_red_score").in("id", gameIds),
+    namesById(
+      admin,
+      rows.map((r) => r.player_id)
+    ),
+  ]);
+  const gameById = Object.fromEntries((games ?? []).map((g) => [g.id, g]));
+
+  const scored: ScoredPrediction[] = [];
+  for (const r of rows) {
+    const g = gameById[r.game_id];
+    if (!g || g.team_white_score == null || g.team_red_score == null) continue; // only scored games count
+    if (args.month && g.date.slice(0, 7) !== args.month) continue;
+    scored.push({
+      playerId: r.player_id,
+      playerName: nameOf[r.player_id] ?? "Unknown",
+      gameId: r.game_id,
+      gameDate: g.date,
+      predictedWhite: r.predicted_white,
+      predictedRed: r.predicted_red,
+      actualWhite: g.team_white_score,
+      actualRed: g.team_red_score,
+    });
+  }
+
+  const leaderboard = buildLeaderboard(scored);
+  return {
+    leaderboard: leaderboard.map((r) => ({ name: r.playerName, points: r.points, exact_calls: r.exactCount, games_guessed: r.gamesGuessed })),
+    top_scorers: topScorers(leaderboard).map((r) => r.playerName),
+  };
+}
+
+// Mirrors potLedger/financeSummary in app/WirralCommunityFootball.tsx
+// exactly (lines ~2882-2936) - the real pot balance is NOT just the
+// pot_entries table, it's that plus an auto-computed entry per game
+// (confirmed paid bookings x price, minus pitch cost), only counting
+// games with at least one confirmed booking. Getting this wrong would
+// mean reporting a balance nowhere close to the real one.
+async function getPotSummary(admin: SupabaseClient) {
+  const [{ data: games }, { data: potEntries }] = await Promise.all([
+    admin.from("games").select("id, date, venue, price, pitch_cost, bookings(waiting, status, pot_exempt_reason)"),
+    admin.from("pot_entries").select("amount, description, category, created_at"),
+  ]);
+
+  type GameRow = {
+    id: string;
+    date: string;
+    venue: string;
+    price: number;
+    pitch_cost: number;
+    bookings: { waiting: boolean; status: string; pot_exempt_reason: string | null }[] | null;
+  };
+  const gameRows = (games ?? []) as GameRow[];
+
+  let grossIncome = 0;
+  let pitchExpense = 0;
+  const autoEntries: { date: string; amount: number; description: string }[] = [];
+  for (const g of gameRows) {
+    const bookings = g.bookings ?? [];
+    const confirmedTotal = bookings.filter((b) => !b.waiting && b.status === "confirmed").length;
+    if (confirmedTotal === 0) continue; // matches the app's own inclusion rule
+    const confirmedPaid = bookings.filter((b) => !b.waiting && b.status === "confirmed" && !b.pot_exempt_reason).length;
+    const amount = confirmedPaid * g.price - g.pitch_cost;
+    grossIncome += confirmedPaid * g.price;
+    pitchExpense += g.pitch_cost;
+    autoEntries.push({ date: g.date, amount, description: `${g.venue} - ${confirmedPaid} paid x £${g.price} - £${g.pitch_cost} pitch` });
+  }
+  const autoNet = autoEntries.reduce((sum, e) => sum + e.amount, 0);
+
+  const manualRows = potEntries ?? [];
+  const manualNet = manualRows.reduce((sum, e) => sum + e.amount, 0);
+  const manualIncome = manualRows.filter((e) => e.amount > 0).reduce((sum, e) => sum + e.amount, 0);
+  const manualExpense = manualRows.filter((e) => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
+
+  const byCategory: Record<string, number> = { pitch: pitchExpense, socials: 0, equipment: 0, sponsorship: 0, other: 0 };
+  for (const e of manualRows) {
+    if (e.amount < 0) byCategory[e.category] = (byCategory[e.category] ?? 0) + Math.abs(e.amount);
+  }
+
+  const recentEntries = [
+    ...autoEntries.map((e) => ({ ...e, kind: "auto" as const })),
+    ...manualRows.map((e) => ({ date: e.created_at.slice(0, 10), amount: e.amount, description: e.description, kind: "manual" as const })),
+  ]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 10);
+
+  return {
+    total_balance: autoNet + manualNet,
+    total_income: grossIncome + manualIncome,
+    total_expense: pitchExpense + manualExpense,
+    expense_by_category: byCategory,
+    recent_entries: recentEntries,
+  };
+}
+
 async function proposeMarkPaid(admin: SupabaseClient, args: { booking_id: string }): Promise<MarkPaidAction> {
   const { data: booking, error } = await admin.from("bookings").select("id, status, player_id, games(date, venue, price)").eq("id", args.booking_id).single();
   if (error || !booking) throw new Error("Booking not found");
@@ -743,6 +945,12 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   get_motm_winner: getMotmWinner,
   get_player_of_month: getPlayerOfMonth,
   find_audit_log_entries: findAuditLogEntries,
+  get_club_settings: getClubSettings,
+  find_awards: findAwards,
+  find_admin_messages: findAdminMessages,
+  find_unmatched_payments: findUnmatchedPayments,
+  get_prediction_leaderboard: getPredictionLeaderboard,
+  get_pot_summary: getPotSummary,
   propose_mark_paid: proposeMarkPaid,
   propose_create_fixture: proposeCreateFixture,
 };
