@@ -15,9 +15,15 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
         venue_contains: { type: "string" },
         published_only: { type: "boolean", description: "Only include fixtures already visible to players" },
         sort: { type: "string", enum: ["asc", "desc"], description: "Sort by date - default asc (oldest first). Use desc for 'most recent'/'last game' questions." },
-        limit: { type: "number", description: "Default 20" },
+        limit: { type: "number", description: "Default 100 - the club has ~25 fixtures on record and growing, so don't lower this for a 'how many total/all fixtures' question or you'll undercount." },
       },
     },
+  },
+  {
+    name: "get_fixture_counts",
+    description:
+      "Exact counts of fixtures - total, already played, and still upcoming. Use this for any 'how many fixtures/games' question instead of calling find_games twice (played + upcoming) and adding them up yourself - that's an easy place to make an arithmetic mistake.",
+    input_schema: { type: "object", properties: {} },
   },
   {
     name: "find_recent_bookings",
@@ -46,7 +52,7 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
       properties: {
         name_contains: { type: "string" },
         role: { type: "string", enum: ["player", "admin", "co-owner", "owner"] },
-        limit: { type: "number", description: "Default 20" },
+        limit: { type: "number", description: "Default 100 - the club has 60+ registered profiles, so don't lower this for a 'how many/list all players' question or you'll undercount." },
       },
     },
   },
@@ -73,6 +79,23 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     description:
       "Every player missing a self-rating and/or an admin-rating, in one efficient call. Use this instead of checking players one by one with get_player_detail - that's far too many round trips for this question and will time out.",
     input_schema: { type: "object", properties: { role: { type: "string", enum: ["player", "admin", "co-owner", "owner"] } } },
+  },
+  {
+    name: "find_players_without_emergency_contact",
+    description: "Every player who hasn't added an emergency contact yet, in one efficient call - useful for chasing this up since it matters if someone's ever injured at a game.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "find_push_notification_issues",
+    description:
+      "Players whose notifications look broken - opted in (push_opt_in) but with no actual working device subscription behind it, so they think they're getting reminders but aren't. Also returns overall counts (opted in vs actually subscribed).",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "find_possible_duplicate_players",
+    description:
+      "Players who share the exact same display name (case-insensitive) - likely duplicate profiles from someone signing up twice. Check this before trusting a headcount or 'has X ever played' question if the name seems generic, since a duplicate profile silently splits that person's real history across two records.",
+    input_schema: { type: "object", properties: {} },
   },
   {
     name: "find_players_without_bookings",

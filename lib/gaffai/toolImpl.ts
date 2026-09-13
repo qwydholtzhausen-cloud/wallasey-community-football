@@ -104,6 +104,21 @@ export interface CreateFixtureAction {
   maxPlayers: number;
 }
 
+// Exact split, computed once, rather than leaving "how many total" to two
+// separate find_games calls plus the model's own addition - confirmed
+// real failure mode (reported 25 total/16 upcoming against an actual 23
+// total/14 upcoming). Uses the same "played" definition as the rest of
+// the app (kickoff + match duration has passed, pastGames/upcomingGames
+// in app/WirralCommunityFootball.tsx) rather than "has a score entered" -
+// a played-but-not-yet-scored game is still past, not upcoming.
+async function getFixtureCounts(admin: SupabaseClient) {
+  const { data } = await admin.from("games").select("date, kickoff");
+  const nowMs = toMs(nowInLondon());
+  const rows = data ?? [];
+  const played = rows.filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs).length;
+  return { total: rows.length, played, upcoming: rows.length - played };
+}
+
 async function findGames(
   admin: SupabaseClient,
   args: { date_from?: string; date_to?: string; venue_contains?: string; published_only?: boolean; sort?: "asc" | "desc"; limit?: number }
@@ -115,7 +130,7 @@ async function findGames(
   if (args.date_to) query = query.lte("date", args.date_to);
   if (args.venue_contains) query = query.ilike("venue", `%${args.venue_contains}%`);
   if (args.published_only) query = query.eq("published", true);
-  query = query.order("date", { ascending: args.sort !== "desc" }).limit(args.limit ?? 20);
+  query = query.order("date", { ascending: args.sort !== "desc" }).limit(args.limit ?? 100);
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -247,7 +262,7 @@ async function findPlayers(admin: SupabaseClient, args: { name_contains?: string
   let query = admin.from("profiles").select("id, display_name, role, push_opt_in");
   if (args.name_contains) query = query.ilike("display_name", `%${args.name_contains}%`);
   if (args.role) query = query.eq("role", args.role);
-  query = query.order("display_name").limit(args.limit ?? 20);
+  query = query.order("display_name").limit(args.limit ?? 100);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data ?? [];
@@ -448,9 +463,14 @@ async function findUnratedPlayers(admin: SupabaseClient, args: { role?: string }
   const selfSet = new Set((selfRatings ?? []).map((r) => r.player_id));
   const adminSet = new Set((adminRatings ?? []).map((r) => r.player_id));
 
-  return (profiles ?? [])
+  const players = (profiles ?? [])
     .filter((p) => !selfSet.has(p.id) || !adminSet.has(p.id))
     .map((p) => ({ name: p.display_name, has_self_rating: selfSet.has(p.id), has_admin_rating: adminSet.has(p.id) }));
+  // count is explicit so the model states a number it was handed, not
+  // one it counted off the list itself - confirmed real failure mode
+  // (misreported 50 instead of 51 for this exact question) worth
+  // guarding against everywhere a headline count is likely to get quoted.
+  return { count: players.length, players };
 }
 
 // Two unbounded flat queries, same shape as find_unrated_players - the
@@ -459,13 +479,71 @@ async function findUnratedPlayers(admin: SupabaseClient, args: { role?: string }
 // who'd genuinely never booked, and wrongly flagged four people who had -
 // find_recent_bookings is capped/paginated by design, so it's never a
 // complete picture of "everyone who's ever booked," only a recent slice.
+async function findPlayersWithoutEmergencyContact(admin: SupabaseClient) {
+  const [{ data: profiles }, { data: contacts }] = await Promise.all([
+    admin.from("profiles").select("id, display_name"),
+    admin.from("emergency_contacts").select("player_id"),
+  ]);
+  const hasContact = new Set((contacts ?? []).map((c) => c.player_id));
+  const players = (profiles ?? []).filter((p) => !hasContact.has(p.id)).map((p) => ({ name: p.display_name }));
+  return { count: players.length, players };
+}
+
+// Same shape of bug this exists to catch as find_unrated_players/
+// find_players_without_bookings: push_opt_in (a DB flag) and an actual
+// working push_subscriptions row can drift apart - see the real Liam
+// bug fixed earlier (lib/push.ts's stale-subscription cleanup never used
+// to reset push_opt_in, so the toggle kept showing "on" with nothing
+// behind it). That root cause is fixed now, but this gives visibility
+// into current state without needing to re-diagnose it by hand again.
+async function findPushNotificationIssues(admin: SupabaseClient) {
+  const [{ data: profiles }, { data: subs }] = await Promise.all([
+    admin.from("profiles").select("id, display_name, push_opt_in"),
+    admin.from("push_subscriptions").select("user_id"),
+  ]);
+  const subscribedSet = new Set((subs ?? []).map((s) => s.user_id));
+  const rows = profiles ?? [];
+  const optedIn = rows.filter((p) => p.push_opt_in);
+  const broken = optedIn.filter((p) => !subscribedSet.has(p.id)).map((p) => ({ name: p.display_name }));
+  return {
+    total_players: rows.length,
+    opted_in: optedIn.length,
+    actually_receiving: optedIn.length - broken.length,
+    broken_opted_in_but_no_working_subscription: broken,
+  };
+}
+
+// Exact case-insensitive name match only, deliberately not fuzzy - a
+// loose similarity threshold risks false positives (flagging two
+// genuinely different players with similar names), where an exact match
+// is a strong, safe signal on its own. Confirmed real case: two separate
+// "Chris Hogan" profiles, one active and one that's never booked, which
+// has already caused two other tools to give wrong answers by silently
+// conflating them before this existed.
+async function findPossibleDuplicatePlayers(admin: SupabaseClient) {
+  const { data: profiles } = await admin.from("profiles").select("id, display_name, role, created_at");
+  const byName: Record<string, { id: string; display_name: string; role: string; created_at: string }[]> = {};
+  for (const p of profiles ?? []) {
+    const key = p.display_name.trim().toLowerCase();
+    (byName[key] ??= []).push(p);
+  }
+  return Object.values(byName)
+    .filter((group) => group.length > 1)
+    .map((group) => ({
+      name: group[0].display_name,
+      count: group.length,
+      profiles: group.map((p) => ({ role: p.role, created_at: p.created_at })),
+    }));
+}
+
 async function findPlayersWithoutBookings(admin: SupabaseClient) {
   const [{ data: profiles }, { data: bookings }] = await Promise.all([
     admin.from("profiles").select("id, display_name"),
     admin.from("bookings").select("player_id"),
   ]);
   const bookedSet = new Set((bookings ?? []).map((b) => b.player_id));
-  return (profiles ?? []).filter((p) => !bookedSet.has(p.id)).map((p) => ({ name: p.display_name }));
+  const players = (profiles ?? []).filter((p) => !bookedSet.has(p.id)).map((p) => ({ name: p.display_name }));
+  return { count: players.length, players };
 }
 
 async function findOverduePlayers(admin: SupabaseClient) {
@@ -490,7 +568,8 @@ async function findOverduePlayers(admin: SupabaseClient) {
     byPlayer[b.player_id] ??= { name: nameOf[b.player_id] ?? "Unknown", games: [] };
     byPlayer[b.player_id].games.push({ date: g.date, venue: g.venue, status: b.status });
   }
-  return Object.values(byPlayer);
+  const players = Object.values(byPlayer);
+  return { count: players.length, players };
 }
 
 async function getPaymentStatus(admin: SupabaseClient, args: { game_id: string }) {
@@ -647,6 +726,7 @@ type ToolImplFn = (admin: SupabaseClient, args: any) => Promise<unknown>;
 
 export const TOOL_IMPL: Record<string, ToolImplFn> = {
   find_games: findGames,
+  get_fixture_counts: getFixtureCounts,
   find_recent_bookings: findRecentBookings,
   get_game_detail: getGameDetail,
   find_players: findPlayers,
@@ -655,6 +735,9 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   suggest_balanced_teams: suggestBalancedTeams,
   find_unrated_players: findUnratedPlayers,
   find_players_without_bookings: findPlayersWithoutBookings,
+  find_players_without_emergency_contact: findPlayersWithoutEmergencyContact,
+  find_push_notification_issues: findPushNotificationIssues,
+  find_possible_duplicate_players: findPossibleDuplicatePlayers,
   find_overdue_players: findOverduePlayers,
   get_payment_status: getPaymentStatus,
   get_motm_winner: getMotmWinner,
