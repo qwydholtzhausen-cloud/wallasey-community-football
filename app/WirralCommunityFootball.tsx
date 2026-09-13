@@ -5794,6 +5794,20 @@ const GAFFAI_SUGGESTIONS = [
   "Is anyone currently blocked from booking?",
 ];
 
+// GaffAI's mark - a ball with an AI spark, not another generic emoji.
+// currentColor so it inherits whatever tint its container sets (white on
+// the blue FAB, light blue in the header tile).
+function GaffAILogo({ size }: { size: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="10.5" cy="13.5" r="6.5" />
+      <path d="M10.5 9.2l2.2 1.6-.85 2.6h-2.7l-.85-2.6z" />
+      <path d="M10.5 9.2V7M7.4 12.2l-1.9-.6M13.6 12.2l1.9-.6M8.9 16.4l-1 1.8M12.1 16.4l1 1.8" />
+      <path d="M18 3.2l.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 // Admin-only floating assistant. Reads anything, but can only ever change
 // two things (mark a booking paid, create a draft fixture) and always via
 // an explicit in-chat confirm/cancel card - never straight from a typed
@@ -5921,7 +5935,7 @@ function GaffAIChat({
       <div className="gaffai-fab-wrap">
         <div className="gaffai-fab-ring" />
         <button className="gaffai-fab" onClick={() => setOpen(true)} aria-label="Open GaffAI">
-          ✨
+          <GaffAILogo size={24} />
         </button>
         {nudges.length > 0 && <span className="gaffai-fab-badge">{nudges.length}</span>}
       </div>
@@ -5931,7 +5945,9 @@ function GaffAIChat({
           <div className="gaffai-sheet" onClick={(e) => e.stopPropagation()}>
             <div className="gaffai-sheet-handle" />
             <div className="gaffai-sheet-head">
-              <div className="gaffai-sheet-ico">🧢</div>
+              <div className="gaffai-sheet-ico">
+                <GaffAILogo size={16} />
+              </div>
               <div className="gaffai-sheet-title">GaffAI</div>
               <span className="gaffai-sheet-tag">Admin only</span>
               <button className="gaffai-sheet-reset" onClick={resetChat} aria-label="Reset conversation" title="Reset">
