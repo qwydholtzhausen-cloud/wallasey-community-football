@@ -5387,7 +5387,7 @@ function App({ session }: { session: Session }) {
         ))}
       </nav>
 
-      {isAdmin && myId && <GaffAIChat getFreshAccessToken={getFreshAccessToken} onFixtureCreated={loadGames} myId={myId} />}
+      {isAdmin && myId && <GaffAIChat getFreshAccessToken={getFreshAccessToken} onFixtureCreated={loadGames} myId={myId} askConfirm={askConfirm} />}
 
       {playerCardId && (() => {
         const cardProfile = profiles.find((p) => p.id === playerCardId);
@@ -5772,7 +5772,8 @@ function PlayerCardModal({
 
 type GaffAIAction =
   | { kind: "mark_paid"; bookingId: string; playerName: string; gameLabel: string; amount: number }
-  | { kind: "create_fixture"; date: string; kickoff: string; venue: string; pitch: string; price: number; maxPlayers: number };
+  | { kind: "create_fixture"; date: string; kickoff: string; venue: string; pitch: string; price: number; maxPlayers: number }
+  | { kind: "send_reminder"; playerId: string; playerName: string; message: string };
 
 interface GaffAIMessage {
   role: "user" | "assistant";
@@ -5848,10 +5849,12 @@ function GaffAIChat({
   getFreshAccessToken,
   onFixtureCreated,
   myId,
+  askConfirm,
 }: {
   getFreshAccessToken: () => Promise<string | null>;
   onFixtureCreated: () => void;
   myId: string;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<GaffAIMessage[]>([]);
@@ -5906,6 +5909,32 @@ function GaffAIChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Persisted conversation memory - loads the most recent turns so the
+  // chat survives a refresh/reopen/different device instead of starting
+  // blank every time. 40 is deliberately generous but bounded: the route
+  // only ever sends the last 20 turns on to the model regardless
+  // (historyIn.slice(-20) in app/api/admin/gaffai/route.ts), so holding
+  // meaningfully more than that here would just bloat the initial render
+  // without the model ever using the extra context. Deliberately only
+  // role+text - a loaded row for what was once an action_proposal has no
+  // `action` set, so it just renders as an inert bot bubble with no
+  // Confirm/Cancel button (see the render below) rather than resurrecting
+  // a days-old proposal that might now be acting on stale data.
+  async function loadHistory() {
+    const { data } = await supabase
+      .from("gaffai_conversations")
+      .select("role, text")
+      .eq("admin_id", myId)
+      .order("created_at", { ascending: false })
+      .limit(40);
+    if (data) setMessages([...data].reverse().map((r) => ({ role: r.role as "user" | "assistant", text: r.text })));
+  }
+
+  useEffect(() => {
+    loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Direct client write (RLS-scoped, admin-only), same pattern as the
   // existing feed_hidden_items hide/unhide - a row present just means
   // "dismissed," no route needed.
@@ -5957,10 +5986,20 @@ function GaffAIChat({
     setMessages((cur) => cur.map((m, i) => (i === index ? { ...m, actionState: "cancelled" } : m)));
   }
 
-  function resetChat() {
+  async function resetChat() {
+    if (messages.length > 0) {
+      const ok = await askConfirm(
+        "Clear this conversation?",
+        "This also forgets everything GaffAI remembers from past chats - next time starts fresh.",
+        "Clear",
+        true
+      );
+      if (!ok) return;
+    }
     setMessages([]);
     setInput("");
     setSuggestions(pickGaffAISuggestions());
+    await supabase.from("gaffai_conversations").delete().eq("admin_id", myId);
   }
 
   return (

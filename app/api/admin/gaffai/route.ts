@@ -3,7 +3,16 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { callClaude, type AnthropicMessage, type AnthropicContentBlock } from "../../../../lib/gaffai/anthropic";
 import { GAFFAI_TOOLS } from "../../../../lib/gaffai/tools";
 import { GAFFAI_SYSTEM_PROMPT } from "../../../../lib/gaffai/prompt";
-import { TOOL_IMPL, executeMarkPaid, executeCreateFixture, computeNudges, type MarkPaidAction, type CreateFixtureAction } from "../../../../lib/gaffai/toolImpl";
+import {
+  TOOL_IMPL,
+  executeMarkPaid,
+  executeCreateFixture,
+  executeSendReminder,
+  computeNudges,
+  type MarkPaidAction,
+  type CreateFixtureAction,
+  type SendReminderAction,
+} from "../../../../lib/gaffai/toolImpl";
 import { nowInLondon } from "../../../../lib/time";
 
 // This app is on Vercel Hobby (see app/api/cron/frequent/route.ts's own
@@ -36,6 +45,23 @@ async function authenticate(req: Request): Promise<{ admin: SupabaseClient; call
 type ToolUseBlock = Extract<AnthropicContentBlock, { type: "tool_use" }>;
 type TextBlock = Extract<AnthropicContentBlock, { type: "text" }>;
 
+// Best-effort - a persistence hiccup should never turn an otherwise-
+// successful answer into a 500. Only real message/answer exchanges get
+// saved here; nudges and confirm_action requests aren't conversation
+// turns. Deliberately just role+text, nothing about any action that was
+// proposed - see the client's GaffAIAction handling for why a reloaded
+// history row never resurrects a stale, possibly-now-invalid proposal.
+async function persistTurn(admin: SupabaseClient, callerId: string, userText: string, replyText: string) {
+  try {
+    await admin.from("gaffai_conversations").insert([
+      { admin_id: callerId, role: "user", text: userText },
+      { admin_id: callerId, role: "assistant", text: replyText },
+    ]);
+  } catch (err) {
+    console.error("gaffai conversation persist failed", err);
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const auth = await authenticate(req);
@@ -66,7 +92,7 @@ export async function POST(req: Request) {
     // model output alone can trigger a mutation. Every field is
     // re-validated fresh against the DB before anything happens.
     if (body.type === "confirm_action") {
-      const action = body.action as MarkPaidAction | CreateFixtureAction;
+      const action = body.action as MarkPaidAction | CreateFixtureAction | SendReminderAction;
       try {
         if (action.kind === "mark_paid") {
           await executeMarkPaid(admin, callerId, action);
@@ -75,6 +101,10 @@ export async function POST(req: Request) {
         if (action.kind === "create_fixture") {
           await executeCreateFixture(admin, callerId, action);
           return NextResponse.json({ type: "action_result", ok: true, text: `Draft fixture created for ${action.date}. Review and publish it when you're ready.` });
+        }
+        if (action.kind === "send_reminder") {
+          await executeSendReminder(admin, callerId, action);
+          return NextResponse.json({ type: "action_result", ok: true, text: `Done — sent to ${action.playerName}.` });
         }
         return NextResponse.json({ type: "error", error: "Unknown action" }, { status: 400 });
       } catch (err) {
@@ -112,7 +142,7 @@ export async function POST(req: Request) {
       // Reset every round - only reflects whichever tools were called in
       // the round immediately before the model's final answer, not
       // anything called earlier in the conversation.
-      let proposalFromLastRound: MarkPaidAction | CreateFixtureAction | null = null;
+      let proposalFromLastRound: MarkPaidAction | CreateFixtureAction | SendReminderAction | null = null;
 
       while (response.stop_reason === "tool_use" && rounds < MAX_TOOL_ROUNDS) {
         rounds++;
@@ -127,8 +157,8 @@ export async function POST(req: Request) {
             }
             try {
               const result = await impl(admin, block.input ?? {});
-              if (block.name === "propose_mark_paid" || block.name === "propose_create_fixture") {
-                proposalFromLastRound = result as MarkPaidAction | CreateFixtureAction;
+              if (block.name === "propose_mark_paid" || block.name === "propose_create_fixture" || block.name === "propose_send_reminder") {
+                proposalFromLastRound = result as MarkPaidAction | CreateFixtureAction | SendReminderAction;
               }
               return { type: "tool_result" as const, tool_use_id: block.id, content: JSON.stringify(result) };
             } catch (err) {
@@ -143,7 +173,9 @@ export async function POST(req: Request) {
       }
 
       if (response.stop_reason === "tool_use") {
-        return NextResponse.json({ type: "answer", text: "Struggling to pin that one down, gaffer — try narrowing it down a bit." });
+        const fallback = "Struggling to pin that one down, gaffer — try narrowing it down a bit.";
+        await persistTurn(admin, callerId, text, fallback);
+        return NextResponse.json({ type: "answer", text: fallback });
       }
 
       const finalText = response.content
@@ -152,9 +184,13 @@ export async function POST(req: Request) {
         .join("\n");
 
       if (proposalFromLastRound) {
-        return NextResponse.json({ type: "action_proposal", text: finalText || "Here's what I'll do:", action: proposalFromLastRound });
+        const replyText = finalText || "Here's what I'll do:";
+        await persistTurn(admin, callerId, text, replyText);
+        return NextResponse.json({ type: "action_proposal", text: replyText, action: proposalFromLastRound });
       }
-      return NextResponse.json({ type: "answer", text: finalText || "Not sure how to answer that one — try rephrasing?" });
+      const replyText = finalText || "Not sure how to answer that one — try rephrasing?";
+      await persistTurn(admin, callerId, text, replyText);
+      return NextResponse.json({ type: "answer", text: replyText });
     }
 
     return NextResponse.json({ type: "error", error: "Unknown request type" }, { status: 400 });

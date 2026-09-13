@@ -211,4 +211,17 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
       required: ["date"],
     },
   },
+  {
+    name: "propose_send_reminder",
+    description:
+      "Prepare (but do NOT send) a direct message to one player - e.g. nudging them about an unpaid booking, a missed rating, or anything else worth a quick word. Returns a proposal for the admin to confirm - this never sends anything by itself. Look up the player's id with find_players first. Write the message text yourself from the context of the conversation - keep it short and direct, like a real admin would type it - unless the admin already gave you exact wording to use.",
+    input_schema: {
+      type: "object",
+      properties: {
+        player_id: { type: "string" },
+        message: { type: "string", description: "The exact text to send to the player." },
+      },
+      required: ["player_id", "message"],
+    },
+  },
 ];

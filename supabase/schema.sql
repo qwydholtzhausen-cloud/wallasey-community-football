@@ -1396,3 +1396,23 @@ create table public.gaffai_feedback (
 alter table public.gaffai_feedback enable row level security;
 create policy "gaffai_feedback_select_admin" on public.gaffai_feedback for select using (public.is_admin());
 create policy "gaffai_feedback_insert_admin" on public.gaffai_feedback for insert with check (public.is_admin());
+
+-- GaffAI persistent conversation memory - unlike the two tables above,
+-- this is scoped to the OWNING admin only (admin_id = auth.uid()), not
+-- any admin, since it's personal chat history rather than shared club
+-- state. Deliberately just role+text, one row per turn - no action/
+-- actionState is ever stored, so a reloaded row for what was once an
+-- action_proposal always renders as inert history, never a resurrected,
+-- possibly-stale Confirm/Cancel button.
+create table public.gaffai_conversations (
+  id uuid primary key default gen_random_uuid(),
+  admin_id uuid not null references public.profiles (id) on delete cascade,
+  role text not null check (role in ('user','assistant')),
+  text text not null,
+  created_at timestamptz not null default now()
+);
+create index gaffai_conversations_admin_created_idx on public.gaffai_conversations (admin_id, created_at);
+alter table public.gaffai_conversations enable row level security;
+create policy "gaffai_conversations_select_own" on public.gaffai_conversations for select using (admin_id = auth.uid());
+create policy "gaffai_conversations_insert_own" on public.gaffai_conversations for insert with check (admin_id = auth.uid());
+create policy "gaffai_conversations_delete_own" on public.gaffai_conversations for delete using (admin_id = auth.uid());

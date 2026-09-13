@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { kickoffCutoff, nowInLondon, previousMonthKey, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../time";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer, type GameForPerformance } from "../teamBalance";
 import { buildLeaderboard, topScorers, type ScoredPrediction } from "../predictions";
+import { sendPushToUsers } from "../push";
 
 // Same "pretend UTC" trick as everywhere else this pattern's used
 // (app/api/cron/frequent/route.ts, app/WirralCommunityFootball.tsx) -
@@ -103,6 +104,12 @@ export interface CreateFixtureAction {
   pitch: string;
   price: number;
   maxPlayers: number;
+}
+export interface SendReminderAction {
+  kind: "send_reminder";
+  playerId: string;
+  playerName: string;
+  message: string;
 }
 
 // Exact split, computed once, rather than leaving "how many total" to two
@@ -928,6 +935,15 @@ async function proposeCreateFixture(
   };
 }
 
+async function proposeSendReminder(admin: SupabaseClient, args: { player_id: string; message: string }): Promise<SendReminderAction> {
+  const message = (args.message ?? "").trim();
+  if (!message) throw new Error("Message can't be empty.");
+  const nameOf = await namesById(admin, [args.player_id]);
+  const playerName = nameOf[args.player_id];
+  if (!playerName) throw new Error("Player not found.");
+  return { kind: "send_reminder", playerId: args.player_id, playerName, message };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ToolImplFn = (admin: SupabaseClient, args: any) => Promise<unknown>;
 
@@ -958,6 +974,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   get_pot_summary: getPotSummary,
   propose_mark_paid: proposeMarkPaid,
   propose_create_fixture: proposeCreateFixture,
+  propose_send_reminder: proposeSendReminder,
 };
 
 export interface Nudge {
@@ -1088,4 +1105,34 @@ export async function executeCreateFixture(admin: SupabaseClient, callerId: stri
   if (error) throw new Error(error.message);
 
   await admin.from("audit_log").insert({ actor_id: callerId, action: "GaffAI created draft fixture", details: `${action.venue} — ${action.date}` });
+}
+
+// Mirrors sendAdminMessage exactly (app/WirralCommunityFootball.tsx
+// ~line 1911): same admin_messages insert shape, same push payload as
+// app/api/push/notify-admin-message/route.ts (sendPushToUsers imported
+// directly rather than hit over HTTP, since this already runs
+// server-side with the service-role client). Logged as "GaffAI sent
+// reminder message" rather than reusing the manual flow's plain "Sent
+// message" label - same reasoning as the other two GaffAI actions: a
+// typed-language-to-mutation pathway is a different, less visible trust
+// surface than the obvious in-app composer, even though the end state
+// (a row in admin_messages) is identical.
+export async function executeSendReminder(admin: SupabaseClient, callerId: string, action: SendReminderAction) {
+  const { data, error } = await admin
+    .from("admin_messages")
+    .insert({ recipient_id: action.playerId, sender_id: callerId, message: action.message })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+
+  const excerpt = action.message.length > 80 ? `${action.message.slice(0, 77)}...` : action.message;
+  await admin.from("audit_log").insert({ actor_id: callerId, action: "GaffAI sent reminder message", details: `${action.playerName} — "${excerpt}"` });
+
+  if (data) {
+    await sendPushToUsers([action.playerId], {
+      title: "Message from an admin",
+      body: action.message.length > 100 ? `${action.message.slice(0, 97)}...` : action.message,
+      url: "/",
+    });
+  }
 }
