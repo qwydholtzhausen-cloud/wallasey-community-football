@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { kickoffCutoff, nowInLondon, previousMonthKey, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../time";
+import { kickoffCutoff, nowInLondon, previousMonthKey, pseudoUtcFromRealInstant, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../time";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer, type GameForPerformance } from "../teamBalance";
 import { buildLeaderboard, topScorers, type ScoredPrediction } from "../predictions";
 import { sendPushToUsers } from "../push";
@@ -111,6 +111,14 @@ export interface PublishFixtureAction {
   gameId: string;
   venue: string;
   date: string;
+}
+export interface MatchdayPushAction {
+  kind: "matchday_push";
+  gameId: string;
+  venue: string;
+  date: string;
+  spotsLeft: number;
+  targetCount: number;
 }
 
 // Exact split, computed once, rather than leaving "how many total" to two
@@ -952,6 +960,35 @@ async function proposePublishFixture(admin: SupabaseClient, args: { game_id: str
   return { kind: "publish_fixture", gameId: game.id, venue: game.venue, date: game.date };
 }
 
+// Same target-audience logic as the existing automatic "last spot going"
+// push (app/api/push/notify-last-spot/route.ts) - everyone opted into
+// push who isn't already on this game - just triggered by an admin
+// asking instead of the game hitting a specific fill level, and for the
+// opposite situation (short of players, not nearly full).
+async function proposeMatchdayPush(admin: SupabaseClient, args: { game_id: string }): Promise<MatchdayPushAction> {
+  const { data: game, error } = await admin
+    .from("games")
+    .select("id, date, kickoff, venue, max_players, published, bookings(player_id, waiting)")
+    .eq("id", args.game_id)
+    .single();
+  if (error || !game) throw new Error("Fixture not found.");
+  if (!game.published) throw new Error("That fixture isn't published yet - publish it first.");
+  const nowMs = toMs(nowInLondon());
+  if (game.date !== nowInLondon().slice(0, 10)) throw new Error("That fixture isn't today - the match-day push is only for the day itself.");
+  if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= nowMs) throw new Error("That fixture's already kicked off - too late for a match-day push.");
+
+  const bookings = game.bookings ?? [];
+  const confirmedCount = bookings.filter((b) => !b.waiting).length;
+  const spotsLeft = game.max_players - confirmedCount;
+  if (spotsLeft <= 0) throw new Error("That fixture's already full - no need for a push.");
+
+  const alreadyOnGame = new Set(bookings.map((b) => b.player_id));
+  const { data: everyone } = await admin.from("profiles").select("id").eq("push_opt_in", true);
+  const targetCount = (everyone ?? []).filter((p) => !alreadyOnGame.has(p.id)).length;
+
+  return { kind: "matchday_push", gameId: game.id, venue: game.venue, date: game.date, spotsLeft, targetCount };
+}
+
 // Unlike the four propose_*/confirm_action pairs, these run immediately
 // with no confirmation step - a "fact" is GaffAI's own internal note
 // about how to talk about the club, not real club data (no booking,
@@ -1057,6 +1094,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   propose_create_fixture: proposeCreateFixture,
   propose_send_reminder: proposeSendReminder,
   propose_publish_fixture: proposePublishFixture,
+  propose_matchday_push: proposeMatchdayPush,
   save_standing_fact: saveStandingFact,
   forget_standing_fact: forgetStandingFact,
   find_clips: findClips,
@@ -1242,19 +1280,118 @@ async function computeAttendanceTrendNudge(admin: SupabaseClient): Promise<Nudge
   };
 }
 
+// Same shape as the MOTM turnout trend, just a different engagement
+// metric - a real, previously-reported problem (participation "has been
+// going down"), not a hypothetical.
+async function computePredictionParticipationTrendNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const nowMs = toMs(nowInLondon());
+  const { data: games } = await admin.from("games").select("id, date, kickoff");
+  const played = (games ?? [])
+    .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs)
+    .sort((a, b) => (a.date + a.kickoff).localeCompare(b.date + b.kickoff));
+  const recentGames = played.slice(-TREND_RUN_LENGTH);
+  if (recentGames.length < TREND_RUN_LENGTH) return null;
+
+  const gameIds = recentGames.map((g) => g.id);
+  const { data: predictions } = await admin.from("score_predictions").select("game_id").in("game_id", gameIds);
+  const countByGame: Record<string, number> = Object.fromEntries(gameIds.map((id) => [id, 0]));
+  for (const p of predictions ?? []) countByGame[p.game_id] = (countByGame[p.game_id] ?? 0) + 1;
+  const counts = gameIds.map((id) => countByGame[id]);
+
+  if (!isDecliningRun(counts, TREND_RUN_LENGTH)) return null;
+
+  return {
+    key: contentKey("prediction-participation-decline", gameIds),
+    text: `Score-prediction participation has dropped for ${TREND_RUN_LENGTH} games running (${counts.join(" → ")} predictions) - might be worth a reminder to play.`,
+  };
+}
+
+// A leading indicator, not just another declining headcount - players
+// booking progressively closer to the deadline each game can signal
+// waning engagement before it shows up as an actual missed booking or
+// empty spot. bookings.created_at is a real UTC timestamp (unlike
+// date/kickoff, which are pretend-UTC UK wall-clock strings) - comparing
+// it straight against kickoffCutoff's toMs() output would silently drift
+// by an hour during BST, so it's converted through
+// pseudoUtcFromRealInstant first to land on the same pretend-UTC basis
+// before the subtraction.
+async function computeBookingLeadTimeTrendNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const nowMs = toMs(nowInLondon());
+  const { data: games } = await admin.from("games").select("id, date, kickoff, bookings(waiting, created_at)");
+  type GameWithBookingTimes = { id: string; date: string; kickoff: string; bookings: { waiting: boolean; created_at: string }[] | null };
+  const played = ((games ?? []) as GameWithBookingTimes[])
+    .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs)
+    .sort((a, b) => (a.date + a.kickoff).localeCompare(b.date + b.kickoff));
+  const recentGames = played.slice(-TREND_RUN_LENGTH);
+  if (recentGames.length < TREND_RUN_LENGTH) return null;
+
+  const avgLeadHours: (number | null)[] = recentGames.map((g) => {
+    const kickoffMs = toMs(kickoffCutoff(g.date, g.kickoff, 0));
+    const bookings = (g.bookings ?? []).filter((b) => !b.waiting);
+    if (bookings.length === 0) return null;
+    const totalHours = bookings.reduce((sum, b) => sum + (kickoffMs - toMs(pseudoUtcFromRealInstant(b.created_at))) / 3600000, 0);
+    return totalHours / bookings.length;
+  });
+  if (avgLeadHours.some((h) => h === null)) return null; // need a real average for every game in the window
+  const hours = avgLeadHours as number[];
+
+  if (!isDecliningRun(hours, TREND_RUN_LENGTH)) return null;
+
+  return {
+    key: contentKey(
+      "booking-leadtime-decline",
+      recentGames.map((g) => g.id)
+    ),
+    text: `Players have been booking later each game for ${TREND_RUN_LENGTH} games running (averaging ${hours.map((h) => Math.round(h)).join(" → ")} hours' notice) - could be an early sign of dropping engagement.`,
+  };
+}
+
+// The nudge half of the new match-day capability - surfaces the fact,
+// propose_matchday_push (below) is what actually does something about
+// it. Only published fixtures count (an unpublished draft isn't
+// bookable yet regardless of today's date, so there's nothing genuinely
+// actionable about it being short of players), and only ones that
+// haven't kicked off yet - no point nudging about a game already
+// underway.
+async function computeMatchdayNotFullNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const nowMs = toMs(nowInLondon());
+  const today = nowInLondon().slice(0, 10);
+  const { data: games } = await admin.from("games").select("id, date, kickoff, venue, max_players, bookings(waiting)").eq("date", today).eq("published", true);
+  const notFull = (games ?? [])
+    .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, 0)) > nowMs)
+    .map((g) => ({ id: g.id, venue: g.venue, spotsLeft: g.max_players - (g.bookings ?? []).filter((b: { waiting: boolean }) => !b.waiting).length }))
+    .filter((g) => g.spotsLeft > 0);
+  if (notFull.length === 0) return null;
+
+  const ids = notFull.map((g) => g.id);
+  const labels = notFull.map((g) => `${g.venue} (${g.spotsLeft} left)`).join(", ");
+  return {
+    key: contentKey("matchday-not-full", ids),
+    text:
+      notFull.length === 1
+        ? `Today's game still has spots open: ${labels}. Want me to send a push to fill it?`
+        : `${notFull.length} of today's games still have spots open: ${labels}. Want me to send a push to fill them?`,
+  };
+}
+
 // Pure deterministic queries, same as suggest_balanced_teams - no
 // Anthropic API call anywhere in here, so computing this on every app
 // load costs nothing beyond a handful of fast Supabase round trips.
 export async function computeNudges(admin: SupabaseClient): Promise<Nudge[]> {
-  const [unpaid, overdue, pushIssues, unpublishedDrafts, motmTrend, attendanceTrend] = await Promise.all([
+  const [unpaid, overdue, pushIssues, unpublishedDrafts, motmTrend, attendanceTrend, predictionTrend, leadTimeTrend, matchdayNotFull] = await Promise.all([
     computeUnpaidNextGameNudge(admin),
     computeOverdueNudge(admin),
     computePushIssuesNudge(admin),
     computeUnpublishedDraftsNudge(admin),
     computeMotmTurnoutTrendNudge(admin),
     computeAttendanceTrendNudge(admin),
+    computePredictionParticipationTrendNudge(admin),
+    computeBookingLeadTimeTrendNudge(admin),
+    computeMatchdayNotFullNudge(admin),
   ]);
-  const candidates = [unpaid, overdue, pushIssues, unpublishedDrafts, motmTrend, attendanceTrend].filter((n): n is Nudge => n !== null);
+  const candidates = [unpaid, overdue, pushIssues, unpublishedDrafts, motmTrend, attendanceTrend, predictionTrend, leadTimeTrend, matchdayNotFull].filter(
+    (n): n is Nudge => n !== null
+  );
   if (candidates.length === 0) return [];
 
   const { data: dismissed } = await admin.from("gaffai_dismissed_nudges").select("nudge_key");
@@ -1353,4 +1490,36 @@ export async function executePublishFixture(admin: SupabaseClient, callerId: str
   if (error) throw new Error(error.message);
 
   await admin.from("audit_log").insert({ actor_id: callerId, action: "GaffAI published fixture", details: `${action.venue} — ${action.date}` });
+}
+
+// Re-validates everything fresh against the DB rather than trusting the
+// proposal's numbers - spots could have filled between proposing and
+// confirming, same "re-check before mutating" discipline as every other
+// execute* function here.
+export async function executeMatchdayPush(admin: SupabaseClient, callerId: string, action: MatchdayPushAction) {
+  const { data: game } = await admin.from("games").select("id, date, kickoff, venue, max_players, bookings(player_id, waiting)").eq("id", action.gameId).single();
+  if (!game) throw new Error("That fixture no longer exists.");
+  const nowMs = toMs(nowInLondon());
+  if (game.date !== nowInLondon().slice(0, 10)) throw new Error("That fixture is no longer today.");
+  if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= nowMs) throw new Error("That fixture's already kicked off.");
+
+  const bookings = game.bookings ?? [];
+  const confirmedCount = bookings.filter((b) => !b.waiting).length;
+  const spotsLeft = game.max_players - confirmedCount;
+  if (spotsLeft <= 0) throw new Error("That fixture's already full.");
+
+  const alreadyOnGame = new Set(bookings.map((b) => b.player_id));
+  const { data: everyone } = await admin.from("profiles").select("id").eq("push_opt_in", true);
+  const targetIds = (everyone ?? []).map((p) => p.id).filter((id) => !alreadyOnGame.has(id));
+
+  const dateLabel = new Date(game.date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  await sendPushToUsers(targetIds, {
+    title: "Spots still open today",
+    body: `${game.venue} on ${dateLabel} still has ${spotsLeft} spot${spotsLeft === 1 ? "" : "s"} open. Book now.`,
+    url: "/",
+  });
+
+  await admin
+    .from("audit_log")
+    .insert({ actor_id: callerId, action: "GaffAI sent matchday push", details: `${game.venue} — ${game.date} (${spotsLeft} spots, ${targetIds.length} notified)` });
 }

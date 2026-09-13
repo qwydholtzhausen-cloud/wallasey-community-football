@@ -5768,7 +5768,8 @@ type GaffAIAction =
   | { kind: "mark_paid"; bookingId: string; playerName: string; gameLabel: string; amount: number }
   | { kind: "create_fixture"; date: string; kickoff: string; venue: string; pitch: string; price: number; maxPlayers: number }
   | { kind: "send_reminder"; playerId: string; playerName: string; message: string }
-  | { kind: "publish_fixture"; gameId: string; venue: string; date: string };
+  | { kind: "publish_fixture"; gameId: string; venue: string; date: string }
+  | { kind: "matchday_push"; gameId: string; venue: string; date: string; spotsLeft: number; targetCount: number };
 
 interface GaffAIMessage {
   role: "user" | "assistant";

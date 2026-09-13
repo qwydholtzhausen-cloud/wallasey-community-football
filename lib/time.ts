@@ -12,9 +12,14 @@ export const MOTM_VOTE_WINDOW_MINUTES = 300;
 // this app waits before treating a game as over.
 export const MATCH_DURATION_MINUTES = 65;
 
-// Current UK wall-clock time as "YYYY-MM-DDTHH:MM", regardless of the
-// server/browser's own timezone.
-export function nowInLondon() {
+// Converts any real instant (a Date, or a genuine ISO UTC string like a
+// `created_at` column) into the same "wall-clock digits as if they were
+// UTC" string nowInLondon()/kickoffCutoff() produce, so it can be safely
+// toMs()'d alongside their output. Comparing a real UTC epoch straight
+// against a toMs()'d pretend-UTC value silently drifts by an hour during
+// BST - this conversion is what avoids that, not a shortcut around it.
+export function pseudoUtcFromRealInstant(input: Date | string) {
+  const date = typeof input === "string" ? new Date(input) : input;
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/London",
     year: "numeric",
@@ -23,9 +28,15 @@ export function nowInLondon() {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).formatToParts(new Date());
+  }).formatToParts(date);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
   return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
+// Current UK wall-clock time as "YYYY-MM-DDTHH:MM", regardless of the
+// server/browser's own timezone.
+export function nowInLondon() {
+  return pseudoUtcFromRealInstant(new Date());
 }
 
 // A fixture's date+kickoff plus a buffer, as "YYYY-MM-DDTHH:MM" in the

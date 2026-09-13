@@ -231,6 +231,12 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     input_schema: { type: "object", properties: { game_id: { type: "string" } }, required: ["game_id"] },
   },
   {
+    name: "propose_matchday_push",
+    description:
+      "Prepare (but do NOT send) a push notification to every opted-in player not yet booked onto today's game, letting them know spots are still open. Returns a proposal for the admin to confirm (including how many players it'll reach) - this never sends anything by itself. Only works for a PUBLISHED fixture happening TODAY that still has room (confirmed bookings below max players) - fails otherwise.",
+    input_schema: { type: "object", properties: { game_id: { type: "string" } }, required: ["game_id"] },
+  },
+  {
     name: "save_standing_fact",
     description:
       "Remember a durable fact/rule/correction so EVERY future conversation (with any admin, not just this one) applies it automatically going forward. Use this when an admin tells you something that should stick - a changed default, a naming correction, a standing preference for how you should answer certain things - not for one-off questions or requests, and not for anything that's really just a normal answer. Runs immediately, no confirmation needed - this only ever writes your own internal note, never club data (no booking, payment, message, or fixture is touched), and forget_standing_fact undoes it instantly if it turns out wrong.",
