@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
 import { kickoffCutoff, nowInLondon, previousMonthKey, MOTM_VOTE_WINDOW_MINUTES } from "../../../../lib/time";
+import { generateWeeklyDigest } from "../../../../lib/gaffai/digest";
 
 interface CronBooking {
   player_id: string;
@@ -123,6 +124,36 @@ export async function GET(req: Request) {
       }
     }
     await markNotified(potmKey);
+  }
+
+  // --- GaffAI weekly digest for admins, Monday mornings only ---
+  // Reuses notified_events for idempotency exactly like MOTM/POTM above -
+  // no backfill needed since the key is forward-looking only (today's
+  // date), never reinterpreting historical rows the way a "this is new"
+  // checkpoint over existing data would. Wrapped in try/catch so a
+  // digest failure (e.g. the Anthropic call timing out) can never take
+  // down the MOTM/POTM logic above it, which has already completed by
+  // this point regardless.
+  const todayStr = nowUk.slice(0, 10);
+  const isMonday = new Date(todayStr + "T00:00:00Z").getUTCDay() === 1;
+  const digestKey = `gaffai-digest-${todayStr}`;
+  if (isMonday && !notifiedKeys.has(digestKey)) {
+    try {
+      const { data: adminProfiles } = await admin.from("profiles").select("id").in("role", ["admin", "co-owner", "owner"]);
+      const adminIds = (adminProfiles ?? []).map((p) => p.id);
+      if (adminIds.length > 0) {
+        const digestText = await generateWeeklyDigest(admin);
+        await admin.from("gaffai_conversations").insert(adminIds.map((id) => ({ admin_id: id, role: "assistant" as const, text: digestText })));
+        await sendPushToUsers(adminIds, {
+          title: "GaffAI's weekly digest",
+          body: digestText.length > 100 ? `${digestText.slice(0, 97)}...` : digestText,
+          url: "/",
+        });
+      }
+      await markNotified(digestKey);
+    } catch (err) {
+      console.error("GaffAI weekly digest failed", err);
+    }
   }
 
   return NextResponse.json({ ok: true });
