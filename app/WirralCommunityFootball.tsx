@@ -5817,16 +5817,24 @@ function pickGaffAISuggestions(): string[] {
   return shuffled.slice(0, 5);
 }
 
-// GaffAI's mark - a ball with an AI spark, not another generic emoji.
-// currentColor so it inherits whatever tint its container sets (white on
-// the blue FAB, light blue in the header tile).
+// GaffAI's mark - a tactical "G" arc breaking into an arrow, with a
+// target-X and a connected node cluster standing in for the AI side.
+// currentColor throughout so it inherits whatever tint its container
+// sets (white on the blue FAB, light blue in the header tile) - the
+// viewBox is recentered on the artwork's real bounding box (not 0 0 512
+// 512) since the drawn shapes aren't symmetric within a plain square.
 function GaffAILogo({ size }: { size: number }) {
   return (
-    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="10.5" cy="13.5" r="6.5" />
-      <path d="M10.5 9.2l2.2 1.6-.85 2.6h-2.7l-.85-2.6z" />
-      <path d="M10.5 9.2V7M7.4 12.2l-1.9-.6M13.6 12.2l1.9-.6M8.9 16.4l-1 1.8M12.1 16.4l1 1.8" />
-      <path d="M18 3.2l.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7z" fill="currentColor" stroke="none" />
+    <svg viewBox="17 5 511 511" width={size} height={size} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M 310 95 C 170 95 95 180 95 285 C 95 390 170 455 315 455 C 410 455 450 395 450 320 L 290 320" strokeWidth="32" />
+      <path d="M 180 185 C 200 135 250 100 320 100 L 375 100" strokeWidth="32" />
+      <path d="M 340 65 L 385 100 L 340 135" strokeWidth="32" />
+      <path d="M 395 220 L 445 270 M 445 220 L 395 270" strokeWidth="28" />
+      <path d="M 265 240 L 225 310 L 285 385 L 355 345" strokeWidth="20" />
+      <circle cx="265" cy="240" r="22" fill="currentColor" stroke="none" />
+      <circle cx="225" cy="310" r="22" fill="currentColor" stroke="none" />
+      <circle cx="285" cy="385" r="22" fill="currentColor" stroke="none" />
+      <circle cx="355" cy="345" r="22" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -5960,7 +5968,7 @@ function GaffAIChat({
       <div className="gaffai-fab-wrap">
         <div className="gaffai-fab-ring" />
         <button className="gaffai-fab" onClick={() => setOpen(true)} aria-label="Open GaffAI">
-          <GaffAILogo size={24} />
+          <GaffAILogo size={44} />
         </button>
         {nudges.length > 0 && <span className="gaffai-fab-badge">{nudges.length}</span>}
       </div>
@@ -5971,7 +5979,7 @@ function GaffAIChat({
             <div className="gaffai-sheet-handle" />
             <div className="gaffai-sheet-head">
               <div className="gaffai-sheet-ico">
-                <GaffAILogo size={16} />
+                <GaffAILogo size={27} />
               </div>
               <div className="gaffai-sheet-title">GaffAI</div>
               <span className="gaffai-sheet-tag">Admin only</span>
