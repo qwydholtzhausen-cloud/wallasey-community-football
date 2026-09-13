@@ -5387,7 +5387,7 @@ function App({ session }: { session: Session }) {
         ))}
       </nav>
 
-      {isAdmin && <GaffAIChat getFreshAccessToken={getFreshAccessToken} onFixtureCreated={loadGames} />}
+      {isAdmin && myId && <GaffAIChat getFreshAccessToken={getFreshAccessToken} onFixtureCreated={loadGames} myId={myId} />}
 
       {playerCardId && (() => {
         const cardProfile = profiles.find((p) => p.id === playerCardId);
@@ -5781,6 +5781,11 @@ interface GaffAIMessage {
   actionState?: "pending" | "confirmed" | "cancelled" | "failed";
 }
 
+interface GaffAINudge {
+  key: string;
+  text: string;
+}
+
 const GAFFAI_SUGGESTIONS = [
   "Who's unpaid for the next game?",
   "Who's on the waiting list?",
@@ -5794,11 +5799,21 @@ const GAFFAI_SUGGESTIONS = [
 // an explicit in-chat confirm/cancel card - never straight from a typed
 // sentence. See app/api/admin/gaffai/route.ts for why that split is
 // actually enforced structurally, not just by prompt.
-function GaffAIChat({ getFreshAccessToken, onFixtureCreated }: { getFreshAccessToken: () => Promise<string | null>; onFixtureCreated: () => void }) {
+function GaffAIChat({
+  getFreshAccessToken,
+  onFixtureCreated,
+  myId,
+}: {
+  getFreshAccessToken: () => Promise<string | null>;
+  onFixtureCreated: () => void;
+  myId: string;
+}) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<GaffAIMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [nudges, setNudges] = useState<GaffAINudge[]>([]);
+  const [flaggedIndexes, setFlaggedIndexes] = useState<Set<number>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -5822,6 +5837,46 @@ function GaffAIChat({ getFreshAccessToken, onFixtureCreated }: { getFreshAccessT
       setMessages((cur) => [...cur, { role: "assistant", text: "Couldn't reach GaffAI just now — try again in a bit." }]);
       return null;
     }
+  }
+
+  // Fresh live facts every call, never a stored "since you last looked"
+  // checkpoint - this app already tried that shape (a nav-tab "new"
+  // dot, removed 2026-08-12) and it broke on a timezone/axis mismatch,
+  // then stayed removed even after the fix because an ambient signal
+  // with no content and no per-item dismissal was judged more confusing
+  // than helpful. These carry real content and dismiss individually.
+  async function loadNudges() {
+    const data = await callGaffAI({ type: "nudges" });
+    if (data?.type === "nudges" && Array.isArray(data.nudges)) setNudges(data.nudges);
+  }
+
+  useEffect(() => {
+    loadNudges();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (open) loadNudges();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Direct client write (RLS-scoped, admin-only), same pattern as the
+  // existing feed_hidden_items hide/unhide - a row present just means
+  // "dismissed," no route needed.
+  async function dismissNudge(key: string) {
+    setNudges((cur) => cur.filter((n) => n.key !== key));
+    await supabase.from("gaffai_dismissed_nudges").insert({ nudge_key: key, dismissed_by: myId });
+  }
+
+  // Pure data capture, reviewed manually later - not something GaffAI
+  // acts on live. Same review loop as every fix this session so far,
+  // just structured instead of relying on the admin happening to
+  // mention a wrong answer in conversation.
+  async function flagAnswer(index: number) {
+    const msg = messages[index];
+    const question = [...messages.slice(0, index)].reverse().find((m) => m.role === "user")?.text ?? "(no preceding question)";
+    setFlaggedIndexes((cur) => new Set(cur).add(index));
+    await supabase.from("gaffai_feedback").insert({ flagged_by: myId, question, answer: msg.text });
   }
 
   async function send(text: string) {
@@ -5868,6 +5923,7 @@ function GaffAIChat({ getFreshAccessToken, onFixtureCreated }: { getFreshAccessT
         <button className="gaffai-fab" onClick={() => setOpen(true)} aria-label="Open GaffAI">
           ✨
         </button>
+        {nudges.length > 0 && <span className="gaffai-fab-badge">{nudges.length}</span>}
       </div>
 
       {open && (
@@ -5888,10 +5944,29 @@ function GaffAIChat({ getFreshAccessToken, onFixtureCreated }: { getFreshAccessT
             <div className="gaffai-sheet-caption">Answers questions and can act on some things — anything that changes something asks first.</div>
 
             <div className="gaffai-messages" ref={scrollRef}>
+              {nudges.map((n) => (
+                <div key={n.key} className="gaffai-msg bot nudge">
+                  {n.text}
+                  <button className="gaffai-nudge-dismiss" onClick={() => dismissNudge(n.key)} aria-label="Dismiss">
+                    ✕
+                  </button>
+                </div>
+              ))}
               <div className="gaffai-msg bot">Alright — what do you need?</div>
               {messages.map((m, i) => (
                 <div key={i} className={"gaffai-msg " + (m.role === "user" ? "user" : "bot") + (m.action ? " action-card" : "")}>
                   {m.text}
+                  {m.role === "assistant" && !m.action && (
+                    <button
+                      className={"gaffai-flag" + (flaggedIndexes.has(i) ? " flagged" : "")}
+                      onClick={() => flagAnswer(i)}
+                      disabled={flaggedIndexes.has(i)}
+                      aria-label="Flag this answer as wrong"
+                      title={flaggedIndexes.has(i) ? "Flagged for review" : "Flag as wrong"}
+                    >
+                      {flaggedIndexes.has(i) ? "🚩" : "⚑"}
+                    </button>
+                  )}
                   {m.action && m.actionState === "pending" && (
                     <div className="gaffai-action-buttons">
                       <button className="gaffai-action-confirm" onClick={() => confirmAction(i)}>
@@ -9357,6 +9432,9 @@ button.wcf-glance-card:disabled{cursor:default}
 .gaffai-fab{position:relative; width:52px; height:52px; border-radius:50%; border:none; cursor:pointer;
   background:linear-gradient(145deg,var(--blue),#1a4d94); color:#fff; font-size:21px;
   display:flex; align-items:center; justify-content:center; box-shadow:0 10px 24px -6px rgba(46,116,204,.6)}
+.gaffai-fab-badge{position:absolute; top:-4px; right:-4px; min-width:19px; height:19px; padding:0 5px; border-radius:10px;
+  background:var(--red); color:#fff; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center;
+  border:2px solid var(--bg); font-variant-numeric:tabular-nums}
 
 .gaffai-backdrop{position:fixed; inset:0; z-index:120; background:rgba(3,4,8,.6); display:flex; align-items:flex-end; justify-content:center;
   -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px)}
@@ -9378,6 +9456,12 @@ button.wcf-glance-card:disabled{cursor:default}
 .gaffai-msg.user{align-self:flex-end; background:var(--blue); color:#fff; border-bottom-right-radius:4px}
 .gaffai-msg.bot{align-self:flex-start; background:var(--panel2); color:var(--white); border:1px solid var(--line); border-bottom-left-radius:4px}
 .gaffai-msg.bot.action-card{border:1px solid rgba(234,179,8,.35); background:rgba(234,179,8,.06)}
+.gaffai-msg.bot.nudge{border:1px solid rgba(59,130,246,.3); background:rgba(59,130,246,.08); display:flex; align-items:flex-start; justify-content:space-between; gap:10px}
+.gaffai-nudge-dismiss{flex:none; background:none; border:none; color:#94a3b8; font-size:13px; cursor:pointer; padding:0; line-height:1.4}
+.gaffai-nudge-dismiss:hover{color:#fff}
+.gaffai-flag{margin-left:6px; background:none; border:none; color:#5b6472; font-size:11px; cursor:pointer; vertical-align:middle; padding:0}
+.gaffai-flag:hover{color:#94a3b8}
+.gaffai-flag.flagged{color:#eab308; cursor:default}
 .gaffai-action-buttons{display:flex; gap:8px; margin-top:10px}
 .gaffai-action-confirm{flex:1; border:none; border-radius:10px; padding:8px 0; background:var(--green); color:#06210f; font-weight:800; font-size:12px; cursor:pointer}
 .gaffai-action-cancel{flex:none; border:1px solid rgba(148,163,184,.3); border-radius:10px; padding:8px 14px; background:transparent; color:#cbd5e1; font-weight:700; font-size:12px; cursor:pointer}

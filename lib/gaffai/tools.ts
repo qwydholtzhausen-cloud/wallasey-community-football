@@ -160,11 +160,12 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
   {
     name: "find_admin_messages",
     description:
-      "Messages an admin has sent to a player - who sent it, who received it, whether it's been read, and when. Every admin can see every message here (not just ones they personally sent), same as the in-app admin console. Filter by player name and/or unread_only. For 'how many total/unread' questions, quote total_count/unread_count directly - they're real counts, not the length of the messages list, which is capped.",
+      "Messages an admin has sent to a player - who sent it, who received it, whether it's been read, and when. Every admin can see every message here (not just ones they personally sent), same as the in-app admin console. Filter by player name, sender, and/or unread_only. For 'have I sent...' or 'my messages' questions, pass sender_id as the caller's own id (given to you in the system prompt) - without it you'll return messages from every admin, not just the one asking. For 'how many total/unread' questions, quote total_count/unread_count directly - they're real counts, not the length of the messages list, which is capped.",
     input_schema: {
       type: "object",
       properties: {
         player_name_contains: { type: "string" },
+        sender_id: { type: "string", description: "Filter to messages sent by this admin's id" },
         unread_only: { type: "boolean" },
         limit: { type: "number", description: "Default 30" },
       },

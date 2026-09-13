@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { callClaude, type AnthropicMessage, type AnthropicContentBlock } from "../../../../lib/gaffai/anthropic";
 import { GAFFAI_TOOLS } from "../../../../lib/gaffai/tools";
 import { GAFFAI_SYSTEM_PROMPT } from "../../../../lib/gaffai/prompt";
-import { TOOL_IMPL, executeMarkPaid, executeCreateFixture, type MarkPaidAction, type CreateFixtureAction } from "../../../../lib/gaffai/toolImpl";
+import { TOOL_IMPL, executeMarkPaid, executeCreateFixture, computeNudges, type MarkPaidAction, type CreateFixtureAction } from "../../../../lib/gaffai/toolImpl";
 import { nowInLondon } from "../../../../lib/time";
 
 // This app is on Vercel Hobby (see app/api/cron/frequent/route.ts's own
@@ -44,6 +44,21 @@ export async function POST(req: Request) {
 
     const body = await req.json();
 
+    // --- Proactive nudges, computed fresh every call ---
+    // Deliberately NOT a "has this changed since you last looked" check -
+    // this app already tried that shape once (a nav-tab "something's new"
+    // dot, removed 2026-08-12 after a time-axis bug, but then still kept
+    // removed because an ambient signal with no content and no per-item
+    // dismissal was judged "more likely to confuse than help"). These are
+    // live, content-ful facts recomputed every time, filtered against
+    // gaffai_dismissed_nudges by content-addressed key - a nudge only
+    // reappears because the underlying facts genuinely changed, never
+    // because of clock drift.
+    if (body.type === "nudges") {
+      const nudges = await computeNudges(admin);
+      return NextResponse.json({ type: "nudges", nudges });
+    }
+
     // --- Executing a previously proposed action ---
     // This is the ONLY path that can mutate anything, and it's only
     // reachable when the request itself says so explicitly - there is no
@@ -82,7 +97,15 @@ export async function POST(req: Request) {
       // prompt, since it has to stay current.
       const nowUk = nowInLondon();
       const weekday = new Date(nowUk + ":00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" });
-      const systemPrompt = `${GAFFAI_SYSTEM_PROMPT}\n\nCurrent date/time: ${weekday} ${nowUk.slice(0, 10)}, ${nowUk.slice(11)} (Europe/London). Use this as "now" for anything relative - "last month," "this week," "the most recent game," etc.`;
+
+      // Lets it personalize, and lets find_admin_messages answer "have I
+      // sent..." questions by passing this id as sender_id - without this
+      // it has no way to distinguish "sent by this admin" from "sent by
+      // any admin."
+      const { data: callerProfile } = await admin.from("profiles").select("display_name").eq("id", callerId).single();
+      const callerName = callerProfile?.display_name ?? "an admin";
+
+      const systemPrompt = `${GAFFAI_SYSTEM_PROMPT}\n\nCurrent date/time: ${weekday} ${nowUk.slice(0, 10)}, ${nowUk.slice(11)} (Europe/London). Use this as "now" for anything relative - "last month," "this week," "the most recent game," etc.\n\nYou're talking to ${callerName}. Their id, for tool params that need it (like find_admin_messages' sender_id), is ${callerId}.`;
 
       let response = await callClaude(messages, GAFFAI_TOOLS, systemPrompt);
       let rounds = 0;

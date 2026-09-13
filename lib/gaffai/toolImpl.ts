@@ -505,7 +505,7 @@ async function findPushNotificationIssues(admin: SupabaseClient) {
   const subscribedSet = new Set((subs ?? []).map((s) => s.user_id));
   const rows = profiles ?? [];
   const optedIn = rows.filter((p) => p.push_opt_in);
-  const broken = optedIn.filter((p) => !subscribedSet.has(p.id)).map((p) => ({ name: p.display_name }));
+  const broken = optedIn.filter((p) => !subscribedSet.has(p.id)).map((p) => ({ id: p.id, name: p.display_name }));
   return {
     total_players: rows.length,
     opted_in: optedIn.length,
@@ -562,11 +562,11 @@ async function findOverduePlayers(admin: SupabaseClient) {
     admin,
     overdue.map((b) => b.player_id)
   );
-  const byPlayer: Record<string, { name: string; games: { date: string; venue: string; status: string }[] }> = {};
+  const byPlayer: Record<string, { player_id: string; name: string; games: { date: string; venue: string; status: string }[] }> = {};
   for (const b of overdue) {
     const g = Array.isArray(b.games) ? b.games[0] : b.games;
     if (!g) continue;
-    byPlayer[b.player_id] ??= { name: nameOf[b.player_id] ?? "Unknown", games: [] };
+    byPlayer[b.player_id] ??= { player_id: b.player_id, name: nameOf[b.player_id] ?? "Unknown", games: [] };
     byPlayer[b.player_id].games.push({ date: g.date, venue: g.venue, status: b.status });
   }
   const players = Object.values(byPlayer);
@@ -704,7 +704,7 @@ async function findAwards(admin: SupabaseClient, args: { title_contains?: string
 // query itself - filtering the already-limited result set after the fact
 // would silently miss matches once there are more than `limit` messages
 // total (same class of bug as the earlier never-booked-players fix).
-async function findAdminMessages(admin: SupabaseClient, args: { player_name_contains?: string; unread_only?: boolean; limit?: number }) {
+async function findAdminMessages(admin: SupabaseClient, args: { player_name_contains?: string; sender_id?: string; unread_only?: boolean; limit?: number }) {
   let recipientIds: string[] | null = null;
   if (args.player_name_contains) {
     const { data: matches } = await admin.from("profiles").select("id").ilike("display_name", `%${args.player_name_contains}%`);
@@ -723,10 +723,15 @@ async function findAdminMessages(admin: SupabaseClient, args: { player_name_cont
     totalQuery = totalQuery.in("recipient_id", recipientIds);
     unreadQuery = unreadQuery.in("recipient_id", recipientIds);
   }
+  if (args.sender_id) {
+    totalQuery = totalQuery.eq("sender_id", args.sender_id);
+    unreadQuery = unreadQuery.eq("sender_id", args.sender_id);
+  }
   const [{ count: totalCount }, { count: unreadCount }] = await Promise.all([totalQuery, unreadQuery]);
 
   let query = admin.from("admin_messages").select("recipient_id, sender_id, message, created_at, read_at").order("created_at", { ascending: false }).limit(args.limit ?? 30);
   if (recipientIds) query = query.in("recipient_id", recipientIds);
+  if (args.sender_id) query = query.eq("sender_id", args.sender_id);
   if (args.unread_only) query = query.is("read_at", null);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -954,6 +959,94 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   propose_mark_paid: proposeMarkPaid,
   propose_create_fixture: proposeCreateFixture,
 };
+
+export interface Nudge {
+  key: string;
+  text: string;
+}
+
+// Content-addressed, not time-addressed - a nudge's key encodes WHICH
+// people/game it's about, not when it was computed. Dismissing means
+// "I know about this specific set of facts," so it naturally reappears
+// only once the facts genuinely change (someone new becomes affected, or
+// drops off) - never because of a stored "last seen" timestamp drifting,
+// which is exactly what broke the app's earlier "something's new" nav
+// dots (removed 2026-08-12) and got the whole feature category pulled
+// even after that specific bug was fixed.
+function contentKey(prefix: string, ids: string[]): string {
+  return `${prefix}-${[...new Set(ids)].sort().join(",")}`;
+}
+
+// Only the single soonest upcoming game, and only once kickoff's within
+// the same 72h window the app's own payment-warning push already uses
+// (app/api/cron/frequent/route.ts) - a game three weeks out with an
+// unpaid booking isn't news yet, it's not due. Nudging about it this
+// early would reintroduce exactly the too-early nagging the 48h/72h
+// payment redesign (this session, earlier) exists to prevent.
+async function computeUnpaidNextGameNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const nowMs = toMs(nowInLondon());
+  const { data: games } = await admin.from("games").select("id, date, kickoff, venue");
+  const upcoming = (games ?? [])
+    .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) > nowMs)
+    .sort((a, b) => (a.date + a.kickoff).localeCompare(b.date + b.kickoff));
+  const nextGame = upcoming[0];
+  if (!nextGame) return null;
+
+  const hoursToKickoff = (toMs(kickoffCutoff(nextGame.date, nextGame.kickoff, 0)) - nowMs) / 3600000;
+  if (hoursToKickoff > 72) return null;
+
+  const { data: bookings } = await admin.from("bookings").select("player_id, status, pot_exempt_reason").eq("game_id", nextGame.id).eq("waiting", false);
+  const unpaidCount = (bookings ?? []).filter((b) => b.status === "unpaid" && !b.pot_exempt_reason).length;
+  if (unpaidCount === 0) return null;
+
+  // Keyed on the game alone (not the affected players) - dismissing this
+  // one means "I know, stop nagging about THIS game," not "tell me the
+  // moment the count changes." Matches how a human would actually want
+  // to acknowledge it.
+  return {
+    key: `unpaid-${nextGame.id}`,
+    text: `${unpaidCount} unpaid for ${nextGame.venue} on ${nextGame.date} (kicks off within 72h).`,
+  };
+}
+
+async function computeOverdueNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const { players } = await findOverduePlayers(admin);
+  if (players.length === 0) return null;
+  const ids = players.map((p) => p.player_id);
+  const names = players.map((p) => p.name).join(", ");
+  return {
+    key: contentKey("overdue", ids),
+    text: `${players.length} player${players.length === 1 ? "" : "s"} currently blocked from booking (unpaid on a past game): ${names}.`,
+  };
+}
+
+async function computePushIssuesNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const result = await findPushNotificationIssues(admin);
+  const broken = result.broken_opted_in_but_no_working_subscription;
+  if (broken.length === 0) return null;
+  const ids = broken.map((p) => p.id);
+  const names = broken.map((p) => p.name).join(", ");
+  return {
+    key: contentKey("push-issues", ids),
+    text:
+      broken.length === 1
+        ? `1 player thinks notifications are on but isn't actually receiving them: ${names}.`
+        : `${broken.length} players think notifications are on but aren't actually receiving them: ${names}.`,
+  };
+}
+
+// Pure deterministic queries, same as suggest_balanced_teams - no
+// Anthropic API call anywhere in here, so computing this on every app
+// load costs nothing beyond a handful of fast Supabase round trips.
+export async function computeNudges(admin: SupabaseClient): Promise<Nudge[]> {
+  const [unpaid, overdue, pushIssues] = await Promise.all([computeUnpaidNextGameNudge(admin), computeOverdueNudge(admin), computePushIssuesNudge(admin)]);
+  const candidates = [unpaid, overdue, pushIssues].filter((n): n is Nudge => n !== null);
+  if (candidates.length === 0) return [];
+
+  const { data: dismissed } = await admin.from("gaffai_dismissed_nudges").select("nudge_key");
+  const dismissedSet = new Set((dismissed ?? []).map((d) => d.nudge_key));
+  return candidates.filter((n) => !dismissedSet.has(n.key));
+}
 
 // Never reachable via any tool schema the model can emit - the only two
 // code paths that mutate anything, called directly by the route handler

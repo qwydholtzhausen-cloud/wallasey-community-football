@@ -1363,3 +1363,36 @@ alter table public.player_admin_ratings add constraint player_admin_ratings_fitn
 alter table public.player_admin_ratings add constraint player_admin_ratings_attack_check check (attack between 1 and 10);
 alter table public.player_admin_ratings add constraint player_admin_ratings_defence_check check (defence between 1 and 10);
 alter table public.player_admin_ratings add constraint player_admin_ratings_goalkeeping_check check (goalkeeping between 1 and 10);
+
+-- GaffAI proactive nudges - dismissal state. Modeled on
+-- feed_hidden_items's reversible shape (a row present just means
+-- "dismissed," deleting it un-dismisses) rather than notified_events's
+-- permanent one-way ledger, since nudges need undo. nudge_key is
+-- content-addressed (which players/game it's about), not time-based, so
+-- a nudge only reappears because the underlying facts genuinely
+-- changed, never from clock drift - see the app's own removed "something's
+-- new" nav-dot feature (added and reverted 2026-08-12) for why that
+-- distinction matters here.
+create table public.gaffai_dismissed_nudges (
+  nudge_key text primary key,
+  dismissed_by uuid references public.profiles (id) on delete set null,
+  dismissed_at timestamptz not null default now()
+);
+alter table public.gaffai_dismissed_nudges enable row level security;
+create policy "gaffai_dismissed_nudges_select" on public.gaffai_dismissed_nudges for select using (public.is_admin());
+create policy "gaffai_dismissed_nudges_insert_admin" on public.gaffai_dismissed_nudges for insert with check (public.is_admin());
+create policy "gaffai_dismissed_nudges_delete_admin" on public.gaffai_dismissed_nudges for delete using (public.is_admin());
+
+-- GaffAI feedback flagging - pure data capture for later manual review
+-- (the same way every fix this session came from a wrong answer someone
+-- happened to mention), not something GaffAI itself reads or acts on.
+create table public.gaffai_feedback (
+  id uuid primary key default gen_random_uuid(),
+  flagged_by uuid references public.profiles (id) on delete set null,
+  question text not null,
+  answer text not null,
+  created_at timestamptz not null default now()
+);
+alter table public.gaffai_feedback enable row level security;
+create policy "gaffai_feedback_select_admin" on public.gaffai_feedback for select using (public.is_admin());
+create policy "gaffai_feedback_insert_admin" on public.gaffai_feedback for insert with check (public.is_admin());
