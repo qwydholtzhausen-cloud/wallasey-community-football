@@ -75,6 +75,12 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     input_schema: { type: "object", properties: { role: { type: "string", enum: ["player", "admin", "co-owner", "owner"] } } },
   },
   {
+    name: "find_players_without_bookings",
+    description:
+      "Every player who has never booked a single game, checked against their complete booking history in one call. Use this rather than cross-referencing find_players against find_recent_bookings or find_games yourself - those are capped/paginated and will give you an incomplete, wrong answer (false positives and false negatives) for this specific question.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "find_overdue_players",
     description:
       "Every player currently blocked from booking a new game because they have an unconfirmed, non-waiting booking on a game that's already happened - mirrors the exact rule the app enforces.",

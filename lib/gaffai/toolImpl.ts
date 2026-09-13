@@ -453,6 +453,21 @@ async function findUnratedPlayers(admin: SupabaseClient, args: { role?: string }
     .map((p) => ({ name: p.display_name, has_self_rating: selfSet.has(p.id), has_admin_rating: adminSet.has(p.id) }));
 }
 
+// Two unbounded flat queries, same shape as find_unrated_players - the
+// model tried answering this by cross-referencing find_players against
+// find_recent_bookings itself and got it wrong both ways (missed someone
+// who'd genuinely never booked, and wrongly flagged four people who had -
+// find_recent_bookings is capped/paginated by design, so it's never a
+// complete picture of "everyone who's ever booked," only a recent slice.
+async function findPlayersWithoutBookings(admin: SupabaseClient) {
+  const [{ data: profiles }, { data: bookings }] = await Promise.all([
+    admin.from("profiles").select("id, display_name"),
+    admin.from("bookings").select("player_id"),
+  ]);
+  const bookedSet = new Set((bookings ?? []).map((b) => b.player_id));
+  return (profiles ?? []).filter((p) => !bookedSet.has(p.id)).map((p) => ({ name: p.display_name }));
+}
+
 async function findOverduePlayers(admin: SupabaseClient) {
   const todayUk = nowInLondon().slice(0, 10);
   const { data } = await admin.from("bookings").select("player_id, status, games(date, venue)").eq("waiting", false).neq("status", "confirmed");
@@ -639,6 +654,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   get_player_records: getPlayerRecords,
   suggest_balanced_teams: suggestBalancedTeams,
   find_unrated_players: findUnratedPlayers,
+  find_players_without_bookings: findPlayersWithoutBookings,
   find_overdue_players: findOverduePlayers,
   get_payment_status: getPaymentStatus,
   get_motm_winner: getMotmWinner,
