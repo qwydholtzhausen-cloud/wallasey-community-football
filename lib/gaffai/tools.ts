@@ -230,4 +230,16 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
       "Prepare (but do NOT execute) publishing a draft fixture, making it visible to players so they can book. Returns a proposal for the admin to confirm - this never publishes anything by itself. Look up the game_id with find_games first (unpublished drafts show up there too, with published:false) - fails if the fixture is already published.",
     input_schema: { type: "object", properties: { game_id: { type: "string" } }, required: ["game_id"] },
   },
+  {
+    name: "save_standing_fact",
+    description:
+      "Remember a durable fact/rule/correction so EVERY future conversation (with any admin, not just this one) applies it automatically going forward. Use this when an admin tells you something that should stick - a changed default, a naming correction, a standing preference for how you should answer certain things - not for one-off questions or requests, and not for anything that's really just a normal answer. Runs immediately, no confirmation needed - this only ever writes your own internal note, never club data (no booking, payment, message, or fixture is touched), and forget_standing_fact undoes it instantly if it turns out wrong.",
+    input_schema: { type: "object", properties: { fact: { type: "string" } }, required: ["fact"] },
+  },
+  {
+    name: "forget_standing_fact",
+    description:
+      "Remove a previously saved standing fact - e.g. it's out of date or was wrong. Use the internal [id:...] tag shown next to each fact in your system prompt, never a guessed id.",
+    input_schema: { type: "object", properties: { fact_id: { type: "string" } }, required: ["fact_id"] },
+  },
 ];

@@ -957,8 +957,28 @@ async function proposePublishFixture(admin: SupabaseClient, args: { game_id: str
   return { kind: "publish_fixture", gameId: game.id, venue: game.venue, date: game.date };
 }
 
+// Unlike the four propose_*/confirm_action pairs, these run immediately
+// with no confirmation step - a "fact" is GaffAI's own internal note
+// about how to talk about the club, not real club data (no booking,
+// payment, message, or fixture is ever touched), and forget_standing_fact
+// undoes a wrong one instantly. The "act on almost nothing" principle is
+// about mutating the club's actual data, which this never does.
+async function saveStandingFact(admin: SupabaseClient, args: { fact: string }, callerId?: string) {
+  const fact = (args.fact ?? "").trim();
+  if (!fact) throw new Error("Fact can't be empty.");
+  const { error } = await admin.from("gaffai_facts").insert({ fact, created_by: callerId ?? null });
+  if (error) throw new Error(error.message);
+  return { saved: true };
+}
+
+async function forgetStandingFact(admin: SupabaseClient, args: { fact_id: string }) {
+  const { error } = await admin.from("gaffai_facts").delete().eq("id", args.fact_id);
+  if (error) throw new Error(error.message);
+  return { forgotten: true };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ToolImplFn = (admin: SupabaseClient, args: any) => Promise<unknown>;
+type ToolImplFn = (admin: SupabaseClient, args: any, callerId?: string) => Promise<unknown>;
 
 export const TOOL_IMPL: Record<string, ToolImplFn> = {
   find_games: findGames,
@@ -989,6 +1009,8 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   propose_create_fixture: proposeCreateFixture,
   propose_send_reminder: proposeSendReminder,
   propose_publish_fixture: proposePublishFixture,
+  save_standing_fact: saveStandingFact,
+  forget_standing_fact: forgetStandingFact,
 };
 
 export interface Nudge {

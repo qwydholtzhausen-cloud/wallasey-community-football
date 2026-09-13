@@ -1416,3 +1416,21 @@ alter table public.gaffai_conversations enable row level security;
 create policy "gaffai_conversations_select_own" on public.gaffai_conversations for select using (admin_id = auth.uid());
 create policy "gaffai_conversations_insert_own" on public.gaffai_conversations for insert with check (admin_id = auth.uid());
 create policy "gaffai_conversations_delete_own" on public.gaffai_conversations for delete using (admin_id = auth.uid());
+
+-- GaffAI standing facts - unlike gaffai_conversations, these ARE shared
+-- club-wide (any admin() policy, not admin_id = auth.uid()): a fact one
+-- admin states ("Friday always means the 8pm game") should apply for
+-- every admin's future conversations, not just the one who said it.
+-- Written/deleted directly by GaffAI itself via save_standing_fact/
+-- forget_standing_fact (no confirm step - these are GaffAI's own notes,
+-- never real club data), not by the client.
+create table public.gaffai_facts (
+  id uuid primary key default gen_random_uuid(),
+  fact text not null,
+  created_by uuid references public.profiles (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+alter table public.gaffai_facts enable row level security;
+create policy "gaffai_facts_select_admin" on public.gaffai_facts for select using (public.is_admin());
+create policy "gaffai_facts_insert_admin" on public.gaffai_facts for insert with check (public.is_admin());
+create policy "gaffai_facts_delete_admin" on public.gaffai_facts for delete using (public.is_admin());

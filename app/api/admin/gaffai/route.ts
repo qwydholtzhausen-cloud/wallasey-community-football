@@ -141,7 +141,20 @@ export async function POST(req: Request) {
       const { data: callerProfile } = await admin.from("profiles").select("display_name").eq("id", callerId).single();
       const callerName = callerProfile?.display_name ?? "an admin";
 
-      const systemPrompt = `${GAFFAI_SYSTEM_PROMPT}\n\nCurrent date/time: ${weekday} ${nowUk.slice(0, 10)}, ${nowUk.slice(11)} (Europe/London). Use this as "now" for anything relative - "last month," "this week," "the most recent game," etc.\n\nYou're talking to ${callerName}. Their id, for tool params that need it (like find_admin_messages' sender_id), is ${callerId}.`;
+      // Standing facts are club-wide (any admin's save_standing_fact
+      // applies to every future conversation, not just theirs) - fetched
+      // fresh and injected directly rather than left for the model to
+      // fetch via a tool, so recall never depends on it remembering to
+      // check. The [id:...] tag is only so forget_standing_fact has
+      // something real to target - the prompt tells the model never to
+      // read one aloud.
+      const { data: facts } = await admin.from("gaffai_facts").select("id, fact").order("created_at", { ascending: true }).limit(50);
+      const factsSection =
+        facts && facts.length > 0
+          ? `\n\nStanding facts admins have told you to remember - apply these unless this conversation directly contradicts one. The [id:...] tag is for forget_standing_fact only, never read it aloud:\n${facts.map((f) => `- [id:${f.id}] ${f.fact}`).join("\n")}`
+          : "";
+
+      const systemPrompt = `${GAFFAI_SYSTEM_PROMPT}\n\nCurrent date/time: ${weekday} ${nowUk.slice(0, 10)}, ${nowUk.slice(11)} (Europe/London). Use this as "now" for anything relative - "last month," "this week," "the most recent game," etc.\n\nYou're talking to ${callerName}. Their id, for tool params that need it (like find_admin_messages' sender_id), is ${callerId}.${factsSection}`;
 
       let response = await callClaude(messages, GAFFAI_TOOLS, systemPrompt);
       let rounds = 0;
@@ -162,7 +175,7 @@ export async function POST(req: Request) {
               return { type: "tool_result" as const, tool_use_id: block.id, content: `Unknown tool: ${block.name}`, is_error: true };
             }
             try {
-              const result = await impl(admin, block.input ?? {});
+              const result = await impl(admin, block.input ?? {}, callerId);
               if (
                 block.name === "propose_mark_paid" ||
                 block.name === "propose_create_fixture" ||
