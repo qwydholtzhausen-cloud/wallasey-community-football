@@ -224,4 +224,10 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
       required: ["player_id", "message"],
     },
   },
+  {
+    name: "propose_publish_fixture",
+    description:
+      "Prepare (but do NOT execute) publishing a draft fixture, making it visible to players so they can book. Returns a proposal for the admin to confirm - this never publishes anything by itself. Look up the game_id with find_games first (unpublished drafts show up there too, with published:false) - fails if the fixture is already published.",
+    input_schema: { type: "object", properties: { game_id: { type: "string" } }, required: ["game_id"] },
+  },
 ];

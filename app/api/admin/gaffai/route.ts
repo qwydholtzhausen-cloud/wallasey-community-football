@@ -8,10 +8,12 @@ import {
   executeMarkPaid,
   executeCreateFixture,
   executeSendReminder,
+  executePublishFixture,
   computeNudges,
   type MarkPaidAction,
   type CreateFixtureAction,
   type SendReminderAction,
+  type PublishFixtureAction,
 } from "../../../../lib/gaffai/toolImpl";
 import { nowInLondon } from "../../../../lib/time";
 
@@ -92,7 +94,7 @@ export async function POST(req: Request) {
     // model output alone can trigger a mutation. Every field is
     // re-validated fresh against the DB before anything happens.
     if (body.type === "confirm_action") {
-      const action = body.action as MarkPaidAction | CreateFixtureAction | SendReminderAction;
+      const action = body.action as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction;
       try {
         if (action.kind === "mark_paid") {
           await executeMarkPaid(admin, callerId, action);
@@ -105,6 +107,10 @@ export async function POST(req: Request) {
         if (action.kind === "send_reminder") {
           await executeSendReminder(admin, callerId, action);
           return NextResponse.json({ type: "action_result", ok: true, text: `Done — sent to ${action.playerName}.` });
+        }
+        if (action.kind === "publish_fixture") {
+          await executePublishFixture(admin, callerId, action);
+          return NextResponse.json({ type: "action_result", ok: true, text: `Published — ${action.venue} on ${action.date} is now visible to players.` });
         }
         return NextResponse.json({ type: "error", error: "Unknown action" }, { status: 400 });
       } catch (err) {
@@ -142,7 +148,7 @@ export async function POST(req: Request) {
       // Reset every round - only reflects whichever tools were called in
       // the round immediately before the model's final answer, not
       // anything called earlier in the conversation.
-      let proposalFromLastRound: MarkPaidAction | CreateFixtureAction | SendReminderAction | null = null;
+      let proposalFromLastRound: MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | null = null;
 
       while (response.stop_reason === "tool_use" && rounds < MAX_TOOL_ROUNDS) {
         rounds++;
@@ -157,8 +163,13 @@ export async function POST(req: Request) {
             }
             try {
               const result = await impl(admin, block.input ?? {});
-              if (block.name === "propose_mark_paid" || block.name === "propose_create_fixture" || block.name === "propose_send_reminder") {
-                proposalFromLastRound = result as MarkPaidAction | CreateFixtureAction | SendReminderAction;
+              if (
+                block.name === "propose_mark_paid" ||
+                block.name === "propose_create_fixture" ||
+                block.name === "propose_send_reminder" ||
+                block.name === "propose_publish_fixture"
+              ) {
+                proposalFromLastRound = result as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction;
               }
               return { type: "tool_result" as const, tool_use_id: block.id, content: JSON.stringify(result) };
             } catch (err) {

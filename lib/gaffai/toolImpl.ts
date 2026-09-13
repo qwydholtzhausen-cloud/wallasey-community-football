@@ -111,6 +111,12 @@ export interface SendReminderAction {
   playerName: string;
   message: string;
 }
+export interface PublishFixtureAction {
+  kind: "publish_fixture";
+  gameId: string;
+  venue: string;
+  date: string;
+}
 
 // Exact split, computed once, rather than leaving "how many total" to two
 // separate find_games calls plus the model's own addition - confirmed
@@ -944,6 +950,13 @@ async function proposeSendReminder(admin: SupabaseClient, args: { player_id: str
   return { kind: "send_reminder", playerId: args.player_id, playerName, message };
 }
 
+async function proposePublishFixture(admin: SupabaseClient, args: { game_id: string }): Promise<PublishFixtureAction> {
+  const { data: game, error } = await admin.from("games").select("id, published, venue, date").eq("id", args.game_id).single();
+  if (error || !game) throw new Error("Fixture not found.");
+  if (game.published) throw new Error("That fixture's already published.");
+  return { kind: "publish_fixture", gameId: game.id, venue: game.venue, date: game.date };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ToolImplFn = (admin: SupabaseClient, args: any) => Promise<unknown>;
 
@@ -975,6 +988,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   propose_mark_paid: proposeMarkPaid,
   propose_create_fixture: proposeCreateFixture,
   propose_send_reminder: proposeSendReminder,
+  propose_publish_fixture: proposePublishFixture,
 };
 
 export interface Nudge {
@@ -1135,4 +1149,25 @@ export async function executeSendReminder(admin: SupabaseClient, callerId: strin
       url: "/",
     });
   }
+}
+
+// Narrower than the manual saveGame (app/WirralCommunityFootball.tsx
+// ~line 2147), which doubles as "save edits to any fixture, published or
+// not" - propose_publish_fixture already rejected an already-published
+// game at proposal time, so this only ever does a draft->published
+// transition and can always set published_at fresh (saveGame's
+// conditional "only set published_at the first time" logic doesn't
+// apply here - there is no "already published" path to protect).
+// published_at is what the frequent cron polls to decide when to
+// announce a fixture, so this alone is enough for the normal
+// announcement flow to pick it up.
+export async function executePublishFixture(admin: SupabaseClient, callerId: string, action: PublishFixtureAction) {
+  const { data: game } = await admin.from("games").select("id, published").eq("id", action.gameId).single();
+  if (!game) throw new Error("That fixture no longer exists.");
+  if (game.published) throw new Error("That fixture's already published.");
+
+  const { error } = await admin.from("games").update({ published: true, published_at: new Date().toISOString() }).eq("id", action.gameId);
+  if (error) throw new Error(error.message);
+
+  await admin.from("audit_log").insert({ actor_id: callerId, action: "GaffAI published fixture", details: `${action.venue} — ${action.date}` });
 }

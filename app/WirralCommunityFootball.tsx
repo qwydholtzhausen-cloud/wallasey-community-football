@@ -5773,7 +5773,8 @@ function PlayerCardModal({
 type GaffAIAction =
   | { kind: "mark_paid"; bookingId: string; playerName: string; gameLabel: string; amount: number }
   | { kind: "create_fixture"; date: string; kickoff: string; venue: string; pitch: string; price: number; maxPlayers: number }
-  | { kind: "send_reminder"; playerId: string; playerName: string; message: string };
+  | { kind: "send_reminder"; playerId: string; playerName: string; message: string }
+  | { kind: "publish_fixture"; gameId: string; venue: string; date: string };
 
 interface GaffAIMessage {
   role: "user" | "assistant";
@@ -5979,7 +5980,7 @@ function GaffAIChat({
     const data = await callGaffAI({ type: "confirm_action", action: msg.action });
     if (!data) return;
     setMessages((cur) => cur.map((m, i) => (i === index ? { ...m, actionState: data.ok ? "confirmed" : "failed", text: data.text ?? m.text } : m)));
-    if (data.ok && msg.action.kind === "create_fixture") onFixtureCreated();
+    if (data.ok && (msg.action.kind === "create_fixture" || msg.action.kind === "publish_fixture")) onFixtureCreated();
   }
 
   function cancelAction(index: number) {
