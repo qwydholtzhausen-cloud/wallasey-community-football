@@ -5786,13 +5786,36 @@ interface GaffAINudge {
   text: string;
 }
 
-const GAFFAI_SUGGESTIONS = [
+// A wider pool than what's shown at once - GaffAI covers 20+ tools now
+// (pot balance, team balancing, predictions, duplicate profiles...) and
+// a fixed 5 would never hint at most of them. A random 5 each time the
+// chat resets means repeat use gradually surfaces the full range instead
+// of anchoring on the same five forever.
+const GAFFAI_SUGGESTION_POOL = [
   "Who's unpaid for the next game?",
   "Who's on the waiting list?",
   "Who hasn't been rated yet?",
   "Who won MOTM last month?",
   "Is anyone currently blocked from booking?",
+  "Suggest balanced teams for the next game",
+  "How much is in the pot?",
+  "Who's got the highest win percentage?",
+  "Who's winning the prediction league?",
+  "Any duplicate player profiles?",
+  "Who hasn't added an emergency contact?",
+  "Anyone with broken push notifications?",
+  "What's our default match price?",
+  "Who's lost the most games?",
 ];
+
+function pickGaffAISuggestions(): string[] {
+  const shuffled = [...GAFFAI_SUGGESTION_POOL];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, 5);
+}
 
 // GaffAI's mark - a ball with an AI spark, not another generic emoji.
 // currentColor so it inherits whatever tint its container sets (white on
@@ -5828,6 +5851,7 @@ function GaffAIChat({
   const [loading, setLoading] = useState(false);
   const [nudges, setNudges] = useState<GaffAINudge[]>([]);
   const [flaggedIndexes, setFlaggedIndexes] = useState<Set<number>>(new Set());
+  const [suggestions, setSuggestions] = useState<string[]>(pickGaffAISuggestions);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -5928,6 +5952,7 @@ function GaffAIChat({
   function resetChat() {
     setMessages([]);
     setInput("");
+    setSuggestions(pickGaffAISuggestions());
   }
 
   return (
@@ -6009,7 +6034,7 @@ function GaffAIChat({
 
             {messages.length === 0 && (
               <div className="gaffai-chips">
-                {GAFFAI_SUGGESTIONS.map((s) => (
+                {suggestions.map((s) => (
                   <button key={s} className="gaffai-chip" onClick={() => send(s)}>
                     {s}
                   </button>
