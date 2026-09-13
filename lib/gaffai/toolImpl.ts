@@ -1168,17 +1168,93 @@ async function computeUnpublishedDraftsNudge(admin: SupabaseClient): Promise<Nud
   };
 }
 
+// A strict, unbroken decline over a fixed run length - not an average or
+// a percentage threshold - is deliberately the simplest signal that
+// won't fire on ordinary week-to-week noise. This club plays maybe one
+// or two games a week, so there's rarely enough data for anything
+// looser (a moving average, a slope fit) to be reliable; a flat streak
+// of "every one of the last N was lower than the one before" is legible
+// and hard to trigger by chance at this scale.
+function isDecliningRun(valuesOldestFirst: number[], runLength: number): boolean {
+  if (valuesOldestFirst.length < runLength) return false;
+  const recent = valuesOldestFirst.slice(-runLength);
+  for (let i = 1; i < recent.length; i++) {
+    if (recent[i] >= recent[i - 1]) return false;
+  }
+  return true;
+}
+
+const TREND_RUN_LENGTH = 3;
+
+// Unlike the four point-in-time nudges above (all "is this true right
+// now"), this looks across several past games for a genuine trend -
+// closer to the original MOTM-pattern analysis that kicked off this
+// whole project than anything else GaffAI computes unprompted. Keyed on
+// the specific games forming the decline, so it naturally clears the
+// moment a newer game breaks the streak (a different set of games is a
+// different key, not the same nudge staying dismissed forever).
+async function computeMotmTurnoutTrendNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const nowMs = toMs(nowInLondon());
+  const { data: games } = await admin.from("games").select("id, date, kickoff");
+  const played = (games ?? [])
+    .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs)
+    .sort((a, b) => (a.date + a.kickoff).localeCompare(b.date + b.kickoff));
+  const recentGames = played.slice(-TREND_RUN_LENGTH);
+  if (recentGames.length < TREND_RUN_LENGTH) return null;
+
+  const gameIds = recentGames.map((g) => g.id);
+  const { data: votes } = await admin.from("motm_votes").select("game_id").in("game_id", gameIds);
+  const countByGame: Record<string, number> = Object.fromEntries(gameIds.map((id) => [id, 0]));
+  for (const v of votes ?? []) countByGame[v.game_id] = (countByGame[v.game_id] ?? 0) + 1;
+  const counts = gameIds.map((id) => countByGame[id]);
+
+  if (!isDecliningRun(counts, TREND_RUN_LENGTH)) return null;
+
+  return {
+    key: contentKey("motm-turnout-decline", gameIds),
+    text: `MOTM voting turnout has dropped for ${TREND_RUN_LENGTH} games running (${counts.join(" → ")} votes) - might be worth a reminder to vote.`,
+  };
+}
+
+async function computeAttendanceTrendNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const nowMs = toMs(nowInLondon());
+  const { data: games } = await admin.from("games").select("id, date, kickoff, bookings(waiting)");
+  type GameWithBookings = { id: string; date: string; kickoff: string; bookings: { waiting: boolean }[] | null };
+  const played = ((games ?? []) as GameWithBookings[])
+    .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs)
+    .sort((a, b) => (a.date + a.kickoff).localeCompare(b.date + b.kickoff));
+  const recentGames = played.slice(-TREND_RUN_LENGTH);
+  if (recentGames.length < TREND_RUN_LENGTH) return null;
+
+  // Same "confirmed_count" definition find_games itself uses - every
+  // non-waiting-list booking counts as a real spot, regardless of its
+  // payment status (unpaid/pending/confirmed are payment states of an
+  // actual booked spot, not attendance states).
+  const counts = recentGames.map((g) => (g.bookings ?? []).filter((b) => !b.waiting).length);
+  if (!isDecliningRun(counts, TREND_RUN_LENGTH)) return null;
+
+  return {
+    key: contentKey(
+      "attendance-decline",
+      recentGames.map((g) => g.id)
+    ),
+    text: `Attendance has dropped for ${TREND_RUN_LENGTH} games running (${counts.join(" → ")} players) - worth checking in with the group?`,
+  };
+}
+
 // Pure deterministic queries, same as suggest_balanced_teams - no
 // Anthropic API call anywhere in here, so computing this on every app
 // load costs nothing beyond a handful of fast Supabase round trips.
 export async function computeNudges(admin: SupabaseClient): Promise<Nudge[]> {
-  const [unpaid, overdue, pushIssues, unpublishedDrafts] = await Promise.all([
+  const [unpaid, overdue, pushIssues, unpublishedDrafts, motmTrend, attendanceTrend] = await Promise.all([
     computeUnpaidNextGameNudge(admin),
     computeOverdueNudge(admin),
     computePushIssuesNudge(admin),
     computeUnpublishedDraftsNudge(admin),
+    computeMotmTurnoutTrendNudge(admin),
+    computeAttendanceTrendNudge(admin),
   ]);
-  const candidates = [unpaid, overdue, pushIssues, unpublishedDrafts].filter((n): n is Nudge => n !== null);
+  const candidates = [unpaid, overdue, pushIssues, unpublishedDrafts, motmTrend, attendanceTrend].filter((n): n is Nudge => n !== null);
   if (candidates.length === 0) return [];
 
   const { data: dismissed } = await admin.from("gaffai_dismissed_nudges").select("nudge_key");
