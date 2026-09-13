@@ -1066,12 +1066,47 @@ async function computePushIssuesNudge(admin: SupabaseClient): Promise<Nudge | nu
   };
 }
 
+// Only genuinely time-sensitive, same discipline as the unpaid-next-game
+// nudge only firing inside a 72h window - a draft fixture dated months
+// out and still unpublished is completely normal (it just hasn't been
+// announced yet), not something to nag about. A draft whose kickoff is
+// within a week and STILL hasn't been published is a real risk though:
+// players lose booking lead time every day it sits unpublished. Now that
+// GaffAI can actually publish one on request (propose_publish_fixture),
+// surfacing this proactively closes the loop instead of only fixing it
+// when asked.
+async function computeUnpublishedDraftsNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const nowMs = toMs(nowInLondon());
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  const { data: games } = await admin.from("games").select("id, date, venue, kickoff").eq("published", false);
+  const soonDrafts = (games ?? []).filter((g) => {
+    const kickoffMs = toMs(kickoffCutoff(g.date, g.kickoff, 0));
+    return kickoffMs > nowMs && kickoffMs - nowMs <= sevenDaysMs;
+  });
+  if (soonDrafts.length === 0) return null;
+
+  const ids = soonDrafts.map((g) => g.id);
+  const labels = soonDrafts.map((g) => `${g.venue} (${g.date})`).join(", ");
+  return {
+    key: contentKey("unpublished-drafts", ids),
+    text:
+      soonDrafts.length === 1
+        ? `1 draft fixture kicks off within a week and still isn't published: ${labels}.`
+        : `${soonDrafts.length} draft fixtures kick off within a week and still aren't published: ${labels}.`,
+  };
+}
+
 // Pure deterministic queries, same as suggest_balanced_teams - no
 // Anthropic API call anywhere in here, so computing this on every app
 // load costs nothing beyond a handful of fast Supabase round trips.
 export async function computeNudges(admin: SupabaseClient): Promise<Nudge[]> {
-  const [unpaid, overdue, pushIssues] = await Promise.all([computeUnpaidNextGameNudge(admin), computeOverdueNudge(admin), computePushIssuesNudge(admin)]);
-  const candidates = [unpaid, overdue, pushIssues].filter((n): n is Nudge => n !== null);
+  const [unpaid, overdue, pushIssues, unpublishedDrafts] = await Promise.all([
+    computeUnpaidNextGameNudge(admin),
+    computeOverdueNudge(admin),
+    computePushIssuesNudge(admin),
+    computeUnpublishedDraftsNudge(admin),
+  ]);
+  const candidates = [unpaid, overdue, pushIssues, unpublishedDrafts].filter((n): n is Nudge => n !== null);
   if (candidates.length === 0) return [];
 
   const { data: dismissed } = await admin.from("gaffai_dismissed_nudges").select("nudge_key");
