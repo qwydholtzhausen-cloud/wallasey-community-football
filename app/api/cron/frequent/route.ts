@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
 import { kickoffCutoff, nowInLondon, MATCH_DURATION_MINUTES } from "../../../../lib/time";
 import { ensureFreshMonzoToken, registerMonzoWebhook } from "../../../../lib/monzo";
+import { AUTO_REMOVE_UNPAID_BOOKINGS } from "../../../../lib/clubPolicy";
 
 // Both sides of this comparison come from the same "pretend UTC" trick in
 // lib/time.ts (real UK wall-clock digits, formatted as if they were UTC) -
@@ -164,8 +165,11 @@ export async function GET(req: Request) {
   //
   // The 72h warning is a notification only - it never deletes anything.
   // The ONLY code path anywhere in the app that removes someone from a
-  // booking for non-payment is the 48h block below; this just gives them
-  // a heads-up a day ahead of it.
+  // booking for non-payment is the 48h block below, and it's currently
+  // disabled - see AUTO_REMOVE_UNPAID_BOOKINGS in lib/clubPolicy.ts for
+  // why and what happens instead (the existing post-game overdue block
+  // takes over). When enabled, this warning just gives a heads-up a day
+  // ahead of the removal.
   const REMOVAL_HOURS_BEFORE_KICKOFF = 48;
   const WARNING_HOURS_BEFORE_KICKOFF = 72;
   const MIN_GRACE_HOURS = 3;
@@ -198,31 +202,40 @@ export async function GET(req: Request) {
 
     if (nowMs < warnAtMs) continue;
 
-    if (nowMs < removalAtMs) {
+    if (!AUTO_REMOVE_UNPAID_BOOKINGS || nowMs < removalAtMs) {
       // Warning - notification only, no delete. Also drops a copy into
       // the in-app inbox (sender_id null - system-generated, not from a
       // specific admin) so it's still visible with a read receipt to
       // players who don't have push working, which is exactly the gap
-      // the inbox exists to cover.
+      // the inbox exists to cover. Wording depends on
+      // AUTO_REMOVE_UNPAID_BOOKINGS (lib/clubPolicy.ts) so it never
+      // promises a removal that won't actually happen while it's off.
       const key = `pre-removal-${b.id}`;
       if (notifiedKeys.has(key)) continue;
-      const hoursLeft = Math.max(1, Math.round((removalAtMs - nowMs) / 3600000));
+      const pushBody = AUTO_REMOVE_UNPAID_BOOKINGS
+        ? `You'll be removed from ${game.venue} on ${fmtDateLabel(game.date)} in about ${Math.max(1, Math.round((removalAtMs - nowMs) / 3600000))}h unless you pay — pay now to keep your spot.`
+        : `You still owe £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)}. Pay before kick-off, or you'll be blocked from booking your next game once this one finishes, until it's sorted.`;
+      const inboxBody = AUTO_REMOVE_UNPAID_BOOKINGS
+        ? `You're still down as owing £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)}. You'll be removed from the game in about ${Math.max(1, Math.round((removalAtMs - nowMs) / 3600000))}h unless you pay — sort it when you get a sec.`
+        : `You're still down as owing £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)}. Pay before kick-off, or you'll be blocked from booking your next game once this one finishes.`;
       await sendPushToUsers([b.player_id], {
-        title: "You'll lose this spot soon ⚠️",
-        body: `You'll be removed from ${game.venue} on ${fmtDateLabel(game.date)} in about ${hoursLeft}h unless you pay — pay now to keep your spot.`,
+        title: AUTO_REMOVE_UNPAID_BOOKINGS ? "You'll lose this spot soon ⚠️" : "Still owe for this one ⚠️",
+        body: pushBody,
         url: "/",
       });
       await admin.from("admin_messages").insert({
         recipient_id: b.player_id,
         sender_id: null,
-        message: `You're still down as owing £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)}. You'll be removed from the game in about ${hoursLeft}h unless you pay — sort it when you get a sec.`,
+        message: inboxBody,
       });
       await markNotified(key);
       continue;
     }
 
     // Removal - the one and only place that actually deletes a booking
-    // for non-payment.
+    // for non-payment. Unreachable while AUTO_REMOVE_UNPAID_BOOKINGS is
+    // false (lib/clubPolicy.ts) - the branch above always takes over
+    // first in that case.
     const player = Array.isArray(b.player) ? b.player[0] : b.player;
 
     const { error: deleteErr } = await admin.from("bookings").delete().eq("id", b.id);
