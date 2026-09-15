@@ -7392,7 +7392,10 @@ function AdminConsole({
                 {claimedPaid.map(({ booking: b }) => (
                   <div key={b.id} className="wcf-pending-row">
                     <span className="wcf-pending-dot paid" />
-                    <span className="wcf-pending-name">{b.player.display_name}</span>
+                    <span className="wcf-pending-name-wrap">
+                      <span className="wcf-pending-name">{b.player.display_name}</span>
+                      <span className="wcf-pending-booked">Booked {fmtDateTime(b.created_at)}</span>
+                    </span>
                     <span className="wcf-pending-status paid">Says paid</span>
                     <button className="wcf-pending-confirm" onClick={() => onSetStatus(b.id, "confirmed")}>Confirm</button>
                   </div>
@@ -7400,7 +7403,10 @@ function AdminConsole({
                 {notPaid.map(({ booking: b }) => (
                   <div key={b.id} className="wcf-pending-row">
                     <span className="wcf-pending-dot unpaid" />
-                    <span className="wcf-pending-name">{b.player.display_name}</span>
+                    <span className="wcf-pending-name-wrap">
+                      <span className="wcf-pending-name">{b.player.display_name}</span>
+                      <span className="wcf-pending-booked">Booked {fmtDateTime(b.created_at)}</span>
+                    </span>
                     <span className="wcf-pending-status unpaid">Not yet paid</span>
                     <button
                       className="wcf-admin-approve-override"
@@ -7443,7 +7449,10 @@ function AdminConsole({
                 {claimedPaid.map(({ booking: b }) => (
                   <div key={b.id} className="wcf-pending-row">
                     <span className="wcf-pending-dot paid" />
-                    <span className="wcf-pending-name">{b.player.display_name}</span>
+                    <span className="wcf-pending-name-wrap">
+                      <span className="wcf-pending-name">{b.player.display_name}</span>
+                      <span className="wcf-pending-booked">Booked {fmtDateTime(b.created_at)}</span>
+                    </span>
                     <span className="wcf-pending-status paid">Says paid</span>
                     <button className="wcf-pending-confirm" onClick={() => onSetStatus(b.id, "confirmed")}>Confirm</button>
                   </div>
@@ -7451,7 +7460,10 @@ function AdminConsole({
                 {notPaid.map(({ booking: b }) => (
                   <div key={b.id} className="wcf-pending-row">
                     <span className="wcf-pending-dot unpaid" />
-                    <span className="wcf-pending-name">{b.player.display_name}</span>
+                    <span className="wcf-pending-name-wrap">
+                      <span className="wcf-pending-name">{b.player.display_name}</span>
+                      <span className="wcf-pending-booked">Booked {fmtDateTime(b.created_at)}</span>
+                    </span>
                     <span className="wcf-pending-status unpaid">Not yet paid</span>
                     <button
                       className="wcf-admin-approve-override"
@@ -8677,7 +8689,9 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pending-dot.paid{background:var(--amber)}
 .wcf-pending-dot.unpaid{background:var(--red-hi)}
 .wcf-pending-dot.confirmed{background:var(--green)}
-.wcf-pending-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700;font-size:12px;color:#f1f5f9}
+.wcf-pending-name-wrap{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.wcf-pending-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700;font-size:12px;color:#f1f5f9}
+.wcf-pending-booked{font-size:9px;font-weight:600;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wcf-pending-status{flex:none;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:5px 8px;border-radius:20px}
 .wcf-pending-status.paid{color:#f5d97a;background:rgba(234,179,8,.14);border:1px solid rgba(234,179,8,.34)}
 .wcf-pending-status.unpaid{color:var(--dim);background:rgba(148,163,184,.1);border:1px solid rgba(148,163,184,.2)}
@@ -8850,8 +8864,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rank{font-family:var(--mono);font-weight:700;color:var(--dim);width:26px;text-align:center;display:grid;place-items:center}
 .wcf-rank-star{color:var(--green);display:grid;place-items:center}
 .wcf-rank-star svg{width:20px;height:20px;fill:var(--green);stroke:var(--green)}
-.wcf-board-name{flex:1;font-weight:800;font-size:14px}
-.wcf-apps-badge{display:inline-block;margin-left:7px;font-size:10px;font-weight:800;font-family:var(--mono);color:var(--amber);background:rgba(224,167,51,.14);border:1px solid rgba(224,167,51,.35);padding:1px 7px;border-radius:20px;vertical-align:middle}
+.wcf-board-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800;font-size:14px}
+.wcf-apps-badge{display:inline-block;flex:none;white-space:nowrap;margin-left:7px;font-size:10px;font-weight:800;font-family:var(--mono);color:var(--amber);background:rgba(224,167,51,.14);border:1px solid rgba(224,167,51,.35);padding:1px 7px;border-radius:20px;vertical-align:middle}
 .wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue);width:44px;text-align:right}
 
 .wcf-lb-eyebrow{font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0 2px}
@@ -9071,7 +9085,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lb-prize{display:flex;align-items:center;gap:8px;background:rgba(224,167,51,.1);border:1px solid rgba(224,167,51,.35);border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:11.5px;color:var(--white);line-height:1.4}
 .wcf-lb-key{font-size:10.5px;color:var(--dim);text-align:center;margin-bottom:12px;line-height:1.6}
 .wcf-lb{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px 14px 4px}
-.wcf-lb-rank{font-family:var(--mono);font-weight:800;font-size:12px;color:var(--dim);width:16px;flex:0 0 auto}
+.wcf-lb-rank{font-family:var(--mono);font-weight:800;font-size:12px;color:var(--dim);width:16px;flex:0 0 auto;text-align:center;display:grid;place-items:center}
 .wcf-lb-rank.top{color:var(--amber)}
 .wcf-lb-pts{font-family:var(--display);font-weight:800;font-size:15px;flex:0 0 auto;color:var(--blue)}
 
