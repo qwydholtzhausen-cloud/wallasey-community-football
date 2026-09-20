@@ -120,6 +120,13 @@ export interface MatchdayPushAction {
   spotsLeft: number;
   targetCount: number;
 }
+export interface SetPotExemptAction {
+  kind: "set_pot_exempt";
+  bookingId: string;
+  playerName: string;
+  gameLabel: string;
+  reason: "birthday" | "prize" | "carried_over" | "other";
+}
 
 // Exact split, computed once, rather than leaving "how many total" to two
 // separate find_games calls plus the model's own addition - confirmed
@@ -989,6 +996,23 @@ async function proposeMatchdayPush(admin: SupabaseClient, args: { game_id: strin
   return { kind: "matchday_push", gameId: game.id, venue: game.venue, date: game.date, spotsLeft, targetCount };
 }
 
+const POT_EXEMPT_REASONS = ["birthday", "prize", "carried_over", "other"] as const;
+
+async function proposeSetPotExempt(admin: SupabaseClient, args: { booking_id: string; reason?: string }): Promise<SetPotExemptAction> {
+  const reason = (args.reason ?? "birthday") as SetPotExemptAction["reason"];
+  if (!POT_EXEMPT_REASONS.includes(reason)) throw new Error("Invalid reason - must be birthday, prize, carried_over, or other.");
+
+  const { data: booking, error } = await admin.from("bookings").select("id, pot_exempt_reason, player_id, games(date, venue)").eq("id", args.booking_id).single();
+  if (error || !booking) throw new Error("Booking not found.");
+  if (booking.pot_exempt_reason === reason) throw new Error("That booking is already marked exempt for this exact reason.");
+
+  const game = Array.isArray(booking.games) ? booking.games[0] : booking.games;
+  if (!game) throw new Error("Couldn't find the game for that booking.");
+  const nameOf = await namesById(admin, [booking.player_id]);
+
+  return { kind: "set_pot_exempt", bookingId: booking.id, playerName: nameOf[booking.player_id] ?? "Unknown", gameLabel: `${game.venue} — ${game.date}`, reason };
+}
+
 // Unlike the four propose_*/confirm_action pairs, these run immediately
 // with no confirmation step - a "fact" is GaffAI's own internal note
 // about how to talk about the club, not real club data (no booking,
@@ -1062,6 +1086,95 @@ async function findFlaggedFeedback(admin: SupabaseClient, args: { limit?: number
   return { count: feedback.length, feedback };
 }
 
+async function getAverageAge(admin: SupabaseClient) {
+  const { data: birthdays } = await admin.from("player_birthdays").select("date_of_birth");
+  const { count: totalProfiles } = await admin.from("profiles").select("*", { count: "exact", head: true });
+  const rows = birthdays ?? [];
+  if (rows.length === 0) return { average_age: null, players_with_dob: 0, total_players: totalProfiles ?? 0 };
+
+  const nowMs = Date.now();
+  const ages = rows.map((r) => (nowMs - new Date(r.date_of_birth).getTime()) / (365.25 * 24 * 3600000));
+  const average = ages.reduce((sum, a) => sum + a, 0) / ages.length;
+  return { average_age: Math.round(average * 10) / 10, players_with_dob: rows.length, total_players: totalProfiles ?? 0 };
+}
+
+// Shared by find_upcoming_birthdays and the birthday nudge, so both give
+// the same answer to "what's their next game" and neither duplicates the
+// lookup. Only published fixtures, only non-waiting bookings - a booking
+// with no real spot yet, or a fixture players can't even see, isn't a
+// game to offer a freebie against.
+async function nextBookedGamesByPlayer(admin: SupabaseClient, playerIds: string[]) {
+  const nowMs = toMs(nowInLondon());
+  const { data: games } = await admin.from("games").select("id, date, kickoff, venue, bookings(id, player_id, waiting)").eq("published", true);
+  const upcomingGames = (games ?? [])
+    .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, 0)) > nowMs)
+    .sort((a, b) => (a.date + a.kickoff).localeCompare(b.date + b.kickoff));
+
+  const result: Record<string, { booking_id: string; venue: string; date: string } | undefined> = {};
+  for (const playerId of playerIds) {
+    for (const g of upcomingGames) {
+      const booking = (g.bookings ?? []).find((bk: { id: string; player_id: string; waiting: boolean }) => bk.player_id === playerId && !bk.waiting);
+      if (booking) {
+        result[playerId] = { booking_id: booking.id, venue: g.venue, date: g.date };
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+// Month/day comparison only - the year on file doesn't matter for "when's
+// their next birthday." Everything here is plain integer date-arithmetic
+// via Date.UTC used purely as a day-counting tool, never as a real-world
+// instant - unlike kickoff comparisons elsewhere, there's no pretend-UTC
+// vs real-UTC mixing risk here since nothing is compared against a
+// genuine timestamp, only against another calendar date (today, from
+// nowInLondon()).
+async function findUpcomingBirthdays(admin: SupabaseClient, args: { days?: number }) {
+  const { data: birthdays } = await admin.from("player_birthdays").select("player_id, date_of_birth");
+  const rows = birthdays ?? [];
+  if (rows.length === 0) return { count: 0, birthdays: [] };
+
+  const nameOf = await namesById(
+    admin,
+    rows.map((r) => r.player_id)
+  );
+  const windowDays = args.days ?? 14;
+
+  const todayStr = nowInLondon().slice(0, 10);
+  const [todayY, todayM, todayD] = todayStr.split("-").map(Number);
+  const todayMs = Date.UTC(todayY, todayM - 1, todayD);
+
+  const withDaysAway = rows.map((r) => {
+    const [dobY, dobM, dobD] = r.date_of_birth.split("-").map(Number);
+    const thisYearMs = Date.UTC(todayY, dobM - 1, dobD);
+    const nextBirthdayMs = thisYearMs >= todayMs ? thisYearMs : Date.UTC(todayY + 1, dobM - 1, dobD);
+    const daysAway = Math.round((nextBirthdayMs - todayMs) / 86400000);
+    const turning = new Date(nextBirthdayMs).getUTCFullYear() - dobY;
+    return { player_id: r.player_id, date: new Date(nextBirthdayMs).toISOString().slice(0, 10), daysAway, turning };
+  });
+  const inWindow = withDaysAway.filter((b) => b.daysAway <= windowDays);
+  if (inWindow.length === 0) return { count: 0, birthdays: [] };
+
+  const nextGameByPlayer = await nextBookedGamesByPlayer(
+    admin,
+    inWindow.map((b) => b.player_id)
+  );
+
+  const upcoming = inWindow
+    .map((b) => ({
+      player_id: b.player_id,
+      name: nameOf[b.player_id] ?? "Unknown",
+      date: b.date,
+      days_away: b.daysAway,
+      turning: b.turning,
+      next_game: nextGameByPlayer[b.player_id] ?? null,
+    }))
+    .sort((a, b) => a.days_away - b.days_away);
+
+  return { count: upcoming.length, birthdays: upcoming };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ToolImplFn = (admin: SupabaseClient, args: any, callerId?: string) => Promise<unknown>;
 
@@ -1095,6 +1208,9 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   propose_send_reminder: proposeSendReminder,
   propose_publish_fixture: proposePublishFixture,
   propose_matchday_push: proposeMatchdayPush,
+  propose_set_pot_exempt: proposeSetPotExempt,
+  get_average_age: getAverageAge,
+  find_upcoming_birthdays: findUpcomingBirthdays,
   save_standing_fact: saveStandingFact,
   forget_standing_fact: forgetStandingFact,
   find_clips: findClips,
@@ -1374,11 +1490,38 @@ async function computeMatchdayNotFullNudge(admin: SupabaseClient): Promise<Nudge
   };
 }
 
+// "A week or so out" - reuses findUpcomingBirthdays rather than
+// reimplementing the month/day math. Also looks up each birthday
+// player's next confirmed (non-waiting) booking, if they have one, so
+// the nudge points straight at which game a birthday freebie would
+// apply to - it only ever surfaces the fact, propose_set_pot_exempt
+// (asked for separately, e.g. "mark that free") is what actually does
+// something about it. Keyed on player+date (not just player), so next
+// year's birthday - a genuinely different fact - naturally reappears
+// once dismissed rather than staying dismissed forever.
+async function computeBirthdayNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const upcoming = await findUpcomingBirthdays(admin, { days: 7 });
+  if (upcoming.count === 0) return null;
+
+  const lines = upcoming.birthdays.map((b) => {
+    const gameNote = b.next_game ? ` - next game booked is ${b.next_game.venue} on ${b.next_game.date}` : "";
+    return `${b.name} turns ${b.turning} on ${b.date} (in ${b.days_away} day${b.days_away === 1 ? "" : "s"})${gameNote}`;
+  });
+
+  return {
+    key: contentKey(
+      "birthday-coming-up",
+      upcoming.birthdays.map((b) => `${b.player_id}-${b.date}`)
+    ),
+    text: upcoming.count === 1 ? `Birthday coming up: ${lines[0]}.` : `${upcoming.count} birthdays coming up: ${lines.join("; ")}.`,
+  };
+}
+
 // Pure deterministic queries, same as suggest_balanced_teams - no
 // Anthropic API call anywhere in here, so computing this on every app
 // load costs nothing beyond a handful of fast Supabase round trips.
 export async function computeNudges(admin: SupabaseClient): Promise<Nudge[]> {
-  const [unpaid, overdue, pushIssues, unpublishedDrafts, motmTrend, attendanceTrend, predictionTrend, leadTimeTrend, matchdayNotFull] = await Promise.all([
+  const [unpaid, overdue, pushIssues, unpublishedDrafts, motmTrend, attendanceTrend, predictionTrend, leadTimeTrend, matchdayNotFull, birthdays] = await Promise.all([
     computeUnpaidNextGameNudge(admin),
     computeOverdueNudge(admin),
     computePushIssuesNudge(admin),
@@ -1388,10 +1531,20 @@ export async function computeNudges(admin: SupabaseClient): Promise<Nudge[]> {
     computePredictionParticipationTrendNudge(admin),
     computeBookingLeadTimeTrendNudge(admin),
     computeMatchdayNotFullNudge(admin),
+    computeBirthdayNudge(admin),
   ]);
-  const candidates = [unpaid, overdue, pushIssues, unpublishedDrafts, motmTrend, attendanceTrend, predictionTrend, leadTimeTrend, matchdayNotFull].filter(
-    (n): n is Nudge => n !== null
-  );
+  const candidates = [
+    unpaid,
+    overdue,
+    pushIssues,
+    unpublishedDrafts,
+    motmTrend,
+    attendanceTrend,
+    predictionTrend,
+    leadTimeTrend,
+    matchdayNotFull,
+    birthdays,
+  ].filter((n): n is Nudge => n !== null);
   if (candidates.length === 0) return [];
 
   const { data: dismissed } = await admin.from("gaffai_dismissed_nudges").select("nudge_key");
@@ -1522,4 +1675,16 @@ export async function executeMatchdayPush(admin: SupabaseClient, callerId: strin
   await admin
     .from("audit_log")
     .insert({ actor_id: callerId, action: "GaffAI sent matchday push", details: `${game.venue} — ${game.date} (${spotsLeft} spots, ${targetIds.length} notified)` });
+}
+
+export async function executeSetPotExempt(admin: SupabaseClient, callerId: string, action: SetPotExemptAction) {
+  const { data: booking } = await admin.from("bookings").select("id").eq("id", action.bookingId).single();
+  if (!booking) throw new Error("That booking no longer exists.");
+
+  const { error } = await admin.from("bookings").update({ pot_exempt_reason: action.reason }).eq("id", action.bookingId);
+  if (error) throw new Error(error.message);
+
+  await admin
+    .from("audit_log")
+    .insert({ actor_id: callerId, action: "GaffAI set pot-exempt", details: `${action.playerName} — ${action.gameLabel} (${action.reason})` });
 }

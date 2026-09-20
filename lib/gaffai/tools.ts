@@ -267,4 +267,29 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
       "Answers an admin has flagged as wrong for later review (via the flag button on a GaffAI reply) - the original question, the answer that was flagged, who flagged it, and when. Use this for anything like 'what have people flagged about you' or 'any known mistakes to review'.",
     input_schema: { type: "object", properties: { limit: { type: "number", description: "Default 30" } } },
   },
+  {
+    name: "get_average_age",
+    description:
+      "Average age across every player who's added their date of birth, plus how many have (and haven't) set it - so you can tell a genuinely young squad apart from just a small sample. Date of birth is optional and most players may not have set it.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "find_upcoming_birthdays",
+    description:
+      "Players whose birthday falls within the next N days (default 14), based on month/day only - the year on file doesn't matter. Returns the age they're turning, how many days away, and their next booked game if they have one (next_game: booking_id/venue/date, already looked up - don't call find_games separately to get this). Only includes players who've added their date of birth.",
+    input_schema: { type: "object", properties: { days: { type: "number", description: "Default 14" } } },
+  },
+  {
+    name: "propose_set_pot_exempt",
+    description:
+      "Prepare (but do NOT execute) marking a specific booking as pot-exempt (free - doesn't count toward pot income) - e.g. a birthday freebie, a prize, or a carried-over credit. Returns a proposal for the admin to confirm - this never changes anything by itself. Get the booking_id from get_game_detail (or find the player's next booked game after find_upcoming_birthdays). reason defaults to 'birthday'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        booking_id: { type: "string" },
+        reason: { type: "string", enum: ["birthday", "prize", "carried_over", "other"], description: "Defaults to 'birthday'" },
+      },
+      required: ["booking_id"],
+    },
+  },
 ];

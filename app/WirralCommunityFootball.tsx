@@ -180,6 +180,10 @@ interface EmergencyContact {
   contact_name: string;
   contact_phone: string;
 }
+interface PlayerBirthday {
+  player_id: string;
+  date_of_birth: string;
+}
 const POT_CATEGORY_LABEL: Record<PotCategory, string> = {
   pitch: "Pitch hire",
   socials: "Socials",
@@ -1440,6 +1444,7 @@ function App({ session }: { session: Session }) {
   const [selfRatings, setSelfRatings] = useState<PlayerRating[]>([]);
   const [adminRatings, setAdminRatings] = useState<PlayerRating[]>([]);
   const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([]);
+  const [birthdays, setBirthdays] = useState<PlayerBirthday[]>([]);
   const [lineupView, setLineupView] = useState<"sheet" | "fairness" | "predict">("sheet");
   const [predictView, setPredictView] = useState<string>("season");
   const [predictOpenId, setPredictOpenId] = useState<string | null>(null);
@@ -1680,6 +1685,13 @@ function App({ session }: { session: Session }) {
     if (data) setEmergencyContacts(data as EmergencyContact[]);
   }, []);
 
+  // Same RLS scoping as emergency contacts and self-ratings - a player's
+  // query only ever returns their own row, an admin's returns everyone's.
+  const loadBirthdays = useCallback(async () => {
+    const { data } = await supabase.from("player_birthdays").select("player_id, date_of_birth");
+    if (data) setBirthdays(data as PlayerBirthday[]);
+  }, []);
+
   const loadClips = useCallback(async () => {
     const { data } = await supabase
       .from("clips")
@@ -1726,6 +1738,7 @@ function App({ session }: { session: Session }) {
         loadSelfRatings(),
         loadAdminRatings(),
         loadEmergencyContacts(),
+        loadBirthdays(),
         loadAdminMessages(),
         loadMonzoUnmatched(),
       ]),
@@ -1745,6 +1758,7 @@ function App({ session }: { session: Session }) {
       loadSelfRatings,
       loadAdminRatings,
       loadEmergencyContacts,
+      loadBirthdays,
       loadAdminMessages,
       loadMonzoUnmatched,
     ]
@@ -1890,6 +1904,13 @@ function App({ session }: { session: Session }) {
     if (error) return notifyError(error.message);
     notifySuccess("Emergency contact saved");
     await loadEmergencyContacts();
+  }
+
+  async function saveBirthday(dateOfBirth: string) {
+    const { error } = await supabase.from("player_birthdays").upsert({ player_id: myId, date_of_birth: dateOfBirth, updated_at: new Date().toISOString() });
+    if (error) return notifyError(error.message);
+    notifySuccess("Date of birth saved");
+    await loadBirthdays();
   }
 
   async function saveAdminRating(playerId: string, fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) {
@@ -5358,6 +5379,8 @@ function App({ session }: { session: Session }) {
             onSaveAdminRating={saveAdminRating}
             myEmergencyContact={emergencyContacts.find((c) => c.player_id === myId) ?? null}
             onSaveEmergencyContact={saveEmergencyContact}
+            myBirthday={birthdays.find((b) => b.player_id === myId) ?? null}
+            onSaveBirthday={saveBirthday}
             ratingPlayerId={ratingPlayerId}
             onToggleRatingPlayer={(id) => setRatingPlayerId((cur) => (cur === id ? null : id))}
             myRecord={myRecord}
@@ -5769,7 +5792,8 @@ type GaffAIAction =
   | { kind: "create_fixture"; date: string; kickoff: string; venue: string; pitch: string; price: number; maxPlayers: number }
   | { kind: "send_reminder"; playerId: string; playerName: string; message: string }
   | { kind: "publish_fixture"; gameId: string; venue: string; date: string }
-  | { kind: "matchday_push"; gameId: string; venue: string; date: string; spotsLeft: number; targetCount: number };
+  | { kind: "matchday_push"; gameId: string; venue: string; date: string; spotsLeft: number; targetCount: number }
+  | { kind: "set_pot_exempt"; bookingId: string; playerName: string; gameLabel: string; reason: string };
 
 interface GaffAIMessage {
   role: "user" | "assistant";
@@ -6180,6 +6204,8 @@ function AccountPanel({
   onSaveAdminRating,
   myEmergencyContact,
   onSaveEmergencyContact,
+  myBirthday,
+  onSaveBirthday,
   ratingPlayerId,
   onToggleRatingPlayer,
   myRecord,
@@ -6211,6 +6237,8 @@ function AccountPanel({
   onSaveAdminRating: (playerId: string, fitness: number, attack: number, defence: number, goalkeeping: number, position: PlayerPosition) => void;
   myEmergencyContact: EmergencyContact | null;
   onSaveEmergencyContact: (contactName: string, contactPhone: string) => void;
+  myBirthday: PlayerBirthday | null;
+  onSaveBirthday: (dateOfBirth: string) => void;
   ratingPlayerId: string | null;
   onToggleRatingPlayer: (id: string) => void;
   clubSettings: ClubSettings;
@@ -6238,6 +6266,7 @@ function AccountPanel({
   const [name, setName] = useState(profile.display_name);
   const [contactName, setContactName] = useState(myEmergencyContact?.contact_name ?? "");
   const [contactPhone, setContactPhone] = useState(myEmergencyContact?.contact_phone ?? "");
+  const [dobDraft, setDobDraft] = useState(myBirthday?.date_of_birth ?? "");
   const myMessages = messages.filter((m) => m.recipient_id === profile.id);
   const unreadMessages = myMessages.filter((m) => !m.read_at);
   const readMessages = myMessages.filter((m) => m.read_at);
@@ -6269,6 +6298,7 @@ function AccountPanel({
     setContactName(myEmergencyContact?.contact_name ?? "");
     setContactPhone(myEmergencyContact?.contact_phone ?? "");
   }, [myEmergencyContact]);
+  useEffect(() => setDobDraft(myBirthday?.date_of_birth ?? ""), [myBirthday]);
 
   return (
     <div className="wcf-account">
@@ -6480,6 +6510,23 @@ function AccountPanel({
             </button>
           </div>
           <span className="wcf-push-sub">Who to call if something happens during a game. Only you and admins can see this.</span>
+        </label>
+
+        <label className="wcf-account-field" style={{ marginTop: 14 }}>
+          Date of birth
+          <div className="wcf-account-emergency">
+            <input
+              type="date"
+              value={dobDraft}
+              max={nowInLondon().slice(0, 10)}
+              min="1920-01-01"
+              onChange={(e) => setDobDraft(e.target.value)}
+            />
+            <button onClick={() => onSaveBirthday(dobDraft)} disabled={!dobDraft || dobDraft === (myBirthday?.date_of_birth ?? "")}>
+              Save
+            </button>
+          </div>
+          <span className="wcf-push-sub">Optional - only you and admins can see this. Lets GaffAI flag your birthday to the admins, and helps with squad planning.</span>
         </label>
 
         <div className="wcf-push-section">

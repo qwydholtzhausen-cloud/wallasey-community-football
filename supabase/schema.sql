@@ -1434,3 +1434,47 @@ alter table public.gaffai_facts enable row level security;
 create policy "gaffai_facts_select_admin" on public.gaffai_facts for select using (public.is_admin());
 create policy "gaffai_facts_insert_admin" on public.gaffai_facts for insert with check (public.is_admin());
 create policy "gaffai_facts_delete_admin" on public.gaffai_facts for delete using (public.is_admin());
+
+-- Date of birth - own table, same privacy reasoning as emergency_contacts
+-- (profiles_select lets every signed-in player read every other player's
+-- row, and a birthdate has no business being that widely visible). Only
+-- the player themselves and admins can read or write a given row. Feeds
+-- GaffAI's get_average_age/find_upcoming_birthdays tools, and the
+-- birthday-freebie nudge - optional, so most players may never set it.
+create table public.player_birthdays (
+  player_id uuid primary key references public.profiles (id) on delete cascade,
+  date_of_birth date not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.player_birthdays enable row level security;
+create policy "player_birthdays_select" on public.player_birthdays for select
+  using (player_id = auth.uid() or public.is_admin());
+create policy "player_birthdays_insert_own_or_admin" on public.player_birthdays for insert
+  with check (player_id = auth.uid() or public.is_admin());
+create policy "player_birthdays_update_own_or_admin" on public.player_birthdays for update
+  using (player_id = auth.uid() or public.is_admin())
+  with check (player_id = auth.uid() or public.is_admin());
+
+-- Add "birthday" as a recognized pot_exempt_reason (birthday freebie,
+-- via GaffAI's propose_set_pot_exempt) alongside the existing three.
+-- Drops whichever existing check constraint sits on the column, found by
+-- matching pg_constraint's conkey against the column's attnum rather
+-- than pattern-matching the constraint body text - the same robust
+-- approach already used for the ratings-scale migration above, since
+-- Postgres rewrites the constraint body internally and a text match
+-- against the original wording isn't reliable.
+do $$
+declare c record;
+begin
+  for c in
+    select con.conname
+    from pg_constraint con
+    join pg_attribute att on att.attrelid = con.conrelid and att.attnum = any(con.conkey)
+    where con.conrelid = 'public.bookings'::regclass
+      and con.contype = 'c'
+      and att.attname = 'pot_exempt_reason'
+  loop
+    execute format('alter table public.bookings drop constraint %I', c.conname);
+  end loop;
+end $$;
+alter table public.bookings add constraint bookings_pot_exempt_reason_check check (pot_exempt_reason in ('birthday', 'prize', 'carried_over', 'other'));
