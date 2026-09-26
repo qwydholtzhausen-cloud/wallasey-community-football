@@ -249,14 +249,14 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     input_schema: { type: "object", properties: { fact_id: { type: "string" } }, required: ["fact_id"] },
   },
   {
-    name: "find_clips",
+    name: "find_boot_room_listings",
     description:
-      "Match highlight clips submitted via the Feed - title, video link, who submitted it, and when. Optionally filter by (partial) title or the submitter's name.",
+      "The Boot Room: members' own trades and businesses (it replaced the old Clips page in the Feed tab). Use for anything like 'who in the club can fix a boiler', 'do we have a PT', or 'what's Mo listed for'. Matches the search text against business name, description, tags and the owner's name. Returns each listing's owner, category, tags, whether they've added a WhatsApp number, and how many members recommend them (an endorsement count, not a star rating).",
     input_schema: {
       type: "object",
       properties: {
-        title_contains: { type: "string" },
-        submitted_by_name_contains: { type: "string" },
+        search: { type: "string", description: "Free text, e.g. 'boiler', 'photographer', or a member's name. Omit to list everything." },
+        category: { type: "string", enum: ["trade", "fitness", "business", "home"], description: "trade = Trades & Motors, fitness = Health & Fitness, business = Business & Creative, home = Home & Personal" },
         limit: { type: "number", description: "Default 30" },
       },
     },

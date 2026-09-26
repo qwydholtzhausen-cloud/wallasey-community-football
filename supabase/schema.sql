@@ -1478,3 +1478,152 @@ begin
   end loop;
 end $$;
 alter table public.bookings add constraint bookings_pot_exempt_reason_check check (pot_exempt_reason in ('birthday', 'prize', 'carried_over', 'other'));
+
+-- ─────────────────────────────────────────────────────────────────
+-- The Boot Room: a searchable directory of members' own trades and
+-- businesses, replacing the unused Clips page inside the Feed tab.
+--
+-- Listings are their own table rather than columns on profiles because a
+-- member can offer more than one thing (vehicle repairs during the week,
+-- man-and-van at weekends) and each needs its own category and logo.
+--
+-- Every statement below is additive - new tables, a new bucket and new
+-- policies. Nothing here alters an existing table, so it's safe to run
+-- against live data. Policies are dropped-if-exists first so the whole
+-- block can be re-run without erroring half way through.
+-- ─────────────────────────────────────────────────────────────────
+
+create table if not exists public.boot_room_listings (
+  id uuid primary key default gen_random_uuid(),
+  player_id uuid not null references public.profiles (id) on delete cascade,
+  company text not null,
+  -- Four categories because the UI shows one rendered boot per category,
+  -- in a single row that still reads cleanly on a 360px phone (six was
+  -- tried and pushed everything below the fold). Adding one means new
+  -- artwork, so this is a deliberate check constraint, not free text.
+  category text not null check (category in ('trade', 'fitness', 'business', 'home')),
+  description text,
+  tags text[] not null default '{}',
+  -- Contact is WhatsApp or a word at the next game - there is
+  -- deliberately no in-app messaging here - and the number is optional.
+  -- Stored in the bare international form a wa.me link needs
+  -- (447700900123: no plus, no leading zero, no spaces). The client
+  -- normalises whatever people type; this check stops anything else
+  -- becoming a WhatsApp button that opens a dead chat.
+  phone text check (phone is null or phone ~ '^[0-9]{10,15}$'),
+  logo_url text,
+  -- A transparent logo drawn in white would vanish against the light
+  -- tile logos sit on, so the owner can flip their own tile dark.
+  logo_on_dark boolean not null default false,
+  -- Admin moderation that doesn't destroy someone's work: a hidden row
+  -- stays visible to its owner and to admins, and to nobody else.
+  hidden boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists boot_room_listings_category_idx on public.boot_room_listings (category);
+create index if not exists boot_room_listings_player_idx on public.boot_room_listings (player_id);
+
+alter table public.boot_room_listings enable row level security;
+drop policy if exists "boot_room_listings_select" on public.boot_room_listings;
+-- Signed-in members only, like every other member-visible table here.
+-- This matters more than usual: listings carry phone numbers, and the
+-- anon key ships in the client bundle, so without the auth check anyone
+-- on the internet could read every member's number straight off the API.
+create policy "boot_room_listings_select" on public.boot_room_listings for select
+  using (auth.role() = 'authenticated' and (not hidden or player_id = auth.uid() or public.is_admin()));
+drop policy if exists "boot_room_listings_insert_own" on public.boot_room_listings;
+create policy "boot_room_listings_insert_own" on public.boot_room_listings for insert
+  with check (player_id = auth.uid());
+-- The with-check repeats the owner test so an owner can't hand their
+-- listing to someone else by editing player_id.
+drop policy if exists "boot_room_listings_update_own_or_admin" on public.boot_room_listings;
+create policy "boot_room_listings_update_own_or_admin" on public.boot_room_listings for update
+  using (player_id = auth.uid() or public.is_admin())
+  with check (player_id = auth.uid() or public.is_admin());
+drop policy if exists "boot_room_listings_delete_own_or_admin" on public.boot_room_listings;
+create policy "boot_room_listings_delete_own_or_admin" on public.boot_room_listings for delete
+  using (player_id = auth.uid() or public.is_admin());
+
+-- One tap to endorse, not a star rating. These are teammates: a low
+-- score is socially impossible to give, so ratings would collect nothing
+-- but fives and the average would mean nothing - and with three ratings
+-- a 4.7 against a 4.3 is noise that still reads as authoritative. A
+-- positive-only signal costs nothing to leave and is honest at small
+-- numbers. The composite primary key gives the one-per-player rule for
+-- free, with no separate unique constraint.
+create table if not exists public.boot_room_endorsements (
+  listing_id uuid not null references public.boot_room_listings (id) on delete cascade,
+  player_id uuid not null references public.profiles (id) on delete cascade,
+  -- Optional one-liner ("sorted our boiler same day") - in a club this
+  -- size that carries more weight than any score.
+  note text,
+  created_at timestamptz not null default now(),
+  primary key (listing_id, player_id)
+);
+create index if not exists boot_room_endorsements_listing_idx on public.boot_room_endorsements (listing_id);
+
+alter table public.boot_room_endorsements enable row level security;
+-- Counts and endorser faces are shown to everyone, so reads are open to
+-- any signed-in member.
+drop policy if exists "boot_room_endorsements_select" on public.boot_room_endorsements;
+create policy "boot_room_endorsements_select" on public.boot_room_endorsements for select
+  using (auth.role() = 'authenticated');
+-- You can only endorse as yourself, and never your own listing.
+drop policy if exists "boot_room_endorsements_insert_own" on public.boot_room_endorsements;
+create policy "boot_room_endorsements_insert_own" on public.boot_room_endorsements for insert
+  with check (
+    player_id = auth.uid()
+    and not exists (
+      select 1 from public.boot_room_listings l
+      where l.id = listing_id and l.player_id = auth.uid()
+    )
+  );
+drop policy if exists "boot_room_endorsements_delete_own_or_admin" on public.boot_room_endorsements;
+create policy "boot_room_endorsements_delete_own_or_admin" on public.boot_room_endorsements for delete
+  using (player_id = auth.uid() or public.is_admin());
+
+-- Logo storage mirrors the avatars bucket above (public, 2MB cap, one
+-- canonical file per owner overwritten on re-upload). The path is keyed
+-- on the LISTING id rather than the player id, because one member can
+-- hold several listings - so these policies join back to the listings
+-- table instead of matching the filename against auth.uid() the way the
+-- avatar policies do. Consequence worth knowing: the listing row has to
+-- exist before its logo can upload, so the client creates then attaches.
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('boot-room-logos', 'boot-room-logos', true, 2097152)
+on conflict (id) do nothing;
+
+drop policy if exists "boot_room_logos_read" on storage.objects;
+create policy "boot_room_logos_read" on storage.objects for select
+  using (bucket_id = 'boot-room-logos');
+-- Ownership is checked through a security-definer function (the same
+-- pattern as public.is_admin()) rather than an inline subquery. The
+-- first version looked the listing up directly inside the policy and
+-- rejected every upload - including owners' own - because the lookup
+-- runs under the listings table's own RLS from the storage API's
+-- context. The function runs that lookup with its owner's rights and
+-- takes the object name explicitly, so neither the RLS context nor
+-- which "name" column a subquery binds to can get in the way.
+create or replace function public.owns_boot_room_logo(object_name text)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.boot_room_listings
+    where player_id = auth.uid() and object_name like id::text || '.%'
+  );
+$$;
+
+drop policy if exists "boot_room_logos_owner_insert" on storage.objects;
+create policy "boot_room_logos_owner_insert" on storage.objects for insert
+  with check (bucket_id = 'boot-room-logos' and public.owns_boot_room_logo(name));
+drop policy if exists "boot_room_logos_owner_update" on storage.objects;
+create policy "boot_room_logos_owner_update" on storage.objects for update
+  using (bucket_id = 'boot-room-logos' and public.owns_boot_room_logo(name));
+drop policy if exists "boot_room_logos_owner_or_admin_delete" on storage.objects;
+create policy "boot_room_logos_owner_or_admin_delete" on storage.objects for delete
+  using (bucket_id = 'boot-room-logos' and (public.is_admin() or public.owns_boot_room_logo(name)));

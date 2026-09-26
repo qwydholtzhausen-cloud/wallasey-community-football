@@ -17,3 +17,10 @@
 // case, it just rarely engaged before now because removal deleted the
 // booking first.
 export const AUTO_REMOVE_UNPAID_BOOKINGS = false;
+
+// The Boot Room soft launch (2026-09-26). While false, only admins see the
+// Boot Room pill in the Feed tab, so they can seed real listings before
+// anyone else opens it - an empty directory doesn't get joined, which is
+// partly what killed the Clips page it replaces. Flip to true to open it
+// to every member.
+export const BOOT_ROOM_OPEN_TO_ALL = false;

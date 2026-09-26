@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Wirral Community Football",
     short_name: "Wirral CF",
-    description: "Book in for pickup games, catch match clips, and keep up with the team.",
+    description: "Book in for pickup games, find who in the club can help, and keep up with the team.",
     start_url: "/",
     display: "standalone",
     background_color: "#0d0d1a",

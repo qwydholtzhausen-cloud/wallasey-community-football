@@ -7,6 +7,8 @@ import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInL
 import { predictionPoints, buildLeaderboard, buildMonthlyLeaderboards, topScorers, type ScoredPrediction } from "../lib/predictions";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer } from "../lib/teamBalance";
 import { defaultPitchCost } from "../lib/pitchCost";
+import { BOOT_ROOM_OPEN_TO_ALL } from "../lib/clubPolicy";
+import { BOOT_CATEGORIES, BOOT_CATEGORY, normaliseUkPhone, displayUkPhone, type BootCategory } from "../lib/bootRoom";
 
 // The payment link is just config, not baked into booking logic (statuses
 // below), so swapping providers later only touches this one env var.
@@ -233,9 +235,7 @@ interface AuditLogEntry {
 
 const FEED_REACTION_EMOJI = ["👍", "🔥"] as const;
 
-type FeedItem =
-  | { key: string; ts: number; kind: "clip"; clip: ClipRow }
-  | { key: string; ts: number; kind: "derived"; icon: React.ReactNode; tone: "amber" | "green" | "blue"; text: React.ReactNode };
+type FeedItem = { key: string; ts: number; kind: "derived"; icon: React.ReactNode; tone: "amber" | "green" | "blue"; text: React.ReactNode };
 
 interface ClubSettings {
   team_white_name: string;
@@ -369,15 +369,6 @@ function formationSlots(n: number): { x: number; y: number; role: string }[] {
   return slots;
 }
 
-interface ClipRow {
-  id: string;
-  title: string;
-  video_url: string | null;
-  created_at: string;
-  submitted_by: string | null;
-  submitter: Profile | null;
-}
-
 interface AdminMessage {
   id: string;
   recipient_id: string;
@@ -434,25 +425,6 @@ function weatherIcon(code: number): string {
 // right now rather than a moment that happened and may since have moved.
 function fmtFeedDate(ts: number) {
   return new Date(ts).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-}
-
-// Real thumbnail instead of a bare link/placeholder - YouTube serves these
-// straight off img.youtube.com by video ID, no API call or key needed.
-// hqdefault is used (not maxresdefault) since it's reliably generated for
-// every video, where the higher-res ones sometimes aren't.
-function youtubeVideoId(url: string): string | null {
-  try {
-    const u = new URL(url);
-    if (u.hostname === "youtu.be") return u.pathname.slice(1).split("/")[0] || null;
-    if (u.hostname.includes("youtube.com")) {
-      if (u.pathname === "/watch") return u.searchParams.get("v");
-      const match = u.pathname.match(/^\/(?:shorts|embed)\/([^/?]+)/);
-      if (match) return match[1];
-    }
-  } catch {
-    return null;
-  }
-  return null;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -1428,7 +1400,6 @@ function App({ session }: { session: Session }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [monzoUnmatched, setMonzoUnmatched] = useState<MonzoUnmatchedRow[]>([]);
   const [games, setGames] = useState<GameRow[]>([]);
-  const [clips, setClips] = useState<ClipRow[]>([]);
   const [goalRows, setGoalRows] = useState<GoalRow[]>([]);
   const [clubSettings, setClubSettings] = useState<ClubSettings | null>(null);
   const [awards, setAwards] = useState<AwardRow[]>([]);
@@ -1573,11 +1544,12 @@ function App({ session }: { session: Session }) {
   const [positionDraft, setPositionDraft] = useState<Record<string, { x: number; y: number }>>({});
   const [draggingPlayerId, setDraggingPlayerId] = useState<string | null>(null);
   const pitchCardRef = useRef<HTMLDivElement | null>(null);
-  const [clipTitle, setClipTitle] = useState("");
-  const [clipUrl, setClipUrl] = useState("");
-  const [feedView, setFeedView] = useState<"feed" | "clips">("feed");
+  const [feedView, setFeedView] = useState<"feed" | "bootroom">("feed");
 
   const isAdmin = myProfile?.role === "admin" || myProfile?.role === "co-owner" || myProfile?.role === "owner";
+  // Soft launch: admins see the Boot Room first so they can seed it before
+  // everyone else does (lib/clubPolicy.ts).
+  const bootRoomVisible = BOOT_ROOM_OPEN_TO_ALL || isAdmin;
   const isOwner = myProfile?.role === "owner";
   const cs: ClubSettings = clubSettings ?? {
     team_white_name: "Whites",
@@ -1692,14 +1664,6 @@ function App({ session }: { session: Session }) {
     if (data) setBirthdays(data as PlayerBirthday[]);
   }, []);
 
-  const loadClips = useCallback(async () => {
-    const { data } = await supabase
-      .from("clips")
-      .select("id, title, video_url, created_at, submitted_by, submitter:profiles(id, display_name, role)")
-      .order("created_at", { ascending: false });
-    if (data) setClips(data as unknown as ClipRow[]);
-  }, []);
-
   const loadGoals = useCallback(async () => {
     const { data } = await supabase
       .from("game_stats")
@@ -1726,7 +1690,6 @@ function App({ session }: { session: Session }) {
         loadProfile(),
         loadProfiles(),
         loadGames(),
-        loadClips(),
         loadGoals(),
         loadClubSettings(),
         loadAwards(),
@@ -1746,7 +1709,6 @@ function App({ session }: { session: Session }) {
       loadProfile,
       loadProfiles,
       loadGames,
-      loadClips,
       loadGoals,
       loadClubSettings,
       loadAwards,
@@ -2321,21 +2283,6 @@ function App({ session }: { session: Session }) {
     if (error) return notifyError(error.message);
     notifySuccess("Restored to the feed");
     await loadHiddenFeedItems();
-  }
-
-  async function addClip(e: React.FormEvent) {
-    e.preventDefault();
-    if (!clipTitle.trim()) return;
-    const { error } = await supabase.from("clips").insert({ title: clipTitle.trim(), video_url: clipUrl.trim() || null, submitted_by: myId });
-    if (error) return notifyError(error.message);
-    setClipTitle("");
-    setClipUrl("");
-    await loadClips();
-  }
-  async function deleteClip(id: string) {
-    const { error } = await supabase.from("clips").delete().eq("id", id);
-    if (error) return notifyError(error.message);
-    await loadClips();
   }
 
   async function setTeam(bookingId: string, team: Team | null) {
@@ -2979,15 +2926,11 @@ function App({ session }: { session: Session }) {
   }
 
   // The club feed is mostly a view over data that already exists elsewhere
-  // (results, joiners, the pot) rather than its own write path - only clips
-  // and MOTM votes are genuinely new here, so most of this list is derived,
-  // not stored.
+  // (results, joiners, the pot) rather than its own write path - only MOTM
+  // votes are genuinely new here, so most of this list is derived, not
+  // stored. (Clips used to live here too; the Boot Room replaced them.)
   const feedItems = useMemo(() => {
     const items: FeedItem[] = [];
-
-    for (const c of clips) {
-      items.push({ key: `clip-${c.id}`, ts: new Date(c.created_at).getTime(), kind: "clip", clip: c });
-    }
 
     for (const g of games) {
       if (g.team_white_score == null || g.team_red_score == null) continue;
@@ -3125,16 +3068,14 @@ function App({ session }: { session: Session }) {
     }
 
     return items.sort((a, b) => b.ts - a.ts);
-  }, [clips, games, pastGames, motmTallyByGame, potLedger, profiles, cs.team_white_name, cs.team_red_name, nowUk]);
+  }, [games, pastGames, motmTallyByGame, potLedger, profiles, cs.team_white_name, cs.team_red_name, nowUk]);
 
   const visibleFeedItems = useMemo(() => {
-    const kindMatch = feedItems.filter((item) => (feedView === "clips" ? item.kind === "clip" : item.kind === "derived"));
-    if (feedView === "clips") return kindMatch;
     // In the normal feed view, archived items are hidden. The "Show
     // archived" toggle (admin-only) flips to showing *only* the archived
     // ones, so they can be reviewed and restored rather than lost.
-    return kindMatch.filter((item) => showArchived === hiddenFeedKeys.includes(item.key));
-  }, [feedItems, feedView, hiddenFeedKeys, showArchived]);
+    return feedItems.filter((item) => showArchived === hiddenFeedKeys.includes(item.key));
+  }, [feedItems, hiddenFeedKeys, showArchived]);
 
   const feedReactionTally = useMemo(() => {
     const map: Record<string, Record<string, number>> = {};
@@ -3891,84 +3832,35 @@ function App({ session }: { session: Session }) {
                 );
               };
 
-              const clipCard = (item: Extract<FeedItem, { kind: "clip" }>, hero: boolean) => {
-                const c = item.clip;
-                const videoId = c.video_url ? youtubeVideoId(c.video_url) : null;
-                const thumb = (
-                  <a className={hero ? "wcf-clip-hero-thumb" : "wcf-clip-thumb"} href={c.video_url ?? undefined} target="_blank" rel="noreferrer">
-                    {videoId && <img src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`} alt="" loading="lazy" />}
-                    <span className={hero ? "wcf-clip-hero-play" : "wcf-clip-play"}>▶</span>
-                  </a>
-                );
-                if (hero) {
-                  return (
-                    <article key={item.key} className="wcf-clip-hero">
-                      {thumb}
-                      <div className="wcf-clip-hero-body">
-                        <div className="wcf-clip-hero-title">{c.title}</div>
-                        <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"} · {fmtFeedDate(item.ts)}</div>
-                        <div className="wcf-clip-hero-actions">
-                          {reactionRow(item)}
-                          {(c.submitted_by === myId || isAdmin) && (
-                            <button
-                              className="wcf-clip-del"
-                              onClick={async () => { if (await askConfirm(`Delete "${c.title}"?`, "This removes it from the feed for everyone.", "Delete")) deleteClip(c.id); }}
-                              aria-label="Delete clip"
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </article>
-                  );
-                }
-                return (
-                  <article key={item.key} className="wcf-clip">
-                    {thumb}
-                    <div className="wcf-clip-body">
-                      <div className="wcf-clip-title">{c.title}</div>
-                      <div className="wcf-clip-sub">shared by {c.submitter?.display_name ?? "someone"} · {fmtFeedDate(item.ts)}</div>
-                      {reactionRow(item)}
-                    </div>
-                    {(c.submitted_by === myId || isAdmin) && (
-                      <button
-                        className="wcf-clip-del"
-                        onClick={async () => { if (await askConfirm(`Delete "${c.title}"?`, "This removes it from the feed for everyone.", "Delete")) deleteClip(c.id); }}
-                        aria-label="Delete clip"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </article>
-                );
-              };
-
               return (
           <>
-            {!showArchived ? (
-              <div className="wcf-feed-hero">
+            {!showArchived && (
+              <div className={"wcf-feed-hero" + (feedView === "bootroom" ? " compact" : "")}>
                 <div className="wcf-feed-hero-eyebrow">Community Feed</div>
-                <div className="wcf-feed-hero-title">Goals, clips &amp; shoutouts</div>
-                <div className="wcf-feed-hero-tabs">
-                  <button className={feedView === "feed" ? "active" : ""} onClick={() => setFeedView("feed")}>Feed</button>
-                  <button className={feedView === "clips" ? "active" : ""} onClick={() => setFeedView("clips")}>Clips</button>
+                <div className="wcf-feed-hero-title">
+                  {bootRoomVisible ? <>Goals, shoutouts &amp; the Boot Room</> : <>Goals &amp; shoutouts</>}
                 </div>
-              </div>
-            ) : (
-              <div className="wcf-subtabs pill">
-                <button className={feedView === "feed" ? "active" : ""} onClick={() => setFeedView("feed")}>Feed</button>
-                <button className={feedView === "clips" ? "active" : ""} onClick={() => setFeedView("clips")}>Clips</button>
+                {/* Only one destination while the Boot Room is admin-only,
+                    so no pill row at all rather than a lone "Feed" pill. */}
+                {bootRoomVisible && (
+                  <div className="wcf-feed-hero-tabs">
+                    <button className={feedView === "feed" ? "active" : ""} onClick={() => setFeedView("feed")}>Feed</button>
+                    <button className={feedView === "bootroom" ? "active" : ""} onClick={() => setFeedView("bootroom")}>Boot Room</button>
+                  </div>
+                )}
               </div>
             )}
 
-            {feedView === "clips" && (
-              <form className="wcf-clip-form" onSubmit={addClip}>
-                <div className="wcf-clip-form-head"><span>Share a clip</span></div>
-                <input placeholder="Clip title" value={clipTitle} onChange={(e) => setClipTitle(e.target.value)} />
-                <input placeholder="YouTube link (optional)" value={clipUrl} onChange={(e) => setClipUrl(e.target.value)} />
-                <button type="submit" disabled={!clipTitle.trim()}>Share clip</button>
-              </form>
+            {feedView === "bootroom" && bootRoomVisible && !showArchived && myId && (
+              <BootRoom
+                myId={myId}
+                isAdmin={isAdmin}
+                profiles={profiles}
+                askConfirm={askConfirm}
+                logAction={logAction}
+                notifyError={notifyError}
+                notifySuccess={notifySuccess}
+              />
             )}
 
             {feedView === "feed" && isAdmin && (
@@ -3977,22 +3869,10 @@ function App({ session }: { session: Session }) {
               </button>
             )}
 
-            {visibleFeedItems.length === 0 && (
+            {feedView === "feed" && visibleFeedItems.length === 0 && (
               <p className="wcf-empty">
-                {feedView === "clips"
-                  ? "No clips yet — share the first one!"
-                  : showArchived
-                  ? "Nothing archived."
-                  : "Nothing yet — check back after the first game."}
+                {showArchived ? "Nothing archived." : "Nothing yet — check back after the first game."}
               </p>
-            )}
-
-            {feedView === "clips" && visibleFeedItems.length > 0 && (
-              <>
-                {clipCard(visibleFeedItems[0] as Extract<FeedItem, { kind: "clip" }>, true)}
-                {visibleFeedItems.length > 1 && <div className="wcf-feed-section-label">Earlier</div>}
-                {visibleFeedItems.slice(1).map((item) => clipCard(item as Extract<FeedItem, { kind: "clip" }>, false))}
-              </>
             )}
 
             {feedView === "feed" && visibleFeedItems.length > 0 && (() => {
@@ -4009,7 +3889,6 @@ function App({ session }: { session: Session }) {
                   <div className="wcf-feed-section-label">{g.label}</div>
                   {g.items.map((item) => {
                     const isHidden = hiddenFeedKeys.includes(item.key);
-                    if (item.kind !== "derived") return null;
                     return (
                       <article key={item.key} className="wcf-feed-item">
                         <div className={"wcf-feed-icon " + item.tone}>{item.icon}</div>
@@ -5844,6 +5723,762 @@ function pickGaffAISuggestions(): string[] {
 // sets (white on the blue FAB, light blue in the header tile) - the
 // viewBox is recentered on the artwork's real bounding box (not 0 0 512
 // 512) since the drawn shapes aren't symmetric within a plain square.
+// ─── The Boot Room ───────────────────────────────────────────────
+// Members' own trades and businesses, in the Feed tab where Clips used to
+// be. Four category boots on a lit stage -> a category -> a listing.
+// Contact is WhatsApp or a word at the next game (no in-app messaging),
+// and "rating" is a one-tap endorsement rather than stars: these are
+// teammates, so a low score is socially impossible to give and an average
+// would only ever read 5.0. Schema and the reasoning behind each policy
+// live in supabase/schema.sql; shared categories/phone handling in
+// lib/bootRoom.ts.
+
+interface BootListing {
+  id: string;
+  player_id: string;
+  company: string;
+  category: BootCategory;
+  description: string | null;
+  tags: string[];
+  phone: string | null;
+  logo_url: string | null;
+  logo_on_dark: boolean;
+  hidden: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BootEndorsement {
+  listing_id: string;
+  player_id: string;
+  created_at: string;
+}
+
+const BOOT_NEW_DAYS = 14;
+
+// Re-encodes a chosen logo to at most 512px while KEEPING transparency.
+// The avatar path (compressImage) is deliberately not reused: it writes
+// JPEG, which is right for photos but flattens a logo's transparent
+// background into a solid block and fuzzes the lettering. WebP where the
+// browser can encode it; iOS Safari can only encode PNG, so that's the
+// fallback, and the storage path carries whichever extension came out.
+function processBootLogo(file: File): Promise<{ blob: Blob; ext: "webp" | "png" }> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/")) return reject(new Error("That isn't an image file"));
+    if (file.size > 15 * 1024 * 1024) return reject(new Error("That file's too big — try a smaller export"));
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      // An SVG with no intrinsic size reports 0 - give it a sensible one.
+      const w0 = img.naturalWidth || 512;
+      const h0 = img.naturalHeight || 512;
+      const scale = Math.min(1, 512 / Math.max(w0, h0));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(w0 * scale));
+      canvas.height = Math.max(1, Math.round(h0 * scale));
+      const ctx = canvas.getContext("2d");
+      URL.revokeObjectURL(url);
+      if (!ctx) return reject(new Error("Canvas isn't supported on this device"));
+      // No background fill - that's what keeps the transparency.
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(
+        (webp) => {
+          if (webp && webp.type === "image/webp") return resolve({ blob: webp, ext: "webp" });
+          canvas.toBlob((png) => (png ? resolve({ blob: png, ext: "png" }) : reject(new Error("Couldn't process that image"))), "image/png");
+        },
+        "image/webp",
+        0.9
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Couldn't read that image"));
+    };
+    img.src = url;
+  });
+}
+
+function BootRoom({
+  myId,
+  isAdmin,
+  profiles,
+  askConfirm,
+  logAction,
+  notifyError,
+  notifySuccess,
+}: {
+  myId: string;
+  isAdmin: boolean;
+  profiles: Profile[];
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  logAction: (action: string, details: string) => Promise<void>;
+  notifyError: (message: string) => void;
+  notifySuccess: (text: string) => void;
+}) {
+  const [listings, setListings] = useState<BootListing[]>([]);
+  const [endorsements, setEndorsements] = useState<BootEndorsement[]>([]);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "missing" | "error">("loading");
+  const [openCat, setOpenCat] = useState<BootCategory | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [editorId, setEditorId] = useState<string | "new" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  // Editor fields
+  const [fCompany, setFCompany] = useState("");
+  const [fCat, setFCat] = useState<BootCategory>("trade");
+  const [fTags, setFTags] = useState<string[]>([]);
+  const [fOther, setFOther] = useState("");
+  const [fDesc, setFDesc] = useState("");
+  const [fPhone, setFPhone] = useState("");
+  const [phoneErr, setPhoneErr] = useState(false);
+  const [fLogo, setFLogo] = useState<{ blob: Blob; ext: "webp" | "png"; preview: string } | null>(null);
+  const [fLogoUrl, setFLogoUrl] = useState<string | null>(null);
+  const [fLogoDark, setFLogoDark] = useState(false);
+  const [logoMsg, setLogoMsg] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const load = useCallback(async () => {
+    const [l, e] = await Promise.all([
+      supabase
+        .from("boot_room_listings")
+        .select("id, player_id, company, category, description, tags, phone, logo_url, logo_on_dark, hidden, created_at, updated_at")
+        .order("created_at", { ascending: false }),
+      supabase.from("boot_room_endorsements").select("listing_id, player_id, created_at").order("created_at", { ascending: true }),
+    ]);
+    if (l.error) {
+      // PGRST205 = table not found: the migration hasn't been run yet.
+      setLoadState(l.error.code === "PGRST205" || l.error.code === "42P01" ? "missing" : "error");
+      return;
+    }
+    setListings((l.data ?? []) as BootListing[]);
+    setEndorsements((e.data ?? []) as BootEndorsement[]);
+    setLoadState("ready");
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
+
+  const endorsersByListing = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const e of endorsements) {
+      const arr = m.get(e.listing_id) ?? [];
+      arr.push(e.player_id);
+      m.set(e.listing_id, arr);
+    }
+    return m;
+  }, [endorsements]);
+
+  const endorsers = (l: BootListing) => endorsersByListing.get(l.id) ?? [];
+  const endorsedByMe = (l: BootListing) => endorsers(l).includes(myId);
+  const ownerName = (l: BootListing) => profileById.get(l.player_id)?.display_name ?? "A member";
+  const isNew = (l: BootListing) => Date.now() - new Date(l.created_at).getTime() < BOOT_NEW_DAYS * 86400000;
+  const byEndorsement = (a: BootListing, b: BootListing) =>
+    endorsers(b).length - endorsers(a).length || a.company.localeCompare(b.company);
+
+  // Community Picks are the most-recommended few, so the section means
+  // something. Until anyone has recommended anything, it honestly says
+  // "New in the Boot Room" instead of crowning listings with zero votes.
+  const endorsedSorted = useMemo(
+    () => listings.filter((l) => (endorsersByListing.get(l.id) ?? []).length > 0).sort(byEndorsement),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [listings, endorsersByListing]
+  );
+  const picks = endorsedSorted.length ? endorsedSorted.slice(0, 3) : listings.slice(0, 3);
+  const pickIds = new Set(endorsedSorted.slice(0, 3).map((l) => l.id));
+  const countIn = (cat: BootCategory) => listings.filter((l) => l.category === cat).length;
+
+  // Names first, count second: in a club this size "Steve and Amir"
+  // persuades far more than a number, because you know Steve.
+  function endorseLine(l: BootListing) {
+    const ids = endorsers(l);
+    const names = [...(ids.includes(myId) ? ["You"] : []), ...ids.filter((id) => id !== myId).map((id) => (profileById.get(id)?.display_name ?? "A member").split(" ")[0])];
+    if (!names.length) return "No recommendations yet";
+    if (names.length === 1) return `Recommended by ${names[0]}`;
+    if (names.length === 2) return `Recommended by ${names[0]} & ${names[1]}`;
+    return `Recommended by ${names[0]}, ${names[1]} + ${names.length - 2} more`;
+  }
+
+  function faces(l: BootListing) {
+    const ids = endorsers(l);
+    const ordered = [...(ids.includes(myId) ? [myId] : []), ...ids.filter((id) => id !== myId)].slice(0, 3);
+    return (
+      <span className="wcf-br-faces">
+        {ordered.map((id) => {
+          const p = profileById.get(id);
+          const name = p?.display_name ?? "?";
+          return <Avatar key={id} name={name} avatarUrl={p?.avatar_url} className={"wcf-br-face" + (id === myId ? " me" : "")} background={avatarFor(name).gradient} />;
+        })}
+      </span>
+    );
+  }
+
+  function badge(l: BootListing, big: boolean) {
+    const c = BOOT_CATEGORY[l.category];
+    if (l.logo_url) {
+      return (
+        <div className={(big ? "wcf-br-logo big" : "wcf-br-logo") + (l.logo_on_dark ? " on-dark" : "")}>
+          <img src={l.logo_url} alt={`${l.company} logo`} />
+        </div>
+      );
+    }
+    const initials = l.company.split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w[0] ?? "")).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
+    return (
+      <div className={big ? "wcf-br-mono big" : "wcf-br-mono"} style={{ background: `linear-gradient(155deg, ${c.colour}, ${c.colour}aa)` }}>
+        {initials}
+      </div>
+    );
+  }
+
+  function card(l: BootListing, i: number) {
+    const c = BOOT_CATEGORY[l.category];
+    return (
+      <button key={l.id} className="wcf-br-card" style={{ animationDelay: `${i * 30}ms` }} onClick={() => setDetailId(l.id)}>
+        {badge(l, false)}
+        <span className="wcf-br-card-body">
+          <span className="wcf-br-card-top">
+            <span className="wcf-br-card-name">{l.company}</span>
+            {pickIds.has(l.id) && <span className="wcf-br-pick">PICK</span>}
+            {isNew(l) && <span className="wcf-br-new">NEW</span>}
+          </span>
+          <span className="wcf-br-card-desc">
+            {ownerName(l)}
+            {l.description ? ` · ${l.description}` : ""}
+          </span>
+          <span className="wcf-br-card-meta">
+            {faces(l)}
+            <span className="wcf-br-recs">{endorseLine(l)}</span>
+          </span>
+        </span>
+        <span className="wcf-br-flag" style={{ color: c.colour }}>{c.label}</span>
+      </button>
+    );
+  }
+
+  function bootArt(cat: BootCategory, cls: string) {
+    const c = BOOT_CATEGORY[cat];
+    return (
+      <span className={cls} style={{ ["--c" as string]: c.colour } as React.CSSProperties}>
+        <img className="main" src={c.img} alt={`${c.full} boot`} />
+        <span className="reflect" aria-hidden="true">
+          <img src={c.img} alt="" />
+        </span>
+      </span>
+    );
+  }
+
+  function goTo(cat: BootCategory | null) {
+    setOpenCat(cat);
+    setSearchOpen(false);
+    setQuery("");
+    setShowAll(false);
+    rootRef.current?.scrollIntoView({ block: "start" });
+  }
+
+  // ---------- endorse ----------
+  async function toggleEndorse(l: BootListing) {
+    if (l.player_id === myId || busy) return;
+    const was = endorsedByMe(l);
+    // Optimistic: on a phone the button should answer the tap immediately.
+    setEndorsements((prev) =>
+      was
+        ? prev.filter((e) => !(e.listing_id === l.id && e.player_id === myId))
+        : [...prev, { listing_id: l.id, player_id: myId, created_at: new Date().toISOString() }]
+    );
+    const { error } = was
+      ? await supabase.from("boot_room_endorsements").delete().eq("listing_id", l.id).eq("player_id", myId)
+      : await supabase.from("boot_room_endorsements").insert({ listing_id: l.id, player_id: myId });
+    if (error) {
+      notifyError(error.message);
+      await load();
+    }
+  }
+
+  // ---------- remove ----------
+  async function removeListing(l: BootListing) {
+    const own = l.player_id === myId;
+    const ok = await askConfirm(
+      own ? "Remove your listing?" : `Delete ${l.company}?`,
+      own
+        ? "It comes off the Boot Room for everyone, along with its recommendations."
+        : `This removes ${ownerName(l)}'s listing for everyone, recommendations included. They can add it again.`,
+      own ? "Remove" : "Delete"
+    );
+    if (!ok) return;
+    setBusy(true);
+    await supabase.storage.from("boot-room-logos").remove([`${l.id}.webp`, `${l.id}.png`]);
+    const { error } = await supabase.from("boot_room_listings").delete().eq("id", l.id);
+    setBusy(false);
+    if (error) return notifyError(error.message);
+    // Admin removals are logged - the owner didn't do it, so "where did my
+    // listing go?" needs an answer. Owners removing their own aren't.
+    if (!own) await logAction("Deleted Boot Room listing", `${l.company} — ${ownerName(l)}`);
+    setDetailId(null);
+    await load();
+    notifySuccess(own ? "Your listing's been removed" : "Listing deleted");
+  }
+
+  // ---------- editor ----------
+  function openEditor(l: BootListing | null) {
+    setDetailId(null);
+    setPhoneErr(false);
+    setLogoMsg(null);
+    setFLogo(null);
+    if (l) {
+      const presets = BOOT_CATEGORY[l.category].tags;
+      setFCompany(l.company);
+      setFCat(l.category);
+      setFTags(l.tags.filter((t) => presets.includes(t)));
+      setFOther(l.tags.filter((t) => !presets.includes(t)).join(", "));
+      setFDesc(l.description ?? "");
+      setFPhone(l.phone ? displayUkPhone(l.phone) : "");
+      setFLogoUrl(l.logo_url);
+      setFLogoDark(l.logo_on_dark);
+      setEditorId(l.id);
+    } else {
+      setFCompany("");
+      setFCat(openCat ?? "trade");
+      setFTags([]);
+      setFOther("");
+      setFDesc("");
+      setFPhone("");
+      setFLogoUrl(null);
+      setFLogoDark(false);
+      setEditorId("new");
+    }
+  }
+
+  function pickCategory(cat: BootCategory) {
+    setFCat(cat);
+    // Keep only tags that exist in the new category's list, so nothing
+    // invisible gets saved against the listing.
+    setFTags((prev) => prev.filter((t) => BOOT_CATEGORY[cat].tags.includes(t)));
+  }
+
+  async function onLogoChosen(file: File | undefined) {
+    if (!file) return;
+    try {
+      const out = await processBootLogo(file);
+      if (fLogo) URL.revokeObjectURL(fLogo.preview);
+      setFLogo({ ...out, preview: URL.createObjectURL(out.blob) });
+      setLogoMsg("Looks good. Flip to a dark tile if your logo is white or very light.");
+    } catch (err) {
+      setLogoMsg(err instanceof Error ? err.message : "Couldn't use that image");
+    }
+  }
+
+  function clearLogo() {
+    if (fLogo) URL.revokeObjectURL(fLogo.preview);
+    setFLogo(null);
+    setFLogoUrl(null);
+    setFLogoDark(false);
+    setLogoMsg(null);
+  }
+
+  async function saveListing() {
+    const company = fCompany.trim();
+    if (!company || busy || !editorId) return;
+    const rawPhone = fPhone.trim();
+    const phone = rawPhone ? normaliseUkPhone(rawPhone) : null;
+    if (rawPhone && !phone) {
+      setPhoneErr(true);
+      return;
+    }
+    const other = fOther.split(",").map((t) => t.trim()).filter(Boolean).slice(0, 5);
+    const tags = Array.from(new Set([...fTags, ...other]));
+    const row = { company, category: fCat, description: fDesc.trim() || null, tags, phone, logo_on_dark: fLogoDark };
+    const existing = editorId === "new" ? null : listings.find((l) => l.id === editorId) ?? null;
+
+    setBusy(true);
+    let id = existing?.id ?? null;
+    if (existing) {
+      const { error } = await supabase.from("boot_room_listings").update({ ...row, updated_at: new Date().toISOString() }).eq("id", existing.id);
+      if (error) {
+        setBusy(false);
+        return notifyError(error.message);
+      }
+    } else {
+      const { data, error } = await supabase.from("boot_room_listings").insert({ ...row, player_id: myId }).select("id").single();
+      if (error || !data) {
+        setBusy(false);
+        return notifyError(error?.message ?? "Couldn't save your listing");
+      }
+      id = (data as { id: string }).id;
+    }
+
+    // The logo is keyed on the listing id (one member can hold several
+    // listings), so it can only upload once the row exists.
+    let logoFailed = false;
+    if (id && fLogo) {
+      // Clear any previous logo first, then a plain upload. Not upsert:
+      // Supabase routes upsert through a separate permission path that the
+      // ownership policy rejects, and it isn't needed - the old file (under
+      // either extension, since iPhones produce PNG and others WebP) is
+      // gone by the time the new one is written.
+      await supabase.storage.from("boot-room-logos").remove([`${id}.webp`, `${id}.png`]);
+      const path = `${id}.${fLogo.ext}`;
+      const { error: upErr } = await supabase.storage
+        .from("boot-room-logos")
+        .upload(path, fLogo.blob, { contentType: fLogo.ext === "webp" ? "image/webp" : "image/png" });
+      if (upErr) logoFailed = true;
+      else {
+        // Same cache-busting as avatars: re-uploads can reuse the path.
+        const url = `${supabase.storage.from("boot-room-logos").getPublicUrl(path).data.publicUrl}?v=${Date.now()}`;
+        await supabase.from("boot_room_listings").update({ logo_url: url }).eq("id", id);
+      }
+    } else if (id && existing?.logo_url && !fLogoUrl) {
+      await supabase.storage.from("boot-room-logos").remove([`${id}.webp`, `${id}.png`]);
+      await supabase.from("boot_room_listings").update({ logo_url: null }).eq("id", id);
+    }
+
+    setBusy(false);
+    setEditorId(null);
+    await load();
+    if (logoFailed) notifyError("Saved — but the logo didn't upload. Try it again from Edit.");
+    else notifySuccess(existing ? "Listing updated" : "You're in the Boot Room");
+  }
+
+  // ---------- derived views ----------
+  const q = query.trim().toLowerCase();
+  const listing = !!q || showAll;
+  const results = q
+    ? listings
+        .filter((l) =>
+          [l.company, l.description ?? "", l.tags.join(" "), ownerName(l), BOOT_CATEGORY[l.category].full].join(" ").toLowerCase().includes(q)
+        )
+        .sort(byEndorsement)
+    : showAll
+      ? [...listings].sort(byEndorsement)
+      : [];
+  const catList = openCat ? listings.filter((l) => l.category === openCat).sort(byEndorsement) : [];
+  const detail = detailId ? listings.find((l) => l.id === detailId) ?? null : null;
+  const logoPreview = fLogo?.preview ?? fLogoUrl;
+
+  if (loadState === "missing" || loadState === "error") {
+    return (
+      <div className="wcf-br">
+        <p className="wcf-empty">
+          {loadState === "missing" ? "The Boot Room isn't set up yet — the database migration still needs running." : "Couldn't load the Boot Room — pull down to try again."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="wcf-br" ref={rootRef}>
+      {!openCat ? (
+        <>
+          <div className="wcf-br-head">
+            <div>
+              <div className="wcf-br-kicker">THE</div>
+              <div className="wcf-br-title">BOOT ROOM</div>
+              <div className="wcf-br-sub">The squad&apos;s own trades and services. Someone here can probably sort it.</div>
+            </div>
+            <button
+              className={"wcf-br-iconbtn" + (searchOpen ? " on" : "")}
+              aria-label="Search the Boot Room"
+              onClick={() => {
+                setSearchOpen((v) => !v);
+                setQuery("");
+                setShowAll(false);
+              }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+            </button>
+          </div>
+
+          {searchOpen && (
+            <div className="wcf-br-search">
+              <input autoFocus type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder='Try "boiler", "logo", "MOT"…' />
+            </div>
+          )}
+
+          {listing ? (
+            <>
+              <div className="wcf-br-sec">
+                <div className="wcf-br-sec-title">
+                  {!q ? `Everyone · ${results.length}` : results.length ? `${results.length} match${results.length === 1 ? "" : "es"}` : "No matches"}
+                </div>
+                <button className="wcf-br-link" onClick={() => { setQuery(""); setShowAll(false); setSearchOpen(false); }}>Close</button>
+              </div>
+              {results.length ? (
+                <div className="wcf-br-cards">{results.map(card)}</div>
+              ) : (
+                <p className="wcf-br-note">No one matches that yet. Try another word — or claim your peg and be the first.</p>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="wcf-br-stage">
+                <div className="wcf-br-stage-glow" />
+                <div className="wcf-br-stage-row">
+                  {BOOT_CATEGORIES.map((c, i) => (
+                    <button key={c.key} className="wcf-br-slot" style={{ ["--d" as string]: `${-i * 0.7}s` } as React.CSSProperties} onClick={() => goTo(c.key)} aria-label={`${c.full}, ${countIn(c.key)} listed`}>
+                      {bootArt(c.key, "wcf-br-boot")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="wcf-br-tiles">
+                {BOOT_CATEGORIES.map((c) => (
+                  <button key={c.key} className="wcf-br-tile" style={{ ["--c" as string]: c.colour } as React.CSSProperties} onClick={() => goTo(c.key)}>
+                    <img src={c.img} alt="" />
+                    <b>{c.label}</b>
+                    <span>{countIn(c.key)}</span>
+                  </button>
+                ))}
+              </div>
+
+              {loadState === "ready" && listings.length === 0 ? (
+                <div className="wcf-br-empty">
+                  <b>Nobody&apos;s in yet</b>
+                  <span>Pick a boot and add what you do — plumber, PT, barber, whatever it is. First few in get found the most.</span>
+                  <button className="wcf-br-fab inline" onClick={() => openEditor(null)}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                    Claim your peg
+                  </button>
+                </div>
+              ) : loadState === "ready" ? (
+                <>
+                  <div className="wcf-br-sec">
+                    <div className="wcf-br-sec-title">{endorsedSorted.length ? "Community Picks" : "New in the Boot Room"}</div>
+                    <button className="wcf-br-link" onClick={() => { setSearchOpen(true); setShowAll(true); }}>See all</button>
+                  </div>
+                  <div className="wcf-br-cards">{picks.map(card)}</div>
+                </>
+              ) : null}
+            </>
+          )}
+        </>
+      ) : (
+        (() => {
+          const c = BOOT_CATEGORY[openCat];
+          return (
+            <>
+              <div className="wcf-br-catbar">
+                <button className="wcf-br-iconbtn" onClick={() => goTo(null)} aria-label="Back to the Boot Room">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="m15 18-6-6 6-6" /></svg>
+                </button>
+                <span className="wcf-br-catname" style={{ color: c.colour }}>{c.full.toUpperCase()}</span>
+              </div>
+              <div className="wcf-br-cathero" style={{ ["--c" as string]: c.colour } as React.CSSProperties}>
+                <div className="wcf-br-herostage">{bootArt(openCat, "wcf-br-heroboot")}</div>
+                <div className="wcf-br-line">{c.line}</div>
+                <div className="wcf-br-blurb">{c.blurb}</div>
+                <div className="wcf-br-count" style={{ color: c.colour }}>{catList.length} IN THE CLUB</div>
+              </div>
+              <div className="wcf-br-sec"><div className="wcf-br-sec-title">{catList.length ? "Who's in" : "Nobody yet"}</div></div>
+              {catList.length ? (
+                <div className="wcf-br-cards">{catList.map(card)}</div>
+              ) : (
+                <p className="wcf-br-note">Nobody&apos;s claimed a peg here yet. If this is what you do, you&apos;re first in.</p>
+              )}
+              <div className="wcf-br-switch">
+                {BOOT_CATEGORIES.filter((o) => o.key !== openCat).map((o) => (
+                  <button key={o.key} style={{ ["--c" as string]: o.colour } as React.CSSProperties} onClick={() => goTo(o.key)}>
+                    <img src={o.img} alt="" />
+                    <b>{o.label}</b>
+                  </button>
+                ))}
+              </div>
+            </>
+          );
+        })()
+      )}
+
+      <div className="wcf-br-spacer" />
+
+      {/* Centred rather than bottom-right: GaffAI's button already lives
+          there for admins, and admins are exactly who sees this first. */}
+      {/* While the room is empty the button sits inside the "Nobody's in
+          yet" message instead - floating, it covered that exact text. */}
+      {loadState === "ready" && (listings.length > 0 || openCat || listing) && (
+        <button className="wcf-br-fab" onClick={() => openEditor(null)}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          Claim your peg
+        </button>
+      )}
+
+      {detail && (
+        <div className="wcf-sheet-overlay" onClick={() => setDetailId(null)}>
+          <div className="wcf-squad-sheet wcf-br-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="wcf-sheet-handle-wrap"><div className="wcf-sheet-handle" /></div>
+            <button className="wcf-sheet-close" onClick={() => setDetailId(null)} aria-label="Close">×</button>
+            <div className="wcf-br-sheet-body">
+              <div className="wcf-br-dtop">
+                {badge(detail, true)}
+                <div>
+                  <div className="wcf-br-dname">{detail.company}</div>
+                  <div className="wcf-br-dwho">
+                    {ownerName(detail)} · <span style={{ color: BOOT_CATEGORY[detail.category].colour }}>{BOOT_CATEGORY[detail.category].label}</span>
+                  </div>
+                </div>
+              </div>
+              {detail.description && <div className="wcf-br-ddesc">{detail.description}</div>}
+              {detail.tags.length > 0 && (
+                <div className="wcf-br-dtags">{detail.tags.map((t) => <span key={t}>{t}</span>)}</div>
+              )}
+              <div className="wcf-br-proof">{faces(detail)}<span>{endorseLine(detail)}</span></div>
+
+              {detail.phone ? (
+                <>
+                  <a className="wcf-br-wa" href={`https://wa.me/${detail.phone}`} target="_blank" rel="noreferrer">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15l-1.3 4.7 4.8-1.3A10 10 0 1 0 12 2Zm5.3 14.1c-.2.6-1.2 1.2-1.7 1.2-.5 0-1.1 0-2-.3a11 11 0 0 1-5.5-4.8c-.5-.9-.8-1.8-.8-2.5 0-.8.4-1.4.8-1.7a1 1 0 0 1 .7-.3h.5c.2 0 .4 0 .5.4l.7 1.7c.1.2 0 .4-.1.5l-.4.5c-.1.2-.2.3 0 .5.5.9 1.6 1.9 2.6 2.3.2.1.4.1.5 0l.6-.7c.2-.2.3-.2.5-.1l1.6.8c.3.1.3.3.3.4v.5Z" /></svg>
+                    WhatsApp {ownerName(detail).split(" ")[0]}
+                  </a>
+                  <div className="wcf-br-dnote">Or just have a word at the next game.</div>
+                </>
+              ) : (
+                <div className="wcf-br-dnote spaced">{ownerName(detail).split(" ")[0]} hasn&apos;t added a number — have a word at the next game.</div>
+              )}
+
+              {detail.player_id === myId ? (
+                <button className="wcf-br-endorse" disabled>It&apos;s your listing — teammates recommend it</button>
+              ) : (
+                <button className={"wcf-br-endorse" + (endorsedByMe(detail) ? " on" : "")} aria-pressed={endorsedByMe(detail)} onClick={() => toggleEndorse(detail)}>
+                  {endorsedByMe(detail) ? (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 5 5 9-10" /></svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 11v9H4v-9h3Zm0 0 4-7a2 2 0 0 1 3 2l-1 4h5a2 2 0 0 1 2 2.3l-1.2 6A2 2 0 0 1 16.8 20H7" /></svg>
+                  )}
+                  {endorsedByMe(detail) ? "You recommend them" : "I'd recommend them"}
+                </button>
+              )}
+
+              {detail.player_id === myId && (
+                <div className="wcf-br-owner">
+                  <button className="wcf-br-secondary" onClick={() => openEditor(detail)}>Edit listing</button>
+                  <button className="wcf-br-danger" disabled={busy} onClick={() => removeListing(detail)}>Remove</button>
+                </div>
+              )}
+              {detail.player_id !== myId && isAdmin && (
+                <button className="wcf-br-danger wide" disabled={busy} onClick={() => removeListing(detail)}>Delete listing (admin)</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editorId && (
+        <div className="wcf-sheet-overlay" onClick={() => !busy && setEditorId(null)}>
+          <div className="wcf-squad-sheet wcf-br-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="wcf-sheet-handle-wrap"><div className="wcf-sheet-handle" /></div>
+            <button className="wcf-sheet-close" onClick={() => !busy && setEditorId(null)} aria-label="Close">×</button>
+            <div className="wcf-br-sheet-body">
+              <div className="wcf-br-ftitle">{editorId === "new" ? "Add your trade" : "Edit your listing"}</div>
+              <div className="wcf-br-fsub">Shows up in the Boot Room for the whole club to search.</div>
+
+              <label className="wcf-br-field">
+                <span>Company or trade name</span>
+                <input type="text" value={fCompany} maxLength={80} onChange={(e) => setFCompany(e.target.value)} placeholder="e.g. Corrigan Plumbing & Heating" />
+              </label>
+
+              <div className="wcf-br-field">
+                <span>Logo (optional)</span>
+                <div className="wcf-br-logorow">
+                  <button type="button" className="wcf-br-logodrop" onClick={() => fileRef.current?.click()} aria-label={logoPreview ? "Change logo" : "Add a logo"}>
+                    {logoPreview ? (
+                      <span className={"shot" + (fLogoDark ? " on-dark" : "")}><img src={logoPreview} alt="Logo preview" /></span>
+                    ) : (
+                      <span className="add">Tap to add</span>
+                    )}
+                  </button>
+                  <div className="wcf-br-logoside">
+                    <span className="wcf-br-hint">{logoMsg ?? "PNG or JPG. Transparent backgrounds work best — we keep the transparency."}</span>
+                    {logoPreview && (
+                      <div className="wcf-br-logoacts">
+                        <button type="button" className={!fLogoDark ? "on" : ""} onClick={() => setFLogoDark(false)}>Light tile</button>
+                        <button type="button" className={fLogoDark ? "on" : ""} onClick={() => setFLogoDark(true)}>Dark tile</button>
+                        <button type="button" onClick={clearLogo}>Remove</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={(e) => {
+                    onLogoChosen(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+              </div>
+
+              <div className="wcf-br-field">
+                <span>Which boot are you on?</span>
+                <div className="wcf-br-pickgrid">
+                  {BOOT_CATEGORIES.map((c) => (
+                    <button key={c.key} type="button" className={fCat === c.key ? "on" : ""} style={{ ["--c" as string]: c.colour } as React.CSSProperties} onClick={() => pickCategory(c.key)}>
+                      <img src={c.img} alt="" />
+                      <b>{c.label}</b>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="wcf-br-field">
+                <span>What can you help with?</span>
+                <div className="wcf-br-tagpick">
+                  {BOOT_CATEGORY[fCat].tags.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={fTags.includes(t) ? "on" : ""}
+                      onClick={() => setFTags((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                <input type="text" value={fOther} maxLength={80} onChange={(e) => setFOther(e.target.value)} placeholder="Something else? Type it, commas between" />
+                <span className="wcf-br-hint">Pick what applies — it&apos;s what search matches on.</span>
+              </div>
+
+              <label className="wcf-br-field">
+                <span>Anything else worth knowing?</span>
+                <textarea value={fDesc} maxLength={280} onChange={(e) => setFDesc(e.target.value)} placeholder="Boiler servicing, leaks, radiator swaps. Wirral-wide, evenings usually fine." />
+              </label>
+
+              <label className="wcf-br-field">
+                <span>WhatsApp number (optional)</span>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  className={phoneErr ? "bad" : ""}
+                  value={fPhone}
+                  onChange={(e) => {
+                    setFPhone(e.target.value);
+                    setPhoneErr(false);
+                  }}
+                  placeholder="07700 900123"
+                />
+                <span className={"wcf-br-hint" + (phoneErr ? " err" : "")}>
+                  {phoneErr
+                    ? "That doesn't look like a phone number — try something like 07700 900123, or leave it blank."
+                    : "Adds a WhatsApp button to your listing. Everyone in the club can see it — leave it blank and people will catch you at the next game."}
+                </span>
+              </label>
+
+              <button className="wcf-br-save" disabled={busy || !fCompany.trim()} onClick={saveListing}>
+                {busy ? "Saving…" : editorId === "new" ? "Add to the Boot Room" : "Save changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GaffAILogo({ size }: { size: number }) {
   return (
     <svg viewBox="17 5 511 511" width={size} height={size} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
@@ -8833,12 +9468,6 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-admin-add-player .wcf-ghost{min-height:44px;padding:0 16px;border-radius:12px;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.36);color:#7fb0ec;font-weight:700;font-size:11.5px}
 .wcf-admin-add-player .wcf-ghost:disabled{opacity:.4;cursor:not-allowed;background:rgba(148,163,184,.06);border-color:rgba(148,163,184,.16);color:var(--dim)}
 
-.wcf-clip-form{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:18px;padding:12px;display:flex;flex-direction:column;gap:9px;margin-bottom:16px}
-.wcf-clip-form-head{display:flex;align-items:center;gap:8px;margin-bottom:2px}
-.wcf-clip-form-head span{font-family:var(--display);font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
-.wcf-clip-form input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:13px;border-radius:12px;font-size:13px;font-family:var(--sans);min-height:44px;box-sizing:border-box}
-.wcf-clip-form button{background:linear-gradient(135deg,var(--red),rgba(230,57,70,.55));color:#fff;border:1px solid rgba(230,57,70,.5);padding:14px;border-radius:14px;font-weight:800;font-size:13px;cursor:pointer;min-height:48px}
-.wcf-clip-form button:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed;border-color:var(--line)}
 
 .wcf-feed-section-label{display:flex;align-items:center;gap:10px;padding:6px 2px 10px;font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#64748b}
 .wcf-feed-section-label:after{content:"";flex:1;height:1px;background:rgba(148,163,184,.1)}
@@ -8850,31 +9479,19 @@ button.wcf-glance-card:disabled{cursor:default}
   background-size:cover;background-position:center 38%;
   border:1px solid var(--line);box-shadow:0 18px 40px -24px rgba(0,0,0,.9);
 }
+/* In the Boot Room the photo card collapses to a band behind the pills:
+   at full height it pushed the boots below the fold on a phone, and the
+   Boot Room carries its own title anyway. */
+.wcf-feed-hero.compact{min-height:0;padding:12px 12px 12px;margin-bottom:4px;background-position:center 30%}
+.wcf-feed-hero.compact .wcf-feed-hero-eyebrow,.wcf-feed-hero.compact .wcf-feed-hero-title{display:none}
+.wcf-feed-hero.compact .wcf-feed-hero-tabs{margin-top:0}
 .wcf-feed-hero-eyebrow{font-family:var(--sans);font-size:10.5px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#f8b3b8}
 .wcf-feed-hero-title{margin-top:6px;font-family:var(--display);font-size:19px;font-weight:800;letter-spacing:-.01em;color:#fff}
 .wcf-feed-hero-tabs{display:flex;gap:8px;margin-top:16px}
 .wcf-feed-hero-tabs button{flex:1;min-height:42px;padding:9px 14px;border-radius:20px;cursor:pointer;font-family:var(--sans);font-weight:700;font-size:12.5px;letter-spacing:.01em;background:rgba(148,163,184,.14);border:1px solid rgba(255,255,255,.2);color:#e2e8f0;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 .wcf-feed-hero-tabs button.active{background:rgba(230,57,70,.88);border-color:rgba(230,57,70,.9);color:#fff}
 
-.wcf-clip-hero{position:relative;border-radius:20px;overflow:hidden;border:1px solid var(--line);background:var(--panel2);margin-bottom:20px}
-.wcf-clip-hero-thumb{position:relative;display:block;aspect-ratio:16/9;background:linear-gradient(135deg,var(--panel2),var(--bg))}
-.wcf-clip-hero-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.wcf-clip-hero-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-.wcf-clip-hero-play:before{content:"";position:absolute;inset:0;background:rgba(4,9,20,.28)}
-.wcf-clip-hero-play:after{content:"▶";position:relative;width:54px;height:54px;border-radius:50%;background:rgba(230,57,70,.9);color:#fff;font-size:19px;padding-left:3px;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 30px -10px rgba(230,57,70,.9)}
-.wcf-clip-hero-body{padding:14px}
-.wcf-clip-hero-title{font-family:var(--display);font-weight:800;font-size:16px;line-height:1.25;color:var(--white)}
-.wcf-clip-hero-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px}
 
-.wcf-clip{display:flex;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:12px;align-items:flex-start}
-.wcf-clip-thumb{width:74px;height:52px;border-radius:9px;flex:0 0 auto;background:linear-gradient(135deg,var(--panel2),var(--bg));position:relative;overflow:hidden}
-.wcf-clip-thumb img{width:100%;height:100%;object-fit:cover;display:block}
-.wcf-clip-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(4,9,20,.28);color:#fff;font-size:14px;text-shadow:0 1px 4px rgba(0,0,0,.6)}
-.wcf-clip-body{flex:1;min-width:0}
-.wcf-clip-title{font-weight:800;font-size:14px}
-.wcf-clip-sub{font-size:11px;color:var(--dim);margin-top:3px}
-.wcf-clip-del{background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;flex:0 0 auto;line-height:1}
-.wcf-clip-del:hover{color:var(--red-hi)}
 
 .wcf-feed-item{display:flex;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:11px 12px;margin-bottom:10px;align-items:flex-start}
 .wcf-feed-icon{width:32px;height:32px;border-radius:9px;flex:0 0 auto;display:grid;place-items:center;font-size:15px}
@@ -9637,4 +10254,176 @@ button.wcf-glance-card:disabled{cursor:default}
   .wcf-heading-actions{gap:5px}
   .wcf-addbtn{padding:8px 10px;font-size:11px;gap:4px}
 }
+/* ─── The Boot Room ─────────────────────────────────────────── */
+.wcf-br{padding:0 0 4px}
+.wcf-br-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 2px 0}
+.wcf-br-kicker{font-family:var(--mono);font-weight:600;font-size:10px;letter-spacing:.22em;color:var(--dim)}
+.wcf-br-title{font-family:var(--display);font-weight:800;font-size:30px;line-height:.95;letter-spacing:-.01em;margin-top:3px}
+.wcf-br-sub{color:var(--dim);font-size:12.5px;line-height:1.5;margin-top:8px;max-width:28ch}
+.wcf-br-iconbtn{flex:none;width:38px;height:38px;border-radius:12px;cursor:pointer;background:rgba(148,163,184,.1);border:1px solid var(--line);color:var(--white);display:grid;place-items:center}
+.wcf-br-iconbtn.on{border-color:rgba(148,163,184,.45)}
+.wcf-br-iconbtn svg{width:17px;height:17px}
+.wcf-br-search{padding:12px 0 0}
+.wcf-br-search input{width:100%;background:var(--panel);border:1px solid rgba(148,163,184,.28);border-radius:13px;padding:11px 13px;color:var(--white);font-family:var(--sans);font-size:15px;outline:none}
+.wcf-br-search input:focus{border-color:var(--blue)}
+
+/* The stage. The halo is CSS, not baked into the artwork: the renders'
+   outer glow couldn't be recovered from their fake transparent
+   background, and doing it here lets it take the category colour. */
+.wcf-br-stage{position:relative;margin-top:8px}
+.wcf-br-stage-glow{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);width:94%;height:110px;pointer-events:none;
+  background:radial-gradient(ellipse at center,rgba(120,140,200,.16),transparent 70%)}
+.wcf-br-stage-row{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:4px;align-items:end}
+.wcf-br-slot{background:none;border:none;padding:0;cursor:pointer;display:flex;flex-direction:column;align-items:center;-webkit-tap-highlight-color:transparent}
+.wcf-br-boot,.wcf-br-heroboot{display:block;width:100%;animation:wcfBrFloat 5.4s ease-in-out var(--d,0s) infinite}
+.wcf-br-boot img,.wcf-br-heroboot img{width:100%;height:auto;display:block}
+.wcf-br-boot .main{filter:drop-shadow(0 6px 10px rgba(0,0,0,.6)) drop-shadow(0 0 9px var(--c))}
+.wcf-br-slot:active .wcf-br-boot .main{filter:drop-shadow(0 6px 10px rgba(0,0,0,.6)) drop-shadow(0 0 16px var(--c))}
+/* Reflection lives in a short clipped box: a flipped full-size image
+   still takes full layout height otherwise. The fade is on the box, not
+   the image - a mask on the image would flip along with it. */
+.wcf-br-boot .reflect,.wcf-br-heroboot .reflect{display:block;height:20px;overflow:hidden;margin-top:-3px;
+  -webkit-mask-image:linear-gradient(to bottom,rgba(0,0,0,.9),transparent);mask-image:linear-gradient(to bottom,rgba(0,0,0,.9),transparent)}
+.wcf-br-boot .reflect img,.wcf-br-heroboot .reflect img{transform:scaleY(-1);opacity:.3;filter:blur(1.1px)}
+@keyframes wcfBrFloat{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-6px) rotate(-1.2deg)}}
+
+.wcf-br-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:8px}
+.wcf-br-tile{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:9px 4px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;font-family:var(--sans)}
+.wcf-br-tile:active{border-color:var(--c)}
+.wcf-br-tile img{width:28px;height:auto;filter:drop-shadow(0 0 5px var(--c))}
+.wcf-br-tile b{font-family:var(--mono);font-weight:600;font-size:8.5px;letter-spacing:.08em;color:var(--c)}
+.wcf-br-tile span{font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
+
+.wcf-br-sec{display:flex;align-items:baseline;justify-content:space-between;padding:22px 2px 10px}
+.wcf-br-sec-title{font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase}
+.wcf-br-link{background:none;border:none;color:var(--dim);font-family:var(--sans);font-size:12px;cursor:pointer;padding:4px 0}
+.wcf-br-note{color:var(--dim);font-size:12.5px;line-height:1.6;text-align:center;padding:10px 18px}
+.wcf-br-empty{text-align:center;padding:20px 22px 0}
+.wcf-br-empty b{display:block;font-family:var(--display);font-weight:700;font-size:18px}
+.wcf-br-empty span{display:block;color:var(--dim);font-size:12.5px;line-height:1.6;margin-top:7px}
+
+.wcf-br-cards{display:flex;flex-direction:column;gap:9px}
+.wcf-br-card{display:flex;gap:11px;align-items:center;text-align:left;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:11px;cursor:pointer;
+  font-family:var(--sans);color:var(--white);animation:wcfBrRise .32s ease both}
+.wcf-br-card:active{border-color:rgba(148,163,184,.35)}
+@keyframes wcfBrRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.wcf-br-card-body{min-width:0;flex:1;display:flex;flex-direction:column}
+.wcf-br-card-top{display:flex;align-items:center;gap:6px;min-width:0}
+.wcf-br-card-name{font-weight:700;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-br-card-desc{font-size:11.5px;color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-br-card-meta{display:flex;align-items:center;gap:6px;margin-top:6px;min-width:0}
+.wcf-br-recs{font-size:10.5px;color:var(--dim);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-br-flag{font-family:var(--mono);font-weight:600;font-size:8px;letter-spacing:.1em;flex:none}
+.wcf-br-pick{font-family:var(--mono);font-weight:600;font-size:7.5px;letter-spacing:.08em;background:rgba(34,197,94,.14);color:#6ee79a;border:1px solid rgba(34,197,94,.3);padding:2px 5px;border-radius:5px;flex:none}
+.wcf-br-new{font-weight:800;font-size:7.5px;letter-spacing:.04em;background:var(--red);color:#fff;padding:2px 5px;border-radius:999px;flex:none}
+
+/* Logos sit on a near-white chip and are contained, never cropped: dark
+   artwork on transparency (the most common) would vanish against this UI
+   otherwise. A white logo can flip its own tile dark. */
+.wcf-br-logo,.wcf-br-mono{flex:none;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;overflow:hidden}
+.wcf-br-logo{padding:5px;background:#eef1f6;box-shadow:inset 0 0 0 1px rgba(13,13,22,.08)}
+.wcf-br-logo.on-dark{background:#14141f;box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+.wcf-br-logo img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.wcf-br-mono{font-family:var(--display);font-weight:800;font-size:15px;color:#0d0d16}
+.wcf-br-logo.big,.wcf-br-mono.big{width:58px;height:58px;border-radius:17px}
+.wcf-br-logo.big{padding:7px}
+.wcf-br-mono.big{font-size:20px}
+
+.wcf-br-faces{display:flex;flex:none}
+.wcf-br-face{width:18px;height:18px;border-radius:50%;margin-left:-5px;border:1.5px solid var(--panel);display:grid;place-items:center;object-fit:cover;
+  font-size:8px;font-weight:800;color:#fff;background:#334155;flex:none}
+.wcf-br-faces .wcf-br-face:first-child{margin-left:0}
+.wcf-br-face.me{box-shadow:0 0 0 1.5px #22c55e}
+
+.wcf-br-catbar{display:flex;align-items:center;gap:10px;padding:16px 2px 0}
+.wcf-br-catname{font-family:var(--mono);font-weight:600;font-size:10.5px;letter-spacing:.18em}
+.wcf-br-cathero{text-align:center;padding:0 16px}
+.wcf-br-herostage{position:relative;width:176px;margin:0 auto}
+.wcf-br-herostage:after{content:"";position:absolute;left:50%;bottom:14px;transform:translateX(-50%);width:210px;height:48px;border-radius:50%;pointer-events:none;opacity:.18;
+  background:radial-gradient(ellipse at center,var(--c),transparent 72%)}
+.wcf-br-heroboot{position:relative;z-index:1}
+.wcf-br-heroboot .main{filter:drop-shadow(0 10px 16px rgba(0,0,0,.6)) drop-shadow(0 0 22px var(--c))}
+.wcf-br-heroboot .reflect{height:34px}
+.wcf-br-line{font-family:var(--display);font-weight:800;font-size:25px;line-height:1.05;margin-top:8px;text-wrap:balance}
+.wcf-br-blurb{color:var(--dim);font-size:12.5px;line-height:1.55;margin-top:8px}
+.wcf-br-count{font-family:var(--mono);font-size:10px;letter-spacing:.1em;margin-top:10px}
+.wcf-br-switch{display:flex;justify-content:center;gap:18px;margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
+.wcf-br-switch button{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;opacity:.6;padding:0}
+.wcf-br-switch img{width:46px;height:auto;filter:drop-shadow(0 0 7px var(--c))}
+.wcf-br-switch b{font-family:var(--mono);font-weight:600;font-size:8px;letter-spacing:.1em;color:var(--c)}
+
+/* Room at the end so the last card can scroll clear of the peg button. */
+.wcf-br-spacer{height:84px}
+/* Centred, not bottom-right: GaffAI's button lives there for admins, and
+   admins are exactly who sees the Boot Room first. */
+.wcf-br-fab{position:fixed;left:50%;transform:translateX(-50%);bottom:84px;z-index:24;display:flex;align-items:center;gap:7px;
+  padding:12px 17px 12px 14px;border-radius:999px;border:none;cursor:pointer;background:linear-gradient(145deg,#f4b455,#f0ab3d);color:#17130a;
+  font-family:var(--sans);font-weight:800;font-size:13px;box-shadow:0 12px 26px -8px rgba(240,171,61,.55)}
+.wcf-br-fab svg{width:16px;height:16px}
+.wcf-br-fab.inline{position:static;transform:none;margin:16px auto 0}
+
+/* Sheets reuse .wcf-sheet-overlay/.wcf-squad-sheet; this is their body. */
+.wcf-br-sheet-body{overflow-y:auto;padding:12px 18px calc(22px + env(safe-area-inset-bottom,0px));-webkit-overflow-scrolling:touch}
+.wcf-br-dtop{display:flex;gap:13px;align-items:center;padding-right:34px}
+.wcf-br-dname{font-family:var(--display);font-weight:700;font-size:19px;line-height:1.15}
+.wcf-br-dwho{font-size:12px;color:var(--dim);margin-top:3px}
+.wcf-br-ddesc{font-size:13.5px;line-height:1.6;color:#cfd4e0;margin-top:14px}
+.wcf-br-dtags{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.wcf-br-dtags span{font-size:11px;color:var(--dim);background:rgba(148,163,184,.08);border:1px solid var(--line);padding:4px 9px;border-radius:999px}
+.wcf-br-proof{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:12px;color:var(--dim)}
+.wcf-br-wa{margin-top:14px;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;padding:14px;border-radius:14px;
+  background:#25d366;color:#06301a;font-weight:800;font-size:14px}
+.wcf-br-wa svg{width:19px;height:19px}
+.wcf-br-dnote{margin-top:9px;font-size:11.5px;color:var(--dim);text-align:center;line-height:1.5}
+.wcf-br-dnote.spaced{margin-top:16px}
+.wcf-br-endorse{margin-top:12px;width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:13px;border-radius:13px;cursor:pointer;
+  font-family:var(--sans);font-weight:800;font-size:13.5px;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.28);color:var(--white)}
+.wcf-br-endorse svg{width:17px;height:17px}
+.wcf-br-endorse.on{background:rgba(34,197,94,.14);border-color:rgba(34,197,94,.5);color:#6ee79a}
+.wcf-br-endorse:disabled{opacity:.55;cursor:default}
+.wcf-br-owner{display:flex;gap:8px;margin-top:12px}
+.wcf-br-secondary,.wcf-br-danger{flex:1;padding:12px;border-radius:12px;cursor:pointer;font-family:var(--sans);font-weight:700;font-size:13px}
+.wcf-br-secondary{background:rgba(148,163,184,.1);border:1px solid rgba(148,163,184,.28);color:var(--white)}
+.wcf-br-danger{background:none;border:1px solid rgba(230,57,70,.45);color:#ff8e95}
+.wcf-br-danger.wide{width:100%;margin-top:12px}
+.wcf-br-danger:disabled,.wcf-br-secondary:disabled{opacity:.5}
+
+.wcf-br-ftitle{font-family:var(--display);font-weight:700;font-size:19px;padding-right:34px}
+.wcf-br-fsub{font-size:12px;color:var(--dim);margin-top:3px;margin-bottom:16px;line-height:1.5}
+.wcf-br-field{display:block;margin-bottom:16px}
+.wcf-br-field>span:first-child{display:block;font-size:11.5px;font-weight:700;color:var(--dim);margin-bottom:7px}
+/* 16px text: anything smaller makes iOS Safari zoom the page on focus. */
+.wcf-br-field input[type=text],.wcf-br-field input[type=tel],.wcf-br-field textarea{width:100%;background:rgba(148,163,184,.08);border:1px solid var(--line);border-radius:11px;
+  padding:11px 12px;color:var(--white);font-family:var(--sans);font-size:16px;outline:none}
+.wcf-br-field textarea{min-height:72px;resize:vertical;line-height:1.45}
+.wcf-br-field input:focus,.wcf-br-field textarea:focus{border-color:var(--blue)}
+.wcf-br-field input.bad{border-color:rgba(230,57,70,.75)}
+.wcf-br-hint{display:block;font-size:11px;color:var(--dim);margin-top:6px;line-height:1.45}
+.wcf-br-hint.err{color:#ff8e95}
+.wcf-br-logorow{display:flex;align-items:center;gap:12px}
+.wcf-br-logodrop{width:64px;height:64px;flex:none;border-radius:16px;cursor:pointer;padding:0;overflow:hidden;background:rgba(148,163,184,.08);border:1px dashed rgba(148,163,184,.35);display:grid;place-items:center}
+.wcf-br-logodrop .add{font-size:9.5px;color:var(--dim);font-family:var(--sans);line-height:1.3;padding:0 4px}
+.wcf-br-logodrop .shot{width:100%;height:100%;padding:7px;background:#eef1f6;display:grid;place-items:center}
+.wcf-br-logodrop .shot.on-dark{background:#14141f}
+.wcf-br-logodrop .shot img{max-width:100%;max-height:100%;object-fit:contain}
+.wcf-br-logoside{min-width:0;flex:1}
+.wcf-br-logoacts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.wcf-br-logoacts button{background:rgba(148,163,184,.08);border:1px solid var(--line);color:var(--dim);font-family:var(--sans);font-size:11px;font-weight:700;padding:6px 10px;border-radius:9px;cursor:pointer}
+.wcf-br-logoacts button.on{color:var(--white);border-color:#f0ab3d;background:rgba(240,171,61,.12)}
+.wcf-br-pickgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.wcf-br-pickgrid button{background:rgba(148,163,184,.06);border:1px solid var(--line);border-radius:12px;cursor:pointer;padding:9px 3px 7px;display:flex;flex-direction:column;align-items:center;gap:4px}
+.wcf-br-pickgrid img{width:26px;height:auto;filter:drop-shadow(0 0 4px var(--c))}
+.wcf-br-pickgrid b{font-family:var(--mono);font-weight:600;font-size:7.5px;letter-spacing:.06em;color:var(--dim)}
+.wcf-br-pickgrid button.on{border-color:var(--c);background:rgba(255,255,255,.05)}
+.wcf-br-pickgrid button.on b{color:var(--c)}
+.wcf-br-tagpick{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.wcf-br-tagpick button{font-family:var(--sans);font-size:12px;color:var(--dim);background:rgba(148,163,184,.08);border:1px solid var(--line);padding:7px 11px;border-radius:999px;cursor:pointer}
+.wcf-br-tagpick button.on{background:rgba(46,116,204,.18);border-color:rgba(46,116,204,.55);color:#cfe0ff}
+.wcf-br-save{width:100%;margin-top:4px;padding:15px;border-radius:14px;border:none;cursor:pointer;background:linear-gradient(145deg,#f4b455,#f0ab3d);color:#17130a;font-family:var(--sans);font-weight:800;font-size:14px}
+.wcf-br-save:disabled{opacity:.5}
+
+/* On a small phone the category flag costs ~55px of a card that's already
+   truncating the business name, and it's redundant there. */
+@media (max-width:400px){.wcf-br-flag{display:none}}
+@media (prefers-reduced-motion: reduce){.wcf-br-boot,.wcf-br-heroboot,.wcf-br-card{animation:none}}
 `;

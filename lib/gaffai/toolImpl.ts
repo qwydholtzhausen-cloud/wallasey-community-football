@@ -4,6 +4,7 @@ import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPla
 import { buildLeaderboard, topScorers, type ScoredPrediction } from "../predictions";
 import { sendPushToUsers } from "../push";
 import { defaultPitchCost } from "../pitchCost";
+import { BOOT_CATEGORY, type BootCategory } from "../bootRoom";
 
 // Same "pretend UTC" trick as everywhere else this pattern's used
 // (app/api/cron/frequent/route.ts, app/WirralCommunityFootball.tsx) -
@@ -1033,32 +1034,43 @@ async function forgetStandingFact(admin: SupabaseClient, args: { fact_id: string
   return { forgotten: true };
 }
 
-async function findClips(admin: SupabaseClient, args: { title_contains?: string; submitted_by_name_contains?: string; limit?: number }) {
-  let submitterIds: string[] | null = null;
-  if (args.submitted_by_name_contains) {
-    const { data: matches } = await admin.from("profiles").select("id").ilike("display_name", `%${args.submitted_by_name_contains}%`);
-    submitterIds = (matches ?? []).map((p) => p.id);
-    if (submitterIds.length === 0) return { count: 0, clips: [] };
-  }
-
-  let query = admin.from("clips").select("id, title, video_url, submitted_by, created_at").order("created_at", { ascending: false }).limit(args.limit ?? 30);
-  if (args.title_contains) query = query.ilike("title", `%${args.title_contains}%`);
-  if (submitterIds) query = query.in("submitted_by", submitterIds);
+async function findBootRoomListings(admin: SupabaseClient, args: { search?: string; category?: string; limit?: number }) {
+  // Small table, so filter in memory: matching a search term across the
+  // tags array and the owner's name at the same time isn't something a
+  // single PostgREST filter can express.
+  let query = admin
+    .from("boot_room_listings")
+    .select("id, player_id, company, category, description, tags, phone, hidden, created_at")
+    .order("created_at", { ascending: false });
+  if (args.category) query = query.eq("category", args.category);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
   const rows = data ?? [];
-  const nameOf = await namesById(
-    admin,
-    rows.map((r) => r.submitted_by).filter((id): id is string => !!id)
-  );
-  const clips = rows.map((r) => ({
-    title: r.title,
-    video_url: r.video_url,
-    submitted_by: r.submitted_by ? nameOf[r.submitted_by] ?? "Unknown" : "Unknown",
-    submitted_at: r.created_at,
-  }));
-  return { count: clips.length, clips };
+  const nameOf = await namesById(admin, rows.map((r) => r.player_id));
+  const { data: ends } = rows.length
+    ? await admin.from("boot_room_endorsements").select("listing_id").in("listing_id", rows.map((r) => r.id))
+    : { data: [] as { listing_id: string }[] };
+  const endorsementCount = new Map<string, number>();
+  for (const e of ends ?? []) endorsementCount.set(e.listing_id, (endorsementCount.get(e.listing_id) ?? 0) + 1);
+
+  const needle = args.search?.trim().toLowerCase();
+  const listings = rows
+    .map((r) => ({
+      company: r.company as string,
+      owner: nameOf[r.player_id] ?? "Unknown",
+      category: BOOT_CATEGORY[r.category as BootCategory]?.full ?? r.category,
+      description: r.description as string | null,
+      tags: (r.tags ?? []) as string[],
+      has_whatsapp: !!r.phone,
+      recommended_by_count: endorsementCount.get(r.id) ?? 0,
+      hidden_by_admin: !!r.hidden,
+      listed_at: r.created_at as string,
+    }))
+    .filter((l) => !needle || [l.company, l.owner, l.description ?? "", l.tags.join(" "), l.category].join(" ").toLowerCase().includes(needle))
+    .sort((x, y) => y.recommended_by_count - x.recommended_by_count)
+    .slice(0, args.limit ?? 30);
+  return { count: listings.length, listings };
 }
 
 // Read-only close of the loop on the flag-a-wrong-answer feature - it
@@ -1213,7 +1225,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   find_upcoming_birthdays: findUpcomingBirthdays,
   save_standing_fact: saveStandingFact,
   forget_standing_fact: forgetStandingFact,
-  find_clips: findClips,
+  find_boot_room_listings: findBootRoomListings,
   find_flagged_feedback: findFlaggedFeedback,
 };
 
