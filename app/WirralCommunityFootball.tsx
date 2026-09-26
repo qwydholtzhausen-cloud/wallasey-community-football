@@ -5839,7 +5839,13 @@ function BootRoom({
   const [fLogoUrl, setFLogoUrl] = useState<string | null>(null);
   const [fLogoDark, setFLogoDark] = useState(false);
   const [logoMsg, setLogoMsg] = useState<string | null>(null);
+  // Problems saving are shown inside the sheet, next to the button. The
+  // app-wide toast renders underneath the sheet overlay, so a failed save
+  // reported there looked exactly like a button that did nothing.
+  const [formErr, setFormErr] = useState<string | null>(null);
+  const [nameErr, setNameErr] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const companyRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     const [l, e] = await Promise.all([
@@ -6015,7 +6021,11 @@ function BootRoom({
     await supabase.storage.from("boot-room-logos").remove([`${l.id}.webp`, `${l.id}.png`]);
     const { error } = await supabase.from("boot_room_listings").delete().eq("id", l.id);
     setBusy(false);
-    if (error) return notifyError(error.message);
+    // Close first: the toast renders underneath the sheet overlay.
+    if (error) {
+      setDetailId(null);
+      return notifyError(`Couldn't remove it — ${error.message}`);
+    }
     // Admin removals are logged - the owner didn't do it, so "where did my
     // listing go?" needs an answer. Owners removing their own aren't.
     if (!own) await logAction("Deleted Boot Room listing", `${l.company} — ${ownerName(l)}`);
@@ -6028,6 +6038,8 @@ function BootRoom({
   function openEditor(l: BootListing | null) {
     setDetailId(null);
     setPhoneErr(false);
+    setFormErr(null);
+    setNameErr(false);
     setLogoMsg(null);
     setFLogo(null);
     if (l) {
@@ -6082,8 +6094,20 @@ function BootRoom({
   }
 
   async function saveListing() {
+    if (busy || !editorId) return;
+    setFormErr(null);
     const company = fCompany.trim();
-    if (!company || busy || !editorId) return;
+    // Never a silently greyed-out button: the example text in this box
+    // can read as already filled in on a phone, so say what's missing.
+    if (!company) {
+      // Said on the box itself too: jumping up to it takes the message by
+      // the button off-screen.
+      setNameErr(true);
+      setFormErr("Add your company or trade name at the top first.");
+      companyRef.current?.focus();
+      companyRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+      return;
+    }
     const rawPhone = fPhone.trim();
     const phone = rawPhone ? normaliseUkPhone(rawPhone) : null;
     if (rawPhone && !phone) {
@@ -6096,52 +6120,59 @@ function BootRoom({
     const existing = editorId === "new" ? null : listings.find((l) => l.id === editorId) ?? null;
 
     setBusy(true);
-    let id = existing?.id ?? null;
-    if (existing) {
-      const { error } = await supabase.from("boot_room_listings").update({ ...row, updated_at: new Date().toISOString() }).eq("id", existing.id);
-      if (error) {
-        setBusy(false);
-        return notifyError(error.message);
+    // try/finally so no failure - a dropped connection, an expired
+    // session - can leave the button stuck on "Saving…".
+    try {
+      let id = existing?.id ?? null;
+      if (existing) {
+        const { error } = await supabase.from("boot_room_listings").update({ ...row, updated_at: new Date().toISOString() }).eq("id", existing.id);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase.from("boot_room_listings").insert({ ...row, player_id: myId }).select("id").single();
+        if (error || !data) throw error ?? new Error("Couldn't save your listing");
+        id = (data as { id: string }).id;
       }
-    } else {
-      const { data, error } = await supabase.from("boot_room_listings").insert({ ...row, player_id: myId }).select("id").single();
-      if (error || !data) {
-        setBusy(false);
-        return notifyError(error?.message ?? "Couldn't save your listing");
-      }
-      id = (data as { id: string }).id;
-    }
 
-    // The logo is keyed on the listing id (one member can hold several
-    // listings), so it can only upload once the row exists.
-    let logoFailed = false;
-    if (id && fLogo) {
-      // Clear any previous logo first, then a plain upload. Not upsert:
-      // Supabase routes upsert through a separate permission path that the
-      // ownership policy rejects, and it isn't needed - the old file (under
-      // either extension, since iPhones produce PNG and others WebP) is
-      // gone by the time the new one is written.
-      await supabase.storage.from("boot-room-logos").remove([`${id}.webp`, `${id}.png`]);
-      const path = `${id}.${fLogo.ext}`;
-      const { error: upErr } = await supabase.storage
-        .from("boot-room-logos")
-        .upload(path, fLogo.blob, { contentType: fLogo.ext === "webp" ? "image/webp" : "image/png" });
-      if (upErr) logoFailed = true;
-      else {
-        // Same cache-busting as avatars: re-uploads can reuse the path.
-        const url = `${supabase.storage.from("boot-room-logos").getPublicUrl(path).data.publicUrl}?v=${Date.now()}`;
-        await supabase.from("boot_room_listings").update({ logo_url: url }).eq("id", id);
+      // The logo is keyed on the listing id (one member can hold several
+      // listings), so it can only upload once the row exists.
+      let logoFailed = false;
+      if (id && fLogo) {
+        // Clear any previous logo first, then a plain upload. Not upsert:
+        // Supabase routes upsert through a separate permission path that the
+        // ownership policy rejects, and it isn't needed - the old file (under
+        // either extension, since iPhones produce PNG and others WebP) is
+        // gone by the time the new one is written.
+        await supabase.storage.from("boot-room-logos").remove([`${id}.webp`, `${id}.png`]);
+        const path = `${id}.${fLogo.ext}`;
+        const { error: upErr } = await supabase.storage
+          .from("boot-room-logos")
+          .upload(path, fLogo.blob, { contentType: fLogo.ext === "webp" ? "image/webp" : "image/png" });
+        if (upErr) logoFailed = true;
+        else {
+          // Same cache-busting as avatars: re-uploads can reuse the path.
+          const url = `${supabase.storage.from("boot-room-logos").getPublicUrl(path).data.publicUrl}?v=${Date.now()}`;
+          await supabase.from("boot_room_listings").update({ logo_url: url }).eq("id", id);
+        }
+      } else if (id && existing?.logo_url && !fLogoUrl) {
+        await supabase.storage.from("boot-room-logos").remove([`${id}.webp`, `${id}.png`]);
+        await supabase.from("boot_room_listings").update({ logo_url: null }).eq("id", id);
       }
-    } else if (id && existing?.logo_url && !fLogoUrl) {
-      await supabase.storage.from("boot-room-logos").remove([`${id}.webp`, `${id}.png`]);
-      await supabase.from("boot_room_listings").update({ logo_url: null }).eq("id", id);
-    }
 
-    setBusy(false);
-    setEditorId(null);
-    await load();
-    if (logoFailed) notifyError("Saved — but the logo didn't upload. Try it again from Edit.");
-    else notifySuccess(existing ? "Listing updated" : "You're in the Boot Room");
+      setEditorId(null);
+      await load();
+      if (logoFailed) notifyError("Saved — but the logo didn't upload. Try it again from Edit.");
+      else notifySuccess(existing ? "Listing updated" : "You're in the Boot Room");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : (err as { message?: string } | null)?.message ?? "";
+      const expired = /jwt|token|expired|401|not authenticated/i.test(msg);
+      setFormErr(
+        expired
+          ? "Your sign-in has timed out. Close the app fully, reopen it, and try again - nothing you typed has been saved yet."
+          : `Couldn't save that${msg ? ` (${msg})` : ""}. Check your signal and try again.`
+      );
+    } finally {
+      setBusy(false);
+    }
   }
 
   // ---------- derived views ----------
@@ -6376,7 +6407,20 @@ function BootRoom({
 
               <label className="wcf-br-field">
                 <span>Company or trade name</span>
-                <input type="text" value={fCompany} maxLength={80} onChange={(e) => setFCompany(e.target.value)} placeholder="e.g. Corrigan Plumbing & Heating" />
+                <input
+                  ref={companyRef}
+                  type="text"
+                  className={nameErr ? "bad" : ""}
+                  value={fCompany}
+                  maxLength={80}
+                  onChange={(e) => {
+                    setFCompany(e.target.value);
+                    setFormErr(null);
+                    setNameErr(false);
+                  }}
+                  placeholder="e.g. Corrigan Plumbing & Heating"
+                />
+                {nameErr && <span className="wcf-br-hint err">Type your company or trade name here — the grey text is just an example.</span>}
               </label>
 
               <div className="wcf-br-field">
@@ -6468,7 +6512,8 @@ function BootRoom({
                 </span>
               </label>
 
-              <button className="wcf-br-save" disabled={busy || !fCompany.trim()} onClick={saveListing}>
+              {formErr && <div className="wcf-br-formerr" role="alert">{formErr}</div>}
+              <button className="wcf-br-save" disabled={busy} onClick={saveListing}>
                 {busy ? "Saving…" : editorId === "new" ? "Add to the Boot Room" : "Save changes"}
               </button>
             </div>
@@ -10397,7 +10442,10 @@ button.wcf-glance-card:disabled{cursor:default}
   padding:11px 12px;color:var(--white);font-family:var(--sans);font-size:16px;outline:none}
 .wcf-br-field textarea{min-height:72px;resize:vertical;line-height:1.45}
 .wcf-br-field input:focus,.wcf-br-field textarea:focus{border-color:var(--blue)}
-.wcf-br-field input.bad{border-color:rgba(230,57,70,.75)}
+/* Clearly faded: at the default brightness the example text read as
+   something already typed, so the form looked filled in when it wasn't. */
+.wcf-br-field input::placeholder,.wcf-br-field textarea::placeholder{color:rgba(148,163,184,.5);opacity:1}
+.wcf-br-field input.bad,.wcf-br-field input.bad:focus{border-color:rgba(230,57,70,.75)}
 .wcf-br-hint{display:block;font-size:11px;color:var(--dim);margin-top:6px;line-height:1.45}
 .wcf-br-hint.err{color:#ff8e95}
 .wcf-br-logorow{display:flex;align-items:center;gap:12px}
@@ -10421,6 +10469,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-br-tagpick button.on{background:rgba(46,116,204,.18);border-color:rgba(46,116,204,.55);color:#cfe0ff}
 .wcf-br-save{width:100%;margin-top:4px;padding:15px;border-radius:14px;border:none;cursor:pointer;background:linear-gradient(145deg,#f4b455,#f0ab3d);color:#17130a;font-family:var(--sans);font-weight:800;font-size:14px}
 .wcf-br-save:disabled{opacity:.5}
+.wcf-br-formerr{margin:0 0 10px;padding:11px 13px;border-radius:12px;background:rgba(230,57,70,.12);border:1px solid rgba(230,57,70,.45);color:#ffb4b9;font-size:12.5px;line-height:1.5}
 
 /* On a small phone the category flag costs ~55px of a card that's already
    truncating the business name, and it's redundant there. */
