@@ -5,6 +5,7 @@ import { buildLeaderboard, topScorers, type ScoredPrediction } from "../predicti
 import { sendPushToUsers } from "../push";
 import { defaultPitchCost } from "../pitchCost";
 import { BOOT_CATEGORY, type BootCategory } from "../bootRoom";
+import { WRAPPED_OPEN_TO_ALL_FROM } from "../clubPolicy";
 
 // Same "pretend UTC" trick as everywhere else this pattern's used
 // (app/api/cron/frequent/route.ts, app/WirralCommunityFootball.tsx) -
@@ -1049,16 +1050,28 @@ async function getWrappedEngagement(admin: SupabaseClient, args: { month?: strin
     admin.from("wrapped_events").select("player_id, event, created_at").eq("month_key", monthKey),
     admin
       .from("games")
-      .select("id, team_white_score, bookings(player_id, waiting, team)")
+      .select("id, date, kickoff, published, team_white_score, bookings(player_id, waiting, team)")
       .gte("date", `${monthKey}-01`)
-      .lte("date", `${monthKey}-31`)
-      .not("team_white_score", "is", null),
+      .lte("date", `${monthKey}-31`),
   ]);
   if (error) throw new Error(error.message);
 
   // Players who get a Wrapped that month: 2+ games with a team.
+  // Whether players can see it yet - same rule as the app: open date
+  // reached, and every published game that month played, scored and its
+  // MOTM vote closed (or the month is simply over).
+  const nowUk = nowInLondon();
+  const monthGames = (games ?? []).filter((g) => g.published);
+  const unfinished = monthGames.filter(
+    (g) => g.team_white_score == null || kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) > nowUk
+  );
+  const monthOver = nowUk.slice(0, 7) > monthKey;
+  const openDateReached = nowUk.slice(0, 10) >= WRAPPED_OPEN_TO_ALL_FROM;
+  const liveForPlayers = openDateReached && (monthOver || (monthGames.length > 0 && unfinished.length === 0));
+  const scoredGames = monthGames.filter((g) => g.team_white_score != null);
+
   const apps: Record<string, number> = {};
-  for (const g of games ?? []) for (const b of (g.bookings ?? []) as { player_id: string; waiting: boolean; team: string | null }[]) {
+  for (const g of scoredGames) for (const b of (g.bookings ?? []) as { player_id: string; waiting: boolean; team: string | null }[]) {
     if (!b.waiting && b.team) apps[b.player_id] = (apps[b.player_id] ?? 0) + 1;
   }
   const eligible = Object.keys(apps).filter((id) => apps[id] >= 2);
@@ -1077,7 +1090,13 @@ async function getWrappedEngagement(admin: SupabaseClient, args: { month?: strin
     watched_to_the_end_by: who("finished"),
     shared_by: who("shared"),
     not_opened_yet: eligible.filter((id) => !opened.has(id)).map((id) => nameOf[id] ?? "Unknown"),
-    note: "Each person counts once per event per month. Admins' own test views are included.",
+    live_for_players: liveForPlayers,
+    why_not_live_yet: liveForPlayers
+      ? null
+      : !openDateReached
+        ? `Wrapped opens to players on ${WRAPPED_OPEN_TO_ALL_FROM}; until then only admins can see it.`
+        : `Players see it once the month's last game is scored and its MOTM vote has closed. Still to finish: ${unfinished.map((g) => g.date).join(", ")}.`,
+    note: "Each person counts once per event per month. Admins' own test views are included (admins can see it before players).",
   };
 }
 
