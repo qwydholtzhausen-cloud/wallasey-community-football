@@ -12,6 +12,11 @@ export const MOTM_VOTE_WINDOW_MINUTES = 300;
 // this app waits before treating a game as over.
 export const MATCH_DURATION_MINUTES = 65;
 
+// The real length of a game, as opposed to the buffer above. Used where the
+// actual playing time matters: a calendar entry's end time and the minutes
+// played in Wrapped.
+export const MATCH_LENGTH_MINUTES = 60;
+
 // Converts any real instant (a Date, or a genuine ISO UTC string like a
 // `created_at` column) into the same "wall-clock digits as if they were
 // UTC" string nowInLondon()/kickoffCutoff() produce, so it can be safely

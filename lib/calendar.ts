@@ -7,7 +7,7 @@
 // kickoff as UK wall-clock (see lib/time.ts), and letting the calendar app
 // apply the BST/GMT rules means a game either side of the October clock
 // change still lands at 20:00, never 19:00 or 21:00.
-import { kickoffCutoff, MATCH_DURATION_MINUTES } from "./time";
+import { kickoffCutoff, MATCH_LENGTH_MINUTES } from "./time";
 
 export const CALENDAR_SITE = "https://www.wirral-community-football.com";
 
@@ -89,7 +89,7 @@ export function buildIcs(g: CalendarGame, now = new Date()) {
     `UID:game-${g.id}@wirral-community-football.com`,
     `DTSTAMP:${stamp}`,
     `DTSTART;TZID=Europe/London:${wallClock(g.date, g.kickoff)}`,
-    `DTEND;TZID=Europe/London:${wallClock(g.date, g.kickoff, MATCH_DURATION_MINUTES)}`,
+    `DTEND;TZID=Europe/London:${wallClock(g.date, g.kickoff, MATCH_LENGTH_MINUTES)}`,
     `SUMMARY:${esc(calendarTitle(g))}`,
     `LOCATION:${esc(g.venue)}`,
     `DESCRIPTION:${esc(calendarDetails(g))}`,
@@ -111,7 +111,7 @@ export function googleCalendarUrl(g: CalendarGame) {
   const q = new URLSearchParams({
     action: "TEMPLATE",
     text: calendarTitle(g),
-    dates: `${wallClock(g.date, g.kickoff)}/${wallClock(g.date, g.kickoff, MATCH_DURATION_MINUTES)}`,
+    dates: `${wallClock(g.date, g.kickoff)}/${wallClock(g.date, g.kickoff, MATCH_LENGTH_MINUTES)}`,
     ctz: "Europe/London",
     location: g.venue,
     details: calendarDetails(g),

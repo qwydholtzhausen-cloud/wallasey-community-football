@@ -4,6 +4,7 @@
 // and teams, goals, MOTM votes, predictions), so it's all computed on the
 // device, nothing stored.
 import { predictionPoints } from "./predictions";
+import { MATCH_LENGTH_MINUTES } from "./time";
 
 type Team = "white" | "red";
 
@@ -214,7 +215,7 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
     squad: Object.keys(apps).length,
     appsRank: rankIn(apps, mine.length),
     appsRun,
-    minutes: mine.length * 65,
+    minutes: mine.length * MATCH_LENGTH_MINUTES,
     ...rec,
     ...colours,
     goals: myGoals,
