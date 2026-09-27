@@ -1,12 +1,11 @@
 name: Frequent reminders
 
 on:
-  schedule:
-    # Vercel's free plan only allows cron jobs once a day, too coarse for
-    # time-sensitive pushes like "kickoff in 1 hour" or a 30-min-delayed
-    # payment nudge - this polls the same route handler every 15 min
-    # instead, entirely free, no plan change needed.
-    - cron: "*/15 * * * *"
+  # The schedule moved to Supabase on 2026-09-27 (pg_cron + pg_net call
+  # /api/cron/frequent every 5 minutes, on time). GitHub ran this "every
+  # 15 minutes" late and irregularly, which is why kickoff reminders were
+  # being missed. Kept as a manual backup: Actions -> Frequent reminders
+  # -> Run workflow.
   workflow_dispatch: {}
 
 jobs:
