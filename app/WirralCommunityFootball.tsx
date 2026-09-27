@@ -610,28 +610,18 @@ async function drawResultCard(opts: {
   const green = "#22c55e";
 
   // ── Header: crest, wordmark, "FULL TIME" pill ──────────────────────
+  // The transparent cut-out crest, drawn as it is at its own proportions
+  // within the same header slot - no box or frame needed around it.
   const crestBox = { x: pad, y: 52, w: 78, h: 86 };
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(crestBox.x, crestBox.y, crestBox.w, crestBox.h, [6, 6, 34, 34]);
-  ctx.fillStyle = "#1e293b";
-  ctx.fill();
-  ctx.strokeStyle = "rgba(230,57,70,0.85)";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.clip();
   try {
-    const crest = await loadImage("/logo.png");
-    ctx.drawImage(crest, crestBox.x, crestBox.y, crestBox.w, crestBox.h);
+    const crest = await loadImage("/crest.png");
+    const scale = Math.min(crestBox.w / crest.width, crestBox.h / crest.height);
+    const cw = crest.width * scale;
+    const ch = crest.height * scale;
+    ctx.drawImage(crest, crestBox.x + (crestBox.w - cw) / 2, crestBox.y + (crestBox.h - ch) / 2, cw, ch);
   } catch {
-    // Crest failed to load (offline etc.) - shield shape still shows.
+    // Crest failed to load (offline etc.) - the wordmark still carries it.
   }
-  const glow = ctx.createLinearGradient(0, crestBox.y + crestBox.h - 34, 0, crestBox.y + crestBox.h);
-  glow.addColorStop(0, "rgba(230,57,70,0)");
-  glow.addColorStop(1, "rgba(230,57,70,0.28)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(crestBox.x, crestBox.y + crestBox.h - 34, crestBox.w, 34);
-  ctx.restore();
 
   const textX = crestBox.x + crestBox.w + 22;
   ctx.textBaseline = "top";
@@ -1079,20 +1069,17 @@ async function drawPlayerOfMonthCard(opts: { monthLabel: string; names: string[]
 
   // ── Header: crest, wordmark, month tab ─────────────────────────────
   const crestSize = 74;
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(pad + crestSize / 2, pad + crestSize / 2, crestSize / 2, 0, Math.PI * 2);
-  ctx.strokeStyle = amber;
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.clip();
   try {
-    const crest = await loadImage("/logo.png");
-    ctx.drawImage(crest, pad + 3, pad + 3, crestSize - 6, crestSize - 6);
+    // The transparent cut-out crest at its own proportions, in the slot the
+    // gold-ringed round badge used to fill.
+    const crest = await loadImage("/crest.png");
+    const scale = Math.min(crestSize / crest.width, (crestSize + 6) / crest.height);
+    const cw = crest.width * scale;
+    const ch = crest.height * scale;
+    ctx.drawImage(crest, pad + (crestSize - cw) / 2, pad + (crestSize - ch) / 2, cw, ch);
   } catch {
-    // Crest failed to load (offline etc.) - gold ring still shows.
+    // Crest failed to load (offline etc.) - the wordmark still carries it.
   }
-  ctx.restore();
 
   const wordmarkX = pad + crestSize + 20;
   ctx.textBaseline = "top";
@@ -1365,7 +1352,7 @@ function SignIn() {
       <div className="wcf-signin-head">
         <div className="wcf-signin-brand-row">
           <span className="wcf-signin-crest">
-            <img src="/logo.png" alt="Wirral Community Football crest" />
+            <img src="/crest.png" alt="Wirral Community Football crest" />
           </span>
           <span className="wcf-signin-est">EST. 2026 · WIRRAL</span>
         </div>
@@ -3768,7 +3755,7 @@ function App({ session }: { session: Session }) {
       <header className="wcf-top">
         <button className="wcf-brand" onClick={() => setTab("fixtures")} aria-label="Go to fixtures">
           <span className="wcf-logo">
-            <img src="/logo.png" alt="Wirral Community Football crest" />
+            <img src="/crest.png" alt="Wirral Community Football crest" />
           </span>
           <div>
             <div className="wcf-wordmark">WIRRAL</div>
@@ -9588,8 +9575,8 @@ const css = `
 .wcf-signin-scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(13,13,26,.6) 0%,rgba(13,13,26,.34) 20%,rgba(13,13,26,.6) 52%,rgba(13,13,26,.86) 66%,var(--bg) 80%)}
 .wcf-signin-head{position:relative;padding:36px 22px 0;flex:0 0 auto}
 .wcf-signin-brand-row{display:flex;align-items:center;gap:10px}
-.wcf-signin-crest{display:block;width:34px;height:34px;border-radius:10px;overflow:hidden;border:1px solid rgba(230,57,70,.4);flex:0 0 auto;box-shadow:0 2px 10px rgba(0,0,0,.5)}
-.wcf-signin-crest img{display:block;width:100%;height:100%;object-fit:cover;object-position:50% 43%}
+.wcf-signin-crest{display:block;width:36px;height:40px;flex:0 0 auto}
+.wcf-signin-crest img{display:block;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 2px 8px rgba(0,0,0,.55))}
 .wcf-signin-est{font-weight:800;font-size:9.5px;letter-spacing:2.6px;color:var(--red-hi)}
 .wcf-signin-wordmark{font-family:var(--display);font-weight:800;font-size:52px;line-height:.86;letter-spacing:-1px;color:var(--white);margin-top:22px;text-shadow:0 6px 30px rgba(0,0,0,.6)}
 .wcf-signin-wordmark-dim1{font-family:var(--display);color:rgba(245,246,248,.34)}
@@ -9620,9 +9607,10 @@ const css = `
 .wcf-top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
   padding:14px 16px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .wcf-brand{display:flex;align-items:center;gap:11px;background:none;border:none;padding:0;margin:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
-.wcf-logo{display:block;width:42px;height:42px;flex:0 0 auto;border-radius:11px;overflow:hidden;
-  border:1px solid rgba(230,57,70,.4);box-shadow:0 2px 10px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.05)}
-.wcf-logo img{display:block;width:100%;height:100%;object-fit:cover;object-position:50% 43%}
+/* The crest is a transparent cut-out (public/crest.png), so it sits on the
+   header as it is - no box around it. */
+.wcf-logo{display:block;width:42px;height:46px;flex:0 0 auto}
+.wcf-logo img{display:block;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 2px 6px rgba(0,0,0,.45))}
 .wcf-wordmark{font-weight:900;font-size:22px;letter-spacing:1px;line-height:.9;
   color:var(--white);text-shadow:0 1px 0 rgba(0,0,0,.4)}
 .wcf-wordmark-sub{font-weight:800;font-size:10px;letter-spacing:2.5px;color:var(--red-hi);margin-top:3px}

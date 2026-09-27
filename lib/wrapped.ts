@@ -54,6 +54,9 @@ export interface WrappedData {
   partner: { playerId: string; name: string; together: number; wins: number; rate: number } | null;
   myRate: number;
   mostWith: { playerId: string; name: string; together: number } | null;
+  // Opponents: who's beaten you most, and who you've had the better of.
+  nemesis: { playerId: string; name: string; met: number; beatYou: number; youBeat: number } | null;
+  favourite: { playerId: string; name: string; met: number; beatYou: number; youBeat: number } | null;
   best: { date: string; team: Team; us: number; them: number } | null;
   unbeaten: number;
   winStreak: number;
@@ -147,6 +150,28 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
     .filter((p) => p.together >= WRAPPED_MIN_TOGETHER && p.wins > 0)
     .sort((a, b) => b.rate - a.rate || b.together - a.together || a.name.localeCompare(b.name))[0];
 
+  // Opponents: everyone on the other side of a game you played. A nemesis
+  // needs 3+ meetings and 2+ wins over you, so one bad night doesn't make
+  // one; the same thresholds the other way round for your "favourite".
+  const opp: Record<string, { met: number; beatYou: number; youBeat: number }> = {};
+  for (const m of mine) {
+    const r = resultFor(m.game, m.team);
+    for (const o of slots) {
+      if (o.game.id !== m.game.id || o.team === m.team) continue;
+      const x = (opp[o.playerId] ??= { met: 0, beatYou: 0, youBeat: 0 });
+      x.met++;
+      if (r === "L") x.beatYou++;
+      if (r === "W") x.youBeat++;
+    }
+  }
+  const opps = Object.entries(opp).map(([playerId, x]) => ({ playerId, name: names[playerId], ...x }));
+  const nemesis = opps
+    .filter((x) => x.met >= 3 && x.beatYou >= 2)
+    .sort((a, b) => b.beatYou - a.beatYou || b.beatYou / b.met - a.beatYou / a.met || b.met - a.met || a.name.localeCompare(b.name))[0];
+  const favourite = opps
+    .filter((x) => x.met >= 3 && x.youBeat >= 2)
+    .sort((a, b) => b.youBeat - a.youBeat || b.youBeat / b.met - a.youBeat / a.met || b.met - a.met || a.name.localeCompare(b.name))[0];
+
   // Your circle: everyone who's been on your side. "New" means you'd
   // never been on the same side before this period.
   const byTogether = [...pairs].sort((a, b) => b.together - a.together || a.name.localeCompare(b.name));
@@ -231,6 +256,8 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
       ? { playerId: bestPair.playerId, name: bestPair.name, together: bestPair.together, wins: bestPair.wins, rate: Math.round(bestPair.rate * 100) }
       : null,
     myRate: Math.round((rec.W / mine.length) * 100),
+    nemesis: nemesis ?? null,
+    favourite: favourite ?? null,
     mostWith: byTogether[0] ? { playerId: byTogether[0].playerId, name: byTogether[0].name, together: byTogether[0].together } : null,
     best: wins[0] ?? null,
     unbeaten,

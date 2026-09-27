@@ -51,6 +51,7 @@ const STRONG_PHOTOS = new Set([
   "/wrapped/predictions.jpg",
   "/wrapped/club.jpg",
   "/wrapped/summary.jpg",
+  "/wrapped/nemesis.jpg",
   "/wrapped/next.jpg",
 ]);
 
@@ -68,6 +69,8 @@ const PHOTO = {
   club: "/wrapped/club.jpg",
   end: "/wrapped/next.jpg",
   summary: "/wrapped/summary.jpg",
+  nemesis: "/wrapped/nemesis.jpg",
+  records: "/wrapped/records.jpg",
 };
 
 function ordinal(n: number) {
@@ -189,7 +192,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     accent: "#f8b3b8",
     body: (
       <>
-        <img className="wr-logo wr-rise" src="/logo.png" alt="" />
+        <img className="wr-logo wr-rise" src="/crest.png" alt="" />
         <div className="wr-rise">
           <div className="wr-kicker">Your monthly</div>
           <div className="wr-period">WRAPPED</div>
@@ -462,6 +465,55 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     });
   }
 
+  // Banter, not a dig: who's beaten you most (3+ meetings, 2+ wins over
+  // you), balanced with the player you've had the better of. Unbeaten
+  // players get "nobody's got your number" instead.
+  if (d.nemesis || d.favourite || (d.L === 0 && d.apps >= 3)) {
+    const n = d.nemesis;
+    const f = d.favourite;
+    const first = (name: string) => name.split(" ")[0];
+    cards.push({
+      key: "nemesis",
+      photo: PHOTO.nemesis,
+      accent: "#f8b3b8",
+      body: n ? (
+        <>
+          <div className="wr-lab wr-rise">Your nemesis</div>
+          <div className="wr-h wr-rise">{n.name} has your number.</div>
+          <div className="wr-duo wr-rise">
+            <Face name={n.name} url={p.avatarFor(n.playerId)} className="wr-av nem" />
+            <span className="wr-vs-badge">VS</span>
+            <Face name={d.firstName} url={p.avatarFor(p.myId)} className="wr-av me" />
+          </div>
+          <div className="wr-h2h wr-rise">
+            <div><b style={{ color: "#f8b3b8" }}><Count to={n.beatYou} /></b><span>{first(n.name)} won</span></div>
+            <div><b><Count to={n.met - n.beatYou - n.youBeat} /></b><span>drawn</span></div>
+            <div><b style={{ color: "#86efac" }}><Count to={n.youBeat} /></b><span>you won</span></div>
+          </div>
+          <div className="wr-p wr-rise">
+            {n.met} games on opposite sides. {n.youBeat === 0 ? "Revenge is due." : "The rematch is on."}
+          </div>
+          <div className="wr-grow" />
+          {f && f.playerId !== n.playerId && (
+            <div className="wr-chip wr-rise"><span className="k" style={{ color: "#86efac" }}>{f.youBeat}</span><span>wins over {f.name} from {f.met}. You&apos;ve had the better of them.</span></div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="wr-lab wr-rise">Your nemesis</div>
+          <div className="wr-h wr-rise">Nobody&apos;s got your number.</div>
+          <div className="wr-p wr-rise">
+            {d.L === 0 ? `Unbeaten in ${d.apps} games. No one on the other side has had the better of you.` : "No one beat you often enough to earn the title."}
+          </div>
+          <div className="wr-grow" />
+          {f && (
+            <div className="wr-chip wr-rise"><span className="k" style={{ color: "#86efac" }}>{f.youBeat}</span><span>wins over {f.name} from {f.met}. You&apos;ve had the better of them.</span></div>
+          )}
+        </>
+      ),
+    });
+  }
+
   if (d.best) {
     const b = d.best;
     const usName = b.team === "red" ? p.redName : p.whiteName;
@@ -515,7 +567,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     if (rows.length >= 2) {
       cards.push({
         key: "records",
-        photo: null,
+        photo: PHOTO.records,
         accent: "#f5d97a",
         body: (
           <>
@@ -607,7 +659,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
         <div className="wr-grow" />
         <div className="wr-poster wr-rise">
           <div className="top">
-            <img src="/logo.png" alt="" />
+            <img src="/crest.png" alt="" />
             <div><span>{p.periodLabel.toUpperCase()} WRAPPED</span>Wirral Community Football</div>
           </div>
           <div className="nm">{d.firstName}</div>
@@ -811,7 +863,7 @@ export default function WrappedStory(props: WrappedStoryProps) {
       onPointerCancel={onPointerCancel}
     >
       <style>{wrappedCss}</style>
-      <div key={card.key} className="wr-card" style={{ "--acc": card.accent } as CSSProperties}>
+      <div key={card.key} data-card={card.key} className="wr-card" style={{ "--acc": card.accent } as CSSProperties}>
         {card.photo && <div className={"wr-photo" + (STRONG_PHOTOS.has(card.photo) ? " strong" : "")} style={{ backgroundImage: `url(${card.photo})` }} />}
         <div className="wr-glow" />
         <div className="wr-in">{card.body}</div>
@@ -825,7 +877,7 @@ export default function WrappedStory(props: WrappedStoryProps) {
           ))}
         </div>
         <div className="wr-bar">
-          <img src="/logo.png" alt="" />
+          <img src="/crest.png" alt="" />
           <span>{props.periodShort} {props.soFar ? "so far" : "Wrapped"}</span>
           <span className="sp" />
           <button onClick={close} aria-label="Close">
@@ -918,7 +970,7 @@ export async function drawWrappedCard(opts: {
 
   // Header: crest + label.
   try {
-    const crest = await loadImg("/logo.png");
+    const crest = await loadImg("/crest.png");
     const ch = 110;
     const cw = (crest.width / crest.height) * ch;
     ctx.drawImage(crest, pad, pad, cw, ch);
@@ -930,11 +982,11 @@ export async function drawWrappedCard(opts: {
   ctx.fillStyle = pink;
   ctx.font = interFont(700, 24);
   spaced(24 * 0.24);
-  ctx.fillText(`${opts.periodLabel.toUpperCase()} WRAPPED`, pad + 110, pad + 22);
+  ctx.fillText(`${opts.periodLabel.toUpperCase()} WRAPPED`, pad + 132, pad + 22);
   ctx.fillStyle = white;
   ctx.font = soraFont(800, 30);
   spaced(30 * 0.06);
-  ctx.fillText("WIRRAL COMMUNITY FOOTBALL", pad + 110, pad + 58);
+  ctx.fillText("WIRRAL COMMUNITY FOOTBALL", pad + 132, pad + 58);
   spaced(0);
 
   // Name.
@@ -1080,15 +1132,23 @@ const wrappedCss = `
 .wr-grid b{display:block;font-family:var(--display);font-weight:800;font-size:28px;line-height:1;font-variant-numeric:tabular-nums}
 .wr-grid div>span{display:block;font-size:11.5px;color:rgba(255,255,255,.7);margin-top:5px;line-height:1.3}
 
-.wr-poster{background:linear-gradient(160deg,rgba(230,57,70,.3),rgba(139,107,232,.3) 55%,rgba(127,176,236,.2)),rgba(20,16,36,.62);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:0 24px 60px -20px rgba(0,0,0,.8);border:1px solid rgba(255,255,255,.14);border-radius:22px;padding:18px 18px 20px}
-.wr-poster .top{display:flex;align-items:center;gap:10px}
-.wr-poster .top img{width:38px;height:38px;object-fit:contain}
-.wr-poster .top div{font-family:var(--display);font-weight:800;font-size:13px;letter-spacing:.1em;line-height:1.3}
+.wr-poster{text-shadow:0 2px 14px rgba(0,0,0,.55)}
+.wr-poster .top{display:flex;align-items:center;gap:12px}
+.wr-poster .top img{width:46px;height:auto;object-fit:contain;filter:drop-shadow(0 4px 14px rgba(0,0,0,.6))}
+.wr-poster .top div{font-family:var(--display);font-weight:800;font-size:13.5px;letter-spacing:.1em;line-height:1.3}
 .wr-poster .top div span{display:block;color:#f8b3b8;font-size:10.5px;letter-spacing:.2em}
-.wr-poster .nm{font-family:var(--display);font-weight:800;font-size:28px;margin-top:14px}
-.wr-poster .g{display:grid;grid-template-columns:1fr 1fr;gap:12px 10px;margin-top:12px}
-.wr-poster .g span{display:block;font-size:10px;letter-spacing:.16em;font-weight:700;color:rgba(255,255,255,.6);text-transform:uppercase}
-.wr-poster .g b{display:block;font-family:var(--display);font-weight:800;font-size:21px;margin-top:3px;line-height:1.15}
+.wr-poster .nm{font-family:var(--display);font-weight:800;font-size:52px;line-height:1;letter-spacing:-.03em;margin-top:18px}
+.wr-poster .g{display:grid;grid-template-columns:1fr 1fr;gap:16px 12px;margin-top:20px;padding-top:18px;border-top:1px solid rgba(255,255,255,.18)}
+.wr-poster .g span{display:block;font-size:10.5px;letter-spacing:.16em;font-weight:700;color:rgba(255,255,255,.66);text-transform:uppercase}
+.wr-poster .g b{display:block;font-family:var(--display);font-weight:800;font-size:30px;margin-top:4px;line-height:1.1}
+.wr-poster .g .wide b{font-size:22px}
+/* The trophy sits mid-frame in its photo; enlarging it from the top moves
+   it down into the space under the record rows. */
+.wr-card[data-card="records"] .wr-photo{background-size:auto 124%;background-position:center top;opacity:.9}
+.wr-card[data-card="records"] .wr-p{text-shadow:0 2px 10px rgba(0,0,0,.9)}
+.wr-card[data-card="records"] .wr-photo::after{background:linear-gradient(180deg,rgba(8,8,18,.62) 0%,rgba(8,8,18,.5) 55%,rgba(8,8,18,.12) 72%,rgba(8,8,18,.2) 86%,rgba(8,8,18,.8) 100%)}
+/* A deeper scrim on the final card, where the stats sit straight on the photo. */
+.wr-card[data-card="summary"] .wr-photo::after{background:linear-gradient(180deg,rgba(8,8,18,.5) 0%,rgba(8,8,18,.35) 22%,rgba(8,8,18,.72) 48%,rgba(8,8,18,.94) 80%)}
 .wr-poster .g .wide{grid-column:1/-1}
 .wr-acts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
 .wr-acts button{height:48px;border-radius:14px;border:0;font:inherit;font-weight:700;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}
@@ -1149,6 +1209,13 @@ const wrappedCss = `
 .wr-rb-row em{display:block;font-style:normal;font-size:12.5px;color:rgba(255,255,255,.72);margin-top:2px;line-height:1.35}
 .wr-rb-row.me{background:rgba(245,217,122,.14);border-color:rgba(245,217,122,.55);box-shadow:0 0 24px -8px rgba(245,217,122,.6)}
 .wr-rb-row.me em{color:#f5d97a;font-weight:700}
+
+.wr-av.nem{background:linear-gradient(135deg,#e63946,#f8b3b8);box-shadow:0 0 0 3px #e63946,0 0 26px rgba(230,57,70,.5)}
+.wr-vs-badge{margin:0 12px;font-family:var(--display);font-weight:800;font-size:15px;letter-spacing:.12em;color:rgba(255,255,255,.7)}
+.wr-h2h{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:18px}
+.wr-h2h div{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:12px 8px 10px;text-align:center}
+.wr-h2h b{display:block;font-family:var(--display);font-size:34px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.wr-h2h div>span{display:block;font-size:11px;font-weight:700;color:rgba(255,255,255,.7);margin-top:4px}
 
 /* The Fixtures banner that opens it. */
 .wr-banner-wrap{position:relative;margin-bottom:14px}
