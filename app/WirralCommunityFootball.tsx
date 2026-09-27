@@ -5142,6 +5142,23 @@ function App({ session }: { session: Session }) {
                     <div className="wcf-rivalry" style={{ "--wc": cs.team_white_color, "--rc": cs.team_red_color } as React.CSSProperties}>
                       <div className="wcf-rivalry-title">{wName} v {rName}</div>
                       <div className="wcf-rivalry-sub">{summary}</div>
+                      <div className="wcf-h2h-table">
+                        <div className="wcf-h2h-row wcf-h2h-header">
+                          <span>Team</span><span>P</span><span>W</span><span>D</span><span>L</span><span>GF</span><span>GA</span><span>Pts</span>
+                        </div>
+                        {([["white", h.white, h.red.goals, wName, cs.team_white_color], ["red", h.red, h.white.goals, rName, cs.team_red_color]] as const)
+                          .slice()
+                          // Level on points goes to goal difference.
+                          .sort((a, b) => b[1].points - a[1].points || (b[1].goals - b[2]) - (a[1].goals - a[2]))
+                          .map(([key, row, against, name, color]) => (
+                            <div key={key} className="wcf-h2h-row">
+                              <span className="wcf-h2h-team"><span className="wcf-h2h-dot" style={{ background: color }} />{name}</span>
+                              <span>{row.played}</span><span>{row.won}</span><span>{row.drawn}</span><span>{row.lost}</span>
+                              <span>{row.goals}</span><span>{against}</span>
+                              <span className="wcf-h2h-pts">{row.points}</span>
+                            </div>
+                          ))}
+                      </div>
                       <div className="wcf-rivalry-row">
                         <div className="wcf-rivalry-lab">
                           <span><b>{h.white.won}</b> {wName}</span>
@@ -12152,6 +12169,9 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rivalry-score.latest{background:rgba(245,217,122,.08)}
 .wcf-rivalry-key{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px;font-size:11px;color:var(--dim)}
 .wcf-rivalry-key i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+.wcf-h2h-table{margin-top:12px}
+.wcf-h2h-table .wcf-h2h-row{grid-template-columns:minmax(0,1fr) repeat(7,26px)}
+.wcf-h2h-table .wcf-h2h-header span:first-child{text-align:left}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
