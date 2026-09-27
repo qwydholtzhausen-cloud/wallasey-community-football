@@ -19,6 +19,10 @@ interface CronGame {
   bookings: CronBooking[];
 }
 
+function fmtDate(date: string) {
+  return new Date(date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
 // Runs once daily (Vercel Hobby's cron minimum interval - see the kickoff
 // reminder note in the backlog for why that one isn't here yet). Handles
 // the two notifications that are fine on a daily cadence: MOTM winners for
@@ -67,18 +71,34 @@ export async function GET(req: Request) {
 
     const tally: Record<string, number> = {};
     for (const v of gameVotes) tally[v.candidate_id] = (tally[v.candidate_id] ?? 0) + 1;
-    const [winnerId] = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+    // Joint winners when the top count is shared, same as the app.
+    const topCount = Math.max(...Object.values(tally));
+    const winnerIds = Object.keys(tally).filter((id) => tally[id] === topCount);
 
-    const { data: winnerProfile } = await admin.from("profiles").select("display_name").eq("id", winnerId).single();
+    const { data: winnerProfiles } = await admin.from("profiles").select("id, display_name").in("id", winnerIds);
+    const names = (winnerProfiles ?? []).map((p) => p.display_name).join(" & ");
+    const score = `${g.team_white_score}–${g.team_red_score}`;
+    const votesLabel = `${topCount} of ${gameVotes.length} vote${gameVotes.length === 1 ? "" : "s"}`;
     // Everyone who actually played, not just payment-confirmed ones - same
-    // reasoning as the kickoff reminder.
+    // reasoning as the kickoff reminder. The winner gets their own message.
     const playedIds = g.bookings.filter((b) => !b.waiting).map((b) => b.player_id);
 
-    await sendPushToUsers(playedIds, {
-      title: "Man of the Match 🏆",
-      body: winnerProfile ? `${winnerProfile.display_name} won Man of the Match for ${g.venue}.` : "Man of the Match has been decided.",
-      url: "/",
-    });
+    await sendPushToUsers(
+      winnerIds.filter((id) => playedIds.includes(id)),
+      {
+        title: winnerIds.length > 1 ? "You're joint Man of the Match 🏆" : "You're Man of the Match 🏆",
+        body: `${votesLabel} from the ${score} game on ${fmtDate(g.date)}. Nice one.`,
+        url: "/",
+      }
+    );
+    await sendPushToUsers(
+      playedIds.filter((id) => !winnerIds.includes(id)),
+      {
+        title: "Man of the Match 🏆",
+        body: names ? `${names} won Man of the Match for the ${score} game on ${fmtDate(g.date)}.` : "Man of the Match has been decided.",
+        url: "/",
+      }
+    );
     await markNotified(key);
   }
 

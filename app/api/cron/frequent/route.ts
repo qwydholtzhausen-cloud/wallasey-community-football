@@ -102,6 +102,61 @@ export async function GET(req: Request) {
     await markNotified(key);
   }
 
+  // --- Teams are out ---
+  // Once an admin saves the Team Sheet for an upcoming game, each player is
+  // told which side they're on. Predictions open at the same moment, so
+  // this is also the only nudge that they can now guess the score. There's
+  // no "teams saved at" timestamp, so it fires the first time a run sees
+  // teams on both sides; once per game. Skipped inside the last half hour,
+  // where the kickoff reminder already says which team you're on.
+  for (const g of games ?? []) {
+    const key = `teams-${g.id}`;
+    if (notifiedKeys.has(key)) continue;
+    const minutesUntilKickoff = (toMs(kickoffCutoff(g.date, g.kickoff, 0)) - nowMs) / 60000;
+    if (minutesUntilKickoff < 30) continue;
+    const playing = (g.bookings as Booking[]).filter((b) => !b.waiting);
+    const whites = playing.filter((b) => b.team === "white");
+    const reds = playing.filter((b) => b.team === "red");
+    if (whites.length < 2 || reds.length < 2) continue;
+
+    const when = `${fmtDateLabel(g.date)}, ${g.kickoff}`;
+    await Promise.all(
+      [...whites, ...reds].map((b) =>
+        sendPushToUsers([b.player_id], {
+          title: "Teams are out 👕",
+          body: `${when}: you're on ${b.team === "white" ? whiteLabel : redLabel}. Predictions are open, so guess the score.`,
+          url: "/",
+        })
+      )
+    );
+    await markNotified(key);
+  }
+
+  // --- MOTM voting is open ---
+  // Sent to the players who played as soon as the score's in, while there's
+  // still a sensible amount of the 5-hour window left. Games scored after
+  // voting has closed (or with under 20 minutes left) never send it.
+  for (const g of games ?? []) {
+    const key = `motm-open-${g.id}`;
+    if (notifiedKeys.has(key)) continue;
+    if (g.team_white_score == null || g.team_red_score == null) continue;
+    const closes = kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES);
+    if ((toMs(closes) - nowMs) / 60000 < 20) continue;
+    const playedIds = (g.bookings as Booking[]).filter((b) => !b.waiting).map((b) => b.player_id);
+    if (playedIds.length === 0) {
+      await markNotified(key);
+      continue;
+    }
+    const [h, m] = closes.slice(11).split(":").map(Number);
+    const closesLabel = `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")}${h < 12 ? "am" : "pm"}`;
+    await sendPushToUsers(playedIds, {
+      title: "Vote for Man of the Match 🗳️",
+      body: `${whiteLabel} ${g.team_white_score}–${g.team_red_score} ${redLabel}. Who was best? Voting closes at ${closesLabel}.`,
+      url: "/",
+    });
+    await markNotified(key);
+  }
+
   // --- Payment-needed nudge, 30 min after booking if still unpaid ---
   // Deliberately not instant: right after booking, the player's already
   // looking at the Pay Now button in-app, so a push at that exact moment
