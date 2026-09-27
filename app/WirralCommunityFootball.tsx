@@ -7,7 +7,15 @@ import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInL
 import { predictionPoints, buildLeaderboard, buildMonthlyLeaderboards, topScorers, type ScoredPrediction } from "../lib/predictions";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer } from "../lib/teamBalance";
 import { defaultPitchCost } from "../lib/pitchCost";
-import { BOOT_ROOM_OPEN_TO_ALL, CALENDAR_BUTTON_OPEN_TO_ALL } from "../lib/clubPolicy";
+import {
+  BOOT_ROOM_OPEN_TO_ALL,
+  CALENDAR_BUTTON_OPEN_TO_ALL,
+  WRAPPED_MONTHLY_OPEN_TO_ALL,
+  WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR,
+  WRAPPED_FIRST_MONTH_FOR_ALL,
+} from "../lib/clubPolicy";
+import { computeWrapped } from "../lib/wrapped";
+import WrappedStory, { drawWrappedCard, wrappedBannerCss } from "./WrappedStory";
 import { googleCalendarUrl } from "../lib/calendar";
 import { BOOT_CATEGORIES, BOOT_CATEGORY, normaliseUkPhone, displayUkPhone, type BootCategory } from "../lib/bootRoom";
 
@@ -3195,6 +3203,79 @@ function App({ session }: { session: Session }) {
     };
   }, [pastGames, motmTallyByGame, goalRows, nowUk]);
 
+  // Monthly Wrapped: your own story of last month, same "last completed
+  // month" window as Player of the Month above, and computed the same way
+  // - from rows already loaded, nothing stored. Admins-only while testing
+  // (WRAPPED_MONTHLY_OPEN_TO_ALL). The month before feeds the "vs July"
+  // comparisons; everything earlier only decides who's new to your circle.
+  // Admins testing it (WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR) get the month in
+  // progress instead, so there's something real to check before it ends.
+  const wrappedSoFar = isAdmin && WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR;
+  const wrappedMonthKey = wrappedSoFar ? nowUk.slice(0, 7) : previousMonthKey(nowUk);
+  const wrapped = useMemo(() => {
+    const scored = pastGames.filter((g) => g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g));
+    const before = previousMonthKey(wrappedMonthKey + "-15");
+    const base = { playerId: myId, goals: goalRows, motmTallyByGame, predictions: scorePredictions };
+    const data = computeWrapped({
+      ...base,
+      games: scored.filter((g) => g.date.startsWith(wrappedMonthKey)),
+      earlierGames: scored.filter((g) => g.date < wrappedMonthKey),
+    });
+    if (!data) return null;
+    const prevData = computeWrapped({ ...base, games: scored.filter((g) => g.date.startsWith(before)) });
+    const label = (key: string, opts: Intl.DateTimeFormatOptions) => new Date(key + "-01T12:00:00Z").toLocaleDateString("en-GB", { ...opts, timeZone: "UTC" });
+    return {
+      data,
+      prev: prevData ? { apps: prevData.apps, goals: prevData.goals, myRate: prevData.myRate } : null,
+      periodKey: wrappedMonthKey,
+      soFar: wrappedSoFar,
+      periodLabel: label(wrappedMonthKey, { month: "long", year: "numeric" }),
+      periodShort: label(wrappedMonthKey, { month: "long" }),
+      prevShort: label(before, { month: "long" }),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastGames, goalRows, motmTallyByGame, scorePredictions, myId, wrappedMonthKey, wrappedSoFar]);
+  const [wrappedOpen, setWrappedOpen] = useState(false);
+  const wrappedDismissKey = `wcf-wrapped-dismissed-${myId}-${wrappedMonthKey}`;
+  const [wrappedDismissed, setWrappedDismissed] = useState(true);
+  useEffect(() => {
+    try {
+      setWrappedDismissed(localStorage.getItem(wrappedDismissKey) === "true");
+    } catch {
+      setWrappedDismissed(false);
+    }
+  }, [wrappedDismissKey]);
+  function dismissWrapped() {
+    try {
+      localStorage.setItem(wrappedDismissKey, "true");
+    } catch {}
+    setWrappedDismissed(true);
+  }
+  const showWrappedBanner =
+    !!wrapped && !wrappedDismissed && (isAdmin || (WRAPPED_MONTHLY_OPEN_TO_ALL && wrappedMonthKey >= WRAPPED_FIRST_MONTH_FOR_ALL));
+
+  async function shareWrapped() {
+    if (!wrapped) return;
+    try {
+      const blob = await drawWrappedCard({ data: wrapped.data, periodLabel: wrapped.periodLabel, whiteName: cs.team_white_name, redName: cs.team_red_name });
+      const file = new File([blob], `wrapped-${wrapped.periodKey}.png`, { type: "image/png" });
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file] });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name;
+        a.click();
+        URL.revokeObjectURL(url);
+        notifySuccess("Image downloaded");
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return; // user backed out of the share sheet
+      notifyError(err instanceof Error ? err.message : "Couldn't generate the image");
+    }
+  }
+
   // Seasons run calendar-year, not the traditional Aug-May football season -
   // Season 1 is 2026 (the club's founding year), Season 2 starts 1 Jan
   // 2027. Stats default to the current season ("archived" in the sense of
@@ -3711,6 +3792,27 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
+            {showWrappedBanner && wrapped && (
+              <div className="wr-banner-wrap">
+                <style>{wrappedBannerCss}</style>
+                <button className="wr-banner" onClick={() => setWrappedOpen(true)} aria-label={`Open your ${wrapped.periodLabel} Wrapped`}>
+                  <span className="row">
+                    <span className="yr">{wrapped.periodShort.slice(0, 3).toUpperCase()}<span>WRAPPED</span></span>
+                    <span className="copy">
+                      <span className="h">
+                        Your {wrapped.periodShort}{wrapped.soFar ? " so far" : ", wrapped"}
+                        {!WRAPPED_MONTHLY_OPEN_TO_ALL && <span className="tag">ADMINS</span>}
+                      </span>
+                      <span className="s">
+                        {wrapped.data.apps} games, {wrapped.data.goals} {wrapped.data.goals === 1 ? "goal" : "goals"}
+                        {wrapped.data.partner ? ", and the teammate you win with" : ""}. Tap to watch.
+                      </span>
+                    </span>
+                  </span>
+                </button>
+                <button className="wr-banner-x" onClick={dismissWrapped} aria-label="Hide this month's Wrapped">×</button>
+              </div>
+            )}
             {showPushNudge && (
               <div className="wcf-nudge-banner">
                 <div>
@@ -5419,6 +5521,32 @@ function App({ session }: { session: Session }) {
           </button>
         ))}
       </nav>
+
+      {wrappedOpen && wrapped && (
+        <WrappedStory
+          {...wrapped}
+          whiteName={cs.team_white_name}
+          redName={cs.team_red_name}
+          whiteColor={cs.team_white_color}
+          redColor={cs.team_red_color}
+          avatarFor={(id) => avatarByPlayerId.get(id) ?? null}
+          nameFor={(id) => profiles.find((p) => p.id === id)?.display_name ?? ""}
+          myId={myId}
+          onClose={() => setWrappedOpen(false)}
+          onShare={shareWrapped}
+          onBook={() => {
+            setWrappedOpen(false);
+            setTab("fixtures");
+            window.scrollTo({ top: 0 });
+          }}
+          onBootRoom={() => {
+            setWrappedOpen(false);
+            setFeedView("bootroom");
+            setTab("feed");
+            window.scrollTo({ top: 0 });
+          }}
+        />
+      )}
 
       {isAdmin && myId && <GaffAIChat getFreshAccessToken={getFreshAccessToken} onFixtureCreated={loadGames} myId={myId} askConfirm={askConfirm} />}
 
