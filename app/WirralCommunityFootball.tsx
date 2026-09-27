@@ -2885,6 +2885,28 @@ function App({ session }: { session: Session }) {
   function motmVotingOpen(g: GameRow) {
     return kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) > nowUk;
   }
+  // "1:00am" and "3h 15m" for a game's MOTM deadline, both from the same
+  // pretend-UTC frame as nowUk.
+  function motmClosesLabel(g: GameRow) {
+    const [h, m] = kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES).slice(11).split(":").map(Number);
+    return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")}${h < 12 ? "am" : "pm"}`;
+  }
+  function motmTimeLeft(g: GameRow) {
+    const min = Math.max(0, Math.floor((toMs(kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES)) - toMs(nowUk)) / 60000));
+    return min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min}m`;
+  }
+  // Only the people who played can vote (the database enforces the same).
+  function playedIn(g: GameRow, playerId: string) {
+    return g.bookings.some((b) => b.player_id === playerId && !b.waiting);
+  }
+  // Straight to a game's card in Scores, opened.
+  function goToResult(gameId: string) {
+    setTab("results");
+    setResultsMonth("all");
+    setExpandedResultId(gameId);
+    setResultsView("fixtures");
+    setTimeout(() => document.getElementById("result-" + gameId)?.scrollIntoView({ block: "start", behavior: "smooth" }), 80);
+  }
   const myMotmVoteByGame = useMemo(() => {
     const map: Record<string, string> = {};
     for (const v of motmVotes) if (v.voter_id === myId) map[v.game_id] = v.candidate_id;
@@ -3036,6 +3058,12 @@ function App({ session }: { session: Session }) {
                   {scorers.slice(0, 4).map((row) => `${row.player.display_name} ${row.goals}`).join(" · ")}
                   {scorers.length > 4 ? ` +${scorers.length - 4} more` : ""}
                 </div>
+              )}
+              {motmVotingOpen(g) && playedIn(g, myId) && (
+                <button className="wcf-ft-vote" onClick={() => goToResult(g.id)}>
+                  {myMotmVoteByGame[g.id] ? "Change your Man of the Match vote" : "Vote for Man of the Match"}
+                  <span>closes {motmClosesLabel(g)}</span>
+                </button>
               )}
             </div>
           );
@@ -3233,7 +3261,7 @@ function App({ session }: { session: Session }) {
     }
 
     return items.sort((a, b) => b.ts - a.ts);
-  }, [games, pastGames, motmTallyByGame, potLedger, profiles, goalRows, cs.team_white_name, cs.team_red_name, cs.team_white_color, cs.team_red_color, nowUk]);
+  }, [games, pastGames, motmTallyByGame, myMotmVoteByGame, myId, potLedger, profiles, goalRows, cs.team_white_name, cs.team_red_name, cs.team_white_color, cs.team_red_color, nowUk]);
 
   const visibleFeedItems = useMemo(() => {
     // In the normal feed view, archived items are hidden. The "Show
@@ -3756,6 +3784,15 @@ function App({ session }: { session: Session }) {
     () => pastGames.filter((g) => g.team_white_score != null && g.team_red_score != null),
     [pastGames]
   );
+  // The game this player can vote Man of the Match on right now, if any:
+  // scored, still inside the voting window, and they played in it.
+  const motmVoteGame = useMemo(
+    () =>
+      scoredPastGames.find(
+        (g) => kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) > nowUk && g.bookings.some((b) => b.player_id === myId && !b.waiting)
+      ) ?? null,
+    [scoredPastGames, nowUk, myId]
+  );
 
   // Flattens every prediction on a scored game into the shape lib/predictions.ts
   // expects - the actual scoring/aggregation logic lives there, kept pure and
@@ -3977,6 +4014,33 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
+            {motmVoteGame && (() => {
+              const g = motmVoteGame;
+              const myPick = myMotmVoteByGame[g.id];
+              const pickName = myPick ? profiles.find((p) => p.id === myPick)?.display_name : null;
+              return myPick ? (
+                <button className="wcf-vote-prompt done" onClick={() => goToResult(g.id)}>
+                  <span className="wcf-vote-prompt-text">
+                    You voted for <b>{pickName ?? "a teammate"}</b> · change it until {motmClosesLabel(g)}
+                  </span>
+                  <span className="wcf-vote-prompt-chev" aria-hidden="true">›</span>
+                </button>
+              ) : (
+                <button className="wcf-vote-prompt" onClick={() => goToResult(g.id)}>
+                  <span className="wcf-vote-prompt-ic" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" /><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></svg>
+                  </span>
+                  <span className="wcf-vote-prompt-text">
+                    <span className="wcf-vote-prompt-k">Man of the Match</span>
+                    <span className="wcf-vote-prompt-t">Who was best tonight?</span>
+                    <span className="wcf-vote-prompt-s">
+                      {cs.team_white_name} {g.team_white_score}–{g.team_red_score} {cs.team_red_name} · closes {motmClosesLabel(g)}
+                    </span>
+                  </span>
+                  <span className="wcf-vote-prompt-btn">Vote</span>
+                </button>
+              );
+            })()}
             {showWrappedBanner && wrapped && (
               <div className="wr-banner-wrap">
                 <style>{wrappedBannerCss}</style>
@@ -5566,10 +5630,6 @@ function App({ session }: { session: Session }) {
                   // those often lag behind by days, and voting closes hours
                   // after kickoff.
                   const candidates = g.bookings.filter((b) => !b.waiting);
-                  // Can't vote for yourself, but you can still win it - so
-                  // this only trims the vote-button list, never `candidates`
-                  // itself (that still feeds the tally/winner below).
-                  const voteCandidates = candidates.filter((c) => c.player_id !== myId);
                   const votingOpen = motmVotingOpen(g);
                   const tally = motmTallyByGame[g.id] ?? {};
                   const totalVotes = Object.values(tally).reduce((sum, n) => sum + n, 0);
@@ -5637,27 +5697,26 @@ function App({ session }: { session: Session }) {
                       {expanded && (
                         <div className="wcf-result-detail">
                           {scorers.length > 0 && (
-                            <>
-                              <div className="wcf-result-section-label">⚽ Goals</div>
-                              <div className="wcf-result-goals">
-                                <div className="wcf-result-goals-col">
-                                  {whiteScorers.map((s) => (
+                            <div className="wcf-result-goals">
+                              {([
+                                ["white", whiteScorers, cs.team_white_name, cs.team_white_color, g.team_white_score],
+                                ["red", redScorers, cs.team_red_name, cs.team_red_color, g.team_red_score],
+                              ] as const).map(([side, list, teamName, color, score]) => (
+                                <div key={side} className="wcf-result-goals-col">
+                                  <div className="wcf-result-goals-head">
+                                    <span className="wcf-h2h-dot" style={{ background: color }} />
+                                    {teamName}
+                                    <b>{score}</b>
+                                  </div>
+                                  {list.map((s) => (
                                     <div key={s.id} className="wcf-result-goal-row">
                                       <button className="wcf-name-link" onClick={() => openPlayerCard(s.player_id)}>{s.player.display_name}</button>
                                       <b>{s.goals}</b>
                                     </div>
                                   ))}
                                 </div>
-                                <div className="wcf-result-goals-col">
-                                  {redScorers.map((s) => (
-                                    <div key={s.id} className="wcf-result-goal-row">
-                                      <button className="wcf-name-link" onClick={() => openPlayerCard(s.player_id)}>{s.player.display_name}</button>
-                                      <b>{s.goals}</b>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            </>
+                              ))}
+                            </div>
                           )}
 
                           {ownGoalScorers.length > 0 && (
@@ -5673,67 +5732,137 @@ function App({ session }: { session: Session }) {
                             </div>
                           )}
 
-                          {voteCandidates.length > 0 && votingOpen && (
-                            <div className="wcf-motm">
-                              <div className="wcf-motm-label">Vote Man of the Match · results hidden until voting closes</div>
-                              <div className="wcf-motm-candidates">
-                                {voteCandidates.map((c) => (
-                                  <button
-                                    key={c.id}
-                                    className={"wcf-motm-vote" + (myVote === c.player_id ? " voted" : "")}
-                                    onClick={() => castMotmVote(g.id, c.player_id, c.player.display_name)}
-                                  >
-                                    {c.player.display_name}{myVote === c.player_id ? " ✓" : ""}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {!votingOpen && totalVotes > 0 && (
-                            <div className="wcf-motm wcf-motm-closed">
-                              <div className="wcf-motm-winner">
-                                🏆 Man of the Match —{" "}
-                                <strong>
-                                  {ranked
-                                    .filter((r) => r.votes === topVotes)
-                                    .map((r) => r.candidate.player.display_name)
-                                    .join(" & ")}
-                                </strong>
-                              </div>
-                              {ranked.filter((r) => r.votes > 0).map((r) => {
-                                const voters = votersFor(r.candidate.player_id);
-                                return (
-                                  <div key={r.candidate.id} className="wcf-motm-bar-row">
-                                    <div className="wcf-motm-bar-top">
-                                      <span className={r.votes === topVotes ? "winner" : ""}>{r.candidate.player.display_name}</span>
-                                      <span className="wcf-motm-count">{r.votes}</span>
-                                    </div>
-                                    <div className="wcf-motm-bar-track">
-                                      <div
-                                        className={"wcf-motm-bar-fill" + (r.votes === topVotes ? " winner" : "")}
-                                        style={{ width: `${Math.max(6, (r.votes / topVotes) * 100)}%` }}
-                                      />
-                                    </div>
-                                    <button
-                                      className="wcf-motm-voters-trigger"
-                                      onClick={() =>
-                                        setMotmVotersFor({ gameId: g.id, candidateId: r.candidate.player_id, candidateName: r.candidate.player.display_name })
-                                      }
-                                    >
-                                      <span className="wcf-avatars">
-                                        {voters.slice(0, 4).map((v) => (
-                                          <Avatar key={v.id} name={v.display_name} avatarUrl={v.avatar_url} className="wcf-avatar-chip" background={avatarFor(v.display_name).gradient} />
-                                        ))}
-                                        {voters.length > 4 && <span className="wcf-avatar-chip more">+{voters.length - 4}</span>}
-                                      </span>
-                                      <span className="wcf-motm-voters-label">See who voted</span>
-                                    </button>
+                          {votingOpen && candidates.length > 0 && (() => {
+                            const closes = motmClosesLabel(g);
+                            if (!playedIn(g, myId)) {
+                              return (
+                                <div className="wcf-vote-note">
+                                  Voting&apos;s for the {candidates.length} who played · result at <b>{closes}</b>
+                                </div>
+                              );
+                            }
+                            const goalsOf = (id: string) => scorers.find((s) => s.player_id === id)?.goals ?? 0;
+                            // Scorers first, then A-Z; you go last in your own team.
+                            const byGoals = (a: BookingRow, b: BookingRow) =>
+                              Number(a.player_id === myId) - Number(b.player_id === myId) ||
+                              goalsOf(b.player_id) - goalsOf(a.player_id) ||
+                              a.player.display_name.localeCompare(b.player.display_name);
+                            const groups = [
+                              { key: "white", name: cs.team_white_name, color: cs.team_white_color, list: candidates.filter((c) => c.team === "white").sort(byGoals) },
+                              { key: "red", name: cs.team_red_name, color: cs.team_red_color, list: candidates.filter((c) => c.team === "red").sort(byGoals) },
+                              { key: "none", name: "Also played", color: "var(--dim)", list: candidates.filter((c) => c.team !== "white" && c.team !== "red").sort(byGoals) },
+                            ].filter((grp) => grp.list.length > 0);
+                            const pickName = myVote ? candidates.find((c) => c.player_id === myVote)?.player.display_name : null;
+                            return (
+                              <div className="wcf-vote">
+                                <div className="wcf-vote-head">
+                                  <div className="wcf-vote-k">Vote Man of the Match</div>
+                                  <div className="wcf-vote-meta">
+                                    Closes <b>{closes}</b> · {motmTimeLeft(g)} left · <b>{totalVotes}</b> of {candidates.length} voted
                                   </div>
-                                );
-                              })}
-                            </div>
-                          )}
+                                </div>
+                                <div className="wcf-vote-teams">
+                                  {groups.map((grp) => (
+                                    <div key={grp.key} className={"wcf-vote-col" + (grp.key === "none" ? " wide" : "")}>
+                                      <div className="wcf-vote-col-h">
+                                        <span className="wcf-h2h-dot" style={{ background: grp.color }} />
+                                        {grp.name}
+                                      </div>
+                                      {grp.list.map((c) => {
+                                        const isMe = c.player_id === myId;
+                                        const picked = myVote === c.player_id;
+                                        const goals = goalsOf(c.player_id);
+                                        return (
+                                          <button
+                                            key={c.id}
+                                            className={"wcf-vote-pick" + (picked ? " picked" : "") + (isMe ? " me" : "")}
+                                            disabled={isMe}
+                                            onClick={() => castMotmVote(g.id, c.player_id, c.player.display_name)}
+                                          >
+                                            <Avatar name={c.player.display_name} avatarUrl={avatarByPlayerId.get(c.player_id)} className="wcf-vote-av" background={avatarFor(c.player.display_name).gradient} />
+                                            <span className="wcf-vote-who">
+                                              <span className="wcf-vote-name">{isMe ? "You" : c.player.display_name}</span>
+                                              {goals > 0 && <span className="wcf-vote-goals">{goals} {goals === 1 ? "goal" : "goals"}</span>}
+                                            </span>
+                                            {picked && <span className="wcf-vote-tick" aria-label="Your vote">✓</span>}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="wcf-vote-foot">
+                                  {pickName ? (
+                                    <>You voted for <b>{pickName}</b>. Tap someone else to change it. The result&apos;s out at {closes}.</>
+                                  ) : (
+                                    <>Tap a player to vote. You can&apos;t vote for yourself. The result&apos;s out at {closes}.</>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {!votingOpen && totalVotes > 0 && (() => {
+                            const winners = ranked.filter((x) => x.votes === topVotes);
+                            const teamLabel = (t: string | null) => (t === "white" ? cs.team_white_name : t === "red" ? cs.team_red_name : null);
+                            const winnerTeams = [...new Set(winners.map((w) => teamLabel(w.candidate.team)).filter(Boolean))];
+                            return (
+                              // Same gold family as Player of the Month: the winner's
+                              // face up top, then every player who got a vote.
+                              <div className="wcf-motm-card">
+                                <div className="wcf-motm-card-k">{winners.length > 1 ? "Joint Man of the Match" : "Man of the Match"}</div>
+                                <div className="wcf-motm-card-main">
+                                  <div className="wcf-motm-card-faces">
+                                    {winners.slice(0, 2).map((w) => (
+                                      <Avatar key={w.candidate.id} name={w.candidate.player.display_name} avatarUrl={avatarByPlayerId.get(w.candidate.player_id)} className="wcf-motm-card-face" background={avatarFor(w.candidate.player.display_name).gradient} />
+                                    ))}
+                                  </div>
+                                  <div className="wcf-motm-card-who">
+                                    <div className="wcf-motm-card-names">
+                                      {winners.map((w, i) => (
+                                        <button key={w.candidate.id} className="wcf-motm-card-name" onClick={() => openPlayerCard(w.candidate.player_id)}>
+                                          {w.candidate.player.display_name}
+                                          {i < winners.length - 1 ? <span className="wcf-motm-card-amp"> &amp;</span> : null}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    <div className="wcf-motm-card-sub">
+                                      <b>{topVotes} of {totalVotes} votes</b>
+                                      {winnerTeams.length > 0 && ` · ${winnerTeams.join(" & ")}`}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="wcf-motm-rank">
+                                  {ranked.filter((x) => x.votes > 0).map((x) => {
+                                    const voters = votersFor(x.candidate.player_id);
+                                    const top = x.votes === topVotes;
+                                    return (
+                                      <button
+                                        key={x.candidate.id}
+                                        className={"wcf-motm-rk" + (top ? " top" : "")}
+                                        onClick={() => setMotmVotersFor({ gameId: g.id, candidateId: x.candidate.player_id, candidateName: x.candidate.player.display_name })}
+                                        aria-label={`See who voted for ${x.candidate.player.display_name}`}
+                                      >
+                                        <Avatar name={x.candidate.player.display_name} avatarUrl={avatarByPlayerId.get(x.candidate.player_id)} className="wcf-motm-rk-av" background={avatarFor(x.candidate.player.display_name).gradient} />
+                                        <span className="wcf-motm-rk-mid">
+                                          <span className="wcf-motm-rk-name">{x.candidate.player.display_name}</span>
+                                          <span className="wcf-motm-rk-bar"><i style={{ width: `${Math.max(8, (x.votes / topVotes) * 100)}%` }} /></span>
+                                        </span>
+                                        <span className="wcf-avatars wcf-motm-rk-voters">
+                                          {voters.slice(0, 3).map((v) => (
+                                            <Avatar key={v.id} name={v.display_name} avatarUrl={v.avatar_url} className="wcf-avatar-chip" background={avatarFor(v.display_name).gradient} />
+                                          ))}
+                                          {voters.length > 3 && <span className="wcf-avatar-chip more">+{voters.length - 3}</span>}
+                                        </span>
+                                        <span className="wcf-motm-rk-n">{x.votes}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                <div className="wcf-motm-card-tip">Tap a name to see who voted for them</div>
+                              </div>
+                            );
+                          })()}
 
                           {(() => {
                             const gamePredictions = scoredPredictionInputs.filter((p) => p.gameId === g.id);
@@ -5764,7 +5893,7 @@ function App({ session }: { session: Session }) {
                                     return (
                                       <div className="wcf-predict-reveal-row">
                                         <span className="wcf-predict-reveal-row-label">
-                                          Your guess: <b>{cs.team_red_name} {myGamePrediction.predictedRed}–{myGamePrediction.predictedWhite} {cs.team_white_name}</b>
+                                          Your guess: <b>{cs.team_white_name} {myGamePrediction.predictedWhite}–{myGamePrediction.predictedRed} {cs.team_red_name}</b>
                                         </span>
                                         <span className={"wcf-predict-pts " + (pts === 3 ? "exact" : pts === 1 ? "partial" : "zero")}>
                                           +{pts} pt{pts === 1 ? "" : "s"}
@@ -11254,8 +11383,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-month-filter{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--white);padding:11px;border-radius:10px;font-size:13px;font-family:var(--sans);margin-bottom:14px}
 .wcf-result{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:11px}
 .wcf-result.featured{
-  background-image:linear-gradient(180deg,rgba(6,10,16,.5) 0%,rgba(6,10,16,.84) 45%,rgba(6,10,16,.97) 80%),url('/pitch-ball-wet.jpg');
-  background-size:cover;background-position:center 62%;
+  background-image:linear-gradient(180deg,rgba(6,10,16,.45) 0%,rgba(6,10,16,.72) 35%,rgba(6,10,16,.86) 70%,rgba(6,10,16,.93) 100%),url('/pitch-ball-wet.jpg');
+  background-size:cover;background-position:center 40%;
 }
 .wcf-result-toggle{display:block;width:100%;background:none;border:none;padding:0;margin:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
 .wcf-result-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -12163,6 +12292,72 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-h2h-table .wcf-h2h-row{grid-template-columns:minmax(0,1fr) repeat(7,26px)}
 .wcf-h2h-table .wcf-h2h-header span:first-child{text-align:left}
 .wcf-rivalry-cap{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+/* MOTM: vote prompt on Fixtures */
+.wcf-vote-prompt{display:flex;align-items:center;gap:12px;width:100%;margin-bottom:14px;padding:14px;border-radius:18px;border:1px solid rgba(245,217,122,.5);background:radial-gradient(100% 90% at 100% 0%,rgba(245,217,122,.16),transparent 60%),#111427;text-align:left;cursor:pointer;color:inherit;box-shadow:0 16px 36px -24px rgba(234,179,8,.6)}
+.wcf-vote-prompt-ic{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:rgba(245,217,122,.15);color:#f5d97a}
+.wcf-vote-prompt-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.wcf-vote-prompt-k{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#f5d97a}
+.wcf-vote-prompt-t{font-family:var(--display);font-weight:800;font-size:16px;color:#fff}
+.wcf-vote-prompt-s{font-size:11.5px;color:var(--dim)}
+.wcf-vote-prompt-btn{flex:none;padding:9px 14px;border-radius:10px;background:#f5d97a;color:#0d0d1a;font-weight:800;font-size:12.5px}
+.wcf-vote-prompt.done{padding:11px 14px;box-shadow:none;border-color:rgba(245,217,122,.35);background:rgba(245,217,122,.06)}
+.wcf-vote-prompt.done .wcf-vote-prompt-text{display:block;font-size:12.5px;color:var(--dim)}
+.wcf-vote-prompt.done b{color:#f5d97a}
+.wcf-vote-prompt-chev{flex:none;font-size:18px;color:var(--dim)}
+.wcf-ft-vote{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;margin-top:10px;padding:10px 12px;border-radius:12px;border:1px solid rgba(245,217,122,.5);background:rgba(245,217,122,.1);color:#f5d97a;font-weight:800;font-size:12.5px;cursor:pointer;text-align:left}
+.wcf-ft-vote span{font-weight:600;font-size:11px;color:var(--dim)}
+/* MOTM: voting in the Scores card */
+.wcf-result-goals-head{display:flex;align-items:center;gap:6px;margin:12px 0 6px;font-size:10.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.wcf-result-goals-head b{margin-left:auto;font-family:var(--display);font-size:17px;letter-spacing:0;color:#fff}
+.wcf-vote-note{margin-top:12px;padding:11px 13px;border-radius:12px;background:rgba(13,13,26,.55);border:1px solid var(--line);font-size:12.5px;color:var(--dim)}
+.wcf-vote-note b{color:#fff}
+.wcf-vote{margin-top:14px;border-radius:18px;overflow:hidden;border:1px solid rgba(245,217,122,.35);background:rgba(13,15,30,.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.wcf-vote-head{padding:12px 14px 10px;text-align:center;border-bottom:1px solid var(--line);background:radial-gradient(90% 120% at 50% 0%,rgba(245,217,122,.14),transparent 70%)}
+.wcf-vote-k{font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#f5d97a}
+.wcf-vote-meta{margin-top:4px;font-size:11.5px;color:var(--dim)}
+.wcf-vote-meta b{color:#fff}
+.wcf-vote-teams{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;padding:10px}
+.wcf-vote-col.wide{grid-column:1/-1}
+.wcf-vote-col-h{display:flex;align-items:center;gap:6px;margin:0 4px 6px;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.wcf-vote-pick{display:flex;align-items:center;gap:8px;width:100%;margin-bottom:4px;padding:6px;border-radius:12px;border:1px solid transparent;background:none;text-align:left;cursor:pointer;color:inherit}
+.wcf-vote-pick:not(:disabled):hover{background:rgba(255,255,255,.05)}
+.wcf-vote-av{width:32px;height:32px;font-size:12px;flex:none;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;color:#fff;}
+.wcf-vote-who{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.wcf-vote-name{font-size:12.5px;font-weight:600;color:#f1f5f9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-vote-goals{font-size:10.5px;color:var(--dim)}
+.wcf-vote-tick{flex:none;color:#f5d97a;font-weight:800}
+.wcf-vote-pick.picked{border-color:rgba(245,217,122,.6);background:rgba(245,217,122,.1)}
+.wcf-vote-pick.picked .wcf-vote-av{box-shadow:0 0 0 2px #eab308}
+.wcf-vote-pick.picked .wcf-vote-name{color:#f5d97a;font-weight:800}
+.wcf-vote-pick.me{opacity:.45;cursor:default}
+.wcf-vote-foot{padding:10px 14px 12px;border-top:1px solid var(--line);font-size:12px;line-height:1.45;color:var(--dim);text-align:center}
+.wcf-vote-foot b{color:#f5d97a}
+/* MOTM: the result */
+.wcf-motm-card{margin-top:14px;border-radius:18px;padding:14px;border:1px solid rgba(234,179,8,.5);background:radial-gradient(100% 80% at 30% 100%,rgba(234,179,8,.18),transparent 60%),rgba(13,13,26,.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.wcf-motm-card-k{font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#f5d97a}
+.wcf-motm-card-main{display:flex;align-items:center;gap:12px;margin-top:10px}
+.wcf-motm-card-faces{display:flex;flex:none}
+.wcf-motm-card-face{width:54px;height:54px;font-size:20px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;color:#fff;box-shadow:0 0 0 3px #eab308,0 0 18px rgba(234,179,8,.45)}
+.wcf-motm-card-face+.wcf-motm-card-face{margin-left:-12px}
+.wcf-motm-card-who{min-width:0}
+.wcf-motm-card-names{display:flex;flex-wrap:wrap;gap:0 6px}
+.wcf-motm-card-name{background:none;border:0;padding:0;font-family:var(--display);font-weight:800;font-size:20px;line-height:1.2;color:#fff;cursor:pointer;text-align:left}
+.wcf-motm-card-amp{color:var(--dim)}
+.wcf-motm-card-sub{margin-top:3px;font-size:12px;color:var(--dim)}
+.wcf-motm-card-sub b{color:#f5d97a}
+.wcf-motm-rank{display:flex;flex-direction:column;margin-top:12px;padding-top:8px;border-top:1px solid rgba(234,179,8,.22)}
+.wcf-motm-rk{display:flex;align-items:center;gap:10px;width:100%;padding:7px 0;background:none;border:0;text-align:left;cursor:pointer;color:inherit}
+.wcf-motm-rk-av{width:28px;height:28px;font-size:11px;flex:none;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;color:#fff;}
+.wcf-motm-rk-mid{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.wcf-motm-rk-name{font-size:12.5px;font-weight:700;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-motm-rk.top .wcf-motm-rk-name{color:#f5d97a}
+.wcf-motm-rk-bar{display:block;height:5px;border-radius:3px;background:rgba(148,163,184,.15);overflow:hidden}
+.wcf-motm-rk-bar i{display:block;height:100%;border-radius:3px;background:#64748b}
+.wcf-motm-rk.top .wcf-motm-rk-bar i{background:#eab308}
+.wcf-motm-rk-voters{flex:none}
+.wcf-motm-rk-n{flex:none;min-width:16px;text-align:right;font-family:var(--display);font-weight:800;font-size:15px;color:#fff;font-variant-numeric:tabular-nums}
+.wcf-motm-rk.top .wcf-motm-rk-n{color:#f5d97a}
+.wcf-motm-card-tip{margin-top:4px;font-size:11px;color:#64748b;text-align:center}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
