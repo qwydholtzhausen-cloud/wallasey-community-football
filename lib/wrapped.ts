@@ -5,16 +5,12 @@
 // device, nothing stored.
 import { predictionPoints } from "./predictions";
 import { MATCH_LENGTH_MINUTES } from "./time";
+import { soldOutDaysBeforeKickoff, type RecordsGame } from "./records";
 
 type Team = "white" | "red";
 
-export interface WrappedGame {
-  id: string;
-  date: string; // YYYY-MM-DD, UK
-  team_white_score: number | null;
-  team_red_score: number | null;
-  bookings: { player_id: string; waiting: boolean; team: Team | null; player: { display_name: string } }[];
-}
+// Same game shape as lib/records.ts, which also works out sell-out times.
+export type WrappedGame = RecordsGame;
 
 export interface WrappedInput {
   games: WrappedGame[]; // the period's games, already played
@@ -53,6 +49,8 @@ export interface WrappedData {
   goalsRank: number | null; // null when 0 goals
   topScorer: { name: string; goals: number } | null;
   motmWins: number;
+  motmVotes: number; // total MOTM votes received
+  promotions: number; // times you got in off the waiting list
   partner: { playerId: string; name: string; together: number; wins: number; rate: number } | null;
   myRate: number;
   mostWith: { playerId: string; name: string; together: number } | null;
@@ -70,6 +68,7 @@ export interface WrappedData {
     draws: number;
     highest: { date: string; white: number; red: number } | null;
     mostApps: { name: string; apps: number } | null;
+    sellOutDays: number | null; // average days before kickoff games sold out
   };
 }
 
@@ -177,12 +176,16 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
 
   // MOTM: most votes in a game wins it; ties are joint winners.
   let motmWins = 0;
+  let motmVotes = 0;
   for (const g of games) {
     const tally = input.motmTallyByGame[g.id];
     if (!tally) continue;
     const top = Math.max(0, ...Object.values(tally));
     if (top > 0 && tally[me] === top) motmWins++;
+    motmVotes += tally[me] ?? 0;
   }
+  const promotions = games.filter((g) => g.bookings.some((b) => b.player_id === me && !b.waiting && b.team && b.promoted_at)).length;
+  const sellOuts = games.map(soldOutDaysBeforeKickoff).filter((d): d is number => d !== null);
 
   // Predictions table over the same games.
   const gameById = new Map(games.map((g) => [g.id, g]));
@@ -222,6 +225,8 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
     goalsRank: myGoals > 0 ? rankIn(goalsBy, myGoals) : null,
     topScorer: topScorerId && goalsBy[topScorerId] > 0 ? { name: names[topScorerId] ?? "", goals: goalsBy[topScorerId] } : null,
     motmWins,
+    motmVotes,
+    promotions,
     partner: bestPair
       ? { playerId: bestPair.playerId, name: bestPair.name, together: bestPair.together, wins: bestPair.wins, rate: Math.round(bestPair.rate * 100) }
       : null,
@@ -251,6 +256,7 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
       draws: games.filter((g) => g.team_white_score === g.team_red_score).length,
       highest: highest ? { date: highest.date, white: highest.team_white_score!, red: highest.team_red_score! } : null,
       mostApps: mostAppsId ? { name: names[mostAppsId], apps: apps[mostAppsId] } : null,
+      sellOutDays: sellOuts.length ? sellOuts.reduce((a, b) => a + b, 0) / sellOuts.length : null,
     },
   };
 }

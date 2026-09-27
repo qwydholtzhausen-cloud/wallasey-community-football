@@ -15,6 +15,7 @@ import {
   WRAPPED_FIRST_MONTH_FOR_ALL,
 } from "../lib/clubPolicy";
 import { computeWrapped } from "../lib/wrapped";
+import { computeRecords, type Holder } from "../lib/records";
 import WrappedStory, { drawWrappedCard, wrappedBannerCss } from "./WrappedStory";
 import { googleCalendarUrl } from "../lib/calendar";
 import { BOOT_CATEGORIES, BOOT_CATEGORY, normaliseUkPhone, displayUkPhone, type BootCategory } from "../lib/bootRoom";
@@ -139,6 +140,7 @@ interface BookingRow {
   waiting: boolean;
   team: Team | null;
   created_at: string;
+  promoted_at: string | null;
   player: Profile;
   confirmer: { display_name: string } | null;
   pot_exempt_reason: PotExemptReason | null;
@@ -1568,7 +1570,8 @@ function App({ session }: { session: Session }) {
   }
 
   const [tab, setTab] = useState<"fixtures" | "feed" | "lineup" | "results" | "account" | "admin">("fixtures");
-  const [resultsView, setResultsView] = useState<"season" | "table" | "fixtures" | "pot">("season");
+  const [showAllHatTricks, setShowAllHatTricks] = useState(false);
+  const [resultsView, setResultsView] = useState<"season" | "table" | "records" | "fixtures" | "pot">("season");
   const [potAmount, setPotAmount] = useState("");
   const [potDescription, setPotDescription] = useState("");
   const [potEntryKind, setPotEntryKind] = useState<"add" | "deduct">("add");
@@ -1628,7 +1631,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, lineup_positions, bookings(id, player_id, status, waiting, team, created_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, lineup_positions, bookings(id, player_id, status, waiting, team, created_at, promoted_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -3216,16 +3219,20 @@ function App({ session }: { session: Session }) {
     const scored = pastGames.filter((g) => g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g));
     const before = previousMonthKey(wrappedMonthKey + "-15");
     const base = { playerId: myId, goals: goalRows, motmTallyByGame, predictions: scorePredictions };
+    const monthGames = scored.filter((g) => g.date.startsWith(wrappedMonthKey));
     const data = computeWrapped({
       ...base,
-      games: scored.filter((g) => g.date.startsWith(wrappedMonthKey)),
+      games: monthGames,
       earlierGames: scored.filter((g) => g.date < wrappedMonthKey),
     });
     if (!data) return null;
     const prevData = computeWrapped({ ...base, games: scored.filter((g) => g.date.startsWith(before)) });
     const label = (key: string, opts: Intl.DateTimeFormatOptions) => new Date(key + "-01T12:00:00Z").toLocaleDateString("en-GB", { ...opts, timeZone: "UTC" });
+    const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
+    const records = computeRecords({ games: monthGames, goals: goalRows, motmTallyByGame, names: (id) => nameById.get(id) ?? "Former player" });
     return {
       data,
+      records,
       prev: prevData ? { apps: prevData.apps, goals: prevData.goals, myRate: prevData.myRate } : null,
       periodKey: wrappedMonthKey,
       soFar: wrappedSoFar,
@@ -3234,7 +3241,7 @@ function App({ session }: { session: Session }) {
       prevShort: label(before, { month: "long" }),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastGames, goalRows, motmTallyByGame, scorePredictions, myId, wrappedMonthKey, wrappedSoFar]);
+  }, [pastGames, goalRows, motmTallyByGame, scorePredictions, profiles, myId, wrappedMonthKey, wrappedSoFar]);
   const [wrappedOpen, setWrappedOpen] = useState(false);
   const wrappedDismissKey = `wcf-wrapped-dismissed-${myId}-${wrappedMonthKey}`;
   const [wrappedDismissed, setWrappedDismissed] = useState(true);
@@ -3323,6 +3330,21 @@ function App({ session }: { session: Session }) {
       .map(([id, row]) => ({ id, ...row }))
       .sort((a, b) => b.apps - a.apps);
   }, [pastGames, goalRows, activeStatsYear]);
+
+  // Club records for the selected season - single-game bests, runs, MOTM,
+  // the waiting list and how early games sell out. Computed like Wrapped
+  // from rows already loaded (lib/records.ts). Only games whose MOTM
+  // voting has closed count, so a record can't flicker mid-vote.
+  const clubRecords = useMemo(() => {
+    const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
+    return computeRecords({
+      games: pastGames.filter((g) => g.date.slice(0, 4) === String(activeStatsYear) && !motmVotingOpen(g)),
+      goals: goalRows,
+      motmTallyByGame,
+      names: (id) => nameById.get(id) ?? "Former player",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastGames, goalRows, motmTallyByGame, profiles, activeStatsYear]);
 
   const nextGame = upcomingGames[0];
   const nextConfirmed = useMemo(
@@ -4764,6 +4786,7 @@ function App({ session }: { session: Session }) {
             <div className="wcf-subtabs">
               <button className={resultsView === "season" ? "active" : ""} onClick={() => setResultsView("season")}>Season</button>
               <button className={resultsView === "table" ? "active" : ""} onClick={() => setResultsView("table")}>Stats</button>
+              <button className={resultsView === "records" ? "active" : ""} onClick={() => setResultsView("records")}>Records</button>
               <button className={resultsView === "fixtures" ? "active" : ""} onClick={() => setResultsView("fixtures")}>Scores</button>
               <button className={resultsView === "pot" ? "active" : ""} onClick={() => setResultsView("pot")}>Pot</button>
             </div>
@@ -5006,6 +5029,114 @@ function App({ session }: { session: Session }) {
                       <span>Milestone badges are awarded every 5 appearances.</span>
                       <button onClick={() => setTab("fixtures")}>View fixtures</button>
                     </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {resultsView === "records" && (() => {
+              const r = clubRecords;
+              // Up to three names, each tappable to their player card,
+              // then "+N more" rather than a wall of names on a tie.
+              const who = (holders: Holder[], withDate = false) => (
+                <>
+                  {holders.slice(0, 3).map((h, i) => (
+                    <span key={h.playerId + (h.date ?? "") + i}>
+                      {i > 0 ? ", " : ""}
+                      <button className="wcf-name-link" onClick={() => openPlayerCard(h.playerId)}>{h.name}</button>
+                      {withDate && h.date ? <span className="wcf-rec-date"> · {fmtDate(h.date)}</span> : null}
+                    </span>
+                  ))}
+                  {holders.length > 3 && <span className="wcf-rec-date"> +{holders.length - 3} more</span>}
+                </>
+              );
+              const row = (key: string, value: React.ReactNode, label: string, detail: React.ReactNode) => (
+                <div key={key} className="wcf-rec-row">
+                  <div className="wcf-rec-val">{value}</div>
+                  <div className="wcf-rec-body">
+                    {label && <div className="wcf-rec-label">{label}</div>}
+                    <div className="wcf-rec-who">{detail}</div>
+                  </div>
+                </div>
+              );
+              const scoreLine = (x: { date: string; white: number; red: number }) => (
+                <>
+                  {cs.team_white_name} {x.white}–{x.red} {cs.team_red_name}
+                  <span className="wcf-rec-date"> · {fmtDate(x.date)}</span>
+                </>
+              );
+              const days = (d: number) => (d < 1 ? "less than a day" : `${Math.round(d)} day${Math.round(d) === 1 ? "" : "s"}`);
+              const empty = !r.highestScoring;
+              return (
+                <div className="wcf-board">
+                  <div className="wcf-lb-eyebrow">Record book</div>
+                  <h3 className="wcf-lb-title">Club records</h3>
+                  <div className="wcf-lb-list-card">
+                    <select
+                      className="wcf-month-filter"
+                      value={activeStatsYear}
+                      onChange={(e) => setStatsSeasonYear(Number(e.target.value))}
+                    >
+                      {seasonYears.map((y) => (
+                        <option key={y} value={y}>
+                          Season {y - SEASON_EPOCH_YEAR + 1} ({y}){y === currentSeasonYear ? " — current" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    {empty ? (
+                      <p className="wcf-board-note">No results yet this season. Records start with the first game.</p>
+                    ) : (
+                      <>
+                        <div className="wcf-rec-group">In a single game</div>
+                        {r.mostGoalsInGame && row("goals", r.mostGoalsInGame.goals, "Most goals by one player", who(r.mostGoalsInGame.holders, true))}
+                        {r.biggestWin && row("win", `+${r.biggestWin.margin}`, "Biggest win", scoreLine(r.biggestWin))}
+                        {r.highestScoring && row("high", r.highestScoring.total, "Most goals in a game", scoreLine(r.highestScoring))}
+                        {r.mostMotmVotesInGame && row("votes1", r.mostMotmVotesInGame.votes, "Most MOTM votes in a game", who(r.mostMotmVotesInGame.holders, true))}
+
+                        <div className="wcf-rec-group">Over the season</div>
+                        {r.winStreak && row("ws", r.winStreak.n, "Longest winning run", who(r.winStreak.holders))}
+                        {r.unbeaten && row("ub", r.unbeaten.n, "Longest unbeaten run", who(r.unbeaten.holders))}
+                        {r.gamesInARow && row("row", r.gamesInARow.n, "Most games in a row", who(r.gamesInARow.holders))}
+                        {r.motmWins && row("mw", r.motmWins.n, "Most Man of the Match wins", who(r.motmWins.holders))}
+                        {r.motmVotes && row("mv", r.motmVotes.n, "Most MOTM votes", who(r.motmVotes.holders))}
+                        {r.promotions && row("wl", r.promotions.n, "Most times in off the waiting list", who(r.promotions.holders))}
+
+                        {r.hatTricks.length > 0 && (
+                          <>
+                            <div className="wcf-rec-group">Hat-tricks · {r.hatTricks.length}</div>
+                            {/* Same rows as every other record, so the numbers and
+                                names line up; the top 5 until asked for the rest,
+                                since this list only grows through a season. */}
+                            {(showAllHatTricks ? r.hatTricks : r.hatTricks.slice(0, 5)).map((h, i) =>
+                              row(
+                                h.playerId + h.date + i,
+                                <span className="wcf-rec-green">{h.goals}</span>,
+                                "",
+                                <>
+                                  <button className="wcf-name-link wcf-rec-name" onClick={() => openPlayerCard(h.playerId)}>{h.name}</button>
+                                  <span className="wcf-rec-date">{h.goals} goals · {fmtDate(h.date)}</span>
+                                </>
+                              )
+                            )}
+                            {r.hatTricks.length > 5 && (
+                              <button className="wcf-rec-more" onClick={() => setShowAllHatTricks((v) => !v)}>
+                                {showAllHatTricks ? "Show fewer" : `Show all ${r.hatTricks.length}`}
+                              </button>
+                            )}
+                          </>
+                        )}
+
+                        {r.sellOut.soldOut > 0 && (
+                          <>
+                            <div className="wcf-rec-group">Booking</div>
+                            {r.sellOut.averageDays !== null &&
+                              row("avg", `${Math.round(r.sellOut.averageDays)}d`, "Games usually sell out", <>about {days(r.sellOut.averageDays)} before kickoff ({r.sellOut.soldOut} of {r.sellOut.of} sold out)</>)}
+                            {r.sellOut.earliest &&
+                              row("early", `${Math.round(r.sellOut.earliest.days)}d`, "Earliest sell-out", <>{days(r.sellOut.earliest.days)} before kickoff<span className="wcf-rec-date"> · {fmtDate(r.sellOut.earliest.date)}</span></>)}
+                          </>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               );
@@ -10835,6 +10966,18 @@ button.wcf-glance-card:disabled{cursor:default}
    than Inter - the nav labels, account section headers and a scatter of
    buttons. Zero specificity (:where), so every rule that sets its own
    font still wins. */
+.wcf-subtabs button{padding:9px 4px}
+.wcf-rec-group{font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin:20px 2px 8px}
+.wcf-rec-row{display:grid;grid-template-columns:58px minmax(0,1fr);min-height:64px;gap:12px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.02);margin-bottom:8px}
+.wcf-rec-val{font-family:var(--display);font-weight:800;font-size:24px;line-height:1;text-align:center;font-variant-numeric:tabular-nums;color:var(--white,#f5f6f8)}
+.wcf-rec-label{font-size:13px;font-weight:700;color:var(--white,#f5f6f8)}
+.wcf-rec-who{font-size:13px;color:var(--dim);margin-top:3px;line-height:1.45}
+.wcf-rec-who .wcf-name-link,.wcf-rec-hat .wcf-name-link{font-size:13px;padding:0}
+.wcf-rec-date{color:var(--dim);font-size:12px}
+.wcf-rec-green{color:var(--green)}
+.wcf-rec-who .wcf-rec-name{display:block;font-size:13px;font-weight:700;color:var(--white,#f5f6f8);text-align:left}
+.wcf-rec-who .wcf-rec-name + .wcf-rec-date{display:block;margin-top:2px}
+.wcf-rec-more{display:block;width:100%;min-height:40px;margin-top:2px;border:1px solid var(--line);border-radius:12px;background:transparent;color:var(--dim);font-weight:700;font-size:13px;cursor:pointer}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted

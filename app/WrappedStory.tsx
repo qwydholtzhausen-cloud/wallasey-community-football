@@ -6,12 +6,14 @@
 // show, the wording, the gestures and the shareable poster.
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { WrappedData } from "../lib/wrapped";
+import type { ClubRecords, Holder } from "../lib/records";
 
 const CARD_MS = 6000;
 const HOLD_MS = 220;
 
 export interface WrappedStoryProps {
   data: WrappedData;
+  records: ClubRecords; // the same period's record book
   prev: { apps: number; goals: number; myRate: number } | null; // the period before, for "vs last month"
   periodKey: string; // "2026-08"
   periodLabel: string; // "August 2026"
@@ -40,7 +42,17 @@ interface Card {
 
 // The generated photos are shot dark with room for text already, so they
 // can show at nearly full strength; the older, brighter ones stay dimmed.
-const STRONG_PHOTOS = new Set(["/wrapped/intro.jpg", "/wrapped/next.jpg", "/wrapped/goals.jpg", "/wrapped/partner.jpg", "/wrapped/summary.jpg"]);
+const STRONG_PHOTOS = new Set([
+  "/wrapped/intro.jpg",
+  "/wrapped/glance.jpg",
+  "/wrapped/goals.jpg",
+  "/wrapped/motm.jpg",
+  "/wrapped/partner.jpg",
+  "/wrapped/predictions.jpg",
+  "/wrapped/club.jpg",
+  "/wrapped/summary.jpg",
+  "/wrapped/next.jpg",
+]);
 
 // Card photos live in public/wrapped/, so a new generated image is a file
 // swap with no code change.
@@ -210,11 +222,19 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
             <span>{d.goals === 1 ? "goal" : "goals"}</span>
             <Delta now={d.goals} prev={prev?.goals} prevShort={p.prevShort} />
           </div>
-          <div className="wr-stat wr-rise">
-            <b><Count to={d.myRate} />%</b>
-            <span>win rate</span>
-            <Delta now={d.myRate} prev={prev?.myRate} prevShort={p.prevShort} suffix="%" />
-          </div>
+          {d.W > 0 ? (
+            <div className="wr-stat wr-rise">
+              <b><Count to={d.myRate} />%</b>
+              <span>win rate</span>
+              <Delta now={d.myRate} prev={prev?.myRate} prevShort={p.prevShort} suffix="%" />
+            </div>
+          ) : (
+            // No wins yet: minutes played, not a big 0%.
+            <div className="wr-stat wr-rise">
+              <b><Count to={d.minutes} /></b>
+              <span>minutes played</span>
+            </div>
+          )}
         </div>
         <div className="wr-grow" />
         <div className="wr-p wr-rise">
@@ -288,6 +308,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
           {d.winStreak >= 2 && <div className="wr-chip wr-rise"><span className="k">{d.winStreak}</span><span>wins on the bounce. You were on fire.</span></div>}
           {d.unbeaten >= 3 && d.unbeaten > d.winStreak && <div className="wr-chip wr-rise"><span className="k">{d.unbeaten}</span><span>games unbeaten, your best run</span></div>}
           {d.appsRun >= 3 && <div className="wr-chip wr-rise"><span className="k">{d.appsRun}</span><span>{d.appsRun === d.ofGames ? "games in a row. You never missed one." : "games in a row without missing one"}</span></div>}
+          {d.promotions > 0 && <div className="wr-chip wr-rise"><span className="k">{d.promotions}</span><span>{d.promotions === 1 ? "time you got in off the waiting list" : "times you got in off the waiting list"}</span></div>}
         </div>
       </>
     ),
@@ -330,21 +351,34 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       ),
   });
 
-  if (d.motmWins > 0) {
+  if (d.motmWins > 0 || d.motmVotes >= 2) {
     cards.push({
       key: "motm",
       photo: PHOTO.motm,
       accent: "#f5d97a",
-      body: (
-        <>
-          <div className="wr-lab wr-rise">Man of the Match</div>
-          <div className="wr-big wr-rise" style={{ marginTop: 14 }}>
-            <Count to={d.motmWins} />
-            <small>{d.motmWins === 1 ? "time" : "times"}</small>
-          </div>
-          <div className="wr-p wr-rise">Voted best on the pitch by the lads you played with.</div>
-        </>
-      ),
+      body:
+        d.motmWins > 0 ? (
+          <>
+            <div className="wr-lab wr-rise">Man of the Match</div>
+            <div className="wr-big wr-rise" style={{ marginTop: 14 }}>
+              <Count to={d.motmWins} />
+              <small>{d.motmWins === 1 ? "time" : "times"}</small>
+            </div>
+            <div className="wr-p wr-rise">Voted best on the pitch by the lads you played with.</div>
+            <div className="wr-grow" />
+            <div className="wr-chip wr-rise"><span className="k">{d.motmVotes}</span><span>MOTM votes in total</span></div>
+          </>
+        ) : (
+          <>
+            <div className="wr-lab wr-rise">Man of the Match</div>
+            <div className="wr-h wr-rise">Your teammates noticed.</div>
+            <div className="wr-big wr-rise" style={{ marginTop: 14 }}>
+              <Count to={d.motmVotes} />
+              <small>{d.motmVotes === 1 ? "vote" : "votes"}</small>
+            </div>
+            <div className="wr-p wr-rise">No win yet, but you&apos;re getting votes. It&apos;s coming.</div>
+          </>
+        ),
     });
   }
 
@@ -452,6 +486,60 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     });
   }
 
+  // The period's record book, with anything you hold picked out.
+  {
+    const r = p.records;
+    const mine = (hs: Holder[]) => hs.some((h) => h.playerId === p.myId);
+    const names = (hs: Holder[]) => {
+      // You first, so a "+3" can never hide you.
+      const n = [...hs].sort((a, b) => Number(b.playerId === p.myId) - Number(a.playerId === p.myId)).map((h) => (h.playerId === p.myId ? "You" : h.name));
+      return n.length > 2 ? `${n.slice(0, 2).join(", ")} +${n.length - 2}` : n.join(" & ");
+    };
+    const rows: { k: string; v: string; label: string; who: string; me: boolean }[] = [];
+    if (r.mostGoalsInGame && r.mostGoalsInGame.goals >= 2)
+      rows.push({ k: "g", v: String(r.mostGoalsInGame.goals), label: "Most goals in a game", who: names(r.mostGoalsInGame.holders), me: mine(r.mostGoalsInGame.holders) });
+    if (r.hatTricks.length)
+      rows.push({
+        k: "h",
+        v: String(r.hatTricks.length),
+        label: r.hatTricks.length === 1 ? "Hat-trick" : "Hat-tricks",
+        who: names(r.hatTricks.map((h) => ({ playerId: h.playerId, name: h.name }))),
+        me: r.hatTricks.some((h) => h.playerId === p.myId),
+      });
+    if (r.biggestWin)
+      rows.push({ k: "b", v: `+${r.biggestWin.margin}`, label: "Biggest win", who: `${p.whiteName} ${r.biggestWin.white}–${r.biggestWin.red} ${p.redName}, ${shortDate(r.biggestWin.date)}`, me: false });
+    if (r.winStreak) rows.push({ k: "w", v: String(r.winStreak.n), label: "Longest winning run", who: names(r.winStreak.holders), me: mine(r.winStreak.holders) });
+    if (r.mostMotmVotesInGame && r.mostMotmVotesInGame.votes >= 2)
+      rows.push({ k: "m", v: String(r.mostMotmVotesInGame.votes), label: "Most MOTM votes in a game", who: names(r.mostMotmVotesInGame.holders), me: mine(r.mostMotmVotesInGame.holders) });
+    const held = rows.filter((x) => x.me).length;
+    if (rows.length >= 2) {
+      cards.push({
+        key: "records",
+        photo: null,
+        accent: "#f5d97a",
+        body: (
+          <>
+            <div className="wr-lab wr-rise">The record book</div>
+            <div className="wr-h wr-rise">{held > 0 ? "You're in it." : `${p.periodShort}'s best bits.`}</div>
+            <div className="wr-rb">
+              {rows.slice(0, 5).map((x) => (
+                <div key={x.k} className={"wr-rb-row wr-rise" + (x.me ? " me" : "")}>
+                  <b>{x.v}</b>
+                  <div>
+                    <span>{x.label}</span>
+                    <em>{x.who}</em>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="wr-grow" />
+            <div className="wr-p wr-rise">The full record book is under Results → Records.</div>
+          </>
+        ),
+      });
+    }
+  }
+
   if (d.predictions) {
     const pr = d.predictions;
     const head =
@@ -501,6 +589,9 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
         <div className="wr-chips">
           {d.topScorer && <div className="wr-chip wr-rise"><span className="k">{d.topScorer.goals}</span><span>goals for {d.topScorer.name}, the top scorer</span></div>}
           {c.mostApps && <div className="wr-chip wr-rise"><span className="k">{c.mostApps.apps}</span><span>games for {c.mostApps.name}, the most of anyone</span></div>}
+          {c.sellOutDays !== null && c.sellOutDays >= 1 && (
+            <div className="wr-chip wr-rise"><span className="k">{Math.round(c.sellOutDays)}d</span><span>before kickoff, games usually sold out. Book early.</span></div>
+          )}
         </div>
       </>
     ),
@@ -524,7 +615,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
             <div><span>Games</span><b>{d.apps}</b></div>
             <div><span>Goals</span><b>{d.goals}</b></div>
             <div><span>Record</span><b>{d.W}-{d.D}-{d.L}</b></div>
-            <div><span>Win rate</span><b style={{ color: "#86efac" }}>{d.myRate}%</b></div>
+            {d.W > 0 ? <div><span>Win rate</span><b style={{ color: "#86efac" }}>{d.myRate}%</b></div> : <div><span>Minutes</span><b>{d.minutes}</b></div>}
             {d.partner && <div className="wide"><span>Wins with</span><b>{d.partner.name} · {d.partner.rate}%</b></div>}
             {d.best && (
               <div className="wide">
@@ -859,7 +950,7 @@ export async function drawWrappedCard(opts: {
     ["GAMES", String(d.apps)],
     ["GOALS", String(d.goals)],
     ["RECORD", `${d.W}-${d.D}-${d.L}`],
-    ["WIN RATE", `${d.myRate}%`, "#86efac"],
+    d.W > 0 ? ["WIN RATE", `${d.myRate}%`, "#86efac"] : ["MINUTES", String(d.minutes)],
   ];
   const wide: [string, string][] = [];
   if (d.partner) wide.push(["WINS WITH", `${d.partner.name} · ${d.partner.rate}%`]);
@@ -1050,6 +1141,14 @@ const wrappedCss = `
 .wr-next{display:flex;flex-direction:column;gap:10px;margin-top:22px}
 .wr-next button{height:52px;border-radius:14px;border:0;font:inherit;font-weight:700;font-size:15px;cursor:pointer;background:rgba(255,255,255,.1);color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.2)}
 .wr-next .book{background:#e63946;box-shadow:0 10px 30px -8px rgba(230,57,70,.7)}
+
+.wr-rb{display:flex;flex-direction:column;gap:8px;margin-top:18px}
+.wr-rb-row{display:grid;grid-template-columns:56px minmax(0,1fr);gap:12px;align-items:center;min-height:60px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12)}
+.wr-rb-row>b{font-family:var(--display);font-weight:800;font-size:26px;text-align:center;font-variant-numeric:tabular-nums;color:var(--acc)}
+.wr-rb-row span{display:block;font-size:13.5px;font-weight:700}
+.wr-rb-row em{display:block;font-style:normal;font-size:12.5px;color:rgba(255,255,255,.72);margin-top:2px;line-height:1.35}
+.wr-rb-row.me{background:rgba(245,217,122,.14);border-color:rgba(245,217,122,.55);box-shadow:0 0 24px -8px rgba(245,217,122,.6)}
+.wr-rb-row.me em{color:#f5d97a;font-weight:700}
 
 /* The Fixtures banner that opens it. */
 .wr-banner-wrap{position:relative;margin-bottom:14px}
