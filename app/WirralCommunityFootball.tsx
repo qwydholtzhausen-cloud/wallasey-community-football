@@ -3691,7 +3691,10 @@ function App({ session }: { session: Session }) {
       if (winnerOf(g) === streakWinner) count++;
       else break;
     }
-    return count >= 2 ? { winner: streakWinner, count } : null;
+    if (count < 2) return null;
+    // For the banter line: when the other side last won, if ever.
+    const otherLastWin = scored.find((g) => winnerOf(g) && winnerOf(g) !== streakWinner);
+    return { winner: streakWinner, count, otherLastWon: otherLastWin?.date ?? null };
   }, [pastGames]);
 
   // Private per-player record - computed from the same past-games data as
@@ -3808,15 +3811,21 @@ function App({ session }: { session: Session }) {
                 <style>{wrappedBannerCss}</style>
                 <button className="wr-banner" onClick={() => setWrappedOpen(true)} aria-label={`Open your ${wrapped.periodLabel} Wrapped`}>
                   <span className="row">
-                    <span className="yr">{wrapped.periodShort.slice(0, 3).toUpperCase()}<span>WRAPPED</span></span>
+                    <span className="ball">
+                      <img src="/wrapped/ball.jpg" alt="" />
+                      <span className="go" aria-hidden="true">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5v9l7-4.5z" /></svg>
+                      </span>
+                    </span>
                     <span className="copy">
-                      <span className="h">
-                        Your {wrapped.periodShort}{wrapped.soFar ? " so far" : ", wrapped"}
+                      <span className="k">
+                        Wrapped
                         {!WRAPPED_MONTHLY_OPEN_TO_ALL && <span className="tag">ADMINS</span>}
                       </span>
+                      <span className="h">Your {wrapped.periodShort}{wrapped.soFar ? " so far" : ""}</span>
                       <span className="s">
-                        {wrapped.data.apps} games, {wrapped.data.goals} {wrapped.data.goals === 1 ? "goal" : "goals"}
-                        {wrapped.data.partner ? ", and the teammate you win with" : ""}. Tap to watch.
+                        {wrapped.data.apps} games · {wrapped.data.goals} {wrapped.data.goals === 1 ? "goal" : "goals"}
+                        {" · tap to watch"}
                       </span>
                     </span>
                   </span>
@@ -4840,15 +4849,28 @@ function App({ session }: { session: Session }) {
                   </div>
                 ))}
 
-                {rivalryStreak && (
-                  <div
-                    className="wcf-streak"
-                    style={{ borderColor: rivalryStreak.winner === "white" ? cs.team_white_color : cs.team_red_color }}
-                  >
-                    🔥 <strong>{rivalryStreak.winner === "white" ? cs.team_white_name : cs.team_red_name}</strong> have won{" "}
-                    {rivalryStreak.count} in a row
-                  </div>
-                )}
+                {rivalryStreak && (() => {
+                  const lead = rivalryStreak.winner === "white" ? cs.team_white_name : cs.team_red_name;
+                  const other = rivalryStreak.winner === "white" ? cs.team_red_name : cs.team_white_name;
+                  const color = rivalryStreak.winner === "white" ? cs.team_white_color : cs.team_red_color;
+                  return (
+                    // Same family as the Player of the Month card: a glow in
+                    // the leading team's own colour, the number up front.
+                    <div className="wcf-streak-card" style={{ "--team": color } as React.CSSProperties}>
+                      <div className="wcf-streak-n">{rivalryStreak.count}</div>
+                      <div className="wcf-streak-body">
+                        <div className="wcf-streak-eyebrow">
+                          <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M13.5 2.5c.4 3-1.2 4.6-2.7 6.1C9.4 10 8 11.4 8 14a4 4 0 0 0 8 0c0-1.2-.4-2.2-1-3 2.3.8 4 3.2 4 6a7 7 0 0 1-14 0c0-4.3 2.6-6.6 4.6-8.5 1.9-1.8 3.5-3.4 3.9-6z" /></svg>
+                          Winning run
+                        </div>
+                        <div className="wcf-streak-title">{lead} have won {rivalryStreak.count} in a row</div>
+                        <div className="wcf-streak-sub">
+                          {rivalryStreak.otherLastWon ? `${other} haven't won since ${fmtDate(rivalryStreak.otherLastWon)}` : `${other} are still waiting for a win`}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {(headToHead.white.played > 0 || headToHead.red.played > 0) && (
                   <div className="wcf-h2h">
@@ -10443,8 +10465,15 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pot-row-amount{font-family:var(--mono);font-weight:800;font-size:14px;flex:0 0 auto}
 .wcf-pot-row-amount.pos{color:var(--green)}
 .wcf-pot-row-amount.neg{color:var(--red-hi)}
-.wcf-streak{background:var(--panel);border:1px solid var(--line);border-left:3px solid;border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}
-.wcf-streak strong{color:var(--white)}
+.wcf-streak-card{position:relative;overflow:hidden;display:flex;align-items:center;gap:16px;border-radius:20px;padding:16px 18px;margin-bottom:14px;
+  background:var(--panel);border:1px solid var(--line);
+  background:radial-gradient(120% 160% at 0% 50%,color-mix(in srgb,var(--team) 30%,transparent),transparent 60%),var(--panel);
+  border:1px solid color-mix(in srgb,var(--team) 45%,transparent);box-shadow:0 18px 40px -26px var(--team)}
+.wcf-streak-n{flex:none;min-width:48px;text-align:center;font-family:var(--display);font-weight:800;font-size:54px;line-height:.9;letter-spacing:-.04em;color:var(--team);text-shadow:0 0 24px color-mix(in srgb,var(--team) 60%,transparent)}
+.wcf-streak-body{min-width:0}
+.wcf-streak-eyebrow{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#fb923c}
+.wcf-streak-title{font-family:var(--display);font-weight:800;font-size:18px;line-height:1.2;margin-top:4px;color:var(--white)}
+.wcf-streak-sub{font-size:12.5px;color:var(--dim);margin-top:4px}
 .wcf-h2h{
   background-image:linear-gradient(180deg,rgba(13,13,26,.55) 0%,rgba(13,13,26,.86) 38%,rgba(13,13,26,.98) 70%),url('/net-rain.jpg');
   background-size:cover;background-position:center 65%;

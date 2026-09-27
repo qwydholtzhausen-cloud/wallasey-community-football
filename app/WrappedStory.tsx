@@ -1217,21 +1217,26 @@ const wrappedCss = `
 .wr-h2h b{display:block;font-family:var(--display);font-size:34px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
 .wr-h2h div>span{display:block;font-size:11px;font-weight:700;color:rgba(255,255,255,.7);margin-top:4px}
 
-/* The Fixtures banner that opens it. */
+/* The Fixtures banner that opens it: a photo card like Player of the
+   Month, with the ribboned ball as its mark. */
 .wr-banner-wrap{position:relative;margin-bottom:14px}
-.wr-banner{position:relative;display:block;width:100%;text-align:left;border:0;cursor:pointer;padding:14px 40px 14px 14px;border-radius:18px;color:#fff;font:inherit;overflow:hidden;
-  background:radial-gradient(120% 140% at 100% 0%,rgba(230,57,70,.55),transparent 55%),radial-gradient(120% 140% at 0% 100%,rgba(139,107,232,.55),transparent 60%),#1a1430;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
-.wr-banner::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,.14) 45%,transparent 60%);transform:translateX(-100%);animation:wr-sheen 3.6s ease-in-out infinite;pointer-events:none}
+.wr-banner{position:relative;display:block;width:100%;text-align:left;border:0;cursor:pointer;padding:16px 16px 16px 14px;border-radius:20px;color:#fff;font:inherit;overflow:hidden;
+  background:#0d0d1a url(/wrapped/banner.jpg) right center/cover no-repeat;box-shadow:inset 0 0 0 1px rgba(139,107,232,.45),0 18px 40px -24px rgba(139,107,232,.8)}
+.wr-banner::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(13,13,26,.9) 0%,rgba(13,13,26,.6) 55%,rgba(13,13,26,.05) 100%);pointer-events:none}
+.wr-banner::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,.12) 45%,transparent 60%);transform:translateX(-100%);animation:wr-sheen 4s ease-in-out infinite;pointer-events:none}
 @keyframes wr-sheen{0%,55%{transform:translateX(-100%)}85%,100%{transform:translateX(100%)}}
 @media (prefers-reduced-motion:reduce){.wr-banner::after{animation:none}}
-.wr-banner .row{display:flex;align-items:center;gap:12px;position:relative;z-index:1}
-.wr-banner .yr{flex:none;width:52px;height:52px;border-radius:14px;background:rgba(13,13,26,.55);display:grid;place-items:center;align-content:center;font-family:var(--display);font-weight:800;font-size:13px;line-height:1;text-align:center;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}
-.wr-banner .yr span{display:block;font-size:8px;letter-spacing:.14em;color:#f8b3b8;margin-top:4px}
-.wr-banner .copy{flex:1;min-width:0}
-.wr-banner .h{display:block;font-family:var(--display);font-weight:800;font-size:15.5px;line-height:1.2}
-.wr-banner .s{display:block;font-size:12.5px;color:#d8d4ec;margin-top:3px;line-height:1.35}
-.wr-banner .tag{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.12em;color:#0d0d1a;background:#f5d97a;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:2px}
-.wr-banner-x{position:absolute;top:4px;right:4px;z-index:2;width:36px;height:36px;border:0;background:transparent;color:rgba(255,255,255,.6);font-size:18px;cursor:pointer;line-height:1;padding:0;display:grid;place-items:center}
+.wr-banner .row{display:flex;align-items:center;gap:14px;position:relative;z-index:1}
+.wr-banner .ball{position:relative;flex:none;width:64px;height:64px}
+.wr-banner .ball img{display:block;width:100%;height:100%;border-radius:16px;object-fit:cover;box-shadow:0 0 0 1px rgba(139,107,232,.5),0 0 24px -4px rgba(139,107,232,.7)}
+.wr-banner .copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding-right:18px}
+.wr-banner .k{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#f8b3b8}
+.wr-banner .h{font-family:var(--display);font-weight:800;font-size:18.5px;line-height:1.15;letter-spacing:-.01em}
+.wr-banner .s{font-size:12.5px;color:#d8d4ec;line-height:1.35}
+.wr-banner .tag{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.12em;color:#0d0d1a;background:#f5d97a;border-radius:4px;padding:1px 5px;margin-left:8px;vertical-align:1px}
+.wr-banner .go{position:absolute;right:-6px;bottom:-6px;width:24px;height:24px;border-radius:50%;background:#fff;color:#0d0d1a;display:grid;place-items:center;box-shadow:0 0 0 2px #0d0d1a,0 4px 12px -4px rgba(0,0,0,.6)}
+.wr-banner .go svg{margin-left:1px}
+.wr-banner-x{position:absolute;top:4px;right:4px;z-index:2;width:36px;height:36px;border:0;background:transparent;color:rgba(255,255,255,.7);font-size:18px;cursor:pointer;line-height:1;padding:0;display:grid;place-items:center}
 `;
 
 // Exported for the banner, which lives on the Fixtures tab.
