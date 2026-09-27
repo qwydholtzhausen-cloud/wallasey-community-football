@@ -7525,6 +7525,10 @@ function AccountPanel({
   // your tab, upcoming bookings) stay always open. Everything here is
   // either "set once, rarely touched again" or admin reference tooling.
   const [openAccountSettings, setOpenAccountSettings] = useState(false);
+  // Regulars book weeks ahead, so the full list can run to 20; the next few
+  // are what matter day to day.
+  const [showAllBookings, setShowAllBookings] = useState(false);
+  const BOOKINGS_SHOWN = 3;
   const [openRating, setOpenRating] = useState(false);
   const [openGuides, setOpenGuides] = useState(false);
   const [openClubSettings, setOpenClubSettings] = useState(false);
@@ -7692,7 +7696,7 @@ function AccountPanel({
             <span className="wcf-console-section-rule" />
             <span className="wcf-console-section-meta">{myUpcomingBookings.length}</span>
           </div>
-          {myUpcomingBookings.map(({ game, booking }) => {
+          {(showAllBookings ? myUpcomingBookings : myUpcomingBookings.slice(0, BOOKINGS_SHOWN)).map(({ game, booking }) => {
             const d = new Date(game.date + "T00:00:00");
             return (
               <div key={game.id} className="wcf-booking-row">
@@ -7712,6 +7716,11 @@ function AccountPanel({
               </div>
             );
           })}
+          {myUpcomingBookings.length > BOOKINGS_SHOWN && (
+            <button className="wcf-rec-more" onClick={() => setShowAllBookings((v) => !v)}>
+              {showAllBookings ? "Show fewer" : `Show all ${myUpcomingBookings.length} bookings`}
+            </button>
+          )}
         </>
       )}
 
@@ -9542,18 +9551,23 @@ function GameCard({
                 <div className="wcf-fx-bar-fill" style={{ width: `${fillPct}%` }} />
               </div>
             </div>
-            {isAdmin && (
-              <button
-                className="wcf-hero-edit-btn"
-                onClick={(e) => { e.stopPropagation(); onEdit(); }}
-                aria-label="Edit fixture"
-              >
-                {editIcon}
-              </button>
-            )}
+            {/* The admin pencil sits in the status column, beside the pill,
+                rather than in a column of its own that squeezed the title
+                onto two lines. */}
             <div className="wcf-fx-status">
               {waitingList.length > 0 && <span className="wcf-hero-waiting-chip">+{waitingList.length} WAITING</span>}
-              <span className={"wcf-fx-pill " + (full ? "full" : "open")}>{full ? "FULL" : `${spotsLeft} LEFT`}</span>
+              <span className="wcf-fx-status-row">
+                {isAdmin && (
+                  <button
+                    className="wcf-hero-edit-btn"
+                    onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                    aria-label="Edit fixture"
+                  >
+                    {editIcon}
+                  </button>
+                )}
+                <span className={"wcf-fx-pill " + (full ? "full" : "open")}>{full ? "FULL" : `${spotsLeft} LEFT`}</span>
+              </span>
             </div>
           </div>
           {payStrip}
@@ -9850,6 +9864,7 @@ const css = `
 .wcf-fx-row-top{display:flex;align-items:center;gap:13px;cursor:pointer}
 .wcf-fx-row .wcf-pay-strip,.wcf-fx-row .wcf-card-actions{margin:0}
 .wcf-fx-status{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:0 0 auto}
+.wcf-fx-status-row{display:flex;align-items:center;gap:6px}
 .wcf-fx-date{width:44px;flex:0 0 auto;text-align:center}
 .wcf-fx-day{font-family:var(--mono);font-weight:600;font-size:9px;letter-spacing:1.2px;color:var(--dim)}
 .wcf-fx-num{font-family:var(--display);font-weight:800;font-size:22px;line-height:1.15;color:var(--white)}
