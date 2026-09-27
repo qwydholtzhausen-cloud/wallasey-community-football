@@ -18,9 +18,8 @@
 // booking first.
 export const AUTO_REMOVE_UNPAID_BOOKINGS = false;
 
-// The Boot Room soft launch (2026-09-26). While false, only admins see the
-// Boot Room pill in the Feed tab, so they can seed real listings before
-// anyone else opens it - an empty directory doesn't get joined, which is
-// partly what killed the Clips page it replaces. Flip to true to open it
-// to every member.
-export const BOOT_ROOM_OPEN_TO_ALL = false;
+// The Boot Room soft launch (2026-09-26): while false, only admins saw the
+// Boot Room pill in the Feed tab, so they could seed it first. Opened to
+// every member 2026-09-27. Setting it back to false hides it from players
+// again without touching anyone's listings.
+export const BOOT_ROOM_OPEN_TO_ALL = true;
