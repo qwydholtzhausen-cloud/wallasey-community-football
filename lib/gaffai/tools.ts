@@ -262,6 +262,15 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     },
   },
   {
+    name: "get_wrapped_engagement",
+    description:
+      "How many people opened their monthly Wrapped (the full-screen story of their month), watched it to the final card, and shared it - with names, plus who has a Wrapped but hasn't opened it yet. Use for 'how many people watched Wrapped', 'who shared their Wrapped', 'has everyone seen September's'. This isn't shown anywhere in the app; you're the only way admins see it.",
+    input_schema: {
+      type: "object",
+      properties: { month: { type: "string", description: "YYYY-MM, e.g. 2026-09. Omit for the most recent month with any views." } },
+    },
+  },
+  {
     name: "find_flagged_feedback",
     description:
       "Answers an admin has flagged as wrong for later review (via the flag button on a GaffAI reply) - the original question, the answer that was flagged, who flagged it, and when. Use this for anything like 'what have people flagged about you' or 'any known mistakes to review'.",

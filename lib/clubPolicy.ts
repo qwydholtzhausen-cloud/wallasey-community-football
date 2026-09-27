@@ -30,18 +30,17 @@ export const BOOT_ROOM_OPEN_TO_ALL = true;
 // everyone the same day.
 export const CALENDAR_BUTTON_OPEN_TO_ALL = true;
 
-// Monthly "Wrapped" (2026-09-27): a player's own story of last month,
-// opened from a banner on Fixtures. Admins-only while it's tested on real
-// months; the year-end version on 1 January is the eventual goal. Flipping
-// this to true shows the monthly banner to every member.
-export const WRAPPED_MONTHLY_OPEN_TO_ALL = false;
+// Monthly "Wrapped" (2026-09-27): a player's own story of a month, opened
+// from a banner on Fixtures. Admins-only while tested on real months; it
+// opens to every member on this UK date (Tuesday 29 September 2026, the
+// day after September's last game). Set it to a far-future date to hide it
+// from players again.
+export const WRAPPED_OPEN_TO_ALL_FROM = "2026-09-29";
 
-// While testing, admins see the month in progress ("September so far"),
-// which updates as each game's score goes in. Turn this off at rollout so
-// admins see the finished month like everyone else.
+// Before the open date, admins see the month in progress ("September so
+// far"), updating as each score goes in, so there's something to test.
 export const WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR = true;
 
 // Players' first Wrapped: nobody but admins sees a month before this one,
-// so opening it up before the end of September doesn't show players an
-// August story for a few days - their first is September's, on 1 October.
+// so opening it up never shows players the August story.
 export const WRAPPED_FIRST_MONTH_FOR_ALL = "2026-09";

@@ -1034,6 +1034,53 @@ async function forgetStandingFact(admin: SupabaseClient, args: { fact_id: string
   return { forgotten: true };
 }
 
+// Wrapped engagement: who opened their month's story, watched it to the
+// final score card, and shared it. Deliberately not shown anywhere in the
+// app - admins get it by asking GaffAI.
+async function getWrappedEngagement(admin: SupabaseClient, args: { month?: string }) {
+  let monthKey: string = args.month ?? "";
+  if (!monthKey) {
+    const { data: latest } = await admin.from("wrapped_events").select("month_key").order("month_key", { ascending: false }).limit(1);
+    monthKey = (latest?.[0]?.month_key as string | undefined) ?? nowInLondon().slice(0, 7);
+  }
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) throw new Error("month must look like 2026-09");
+
+  const [{ data: events, error }, { data: games }] = await Promise.all([
+    admin.from("wrapped_events").select("player_id, event, created_at").eq("month_key", monthKey),
+    admin
+      .from("games")
+      .select("id, team_white_score, bookings(player_id, waiting, team)")
+      .gte("date", `${monthKey}-01`)
+      .lte("date", `${monthKey}-31`)
+      .not("team_white_score", "is", null),
+  ]);
+  if (error) throw new Error(error.message);
+
+  // Players who get a Wrapped that month: 2+ games with a team.
+  const apps: Record<string, number> = {};
+  for (const g of games ?? []) for (const b of (g.bookings ?? []) as { player_id: string; waiting: boolean; team: string | null }[]) {
+    if (!b.waiting && b.team) apps[b.player_id] = (apps[b.player_id] ?? 0) + 1;
+  }
+  const eligible = Object.keys(apps).filter((id) => apps[id] >= 2);
+  const rows = events ?? [];
+  const ids = [...new Set([...eligible, ...rows.map((r) => r.player_id)])];
+  const nameOf = await namesById(admin, ids);
+  const who = (e: string) => rows.filter((r) => r.event === e).map((r) => nameOf[r.player_id] ?? "Unknown");
+  const opened = new Set(rows.filter((r) => r.event === "opened").map((r) => r.player_id));
+  return {
+    month: monthKey,
+    players_with_a_wrapped: eligible.length,
+    opened: opened.size,
+    watched_to_the_end: who("finished").length,
+    shared: who("shared").length,
+    opened_by: who("opened"),
+    watched_to_the_end_by: who("finished"),
+    shared_by: who("shared"),
+    not_opened_yet: eligible.filter((id) => !opened.has(id)).map((id) => nameOf[id] ?? "Unknown"),
+    note: "Each person counts once per event per month. Admins' own test views are included.",
+  };
+}
+
 async function findBootRoomListings(admin: SupabaseClient, args: { search?: string; category?: string; limit?: number }) {
   // Small table, so filter in memory: matching a search term across the
   // tags array and the owner's name at the same time isn't something a
@@ -1226,6 +1273,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   save_standing_fact: saveStandingFact,
   forget_standing_fact: forgetStandingFact,
   find_boot_room_listings: findBootRoomListings,
+  get_wrapped_engagement: getWrappedEngagement,
   find_flagged_feedback: findFlaggedFeedback,
 };
 

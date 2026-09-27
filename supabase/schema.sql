@@ -1627,3 +1627,24 @@ create policy "boot_room_logos_owner_update" on storage.objects for update
 drop policy if exists "boot_room_logos_owner_or_admin_delete" on storage.objects;
 create policy "boot_room_logos_owner_or_admin_delete" on storage.objects for delete
   using (bucket_id = 'boot-room-logos' and (public.is_admin() or public.owns_boot_room_logo(name)));
+
+-- ─────────────────────────────────────────────────────────────────
+-- Wrapped engagement (2026-09-27): one row per person, per month, per
+-- event - "opened" the story, "finished" (reached the final score card),
+-- "shared" the poster. The unique key makes each a count of people, not
+-- taps. Players can only record their own; only admins can read them.
+-- ─────────────────────────────────────────────────────────────────
+create table if not exists public.wrapped_events (
+  player_id uuid not null references public.profiles (id) on delete cascade,
+  month_key text not null check (month_key ~ '^\d{4}-\d{2}$'),
+  event text not null check (event in ('opened', 'finished', 'shared')),
+  created_at timestamptz not null default now(),
+  primary key (player_id, month_key, event)
+);
+
+alter table public.wrapped_events enable row level security;
+
+drop policy if exists "wrapped_events_insert_own" on public.wrapped_events;
+create policy "wrapped_events_insert_own" on public.wrapped_events for insert with check (player_id = auth.uid());
+drop policy if exists "wrapped_events_select_admin" on public.wrapped_events;
+create policy "wrapped_events_select_admin" on public.wrapped_events for select using (public.is_admin());

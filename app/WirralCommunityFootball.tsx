@@ -10,7 +10,7 @@ import { defaultPitchCost } from "../lib/pitchCost";
 import {
   BOOT_ROOM_OPEN_TO_ALL,
   CALENDAR_BUTTON_OPEN_TO_ALL,
-  WRAPPED_MONTHLY_OPEN_TO_ALL,
+  WRAPPED_OPEN_TO_ALL_FROM,
   WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR,
   WRAPPED_FIRST_MONTH_FOR_ALL,
 } from "../lib/clubPolicy";
@@ -2994,16 +2994,42 @@ function App({ session }: { session: Session }) {
           </svg>
         ),
         tone: "blue",
-        text: (
-          <>
-            Full time
-            <div className="wcf-feed-score-chip">
-              <span style={{ color: cs.team_white_color }}>{g.team_white_score}</span>
-              <span className="wcf-feed-score-dash">–</span>
-              <span style={{ color: cs.team_red_color }}>{g.team_red_score}</span>
+        text: (() => {
+          // A proper result card, in the same style as the Scores rows: who
+          // won, the score in team colours, and who scored.
+          const w = g.team_white_score;
+          const r = g.team_red_score;
+          const outcome = w > r ? "white" : r > w ? "red" : "draw";
+          const scorers = goalRows
+            .filter((row) => row.game_id === g.id && row.goals > 0)
+            .sort((a, b) => b.goals - a.goals || a.player.display_name.localeCompare(b.player.display_name));
+          return (
+            <div className="wcf-ft">
+              <div className="wcf-ft-head">
+                <span className="wcf-ft-label">Full time</span>
+                <span
+                  className={"wcf-res-pill " + outcome}
+                  style={outcome === "white" ? { background: cs.team_white_color } : outcome === "red" ? { background: cs.team_red_color } : undefined}
+                >
+                  {outcome === "draw" ? "Draw" : `${outcome === "white" ? cs.team_white_name : cs.team_red_name} win`}
+                </span>
+              </div>
+              <div className="wcf-ft-score">
+                <span className="wcf-ft-team">{cs.team_white_name}</span>
+                <b style={{ color: cs.team_white_color }}>{w}</b>
+                <span className="wcf-ft-dash">–</span>
+                <b style={{ color: cs.team_red_color }}>{r}</b>
+                <span className="wcf-ft-team">{cs.team_red_name}</span>
+              </div>
+              {scorers.length > 0 && (
+                <div className="wcf-ft-scorers">
+                  {scorers.slice(0, 4).map((row) => `${row.player.display_name} ${row.goals}`).join(" · ")}
+                  {scorers.length > 4 ? ` +${scorers.length - 4} more` : ""}
+                </div>
+              )}
             </div>
-          </>
-        ),
+          );
+        })(),
       });
 
       if (!motmVotingOpen(g)) {
@@ -3120,7 +3146,7 @@ function App({ session }: { session: Session }) {
     }
 
     return items.sort((a, b) => b.ts - a.ts);
-  }, [games, pastGames, motmTallyByGame, potLedger, profiles, cs.team_white_name, cs.team_red_name, nowUk]);
+  }, [games, pastGames, motmTallyByGame, potLedger, profiles, goalRows, cs.team_white_name, cs.team_red_name, cs.team_white_color, cs.team_red_color, nowUk]);
 
   const visibleFeedItems = useMemo(() => {
     // In the normal feed view, archived items are hidden. The "Show
@@ -3198,12 +3224,27 @@ function App({ session }: { session: Session }) {
   // Monthly Wrapped: your own story of last month, same "last completed
   // month" window as Player of the Month above, and computed the same way
   // - from rows already loaded, nothing stored. Admins-only while testing
-  // (WRAPPED_MONTHLY_OPEN_TO_ALL). The month before feeds the "vs July"
+  // until WRAPPED_OPEN_TO_ALL_FROM. The month before feeds the "vs July"
   // comparisons; everything earlier only decides who's new to your circle.
   // Admins testing it (WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR) get the month in
   // progress instead, so there's something real to check before it ends.
-  const wrappedSoFar = isAdmin && WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR;
-  const wrappedMonthKey = wrappedSoFar ? nowUk.slice(0, 7) : previousMonthKey(nowUk);
+  const wrappedOpenToAll = nowUk.slice(0, 10) >= WRAPPED_OPEN_TO_ALL_FROM;
+  const wrappedSoFar = isAdmin && WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR && !wrappedOpenToAll;
+  // A month's Wrapped appears the moment its last game is played, scored
+  // and its MOTM vote has closed - not on the 1st - so September's goes
+  // live once Monday 28th's result is in. Until then it's last month's.
+  const thisMonthKey = nowUk.slice(0, 7);
+  const thisMonthDone = useMemo(() => {
+    const month = games.filter((g) => g.published && g.date.startsWith(thisMonthKey));
+    return (
+      month.length > 0 &&
+      month.every(
+        (g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk && g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g)
+      )
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, thisMonthKey, nowUk]);
+  const wrappedMonthKey = wrappedSoFar || thisMonthDone ? thisMonthKey : previousMonthKey(nowUk);
   const wrapped = useMemo(() => {
     const scored = pastGames.filter((g) => g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g));
     const before = previousMonthKey(wrappedMonthKey + "-15");
@@ -3235,7 +3276,17 @@ function App({ session }: { session: Session }) {
   // The unwrap clip plays the first time each month's Wrapped is opened on
   // this phone; worked out when the story opens, so reopening skips it.
   const [wrappedIntroDue, setWrappedIntroDue] = useState(false);
+  // Engagement: one row per person per month per event (opened / finished /
+  // shared). A repeat insert just hits the unique key and is ignored, so
+  // these are counts of people. Never blocks or errors the story itself.
+  function trackWrapped(event: "opened" | "finished" | "shared") {
+    void supabase
+      .from("wrapped_events")
+      .insert({ player_id: myId, month_key: wrappedMonthKey, event })
+      .then(() => undefined, () => undefined);
+  }
   function openWrapped() {
+    trackWrapped("opened");
     let seen = false;
     try {
       seen = localStorage.getItem(`wcf-wrapped-intro-${myId}-${wrappedMonthKey}`) === "true";
@@ -3260,10 +3311,11 @@ function App({ session }: { session: Session }) {
     setWrappedDismissed(true);
   }
   const showWrappedBanner =
-    !!wrapped && !wrappedDismissed && (isAdmin || (WRAPPED_MONTHLY_OPEN_TO_ALL && wrappedMonthKey >= WRAPPED_FIRST_MONTH_FOR_ALL));
+    !!wrapped && !wrappedDismissed && (isAdmin || (wrappedOpenToAll && wrappedMonthKey >= WRAPPED_FIRST_MONTH_FOR_ALL));
 
   async function shareWrapped() {
     if (!wrapped) return;
+    trackWrapped("shared");
     try {
       const blob = await drawWrappedCard({ data: wrapped.data, periodLabel: wrapped.periodLabel, whiteName: cs.team_white_name, redName: cs.team_red_name });
       const file = new File([blob], `wrapped-${wrapped.periodKey}.png`, { type: "image/png" });
@@ -3839,7 +3891,7 @@ function App({ session }: { session: Session }) {
                     <span className="copy">
                       <span className="k">
                         Wrapped
-                        {!WRAPPED_MONTHLY_OPEN_TO_ALL && <span className="tag">ADMINS</span>}
+                        {!wrappedOpenToAll && <span className="tag">ADMINS</span>}
                       </span>
                       <span className="h">Your {wrapped.periodShort}{wrapped.soFar ? " so far" : ""}</span>
                       <span className="s">
@@ -5807,6 +5859,7 @@ function App({ session }: { session: Session }) {
           myId={myId}
           onClose={() => setWrappedOpen(false)}
           onShare={shareWrapped}
+          onFinished={() => trackWrapped("finished")}
           playIntro={wrappedIntroDue}
           onIntroSeen={() => {
             try {
@@ -11225,6 +11278,15 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-board-header .wcf-board-count.on{background:none;color:#f5d97a;-webkit-text-fill-color:#f5d97a}
 .wcf-apps-badge{font-family:var(--sans);text-transform:uppercase;letter-spacing:.08em;font-size:9.5px;color:#f5d97a;background:transparent;border:1px solid rgba(245,217,122,.45);border-radius:4px;padding:1px 5px}
 .wcf-lb-you-badge{background:#f5d97a;color:#0d0d1a}
+.wcf-ft{display:flex;flex-direction:column;gap:6px}
+.wcf-ft-head{display:flex;align-items:center;gap:8px}
+.wcf-ft-label{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.wcf-ft-head .wcf-res-pill{margin-left:0}
+.wcf-ft-score{display:flex;align-items:baseline;gap:8px}
+.wcf-ft-score b{font-family:var(--display);font-weight:800;font-size:26px;line-height:1}
+.wcf-ft-dash{color:var(--dim);font-family:var(--display);font-weight:700;font-size:18px}
+.wcf-ft-team{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.wcf-ft-scorers{font-size:12px;color:var(--dim);line-height:1.45}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted

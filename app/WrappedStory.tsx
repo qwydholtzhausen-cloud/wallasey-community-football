@@ -33,6 +33,7 @@ export interface WrappedStoryProps {
   onBootRoom: () => void;
   // The unwrap clip plays first, once per month per phone.
   playIntro?: boolean;
+  onFinished?: () => void; // reached the final score card
   onIntroSeen?: () => void;
 }
 
@@ -739,6 +740,12 @@ export default function WrappedStory(props: WrappedStoryProps) {
     [props.data, props.prev, props.periodKey, props.soFar]
   );
   const last = cards.length - 1;
+
+  // "Watched to the end" = reached the final score card.
+  useEffect(() => {
+    if (cards[idx]?.key === "summary") props.onFinished?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx]);
 
   // Warm the photos so each card's background is there when it arrives.
   useEffect(() => {
