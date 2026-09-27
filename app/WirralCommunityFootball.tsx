@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
 import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey } from "../lib/time";
@@ -2922,12 +2922,12 @@ function App({ session }: { session: Session }) {
   }, [motmVotes]);
 
   const potLedger = useMemo(() => {
-    // Counts as soon as a game has any confirmed payment - people pay in
-    // advance to secure a spot, so that money is real before kickoff, not
-    // after. Games with zero confirmed payments are excluded entirely
-    // (rather than showing an immediate -pitch_cost the moment a fixture
-    // is created, before anyone's even had a chance to book).
-    const autoEntries = games
+    // Only games that have been played. Counting a future game as soon as
+    // anyone paid early booked its whole pitch hire against the pot straight
+    // away (five early payers = +£25 against −£55), so the total dipped
+    // every time people paid ahead. Games with no confirmed payments are
+    // still left out.
+    const autoEntries = pastGames
       .filter((g) => g.bookings.some((b) => !b.waiting && b.status === "confirmed"))
       .map((g) => {
         // Pot-exempt bookings (prize/carried-over) are still real confirmed
@@ -2942,6 +2942,7 @@ function App({ session }: { session: Session }) {
           description: `${g.venue} · ${fmtDate(g.date)} — ${confirmedPaid} paid × £${g.price} − £${g.pitch_cost} pitch`,
           category: "pitch" as PotCategory,
           kind: "auto" as const,
+          paid: confirmedPaid,
         };
       });
     const manualEntries = potEntries.map((e) => ({
@@ -2951,9 +2952,10 @@ function App({ session }: { session: Session }) {
       amount: e.amount,
       description: e.description,
       kind: "manual" as const,
+      paid: 0,
     }));
     return [...autoEntries, ...manualEntries].sort((a, b) => b.date.localeCompare(a.date));
-  }, [games, potEntries]);
+  }, [pastGames, potEntries]);
   const potTotal = useMemo(() => potLedger.reduce((sum, e) => sum + e.amount, 0), [potLedger]);
 
   // Income/expenses computed from source data (games, manual entries)
@@ -2963,7 +2965,7 @@ function App({ session }: { session: Session }) {
   const financeSummary = useMemo(() => {
     let grossIncome = 0;
     let pitchExpense = 0;
-    for (const g of games) {
+    for (const g of pastGames) {
       const confirmedTotal = g.bookings.filter((b) => !b.waiting && b.status === "confirmed").length;
       if (confirmedTotal === 0) continue; // matches potLedger's own inclusion rule
       const confirmedPaid = g.bookings.filter((b) => !b.waiting && b.status === "confirmed" && !b.pot_exempt_reason).length;
@@ -2988,7 +2990,7 @@ function App({ session }: { session: Session }) {
     const byFixture = potLedger.filter((e) => e.kind === "auto").slice(0, 8);
 
     return { income: grossIncome + manualIncome, expenses: pitchExpense + manualExpense, byCategory, balancePoints, byFixture };
-  }, [games, potEntries, potLedger]);
+  }, [pastGames, potEntries, potLedger]);
 
   function exportFinanceCsv() {
     const rows = [
@@ -5933,33 +5935,92 @@ function App({ session }: { session: Session }) {
               const hi = Math.max(...series, 1);
               const lo = Math.min(...series, 0);
               const pt = (v: number, i: number) => {
-                const x = (i / Math.max(series.length - 1, 1)) * 320;
-                const y = 66 - ((v - lo) / Math.max(hi - lo, 1)) * 58;
+                const x = (i / Math.max(series.length - 1, 1)) * 300;
+                const y = 74 - ((v - lo) / Math.max(hi - lo, 1)) * 66;
                 return `${Math.round(x)},${Math.round(y)}`;
               };
               const sparkLine = series.map(pt).join(" ");
-              const sparkFill = `0,70 ${sparkLine} 320,70`;
+              const sparkFill = `0,80 ${sparkLine} 300,80`;
+              const gameEntries = potLedger.filter((e) => e.kind === "auto");
+              const lastGame = gameEntries[0];
+              const firstDate = chronological[0]?.date;
+              const shortDate = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+              const spent = (Object.keys(financeSummary.byCategory) as PotCategory[]).filter((c) => c !== "pitch" && financeSummary.byCategory[c] > 0);
+              const money = (n: number) => `${n < 0 ? "−" : ""}£${Math.abs(n) % 1 === 0 ? Math.abs(n).toFixed(0) : Math.abs(n).toFixed(2)}`;
 
               return (
                 <>
-                  <div className="wcf-pot-total">
-                    <div className="wcf-pot-total-label">Community pot</div>
-                    <div className={"wcf-pot-total-amount" + (isAdmin ? " admin" : "") + (potTotal < 0 ? " negative" : "")}>
-                      {potTotal < 0 ? "−" : ""}£{Math.abs(potTotal).toFixed(2)}
-                    </div>
-                    <p className="wcf-pot-total-note">
-                      Built up from game surpluses (match fees vs pitch hire) plus socials, sponsorship and other contributions.
-                      Goes towards equipment, socials and running the club.
-                    </p>
-
-                    {!isAdmin && (
-                      <div className="wcf-pot-tags">
-                        <span className="wcf-pot-tag">Equipment</span>
-                        <span className="wcf-pot-tag">Socials</span>
-                        <span className="wcf-pot-tag">Running the club</span>
+                  {/* Everyone sees the pot grow game by game; the amounts are
+                      the club's (fees in minus pitch hire), never anyone's
+                      own payment. */}
+                  <div className="wcf-pot-hero">
+                    <div className="wcf-pot-hero-k">Community pot</div>
+                    <div className={"wcf-pot-hero-amt" + (potTotal < 0 ? " negative" : "")}>{money(potTotal)}</div>
+                    {lastGame && (
+                      <div className="wcf-pot-hero-sub">
+                        <b>{lastGame.amount >= 0 ? "+" : ""}{money(lastGame.amount)}</b> from {fmtDate(lastGame.date)} · <b>{gameEntries.length}</b> {gameEntries.length === 1 ? "game" : "games"}
+                        {firstDate ? ` since ${shortDate(firstDate)}` : ""}
                       </div>
                     )}
+                    {series.length > 1 && (
+                      <>
+                        <svg viewBox="0 0 300 80" preserveAspectRatio="none" className="wcf-pot-hero-spark" aria-hidden="true">
+                          <polygon points={sparkFill} fill="rgba(34,197,94,.16)" />
+                          <polyline points={sparkLine} fill="none" stroke="#22c55e" strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                        </svg>
+                        <div className="wcf-pot-hero-axis"><span>{shortDate(chronological[0].date)}</span><span>{shortDate(chronological[chronological.length - 1].date)}</span></div>
+                      </>
+                    )}
                   </div>
+
+                  {!isAdmin && (
+                    <>
+                      <div className="wcf-pot-card">
+                        <div className="wcf-pot-card-h">So far</div>
+                        <div className="wcf-pot-split">
+                          <span><b>{money(financeSummary.income)}</b>{potEntries.some((e) => e.amount > 0) ? "Money in" : "Match fees"}</span>
+                          <span><b className="out">{money(-financeSummary.expenses)}</b>{spent.length > 0 ? "Money out" : "Pitch hire"}</span>
+                          <span><b className="in">{money(potTotal)}</b>In the pot</span>
+                        </div>
+                      </div>
+                      {gameEntries.length > 0 && (
+                        <div className="wcf-pot-card">
+                          <div className="wcf-pot-card-h">
+                            Latest games
+                            <span>avg {money(gameEntries.reduce((sum, e) => sum + e.amount, 0) / gameEntries.length)}</span>
+                          </div>
+                          {gameEntries.slice(0, 3).map((e) => (
+                            <div key={e.id} className="wcf-pot-led">
+                              <div>
+                                {fmtDate(e.date)}
+                                <div className="wcf-pot-led-sub">{e.paid} paid</div>
+                              </div>
+                              <span className={e.amount < 0 ? "out" : ""}>{e.amount >= 0 ? "+" : ""}{money(e.amount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="wcf-pot-card">
+                        <div className="wcf-pot-card-h">Where it&apos;s gone</div>
+                        {spent.length === 0 ? (
+                          <p className="wcf-pot-empty">Nothing spent yet. The pot goes towards equipment, socials and running the club, and anything spent will show here.</p>
+                        ) : (
+                          potEntries
+                            .filter((e) => e.amount < 0)
+                            .slice(0, 5)
+                            .map((e) => (
+                              <div key={e.id} className="wcf-pot-led">
+                                <div>
+                                  {e.description}
+                                  <div className="wcf-pot-led-sub">{POT_CATEGORY_LABEL[e.category]} · {fmtDate(e.created_at.slice(0, 10))}</div>
+                                </div>
+                                <span className="out">{money(e.amount)}</span>
+                              </div>
+                            ))
+                        )}
+                      </div>
+                    </>
+                  )}
 
                 {isAdmin && (
                   <>
@@ -5993,16 +6054,6 @@ function App({ session }: { session: Session }) {
                             <span className="wcf-fin-fx-net red">£{(m.amount_pence / 100).toFixed(2)}</span>
                           </div>
                         ))}
-                      </div>
-                    )}
-
-                    {potLedger.length > 0 && (
-                      <div className="wcf-fin-card">
-                        <div className="wcf-fin-card-head">Balance over time</div>
-                        <svg viewBox="0 0 320 70" preserveAspectRatio="none" className="wcf-pot-spark">
-                          <polyline points={sparkFill} fill="rgba(34,197,94,.18)" stroke="none" />
-                          <polyline points={sparkLine} stroke="var(--green)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" fill="none" />
-                        </svg>
                       </div>
                     )}
 
@@ -6140,7 +6191,7 @@ function App({ session }: { session: Session }) {
                         )}
                       </div>
                     ))}
-                    {potLedger.length > 0 && <p className="wcf-pot-auto-note">Match surpluses are added automatically the morning after each fixture.</p>}
+                    {potLedger.length > 0 && <p className="wcf-pot-auto-note">Match surpluses are added automatically once each fixture has been played.</p>}
 
                     <button className="wcf-ghost wcf-fin-export" onClick={exportFinanceCsv}>⬇ Export season as CSV</button>
                   </>
@@ -6247,7 +6298,7 @@ function App({ session }: { session: Session }) {
         />
       )}
 
-      {isAdmin && myId && <GaffAIChat getFreshAccessToken={getFreshAccessToken} onFixtureCreated={loadGames} myId={myId} askConfirm={askConfirm} />}
+      {isAdmin && myId && <GaffAIChat getFreshAccessToken={getFreshAccessToken} onFixtureCreated={loadGames} myId={myId} myName={myProfile?.display_name ?? ""} askConfirm={askConfirm} />}
 
       {playerCardId && (() => {
         const cardProfile = profiles.find((p) => p.id === playerCardId);
@@ -6717,30 +6768,108 @@ interface GaffAINudge {
 // a fixed 5 would never hint at most of them. A random 5 each time the
 // chat resets means repeat use gradually surfaces the full range instead
 // of anchoring on the same five forever.
-const GAFFAI_SUGGESTION_POOL = [
-  "Who's unpaid for the next game?",
-  "Who's on the waiting list?",
-  "Who hasn't been rated yet?",
-  "Who won MOTM last month?",
-  "Is anyone currently blocked from booking?",
-  "Suggest balanced teams for the next game",
-  "How much is in the pot?",
-  "Who's got the highest win percentage?",
-  "Who's winning the prediction league?",
-  "Any duplicate player profiles?",
-  "Who hasn't added an emergency contact?",
-  "Anyone with broken push notifications?",
-  "What's our default match price?",
-  "Who's lost the most games?",
-];
+// Grouped so the three rows read as Players / Money / Games, each
+// scrolling sideways instead of stacking five questions over the chat.
+const GAFFAI_SUGGESTION_POOL: Record<string, string[]> = {
+  Players: [
+    "Who hasn't been rated yet?",
+    "Any duplicate player profiles?",
+    "Who's got the highest win percentage?",
+    "Who hasn't added an emergency contact?",
+    "Anyone with broken push notifications?",
+    "Who's lost the most games?",
+  ],
+  Money: [
+    "Who's unpaid for the next game?",
+    "Is anyone currently blocked from booking?",
+    "How much is in the pot?",
+    "What's our default match price?",
+  ],
+  Games: [
+    "How's the next game looking?",
+    "Who's on the waiting list?",
+    "Who won MOTM last month?",
+    "Suggest balanced teams for the next game",
+    "Who's winning the prediction league?",
+  ],
+};
 
-function pickGaffAISuggestions(): string[] {
-  const shuffled = [...GAFFAI_SUGGESTION_POOL];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+function pickGaffAISuggestions(): { group: string; items: string[] }[] {
+  return Object.entries(GAFFAI_SUGGESTION_POOL).map(([group, pool]) => {
+    const shuffled = [...pool];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return { group, items: shuffled.slice(0, 3) };
+  });
+}
+
+// GaffAI writes light markdown (**bold**, "- " bullets, numbered lists,
+// "### " headings). Shown as real formatting rather than raw symbols.
+function GaffAIText({ text }: { text: string }) {
+  const inline = (line: string, key: string) =>
+    line.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+      part.length > 4 && part.startsWith("**") && part.endsWith("**") ? (
+        <b key={key + i}>{part.slice(2, -2)}</b>
+      ) : (
+        <Fragment key={key + i}>{part}</Fragment>
+      )
+    );
+  const blocks: React.ReactNode[] = [];
+  const st: { list: { ordered: boolean; items: string[] } | null; para: string[] } = { list: null, para: [] };
+  const flushPara = () => {
+    if (st.para.length === 0) return;
+    const lines = st.para;
+    blocks.push(
+      <p key={"p" + blocks.length}>
+        {lines.map((l, i) => (
+          <Fragment key={i}>
+            {i > 0 && <br />}
+            {inline(l, "l" + i)}
+          </Fragment>
+        ))}
+      </p>
+    );
+    st.para = [];
+  };
+  const flushList = () => {
+    if (!st.list) return;
+    const { ordered, items } = st.list;
+    const children = items.map((it, i) => <li key={i}>{inline(it, "i" + i)}</li>);
+    blocks.push(ordered ? <ol key={"o" + blocks.length}>{children}</ol> : <ul key={"u" + blocks.length}>{children}</ul>);
+    st.list = null;
+  };
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const heading = line.match(/^#{1,4}\s+(.*)$/);
+    if (bullet || numbered) {
+      flushPara();
+      const ordered = !bullet;
+      if (!st.list || st.list.ordered !== ordered) {
+        flushList();
+        st.list = { ordered, items: [] };
+      }
+      st.list.items.push((bullet ?? numbered)![1]);
+      continue;
+    }
+    flushList();
+    if (heading) {
+      flushPara();
+      blocks.push(<div key={"h" + blocks.length} className="gaffai-h">{heading[1].replace(/\*\*/g, "")}</div>);
+      continue;
+    }
+    if (!line.trim()) {
+      flushPara();
+      continue;
+    }
+    st.para.push(line);
   }
-  return shuffled.slice(0, 5);
+  flushPara();
+  flushList();
+  return <>{blocks}</>;
 }
 
 // GaffAI's mark - a tactical "G" arc breaking into an arrow, with a
@@ -7575,11 +7704,13 @@ function GaffAIChat({
   getFreshAccessToken,
   onFixtureCreated,
   myId,
+  myName,
   askConfirm,
 }: {
   getFreshAccessToken: () => Promise<string | null>;
   onFixtureCreated: () => void;
   myId: string;
+  myName: string;
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
@@ -7588,7 +7719,7 @@ function GaffAIChat({
   const [loading, setLoading] = useState(false);
   const [nudges, setNudges] = useState<GaffAINudge[]>([]);
   const [flaggedIndexes, setFlaggedIndexes] = useState<Set<number>>(new Set());
-  const [suggestions, setSuggestions] = useState<string[]>(pickGaffAISuggestions);
+  const [suggestions, setSuggestions] = useState(pickGaffAISuggestions);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -7766,8 +7897,10 @@ function GaffAIChat({
               <div className="gaffai-sheet-ico">
                 <GaffAILogo size={27} />
               </div>
-              <div className="gaffai-sheet-title">GaffAI</div>
-              <span className="gaffai-sheet-tag">Admin only</span>
+              <div className="gaffai-sheet-titles">
+                <div className="gaffai-sheet-title">GaffAI</div>
+                <div className="gaffai-sheet-sub">Admins only · asks before changing anything</div>
+              </div>
               <button className="gaffai-sheet-reset" onClick={resetChat} aria-label="Reset conversation" title="Reset">
                 ↺
               </button>
@@ -7775,21 +7908,39 @@ function GaffAIChat({
                 ✕
               </button>
             </div>
-            <div className="gaffai-sheet-caption">Answers questions and can act on some things — anything that changes something asks first.</div>
-
             <div className="gaffai-messages" ref={scrollRef}>
-              {nudges.map((n) => (
-                <div key={n.key} className="gaffai-msg bot nudge">
-                  {n.text}
-                  <button className="gaffai-nudge-dismiss" onClick={() => dismissNudge(n.key)} aria-label="Dismiss">
-                    ✕
-                  </button>
-                </div>
-              ))}
-              <div className="gaffai-msg bot">Alright — what do you need?</div>
+              {nudges.map((n) => {
+                const money = /^(unpaid|overdue)-/.test(n.key);
+                return (
+                  <div key={n.key} className="gaffai-needs">
+                    <div className="gaffai-needs-k">Needs you</div>
+                    <div className="gaffai-needs-t">{n.text}</div>
+                    <div className="gaffai-needs-acts">
+                      <button
+                        className="gaffai-needs-go"
+                        disabled={loading}
+                        onClick={() => send(money ? `Draft a short payment reminder for this: ${n.text}` : `What should I do about this? ${n.text}`)}
+                      >
+                        {money ? "Draft a reminder" : "What should I do?"}
+                      </button>
+                      <button className="gaffai-needs-x" onClick={() => dismissNudge(n.key)}>Dismiss</button>
+                    </div>
+                  </div>
+                );
+              })}
+              {messages.length === 0 && (() => {
+                const h = Number(nowInLondon().slice(11, 13));
+                const first = myName.trim().split(/\s+/)[0];
+                return (
+                  <div className="gaffai-hello">
+                    <div className="gaffai-hello-t">{h < 12 ? "Morning" : h < 18 ? "Afternoon" : "Evening"}{first ? `, ${first}` : ""}.</div>
+                    <div className="gaffai-hello-s">Ask about players, payments, games or stats.</div>
+                  </div>
+                );
+              })()}
               {messages.map((m, i) => (
                 <div key={i} className={"gaffai-msg " + (m.role === "user" ? "user" : "bot") + (m.action ? " action-card" : "")}>
-                  {m.text}
+                  {m.role === "assistant" ? <GaffAIText text={m.text} /> : m.text}
                   {m.role === "assistant" && !m.action && (
                     <button
                       className={"gaffai-flag" + (flaggedIndexes.has(i) ? " flagged" : "")}
@@ -7826,11 +7977,18 @@ function GaffAIChat({
             </div>
 
             {messages.length === 0 && (
-              <div className="gaffai-chips">
-                {suggestions.map((s) => (
-                  <button key={s} className="gaffai-chip" onClick={() => send(s)}>
-                    {s}
-                  </button>
+              <div className="gaffai-chip-groups">
+                {suggestions.map((grp) => (
+                  <div key={grp.group}>
+                    <div className="gaffai-chip-label">{grp.group}</div>
+                    <div className="gaffai-chips">
+                      {grp.items.map((q) => (
+                        <button key={q} className="gaffai-chip" onClick={() => send(q)}>
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
@@ -11691,10 +11849,12 @@ button.wcf-glance-card:disabled{cursor:default}
 .gaffai-sheet{width:100%; max-width:520px; height:min(82vh,720px); background:#131624; border-radius:22px 22px 0 0;
   box-shadow:0 -20px 50px -20px rgba(0,0,0,.6); display:flex; flex-direction:column; border:1px solid var(--line); border-bottom:none}
 .gaffai-sheet-handle{width:36px; height:4px; border-radius:4px; background:rgba(148,163,184,.3); margin:10px auto 2px}
-.gaffai-sheet-head{display:flex; align-items:center; gap:10px; padding:10px 16px 12px; border-bottom:1px solid var(--line)}
-.gaffai-sheet-ico{width:32px; height:32px; border-radius:10px; background:rgba(46,116,204,.16); border:1px solid rgba(46,116,204,.36);
+.gaffai-sheet-head{display:flex; align-items:center; gap:10px; padding:10px 16px 12px; border-bottom:1px solid var(--line); background:radial-gradient(100% 140% at 0% 0%,rgba(245,217,122,.12),transparent 60%)}
+.gaffai-sheet-titles{min-width:0}
+.gaffai-sheet-sub{font-size:11px; color:var(--dim); margin-top:1px}
+.gaffai-sheet-ico{width:36px; height:36px; border-radius:12px; background:linear-gradient(135deg,#1d2438,#0d0d1a); border:1px solid rgba(245,217,122,.4); color:#f5d97a;
   display:flex; align-items:center; justify-content:center; font-size:15px}
-.gaffai-sheet-title{font-family:var(--display); font-weight:700; font-size:14.5px}
+.gaffai-sheet-title{font-family:var(--display); font-weight:800; font-size:16px}
 .gaffai-sheet-tag{font-size:9px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--amber);
   background:rgba(234,179,8,.12); border:1px solid rgba(234,179,8,.3); padding:2px 7px; border-radius:20px; margin-left:2px}
 .gaffai-sheet-reset,.gaffai-sheet-close{width:36px; height:36px; border-radius:50%; background:rgba(148,163,184,.1); border:none; color:#cbd5e1; font-size:15px; cursor:pointer}
@@ -11702,8 +11862,16 @@ button.wcf-glance-card:disabled{cursor:default}
 .gaffai-sheet-caption{padding:10px 16px 2px; font-size:11.5px; color:var(--dim); line-height:1.5}
 
 .gaffai-messages{flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px}
-.gaffai-msg{max-width:84%; font-size:13px; line-height:1.5; padding:10px 13px; border-radius:14px; white-space:pre-wrap}
-.gaffai-msg.user{align-self:flex-end; background:var(--blue); color:#fff; border-bottom-right-radius:4px}
+.gaffai-msg{max-width:88%; font-size:13px; line-height:1.5; padding:10px 13px; border-radius:14px; white-space:pre-wrap}
+.gaffai-msg.bot{white-space:normal}
+.gaffai-msg.bot p{margin:0}
+.gaffai-msg.bot p+p,.gaffai-msg.bot p+ul,.gaffai-msg.bot p+ol,.gaffai-msg.bot ul+p,.gaffai-msg.bot ol+p{margin-top:8px}
+.gaffai-msg.bot ul,.gaffai-msg.bot ol{margin:4px 0 0; padding-left:18px}
+.gaffai-msg.bot li+li{margin-top:2px}
+.gaffai-msg.bot b{font-weight:800; color:#fff}
+.gaffai-h{margin:10px 0 2px; font-size:10.5px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:#f5d97a}
+.gaffai-h:first-child{margin-top:0}
+.gaffai-msg.user{align-self:flex-end; background:var(--red); color:#fff; border-bottom-right-radius:4px}
 .gaffai-msg.bot{align-self:flex-start; background:var(--panel2); color:var(--white); border:1px solid var(--line); border-bottom-left-radius:4px}
 .gaffai-msg.bot.action-card{border:1px solid rgba(234,179,8,.35); background:rgba(234,179,8,.06)}
 .gaffai-msg.bot.nudge{border:1px solid rgba(59,130,246,.3); background:rgba(59,130,246,.08); display:flex; align-items:flex-start; justify-content:space-between; gap:10px}
@@ -11724,14 +11892,26 @@ button.wcf-glance-card:disabled{cursor:default}
 .gaffai-typing span:nth-child(3){animation-delay:.3s}
 @keyframes gaffaiBounce{0%,80%,100%{transform:translateY(0); opacity:.5}40%{transform:translateY(-4px); opacity:1}}
 
-.gaffai-chips{display:flex; flex-wrap:wrap; gap:7px; padding:2px 16px 12px}
-.gaffai-chip{font-size:11.5px; font-weight:600; padding:8px 12px; border-radius:20px; background:rgba(148,163,184,.08); border:1px solid rgba(148,163,184,.2); color:#cbd5e1; cursor:pointer; text-align:left}
+.gaffai-chip-groups{display:flex; flex-direction:column; gap:8px; padding:4px 0 12px}
+.gaffai-chip-label{padding:0 16px 5px; font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; color:#64748b}
+.gaffai-chips{display:flex; gap:7px; padding:0 16px 2px; overflow-x:auto; scrollbar-width:none}
+.gaffai-chips::-webkit-scrollbar{display:none}
+.gaffai-hello{margin-top:2px}
+.gaffai-hello-t{font-family:var(--display); font-weight:800; font-size:19px; color:#fff}
+.gaffai-hello-s{margin-top:2px; font-size:12px; color:var(--dim)}
+.gaffai-needs{border-radius:16px; padding:12px; background:rgba(245,217,122,.07); border:1px solid rgba(245,217,122,.4)}
+.gaffai-needs-k{font-size:10px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; color:#f5d97a}
+.gaffai-needs-t{margin-top:4px; font-size:13px; line-height:1.45; color:#f1f5f9}
+.gaffai-needs-acts{display:flex; gap:6px; margin-top:9px}
+.gaffai-needs-go{border:none; border-radius:9px; padding:7px 11px; background:#f5d97a; color:#0d0d1a; font-weight:800; font-size:12px; cursor:pointer}
+.gaffai-needs-x{border:1px solid var(--line); border-radius:9px; padding:7px 11px; background:none; color:var(--dim); font-weight:700; font-size:12px; cursor:pointer}
+.gaffai-chip{flex:none; white-space:nowrap; font-size:12px; font-weight:600; padding:8px 11px; border-radius:12px; background:var(--panel); border:1px solid var(--line); color:#e2e8f0; cursor:pointer; text-align:left}
 .gaffai-chip:hover{background:rgba(148,163,184,.15)}
 
 .gaffai-composer{display:flex; gap:8px; padding:10px 14px calc(14px + env(safe-area-inset-bottom,0px)); border-top:1px solid var(--line)}
-.gaffai-composer input{flex:1; min-width:0; background:var(--bg); border:1px solid rgba(148,163,184,.2); color:var(--white); padding:11px 14px; border-radius:22px; font-size:13px; font-family:var(--sans); outline:none}
+.gaffai-composer input{flex:1; min-width:0; background:var(--bg); border:1px solid rgba(148,163,184,.2); color:var(--white); padding:11px 14px; border-radius:14px; font-size:13px; font-family:var(--sans); outline:none}
 .gaffai-composer input::placeholder{color:#5b6472}
-.gaffai-send{flex:none; width:40px; height:40px; border-radius:50%; border:none; background:var(--blue); color:#fff; font-size:15px; cursor:pointer; display:flex; align-items:center; justify-content:center}
+.gaffai-send{flex:none; width:40px; height:40px; border-radius:12px; border:none; background:var(--red); color:#fff; font-size:15px; cursor:pointer; display:flex; align-items:center; justify-content:center}
 
 /* Three pill buttons (Update/Month/Fixture) in the fixtures header don't
    fit their natural width on the narrowest phones (iPhone SE and similar,
@@ -12358,6 +12538,28 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-motm-rk-n{flex:none;min-width:16px;text-align:right;font-family:var(--display);font-weight:800;font-size:15px;color:#fff;font-variant-numeric:tabular-nums}
 .wcf-motm-rk.top .wcf-motm-rk-n{color:#f5d97a}
 .wcf-motm-card-tip{margin-top:4px;font-size:11px;color:#64748b;text-align:center}
+.wcf-pot-hero{border-radius:20px;padding:16px;margin-bottom:12px;border:1px solid rgba(34,197,94,.35);background:radial-gradient(100% 80% at 50% 0%,rgba(34,197,94,.14),transparent 60%),#0f1a1a}
+.wcf-pot-hero-k{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.wcf-pot-hero-amt{font-family:var(--display);font-weight:800;font-size:44px;line-height:1.05;margin-top:4px;color:#22c55e;font-variant-numeric:tabular-nums}
+.wcf-pot-hero-amt.negative{color:var(--red-hi)}
+.wcf-pot-hero-sub{margin-top:4px;font-size:12.5px;color:var(--dim)}
+.wcf-pot-hero-sub b{color:#fff}
+.wcf-pot-hero-spark{display:block;width:100%;height:70px;margin-top:10px}
+.wcf-pot-hero-axis{display:flex;justify-content:space-between;font-size:10px;color:#64748b}
+.wcf-pot-card{border-radius:16px;padding:12px 14px;margin-bottom:10px;background:var(--panel);border:1px solid var(--line)}
+.wcf-pot-card-h{display:flex;justify-content:space-between;margin-bottom:8px;font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.wcf-pot-card-h span{color:var(--green);letter-spacing:.04em}
+.wcf-pot-split{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.wcf-pot-split span{display:flex;flex-direction:column;gap:3px;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.wcf-pot-split b{font-family:var(--display);font-size:18px;letter-spacing:0;color:#fff;font-variant-numeric:tabular-nums}
+.wcf-pot-split b.in{color:#22c55e}
+.wcf-pot-split b.out{color:var(--red-hi)}
+.wcf-pot-led{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;font-size:12.5px;color:#e2e8f0}
+.wcf-pot-led+.wcf-pot-led{border-top:1px solid var(--line)}
+.wcf-pot-led-sub{margin-top:1px;font-size:11px;color:var(--dim)}
+.wcf-pot-led>span{flex:none;font-family:var(--display);font-weight:800;color:#22c55e;font-variant-numeric:tabular-nums}
+.wcf-pot-led>span.out{color:var(--red-hi)}
+.wcf-pot-empty{margin:0;font-size:12.5px;line-height:1.5;color:var(--dim)}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted

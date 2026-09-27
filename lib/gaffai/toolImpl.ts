@@ -854,17 +854,20 @@ async function getPredictionLeaderboard(admin: SupabaseClient, args: { month?: s
 // exactly (lines ~2882-2936) - the real pot balance is NOT just the
 // pot_entries table, it's that plus an auto-computed entry per game
 // (confirmed paid bookings x price, minus pitch cost), only counting
-// games with at least one confirmed booking. Getting this wrong would
-// mean reporting a balance nowhere close to the real one.
+// games with at least one confirmed booking that have been played (a future
+// game's pitch hire isn't counted against the pot until it's played).
+// Getting this wrong would mean reporting a balance nowhere close to the
+// real one.
 async function getPotSummary(admin: SupabaseClient) {
   const [{ data: games }, { data: potEntries }] = await Promise.all([
-    admin.from("games").select("id, date, venue, price, pitch_cost, bookings(waiting, status, pot_exempt_reason)"),
+    admin.from("games").select("id, date, kickoff, venue, price, pitch_cost, bookings(waiting, status, pot_exempt_reason)"),
     admin.from("pot_entries").select("amount, description, category, created_at"),
   ]);
 
   type GameRow = {
     id: string;
     date: string;
+    kickoff: string;
     venue: string;
     price: number;
     pitch_cost: number;
@@ -875,7 +878,9 @@ async function getPotSummary(admin: SupabaseClient) {
   let grossIncome = 0;
   let pitchExpense = 0;
   const autoEntries: { date: string; amount: number; description: string }[] = [];
+  const nowUk = nowInLondon();
   for (const g of gameRows) {
+    if (kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) > nowUk) continue;
     const bookings = g.bookings ?? [];
     const confirmedTotal = bookings.filter((b) => !b.waiting && b.status === "confirmed").length;
     if (confirmedTotal === 0) continue; // matches the app's own inclusion rule

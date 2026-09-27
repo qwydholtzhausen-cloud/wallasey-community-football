@@ -1648,3 +1648,76 @@ drop policy if exists "wrapped_events_insert_own" on public.wrapped_events;
 create policy "wrapped_events_insert_own" on public.wrapped_events for insert with check (player_id = auth.uid());
 drop policy if exists "wrapped_events_select_admin" on public.wrapped_events;
 create policy "wrapped_events_select_admin" on public.wrapped_events for select using (public.is_admin());
+
+-- ─────────────────────────────────────────────────────────────────
+-- Season history (2026-09-27): three things that aren't otherwise kept,
+-- saved now for the end-of-season Wrapped. Everything else (bookings,
+-- teams, scores, goals, votes, predictions, payments) is already stored
+-- and can be rebuilt at any time.
+-- ─────────────────────────────────────────────────────────────────
+
+-- Weather at kickoff, saved by the daily cron once a game's been played
+-- (the fixture card's forecast is fetched live and never stored).
+create table if not exists public.game_weather (
+  game_id uuid primary key references public.games (id) on delete cascade,
+  temp_c numeric not null,
+  weather_code int not null,
+  recorded_at timestamptz not null default now()
+);
+alter table public.game_weather enable row level security;
+drop policy if exists "game_weather_select" on public.game_weather;
+create policy "game_weather_select" on public.game_weather for select using (auth.role() = 'authenticated');
+
+-- Every change to a rating, self or admin, since ratings themselves are
+-- overwritten. Admins only - same visibility as admin ratings.
+create table if not exists public.rating_history (
+  id uuid primary key default gen_random_uuid(),
+  player_id uuid not null references public.profiles (id) on delete cascade,
+  source text not null check (source in ('self', 'admin')),
+  fitness int not null,
+  attack int not null,
+  defence int not null,
+  goalkeeping int not null,
+  position text not null,
+  recorded_at timestamptz not null default now()
+);
+create index if not exists rating_history_player_idx on public.rating_history (player_id, recorded_at);
+alter table public.rating_history enable row level security;
+drop policy if exists "rating_history_select_admin" on public.rating_history;
+create policy "rating_history_select_admin" on public.rating_history for select using (public.is_admin());
+
+create or replace function public.log_rating_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.rating_history (player_id, source, fitness, attack, defence, goalkeeping, position)
+  values (new.player_id, tg_argv[0], new.fitness, new.attack, new.defence, new.goalkeeping, new.position);
+  return new;
+end;
+$$;
+
+drop trigger if exists self_rating_history on public.player_self_ratings;
+create trigger self_rating_history after insert or update on public.player_self_ratings
+  for each row execute function public.log_rating_change('self');
+drop trigger if exists admin_rating_history on public.player_admin_ratings;
+create trigger admin_rating_history after insert or update on public.player_admin_ratings
+  for each row execute function public.log_rating_change('admin');
+
+-- Starting point: today's ratings, stamped with when they were last set.
+insert into public.rating_history (player_id, source, fitness, attack, defence, goalkeeping, position, recorded_at)
+select player_id, 'self', fitness, attack, defence, goalkeeping, position, updated_at from public.player_self_ratings
+where not exists (select 1 from public.rating_history h where h.player_id = player_self_ratings.player_id and h.source = 'self');
+insert into public.rating_history (player_id, source, fitness, attack, defence, goalkeeping, position, recorded_at)
+select player_id, 'admin', fitness, attack, defence, goalkeeping, position, updated_at from public.player_admin_ratings
+where not exists (select 1 from public.rating_history h where h.player_id = player_admin_ratings.player_id and h.source = 'admin');
+
+-- One row per finished month, written by the daily cron: Player of the
+-- Month, the Whites v Reds table and top scorers as they stood, so later
+-- edits can't quietly change history.
+create table if not exists public.monthly_snapshots (
+  month_key text primary key check (month_key ~ '^\d{4}-\d{2}$'),
+  data jsonb not null,
+  created_at timestamptz not null default now()
+);
+alter table public.monthly_snapshots enable row level security;
+drop policy if exists "monthly_snapshots_select" on public.monthly_snapshots;
+create policy "monthly_snapshots_select" on public.monthly_snapshots for select using (auth.role() = 'authenticated');

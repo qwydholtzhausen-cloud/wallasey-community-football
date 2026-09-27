@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
-import { kickoffCutoff, nowInLondon, previousMonthKey, MOTM_VOTE_WINDOW_MINUTES } from "../../../../lib/time";
+import { kickoffCutoff, nowInLondon, previousMonthKey, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../../../../lib/time";
 import { generateWeeklyDigest } from "../../../../lib/gaffai/digest";
 
 interface CronBooking {
@@ -176,5 +176,122 @@ export async function GET(req: Request) {
     }
   }
 
+  // --- Season history for the end-of-season Wrapped ---
+  // Each part is wrapped on its own so a failure (or the tables not
+  // existing yet) never touches the notifications above.
+  try {
+    await saveGameWeather(admin, typedGames, nowUk);
+  } catch (err) {
+    console.error("Saving game weather failed", err);
+  }
+  try {
+    await saveMonthlySnapshots(admin, typedGames, allVotes, nowUk);
+  } catch (err) {
+    console.error("Saving monthly snapshots failed", err);
+  }
+
   return NextResponse.json({ ok: true });
+}
+
+// Weather at kickoff for every played game that doesn't have it yet. The
+// fixture card's forecast is fetched live and never stored, so this is
+// the only record of what the night was like. Open-Meteo's forecast API
+// keeps the last 92 days, which also covers everything played so far.
+async function saveGameWeather(admin: SupabaseClient, games: CronGame[], nowUk: string) {
+  const { data: saved, error } = await admin.from("game_weather").select("game_id");
+  if (error) return; // table not created yet
+  const have = new Set((saved ?? []).map((r) => r.game_id));
+  const oldest = new Date(Date.UTC(+nowUk.slice(0, 4), +nowUk.slice(5, 7) - 1, +nowUk.slice(8, 10) - 90)).toISOString().slice(0, 10);
+  const todo = games.filter(
+    (g) => !have.has(g.id) && g.date >= oldest && kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk
+  );
+  if (todo.length === 0) return;
+  const res = await fetch(
+    "https://api.open-meteo.com/v1/forecast?latitude=53.43&longitude=-3.06&hourly=temperature_2m,weathercode&past_days=92&forecast_days=1&timezone=Europe%2FLondon"
+  );
+  if (!res.ok) return;
+  const data = await res.json();
+  const times: string[] = data?.hourly?.time ?? [];
+  const rows = todo.flatMap((g) => {
+    const i = times.indexOf(`${g.date}T${g.kickoff.slice(0, 2)}:00`);
+    if (i < 0) return [];
+    return [{ game_id: g.id, temp_c: data.hourly.temperature_2m[i], weather_code: data.hourly.weathercode[i] }];
+  });
+  if (rows.length > 0) await admin.from("game_weather").upsert(rows, { onConflict: "game_id" });
+}
+
+// One snapshot per finished month, as it stood: Player of the Month (same
+// tie-breaks as the app: MOTM wins, then votes, then goals), the Whites v
+// Reds table and the top scorers. Fills any missing month from the first
+// game up to last month, so August is taken on the first run.
+async function saveMonthlySnapshots(
+  admin: SupabaseClient,
+  games: CronGame[],
+  votes: { game_id: string; candidate_id: string }[],
+  nowUk: string
+) {
+  const { data: saved, error } = await admin.from("monthly_snapshots").select("month_key");
+  if (error) return; // table not created yet
+  const have = new Set((saved ?? []).map((r) => r.month_key));
+  const lastFinished = previousMonthKey(nowUk);
+  const months = [...new Set(games.map((g) => g.date.slice(0, 7)))].filter((m) => m <= lastFinished && !have.has(m)).sort();
+  if (months.length === 0) return;
+
+  const { data: stats } = await admin.from("game_stats").select("game_id, player_id, goals");
+  const { data: profiles } = await admin.from("profiles").select("id, display_name");
+  const nameOf = (id: string) => (profiles ?? []).find((p) => p.id === id)?.display_name ?? "";
+
+  for (const month of months) {
+    const monthGames = games.filter((g) => g.date.startsWith(month));
+    const ids = new Set(monthGames.map((g) => g.id));
+    const goals: Record<string, number> = {};
+    for (const r of stats ?? []) if (ids.has(r.game_id) && r.goals > 0) goals[r.player_id] = (goals[r.player_id] ?? 0) + r.goals;
+
+    const wins: Record<string, number> = {};
+    const voteTotals: Record<string, number> = {};
+    for (const g of monthGames) {
+      const tally: Record<string, number> = {};
+      for (const v of votes) if (v.game_id === g.id) tally[v.candidate_id] = (tally[v.candidate_id] ?? 0) + 1;
+      const top = Math.max(0, ...Object.values(tally));
+      for (const [id, c] of Object.entries(tally)) {
+        voteTotals[id] = (voteTotals[id] ?? 0) + c;
+        if (top > 0 && c === top) wins[id] = (wins[id] ?? 0) + 1;
+      }
+    }
+    let leaders = Object.keys(wins);
+    for (const score of [(id: string) => wins[id] ?? 0, (id: string) => voteTotals[id] ?? 0, (id: string) => goals[id] ?? 0]) {
+      if (leaders.length <= 1) break;
+      const best = Math.max(...leaders.map(score));
+      leaders = leaders.filter((id) => score(id) === best);
+    }
+
+    const side = () => ({ played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0, points: 0 });
+    const white = side();
+    const red = side();
+    for (const g of monthGames) {
+      const w = g.team_white_score!;
+      const r = g.team_red_score!;
+      white.played++; red.played++;
+      white.goalsFor += w; white.goalsAgainst += r; red.goalsFor += r; red.goalsAgainst += w;
+      if (w > r) { white.won++; white.points += 3; red.lost++; }
+      else if (r > w) { red.won++; red.points += 3; white.lost++; }
+      else { white.drawn++; red.drawn++; white.points++; red.points++; }
+    }
+
+    const data = {
+      games: monthGames.length,
+      goals: monthGames.reduce((sum, g) => sum + g.team_white_score! + g.team_red_score!, 0),
+      // Needs 2+ games, same as the Player of the Month card.
+      playerOfTheMonth:
+        monthGames.length >= 2
+          ? leaders.map((id) => ({ id, name: nameOf(id), motmWins: wins[id] ?? 0, votes: voteTotals[id] ?? 0, goals: goals[id] ?? 0 }))
+          : [],
+      table: { white, red },
+      topScorers: Object.entries(goals)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([id, n]) => ({ id, name: nameOf(id), goals: n })),
+    };
+    await admin.from("monthly_snapshots").insert({ month_key: month, data });
+  }
 }
