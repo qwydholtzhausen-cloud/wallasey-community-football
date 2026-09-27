@@ -40,7 +40,7 @@ interface Card {
 
 // The generated photos are shot dark with room for text already, so they
 // can show at nearly full strength; the older, brighter ones stay dimmed.
-const STRONG_PHOTOS = new Set(["/wrapped/intro.jpg", "/wrapped/next.jpg", "/wrapped/goals.jpg", "/wrapped/partner.jpg"]);
+const STRONG_PHOTOS = new Set(["/wrapped/intro.jpg", "/wrapped/next.jpg", "/wrapped/goals.jpg", "/wrapped/partner.jpg", "/wrapped/summary.jpg"]);
 
 // Card photos live in public/wrapped/, so a new generated image is a file
 // swap with no code change.
@@ -55,6 +55,7 @@ const PHOTO = {
   pred: "/wrapped/predictions.jpg",
   club: "/wrapped/club.jpg",
   end: "/wrapped/next.jpg",
+  summary: "/wrapped/summary.jpg",
 };
 
 function ordinal(n: number) {
@@ -507,11 +508,12 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
 
   cards.push({
     key: "summary",
-    photo: null,
+    photo: PHOTO.summary,
     accent: "#f8b3b8",
     body: (
       <>
         <div className="wr-lab wr-rise">Your final score</div>
+        <div className="wr-grow" />
         <div className="wr-poster wr-rise">
           <div className="top">
             <img src="/logo.png" alt="" />
@@ -539,6 +541,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
           </button>
           <button className="sec" onClick={onReplay}>Watch again</button>
         </div>
+        <div className="wr-grow" />
       </>
     ),
   });
@@ -797,6 +800,22 @@ export async function drawWrappedCard(opts: {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
   };
+  // The same photo as the story's final card, dimmed under the glows.
+  try {
+    const bg = await loadImg("/wrapped/summary.jpg");
+    const scale = Math.max(W / bg.width, H / bg.height);
+    ctx.globalAlpha = 0.45;
+    ctx.drawImage(bg, W / 2 - (bg.width * scale) / 2, H / 2 - (bg.height * scale) / 2, bg.width * scale, bg.height * scale);
+    ctx.globalAlpha = 1;
+    const scrim = ctx.createLinearGradient(0, 0, 0, H);
+    scrim.addColorStop(0, "rgba(13,13,26,0.55)");
+    scrim.addColorStop(0.5, "rgba(13,13,26,0.75)");
+    scrim.addColorStop(1, "rgba(13,13,26,0.9)");
+    ctx.fillStyle = scrim;
+    ctx.fillRect(0, 0, W, H);
+  } catch {
+    // Photo failed to load (offline etc.) - the glows alone still work.
+  }
   glow(W, 0, 900, "rgba(230,57,70,0.45)");
   glow(0, H, 1000, "rgba(139,107,232,0.45)");
   glow(W * 0.8, H * 0.75, 600, "rgba(127,176,236,0.18)");
@@ -970,7 +989,7 @@ const wrappedCss = `
 .wr-grid b{display:block;font-family:var(--display);font-weight:800;font-size:28px;line-height:1;font-variant-numeric:tabular-nums}
 .wr-grid div>span{display:block;font-size:11.5px;color:rgba(255,255,255,.7);margin-top:5px;line-height:1.3}
 
-.wr-poster{background:linear-gradient(160deg,rgba(230,57,70,.28),rgba(139,107,232,.28) 55%,rgba(127,176,236,.18)),#141024;border:1px solid rgba(255,255,255,.14);border-radius:22px;padding:18px 18px 20px}
+.wr-poster{background:linear-gradient(160deg,rgba(230,57,70,.3),rgba(139,107,232,.3) 55%,rgba(127,176,236,.2)),rgba(20,16,36,.62);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:0 24px 60px -20px rgba(0,0,0,.8);border:1px solid rgba(255,255,255,.14);border-radius:22px;padding:18px 18px 20px}
 .wr-poster .top{display:flex;align-items:center;gap:10px}
 .wr-poster .top img{width:38px;height:38px;object-fit:contain}
 .wr-poster .top div{font-family:var(--display);font-weight:800;font-size:13px;letter-spacing:.1em;line-height:1.3}
