@@ -3114,6 +3114,78 @@ function App({ session }: { session: Session }) {
       });
     }
 
+    // Hat-tricks and club records, walked game by game through each season
+    // (records reset each calendar-year season, like the Records tab). A
+    // record only counts as "broken" once there was one to beat - the first
+    // game of a season sets the marks without a post. A hat-trick that also
+    // sets the goals record is one post, not two. Sits just after that
+    // game's Full time post. Feed only - never a notification.
+    {
+      const trophy = (
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" />
+          <path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4" />
+        </svg>
+      );
+      const chron = [...pastGames]
+        .filter((g) => g.team_white_score != null && g.team_red_score != null)
+        .sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff));
+      let season = "";
+      let best = { goals: 0, margin: 0, total: 0, seen: false };
+      for (const g of chron) {
+        if (g.date.slice(0, 4) !== season) {
+          season = g.date.slice(0, 4);
+          best = { goals: 0, margin: 0, total: 0, seen: false };
+        }
+        const ts = toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) + 1;
+        const w = g.team_white_score!;
+        const r = g.team_red_score!;
+        const rows = goalRows.filter((row) => row.game_id === g.id && row.goals > 0).sort((a, b) => b.goals - a.goals);
+        const topGoals = rows[0]?.goals ?? 0;
+        const margin = Math.abs(w - r);
+        // Minimum bars, so an early-season "record" that only beat one
+        // quiet game doesn't count: a goals record needs a hat-trick, a
+        // biggest win a 5-goal margin, a goal-fest 10+ goals.
+        const goalsRecord = best.seen && topGoals > best.goals && topGoals >= 3;
+        const lines: React.ReactNode[] = [];
+        let isRecord = false;
+        for (const row of rows) {
+          const name = row.player.display_name;
+          if (goalsRecord && row.goals === topGoals) {
+            isRecord = true;
+            lines.push(<><strong>{name}</strong> scored {row.goals}, the most in a game this season.</>);
+          } else if (row.goals >= 3) {
+            lines.push(<>Hat-trick for <strong>{name}</strong> ({row.goals}).</>);
+          }
+        }
+        if (best.seen && margin > best.margin && margin >= 5) {
+          isRecord = true;
+          lines.push(<>Biggest win of the season: <strong>{w > r ? cs.team_white_name : cs.team_red_name} by {margin}</strong>.</>);
+        }
+        if (best.seen && w + r > best.total && w + r >= 10) {
+          isRecord = true;
+          lines.push(<>Most goals in a game this season: <strong>{w + r}</strong>.</>);
+        }
+        if (lines.length > 0) {
+          items.push({
+            key: `records-${g.id}`,
+            ts,
+            kind: "derived",
+            icon: trophy,
+            tone: "amber",
+            text: (
+              <div className="wcf-rec-post">
+                <span className="wcf-rec-post-tag">{isRecord ? "New club record" : lines.length > 1 ? "Hat-tricks" : "Hat-trick"}</span>
+                <span className="wcf-rec-post-score">{cs.team_white_name} {w}–{r} {cs.team_red_name}</span>
+                {lines.map((l, i) => <div key={i} className="wcf-rec-post-line">{l}</div>)}
+              </div>
+            ),
+          });
+        }
+        best = { goals: Math.max(best.goals, topGoals), margin: Math.max(best.margin, margin), total: Math.max(best.total, w + r), seen: true };
+      }
+    }
+
     // Every 5th appearance (5, 10, 15, 20...) - walked oldest to newest so
     // the running count per player is accurate.
     const chronPast = [...pastGames].sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff));
@@ -11312,6 +11384,10 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-suggestion-actions .wcf-generate-teams{background:transparent;border:1px solid var(--line);color:var(--white)}
 .wcf-apply-teams{background:var(--red);color:#fff;border-radius:999px;min-height:46px;font-weight:700}
 .wcf-suggestion-actions .wcf-ghost{border-radius:999px;min-height:46px}
+.wcf-rec-post{line-height:1.45}
+.wcf-rec-post-score{font-size:11.5px;font-weight:700;color:var(--dim)}
+.wcf-rec-post-line{margin-top:3px}
+.wcf-rec-post-tag{display:inline-block;margin-right:6px;padding:1px 6px;border-radius:5px;background:#f5d97a;color:#0d0d1a;font-size:9.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;vertical-align:1px}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted

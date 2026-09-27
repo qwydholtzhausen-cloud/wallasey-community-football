@@ -56,6 +56,7 @@ const STRONG_PHOTOS = new Set([
   "/wrapped/club.jpg",
   "/wrapped/summary.jpg",
   "/wrapped/nemesis.jpg",
+  "/wrapped/best.jpg",
   "/wrapped/next.jpg",
 ]);
 
