@@ -3052,9 +3052,14 @@ function App({ session }: { session: Session }) {
               </svg>
             ),
             tone: "amber",
+            // "was voted", not "voted" - the old wording read as if the
+            // winner had cast a vote. Vote count and the game for context.
             text: (
               <>
-                <strong>{winners.map((w) => w.display_name).join(" & ")}</strong> voted Man of the Match
+                <strong>{winners.map((w) => w.display_name).join(" & ")}</strong> {winners.length > 1 ? "were" : "was"} voted Man of the Match
+                <div className="wcf-motm-post-meta">
+                  <b>{topVotes} {topVotes === 1 ? "vote" : "votes"}</b> · {cs.team_white_name} {g.team_white_score}–{g.team_red_score} {cs.team_red_name}
+                </div>
               </>
             ),
           });
@@ -4834,6 +4839,35 @@ function App({ session }: { session: Session }) {
 
               return (
                 <>
+                  {/* The thing you came to do, first: the same prediction box
+                      as the Team Sheet (or "opens when teams are posted"),
+                      rather than a button below all 28 leaderboard rows. */}
+                  {nextGame && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
+                    <div className="wcf-predict-top">
+                    <PredictPanel
+                      key={"top-" + nextGame.id}
+                      gameId={nextGame.id}
+                      whiteLabel={cs.team_white_name}
+                      redLabel={cs.team_red_name}
+                      isBooked={nextConfirmed.some((b) => b.player_id === myId)}
+                      myPrediction={scorePredictions.find((p) => p.game_id === nextGame.id && p.player_id === myId) ?? null}
+                      onSave={savePrediction}
+                    />
+                    </div>
+                  )}
+                  {nextGame && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && (
+                    <div className="wcf-predict wcf-predict-top">
+                      <div className="wcf-predict-gate">
+                        <div className="wcf-predict-gate-icon">
+                          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" /></svg>
+                        </div>
+                        <div className="wcf-predict-gate-text">
+                          <b>{fmtDate(nextGame.date)}: predictions open once teams are posted.</b> Check back here nearer kickoff. They lock at kickoff.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <select className="wcf-month-filter" value={predictView} onChange={(e) => { setPredictView(e.target.value); setPredictOpenId(null); }}>
                     <option value="season">Overall (this season)</option>
                     {predictionMonths.map((m) => (
@@ -4932,7 +4966,7 @@ function App({ session }: { session: Session }) {
                               <div className="wcf-pl-body">
                                 <div className="wcf-pl-name">{row.playerName}{row.playerId === myId ? " (you)" : ""}</div>
                                 <div className="wcf-pl-sub-row">
-                                  <span>{row.exactCount} exact score{row.exactCount === 1 ? "" : "s"}</span>
+                                  {row.exactCount > 0 && <span className="wcf-pl-exact">{row.exactCount} exact score{row.exactCount === 1 ? "" : "s"}</span>}
                                   {form.length > 0 && (
                                     <span className="wcf-pl-form">
                                       {form.map((pts, fi) => (
@@ -4961,12 +4995,6 @@ function App({ session }: { session: Session }) {
                     </div>
                   )}
 
-                  {board.length > 0 && (
-                    <div className="wcf-pl-footer">
-                      <span>Predictions lock at kick-off.</span>
-                      <button onClick={() => setLineupView("sheet")}>Predict next match</button>
-                    </div>
-                  )}
                 </>
               );
             })()}
@@ -6033,6 +6061,32 @@ function App({ session }: { session: Session }) {
         const rating = canSeeRating ? ratingByPlayer[playerCardId] ?? null : null;
         const emergencyContact = canSeeRating ? emergencyContacts.find((c) => c.player_id === playerCardId) ?? null : null;
         const appsRank = playerStats.findIndex((p) => p.id === playerCardId) + 1;
+        // This season, for the card's record / form / bests sections.
+        const seasonGames = [...pastGames]
+          .filter((g) => g.date.slice(0, 4) === String(currentSeasonYear) && g.team_white_score != null && g.team_red_score != null)
+          .sort((x, y) => x.date.localeCompare(y.date) || x.kickoff.localeCompare(y.kickoff));
+        const results: ("W" | "D" | "L")[] = [];
+        for (const g of seasonGames) {
+          const bk = g.bookings.find((b) => b.player_id === playerCardId && !b.waiting && b.team);
+          if (!bk) continue;
+          const w = g.team_white_score!;
+          const rr = g.team_red_score!;
+          results.push(w === rr ? "D" : (bk.team === "white") === w > rr ? "W" : "L");
+        }
+        const pb = computePersonalBests(
+          { games: seasonGames.filter((g) => !motmVotingOpen(g)), goals: goalRows, motmTallyByGame, names: () => "" },
+          playerCardId
+        );
+        const topGoals = Math.max(0, ...playerStats.map((p) => p.goals));
+        const cardSeason = {
+          W: results.filter((x) => x === "W").length,
+          D: results.filter((x) => x === "D").length,
+          L: results.filter((x) => x === "L").length,
+          form: results.slice(-5),
+          bestGoals: pb.mostGoals,
+          hatTricks: pb.hatTricks,
+          topScorer: topGoals > 0 && stats.goals === topGoals,
+        };
         return (
           <PlayerCardModal
             profile={cardProfile}
@@ -6043,6 +6097,7 @@ function App({ session }: { session: Session }) {
             isOwnCard={playerCardId === myId}
             rank={appsRank > 0 ? appsRank : null}
             team={playerCardTeam}
+            season={cardSeason}
             onClose={() => { setPlayerCardId(null); setPlayerCardTeam(null); }}
           />
         );
@@ -6287,6 +6342,7 @@ function PlayerCardModal({
   isOwnCard,
   rank,
   team,
+  season,
   onClose,
 }: {
   profile: Profile;
@@ -6297,9 +6353,19 @@ function PlayerCardModal({
   isOwnCard: boolean;
   rank: number | null;
   team: { name: string; color: string } | null;
+  season: {
+    W: number;
+    D: number;
+    L: number;
+    form: ("W" | "D" | "L")[];
+    bestGoals: { goals: number; date: string } | null;
+    hatTricks: number;
+    topScorer: boolean;
+  } | null;
   onClose: () => void;
 }) {
   const a = avatarFor(profile.display_name);
+  const nth = (n: number) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
   const firstName = profile.display_name.split(" ")[0];
   const overall = rating ? ((rating.fitness + rating.attack + rating.defence) / 3).toFixed(1) : null;
   return (
@@ -6317,10 +6383,11 @@ function PlayerCardModal({
           )}
           <div className="wcf-pcard-avatar-wrap">
             <Avatar name={profile.display_name} avatarUrl={profile.avatar_url} className="wcf-pcard-avatar" background={a.gradient} />
-            {rank != null && <span className="wcf-pcard-rank">#{rank}</span>}
           </div>
           <div className="wcf-pcard-name">{profile.display_name}</div>
           <div className="wcf-pcard-badges">
+            {season?.topScorer && <span className="wcf-pcard-honour">Top scorer</span>}
+            {rank != null && rank <= 10 && <span className="wcf-pcard-role-badge">{nth(rank)} for games</span>}
             <span className="wcf-pcard-role-badge">{ROLE_LABEL[profile.role]}</span>
             {team && (
               <span
@@ -6343,6 +6410,29 @@ function PlayerCardModal({
             <div className="wcf-pcard-stat"><b>{stats.goals}</b><span>Goals</span></div>
             <div className="wcf-pcard-stat"><b>{stats.motm}</b><span>MOTM</span></div>
           </div>
+
+          {/* Their season at a glance - all of it already public elsewhere
+              in the app (Scores, Records), just gathered on one card. */}
+          {season && season.W + season.D + season.L > 0 && (
+            <div className="wcf-pcard-season">
+              <div className="wcf-pcard-sec-head"><span>Season record</span><b>{season.W}W · {season.D}D · {season.L}L</b></div>
+              <div className="wcf-pcard-wdl">
+                {season.W > 0 && <div style={{ flex: season.W }} className="w">{season.W}</div>}
+                {season.D > 0 && <div style={{ flex: season.D }} className="d">{season.D}</div>}
+                {season.L > 0 && <div style={{ flex: season.L }} className="l">{season.L}</div>}
+              </div>
+              <div className="wcf-pcard-sec-head" style={{ marginTop: 12 }}><span>Last {season.form.length}</span><span>oldest → latest</span></div>
+              <div className="wcf-pcard-form">
+                {season.form.map((r, i) => <i key={i} className={"f" + r}>{r}</i>)}
+              </div>
+              <div className="wcf-pcard-sec-head" style={{ marginTop: 12 }}><span>Bests</span></div>
+              <div className="wcf-pcard-bests">
+                <div><b>{season.bestGoals?.goals ?? 0}</b><span>{season.bestGoals ? `goals in a game · ${fmtDate(season.bestGoals.date)}` : "goals in a game"}</span></div>
+                <div><b>{season.hatTricks}</b><span>{season.hatTricks === 1 ? "hat-trick" : "hat-tricks"}</span></div>
+                <div><b>{stats.apps ? (stats.goals / stats.apps).toFixed(1) : "0.0"}</b><span>goals per game</span></div>
+              </div>
+            </div>
+          )}
 
           {canSeeRating && rating ? (
             <div className="wcf-pcard-ratings">
@@ -8701,9 +8791,19 @@ function AdminConsole({
   // scattered across Admin/Line-up/Results into one glance at the top.
   const unscored = previous.filter((g) => g.team_white_score == null || g.team_red_score == null);
   const drafts = [...upcoming, ...previous].filter((g) => !g.published);
-  const pendingApproval = upcoming.flatMap((g) =>
-    g.bookings.filter((b) => !b.waiting && b.status !== "confirmed").map((b) => ({ booking: b, game: g }))
+  // Two different things that used to share one "Pending approvals" tile
+  // (which read 96-100 when only 1 player had actually claimed to pay):
+  // payments a player says they've made, which an admin needs to check -
+  // on any game, past or upcoming - and upcoming bookings not paid yet,
+  // which is normal and needs nothing.
+  const paymentClaims = [...upcoming, ...previous].flatMap((g) =>
+    g.bookings.filter((b) => !b.waiting && b.status === "pending").map((b) => ({ booking: b, game: g }))
   );
+  const notPaidYet = upcoming.flatMap((g) =>
+    g.bookings.filter((b) => !b.waiting && b.status === "unpaid").map((b) => ({ booking: b, game: g }))
+  );
+  const [pendingView, setPendingView] = useState<null | "claims" | "unpaid">(null);
+  const pendingApproval = pendingView === "unpaid" ? notPaidYet : paymentClaims;
   // Grouped by game for the expanded "Awaiting approval" breakdown - the
   // dashboard card's namesList() alone gives no game context, meaning an
   // admin had to go hunting through Upcoming to find each one.
@@ -8746,7 +8846,7 @@ function AdminConsole({
   // the amount shown, same distinction the pre-removal warning already
   // makes (see the frequent cron job).
   const [expandedTabId, setExpandedTabId] = useState<string | null>(null);
-  const [showPendingDetail, setShowPendingDetail] = useState(false);
+  const showPendingDetail = pendingView !== null;
   const [showOverdueDetail, setShowOverdueDetail] = useState(false);
   const playerTabs = useMemo(() => {
     const byPlayer: Record<string, { playerId: string; playerName: string; owed: typeof overdue; pending: typeof overdue }> = {};
@@ -8842,18 +8942,35 @@ function AdminConsole({
           {overdue.length > 0 && <div className="wcf-glance-expand">{showOverdueDetail ? "Hide detail" : "Tap for detail"}</div>}
         </button>
         <button
-          className={"wcf-glance-card" + (pendingApproval.length === 0 ? " clear" : " amber") + (pendingApproval.length > 0 ? " expandable" : "")}
-          onClick={() => pendingApproval.length > 0 && setShowPendingDetail((v) => !v)}
+          className={"wcf-glance-card" + (paymentClaims.length === 0 ? " clear" : " amber") + (paymentClaims.length > 0 ? " expandable" : "")}
+          onClick={() => paymentClaims.length > 0 && setPendingView((v) => (v === "claims" ? null : "claims"))}
         >
           <div className="wcf-glance-top">
-            <span className="wcf-glance-num">{pendingApproval.length === 0 ? "" : pendingApproval.length}</span>
-            <span className="wcf-glance-tile">{pendingApproval.length === 0 ? "✓" : "?"}</span>
+            <span className="wcf-glance-num">{paymentClaims.length === 0 ? "" : paymentClaims.length}</span>
+            <span className="wcf-glance-tile">{paymentClaims.length === 0 ? "✓" : "?"}</span>
           </div>
-          <div className="wcf-glance-label">{pendingApproval.length === 0 ? "No claims waiting" : "Pending approvals"}</div>
-          <div className="wcf-glance-names">{pendingApproval.length === 0 ? "Nothing to review" : namesList(pendingApproval.map((p) => p.booking.player.display_name.split(" ")[0]))}</div>
-          {pendingApproval.length > 0 && <div className="wcf-glance-expand">{showPendingDetail ? "Hide detail" : "Tap for detail"}</div>}
+          <div className="wcf-glance-label">{paymentClaims.length === 0 ? "No payments to check" : paymentClaims.length === 1 ? "Payment to check" : "Payments to check"}</div>
+          <div className="wcf-glance-names">
+            {paymentClaims.length === 0
+              ? "Nobody's waiting on you"
+              : paymentClaims.length === 1
+                ? `${paymentClaims[0].booking.player.display_name} says they've paid for ${fmtDate(paymentClaims[0].game.date)}`
+                : namesList(paymentClaims.map((p) => p.booking.player.display_name.split(" ")[0]))}
+          </div>
+          {paymentClaims.length > 0 && <div className="wcf-glance-expand">{pendingView === "claims" ? "Hide detail" : "Check now"}</div>}
         </button>
-        <div className={"wcf-glance-card" + (drafts.length === 0 ? " clear" : " blue")}>
+        <button
+          className={"wcf-glance-card" + (notPaidYet.length === 0 ? " clear" : " calm") + (notPaidYet.length > 0 ? " expandable" : "")}
+          onClick={() => notPaidYet.length > 0 && setPendingView((v) => (v === "unpaid" ? null : "unpaid"))}
+        >
+          <div className="wcf-glance-top">
+            <span className="wcf-glance-num">{notPaidYet.length === 0 ? "" : notPaidYet.length}</span>
+            <span className="wcf-glance-tile">{notPaidYet.length === 0 ? "✓" : "…"}</span>
+          </div>
+          <div className="wcf-glance-label">{notPaidYet.length === 0 ? "Everyone's paid up" : "Not paid yet"}</div>
+          <div className="wcf-glance-names">{notPaidYet.length === 0 ? "All upcoming bookings paid" : "Upcoming games. Nothing to do; reminders go out automatically."}</div>
+        </button>
+        <div className={"wcf-glance-card wide" + (drafts.length === 0 ? " clear" : " blue")}>
           <div className="wcf-glance-top">
             <span className="wcf-glance-num">{drafts.length === 0 ? "" : drafts.length}</span>
             <span className="wcf-glance-tile">{drafts.length === 0 ? "✓" : "✎"}</span>
@@ -8925,7 +9042,7 @@ function AdminConsole({
       {showPendingDetail && pendingByGame.length > 0 && (
         <div className="wcf-pending-detail">
           <div className="wcf-pending-head">
-            <span>PENDING APPROVALS</span>
+            <span>{pendingView === "unpaid" ? "NOT PAID YET · UPCOMING" : "PAYMENTS TO CHECK"}</span>
             <span className="wcf-pending-head-rule" />
           </div>
           {pendingByGame.map(({ game, items }) => {
@@ -9617,6 +9734,38 @@ function GameCard({
     </div>
   );
 
+  // Where you are in the queue, if you're on the waiting list: "2nd in
+  // line", with the queue drawn out. Updates live as people drop out (the
+  // bookings realtime channel already refreshes this card), and getting a
+  // place sends the "You're in" push from the booking-promoted webhook.
+  const queuePos = myBooking?.waiting ? waitingList.findIndex((b) => b.player_id === myId) + 1 : 0;
+  const nth = (n: number) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
+  const queueStrip = queuePos > 0 && (
+    <div className="wcf-queue">
+      <div className="wcf-queue-k">You&apos;re on the waiting list</div>
+      <div className="wcf-queue-t">{queuePos === 1 ? "Next in line" : `${nth(queuePos)} in line`}</div>
+      <div className="wcf-queue-line">
+        <span className="wcf-queue-spot">OPEN</span>
+        <span className="wcf-queue-arrow" aria-hidden="true">←</span>
+        {waitingList.slice(0, Math.max(queuePos + 1, 4)).map((b) => {
+          const me = b.player_id === myId;
+          return (
+            <span key={b.id} className={"wcf-queue-slot" + (me ? " me" : "")}>
+              <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-queue-av" background={avatarFor(b.player.display_name).gradient} />
+              <span>{me ? "You" : b.player.display_name.split(" ")[0]}</span>
+            </span>
+          );
+        })}
+      </div>
+      <div className="wcf-queue-s">
+        {queuePos === 1
+          ? "If anyone drops out, the spot's yours."
+          : `If ${queuePos} people drop out, you're in.`}{" "}
+        We&apos;ll send you a notification.
+      </div>
+    </div>
+  );
+
   const cta = (
     <div className="wcf-card-actions">
       {!myBooking && overdue ? (
@@ -9766,6 +9915,7 @@ function GameCard({
               </span>
             </div>
           </div>
+          {queueStrip}
           {payStrip}
           {cta}
         </div>
@@ -9843,6 +9993,7 @@ function GameCard({
           For the compact row, payStrip/cta render inside .wcf-fx-row
           above instead so the whole fixture reads as one card; the hero
           already is one card, so they render here. */}
+      {featured && queueStrip}
       {featured && payStrip}
       {featured && cta}
 
@@ -10174,6 +10325,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-glance-card.wide{grid-column:1/-1}
 .wcf-glance-card.amber{background:linear-gradient(155deg,rgba(234,179,8,.15),rgba(19,22,38,.96) 62%);border-color:rgba(234,179,8,.35);box-shadow:0 16px 34px -26px rgba(234,179,8,.4)}
 .wcf-glance-card.red{background:linear-gradient(155deg,rgba(240,82,94,.15),rgba(19,22,38,.96) 62%);border-color:rgba(240,82,94,.35);box-shadow:0 16px 34px -26px rgba(240,82,94,.4)}
+.wcf-glance-card.calm .wcf-glance-num{color:var(--dim)}
 .wcf-glance-card.blue{background:linear-gradient(155deg,rgba(46,116,204,.15),rgba(19,22,38,.96) 62%);border-color:rgba(46,116,204,.35);box-shadow:0 16px 34px -26px rgba(46,116,204,.4)}
 .wcf-glance-card.crimson{background:linear-gradient(155deg,rgba(230,57,70,.15),rgba(19,22,38,.96) 62%);border-color:rgba(230,57,70,.35);box-shadow:0 16px 34px -26px rgba(230,57,70,.4)}
 .wcf-glance-card.expandable{padding-bottom:0}
@@ -11445,6 +11597,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-suggestion-actions .wcf-generate-teams{background:transparent;border:1px solid var(--line);color:var(--white)}
 .wcf-apply-teams{background:var(--red);color:#fff;border-radius:999px;min-height:46px;font-weight:700}
 .wcf-suggestion-actions .wcf-ghost{border-radius:999px;min-height:46px}
+.wcf-motm-post-meta{font-size:12px;color:var(--dim);margin-top:3px}
+.wcf-motm-post-meta b{color:#f5d97a;font-weight:700}
 .wcf-rec-post{line-height:1.45}
 .wcf-rec-post-score{font-size:11.5px;font-weight:700;color:var(--dim)}
 .wcf-rec-post-line{margin-top:3px}
@@ -11467,6 +11621,39 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-bests-stat small{font-size:11px;color:var(--faint,#64748b);margin-top:2px}
 .wcf-bests-stat em{display:inline-flex;align-items:center;gap:4px;font-style:normal;font-size:10.5px;font-weight:800;color:#f5d97a;margin-top:3px}
 .wcf-bests-stat.record b{background:linear-gradient(180deg,#fde68a,#eab308);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wcf-queue{margin:12px 0 10px;padding:12px;border-radius:16px;background:rgba(245,217,122,.07);border:1px solid rgba(245,217,122,.4)}
+.wcf-queue-k{font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#f5d97a}
+.wcf-queue-t{font-family:var(--display);font-weight:800;font-size:21px;margin-top:3px;color:var(--white)}
+.wcf-queue-line{display:flex;align-items:flex-start;gap:8px;margin-top:10px;overflow-x:auto}
+.wcf-queue-spot{flex:none;width:36px;height:36px;border-radius:50%;border:2px dashed rgba(134,239,172,.6);display:grid;place-items:center;color:var(--green,#86efac);font-weight:800;font-size:9px;letter-spacing:.04em}
+.wcf-queue-arrow{color:var(--dim);font-size:15px;line-height:36px}
+.wcf-queue-slot{flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:10.5px;font-weight:600;color:var(--dim);max-width:52px;text-align:center}
+.wcf-queue-slot>span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:52px}
+.wcf-queue-av{width:36px;height:36px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:12px;color:#fff}
+.wcf-queue-slot.me{color:#f5d97a;font-weight:800}
+.wcf-queue-slot.me .wcf-queue-av{box-shadow:0 0 0 3px #eab308,0 0 14px rgba(234,179,8,.5)}
+.wcf-queue-s{font-size:12px;color:var(--dim);margin-top:10px;line-height:1.45}
+.wcf-pcard-badges{flex-wrap:wrap;justify-content:center}
+.wcf-pcard-badges>span{white-space:nowrap}
+.wcf-pcard-honour{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:999px;background:#f5d97a;color:#0d0d1a}
+.wcf-pcard-season{margin-top:14px}
+.wcf-pcard-sec-head{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.wcf-pcard-sec-head b{font-family:var(--display);font-size:12px;letter-spacing:.02em;color:var(--white)}
+.wcf-pcard-wdl{display:flex;height:24px;border-radius:7px;overflow:hidden;margin-top:6px;font-family:var(--display);font-weight:800;font-size:11px}
+.wcf-pcard-wdl div{display:grid;place-items:center;color:#0d0d1a;min-width:18px}
+.wcf-pcard-wdl .w{background:#86efac}.wcf-pcard-wdl .d{background:#cbd5e1}.wcf-pcard-wdl .l{background:#f8b3b8}
+.wcf-pcard-form{display:flex;gap:6px;margin-top:6px}
+.wcf-pcard-form i{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-family:var(--display);font-weight:800;font-size:10.5px;color:#0d0d1a}
+.wcf-pcard-form .fW{background:#86efac}.wcf-pcard-form .fD{background:#cbd5e1}.wcf-pcard-form .fL{background:#f8b3b8}
+.wcf-pcard-bests{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:6px}
+.wcf-pcard-bests b{display:block;font-family:var(--display);font-weight:800;font-size:19px;color:var(--white)}
+.wcf-pcard-bests span{display:block;font-size:10.5px;color:var(--dim);font-weight:600;line-height:1.3;margin-top:2px}
+/* Predict leaderboard in the Stats/Records style: gold points, your row in gold. */
+.wcf-lb-pts{background:linear-gradient(180deg,#fde68a,#eab308);-webkit-background-clip:text;background-clip:text;color:transparent;font-size:17px}
+.wcf-pl-row.me{background:rgba(245,217,122,.1);border-bottom:1px solid rgba(245,217,122,.35);box-shadow:inset 0 0 0 1px rgba(245,217,122,.35)}
+.wcf-pl-row.lead{background:rgba(245,217,122,.07)}
+.wcf-predict-top{margin-bottom:16px}
+.wcf-pl-exact{font-size:11px;font-weight:700;color:#f5d97a;white-space:nowrap}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
