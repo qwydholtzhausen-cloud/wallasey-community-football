@@ -235,7 +235,47 @@ interface AuditLogEntry {
 
 const FEED_REACTION_EMOJI = ["👍", "🔥"] as const;
 
-type FeedItem = { key: string; ts: number; kind: "derived"; icon: React.ReactNode; tone: "amber" | "green" | "blue"; text: React.ReactNode };
+type FeedItem = {
+  key: string;
+  ts: number;
+  kind: "derived";
+  icon: React.ReactNode;
+  tone: "amber" | "green" | "blue";
+  text: React.ReactNode;
+  // Set on the kinds that arrive in bursts, so the feed can fold them into
+  // one card per week (see foldFeedRows).
+  group?: "join" | "apps";
+  groupLabel?: string;
+};
+
+type FeedRow = { type: "item"; item: FeedItem } | { type: "group"; group: "join" | "apps"; items: FeedItem[] };
+
+// New members and appearance milestones come in bursts - a batch of
+// sign-ups, or a game where several players hit 5 - and read as a wall of
+// near-identical rows that buries the results and MOTM people come to
+// see. Two or more of the same kind within one section fold into a single
+// card, placed where the newest of them was; everything else is untouched.
+function foldFeedRows(items: FeedItem[]): FeedRow[] {
+  const counts = { join: 0, apps: 0 };
+  for (const i of items) if (i.group) counts[i.group]++;
+  const rows: FeedRow[] = [];
+  const placed = new Set<string>();
+  for (const i of items) {
+    if (i.group && counts[i.group] >= 2) {
+      if (placed.has(i.group)) continue;
+      placed.add(i.group);
+      rows.push({ type: "group", group: i.group, items: items.filter((x) => x.group === i.group) });
+    } else rows.push({ type: "item", item: i });
+  }
+  return rows;
+}
+
+// "A, B, C and 4 more" - enough names to recognise people without a
+// card that runs to ten lines.
+function listNames(names: string[], max = 4) {
+  if (names.length <= max) return names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `${names.slice(0, max).join(", ")} and ${names.length - max} more`;
+}
 
 interface ClubSettings {
   team_white_name: string;
@@ -1545,6 +1585,7 @@ function App({ session }: { session: Session }) {
   const [draggingPlayerId, setDraggingPlayerId] = useState<string | null>(null);
   const pitchCardRef = useRef<HTMLDivElement | null>(null);
   const [feedView, setFeedView] = useState<"feed" | "bootroom">("feed");
+  const [showLaterFixtures, setShowLaterFixtures] = useState(false);
 
   const isAdmin = myProfile?.role === "admin" || myProfile?.role === "co-owner" || myProfile?.role === "owner";
   // Soft launch: admins see the Boot Room first so they can seed it before
@@ -2276,6 +2317,14 @@ function App({ session }: { session: Session }) {
     const { error } = await supabase.from("feed_hidden_items").insert({ item_key: itemKey, hidden_by: myId });
     if (error) return notifyError(error.message);
     notifySuccess("Archived — find it again under \"Show archived\"");
+    await loadHiddenFeedItems();
+  }
+  // One confirm and one write for a folded group of feed items, rather
+  // than looping the single-item version and toasting once per item.
+  async function hideFeedItems(itemKeys: string[]) {
+    const { error } = await supabase.from("feed_hidden_items").insert(itemKeys.map((item_key) => ({ item_key, hidden_by: myId })));
+    if (error) return notifyError(error.message);
+    notifySuccess(`Archived ${itemKeys.length} — find them again under "Show archived"`);
     await loadHiddenFeedItems();
   }
   async function unhideFeedItem(itemKey: string) {
@@ -3035,6 +3084,8 @@ function App({ session }: { session: Session }) {
             <strong>{p.display_name}</strong> joined the club
           </>
         ),
+        group: "join",
+        groupLabel: p.display_name,
       });
     }
 
@@ -3062,6 +3113,8 @@ function App({ session }: { session: Session }) {
                 <strong>{b.player.display_name}</strong> hit {count} appearances!
               </>
             ),
+            group: "apps",
+            groupLabel: `${b.player.display_name} (${count})`,
           });
         }
       }
@@ -3753,12 +3806,25 @@ function App({ session }: { session: Session }) {
                   </>
                 )}
 
-                {upcomingByMonth.map((group) => {
-                  const games = group.games.filter((g) => g.id !== nextFixtureForCountdown?.id);
+                {(() => {
+                  // Only the next four weeks until asked - the list ran to
+                  // around 20 games, most of them weeks away. Both sides are
+                  // UK calendar dates as plain strings, so there's no
+                  // timezone comparison to get wrong here.
+                  const cut = new Date(nowUk.slice(0, 10) + "T00:00:00Z");
+                  cut.setUTCDate(cut.getUTCDate() + 28);
+                  const laterFrom = cut.toISOString().slice(0, 10);
+                  const shown = (g: GameRow) => showLaterFixtures || g.date <= laterFrom;
+                  const laterCount = upcomingGames.filter((g) => g.id !== nextFixtureForCountdown?.id && !shown(g)).length;
+                  const visibleMonths = upcomingByMonth.filter((grp) => grp.games.some((g) => g.id !== nextFixtureForCountdown?.id && shown(g)));
+                  return (
+                    <>
+                {visibleMonths.map((group) => {
+                  const games = group.games.filter((g) => g.id !== nextFixtureForCountdown?.id && shown(g));
                   if (games.length === 0) return null;
                   return (
                     <div key={group.key}>
-                      {upcomingByMonth.length > 1 && <h4 className="wcf-month-head">{group.label}</h4>}
+                      {visibleMonths.length > 1 && <h4 className="wcf-month-head">{group.label}</h4>}
                       {games.map((g) => (
                         <GameCard
                           key={g.id}
@@ -3782,6 +3848,19 @@ function App({ session }: { session: Session }) {
                     </div>
                   );
                 })}
+                {laterCount > 0 && (
+                  <button className="wcf-ghost wcf-later-fixtures" onClick={() => setShowLaterFixtures(true)}>
+                    Show {laterCount} later fixture{laterCount === 1 ? "" : "s"}
+                  </button>
+                )}
+                {showLaterFixtures && (
+                  <button className="wcf-ghost wcf-later-fixtures" onClick={() => setShowLaterFixtures(false)}>
+                    Show just the next four weeks
+                  </button>
+                )}
+                    </>
+                  );
+                })()}
               </>
             )}
           </>
@@ -3887,7 +3966,41 @@ function App({ session }: { session: Session }) {
               return groups.map((g) => (
                 <div key={g.label}>
                   <div className="wcf-feed-section-label">{g.label}</div>
-                  {g.items.map((item) => {
+                  {(showArchived ? g.items.map((item): FeedRow => ({ type: "item", item })) : foldFeedRows(g.items)).map((row) => {
+                    if (row.type === "group") {
+                      const first = row.items[0];
+                      const names = row.items.map((x) => x.groupLabel ?? "");
+                      return (
+                        <article key={`group-${row.group}-${first.key}`} className="wcf-feed-item grouped">
+                          <div className={"wcf-feed-icon " + first.tone}>{first.icon}</div>
+                          <div className="wcf-feed-body">
+                            <div className="wcf-feed-text">
+                              {row.group === "join" ? (
+                                <><strong>{row.items.length} new faces</strong> joined the club: {listNames(names)}</>
+                              ) : (
+                                <><strong>Appearance milestones:</strong> {listNames(names)}</>
+                              )}
+                            </div>
+                            <div className="wcf-feed-date">{fmtFeedDate(first.ts)}</div>
+                            {isAdmin && (
+                              <div className="wcf-feed-item-actions">
+                                <button
+                                  className="wcf-feed-archive-btn"
+                                  onClick={async () => {
+                                    if (await askConfirm(`Archive these ${row.items.length}?`, "You can restore them one by one from \"Show archived\".", "Archive", false)) {
+                                      hideFeedItems(row.items.map((x) => x.key));
+                                    }
+                                  }}
+                                >
+                                  Archive
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    }
+                    const item = row.item;
                     const isHidden = hiddenFeedKeys.includes(item.key);
                     return (
                       <article key={item.key} className="wcf-feed-item">
@@ -4352,7 +4465,14 @@ function App({ session }: { session: Session }) {
 
                 {!editingLineup && nextGrouped.unassigned.length > 0 && (
                   <div className="wcf-lineup-group">
-                    <div className="wcf-lineup-group-label">Unassigned · {nextGrouped.unassigned.length}</div>
+                    {/* "Unassigned" is admin language. Before any teams are
+                        picked this is simply who's playing. */}
+                    <div className="wcf-lineup-group-label">
+                      {nextGrouped.white.length === 0 && nextGrouped.red.length === 0 ? "Who's in" : "Still to be picked"} · {nextGrouped.unassigned.length}
+                    </div>
+                    {nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && (
+                      <p className="wcf-lineup-group-note">Teams get picked nearer kick-off.</p>
+                    )}
                     {nextGrouped.unassigned.map((b) => (
                       <div key={b.id} className={"wcf-lineup-row" + (b.player_id === myId ? " me" : "")}>
                         <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-lineup-avatar" />
@@ -8445,8 +8565,15 @@ function AdminGameRow({
   const gameUnassigned = confirmed.filter((b) => !b.team).length;
   const gameTeamsSet = confirmed.length === 0 || gameUnassigned === 0;
   const scored = game.team_white_score != null && game.team_red_score != null;
-  const badge = !past ? (gameTeamsSet ? "TEAMS SET" : "NO TEAMS") : scored ? `${game.team_white_score}–${game.team_red_score}` : "SCORE";
-  const badgeTone = !past ? (gameTeamsSet ? "green" : "amber") : scored ? "blue" : "amber";
+  // Teams aren't picked weeks ahead, so an amber "NO TEAMS" on every
+  // upcoming game was a warning that meant nothing. It only warns inside
+  // 48 hours of kick-off. Both sides go through toMs(): kickoffCutoff() and
+  // nowInLondon() are UK wall-clock-as-UTC and must never meet Date.now().
+  const teamsDueSoon = !past && toMs(kickoffCutoff(game.date, game.kickoff, 0)) - toMs(nowInLondon()) <= 48 * 3600000;
+  const badge = !past
+    ? gameTeamsSet ? "TEAMS SET" : teamsDueSoon ? "NO TEAMS" : "TEAMS LATER"
+    : scored ? `${game.team_white_score}–${game.team_red_score}` : "SCORE";
+  const badgeTone = !past ? (gameTeamsSet ? "green" : teamsDueSoon ? "amber" : "muted") : scored ? "blue" : "amber";
 
   return (
     <div className={"wcf-admin-game" + (past ? "" : " upcoming") + (expanded ? " open" : "")}>
@@ -8847,7 +8974,7 @@ function GameCard({
         <p className="wcf-overdue-note">Overdue payment — speak to an admin before booking your next game.</p>
       ) : (
         <button
-          className={"wcf-book " + (myBooking ? "cancel" : "")}
+          className={"wcf-book " + (myBooking ? "cancel" : full ? "waitlist" : "")}
           disabled={!myBooking && full && waitingList.length >= 10}
           onClick={async () => {
             if (!myBooking) return onBook();
@@ -9328,6 +9455,11 @@ const css = `
 .wcf-book{flex:1;background:var(--red);color:#fff;border:none;padding:13px 16px;border-radius:12px;font-family:var(--display);font-weight:800;font-size:13.5px;letter-spacing:.01em;cursor:pointer;transition:.15s}
 .wcf-book:hover{background:var(--red-hi)}
 .wcf-book.cancel{background:transparent;color:var(--white);border:1px solid var(--line)}
+/* Most games are full, so this was a solid red button on nearly every
+   card - the loudest colour in the app on the secondary action. Solid red
+   is kept for "Grab a spot", the one people should actually notice. */
+.wcf-book.waitlist{background:rgba(230,57,70,.08);color:#ff9aa1;border:1px solid rgba(230,57,70,.45)}
+.wcf-book.waitlist:hover{background:rgba(230,57,70,.16)}
 .wcf-book:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
 .wcf-ghost{background:transparent;border:1px solid var(--line);color:var(--dim);padding:11px 12px;border-radius:10px;font-weight:700;font-size:12px;cursor:pointer}
 .wcf-ghost.danger:hover{color:var(--red-hi);border-color:rgba(230,57,70,.5)}
@@ -9347,6 +9479,7 @@ const css = `
 .wcf-console-section-meta.warn{color:var(--red-hi)}
 .wcf-month-head{font-size:10.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:16px 2px 9px;display:flex;align-items:center;gap:9px}
 .wcf-month-head:first-child{margin-top:2px}
+.wcf-later-fixtures{display:block;width:100%;margin:4px 0 18px;padding:12px;text-align:center}
 .wcf-eyebrow{font-family:var(--display);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0 2px 12px}
 .wcf-month-head:after{content:"";flex:1;height:1px;background:var(--line)}
 .wcf-glance-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:6px}
@@ -9434,10 +9567,14 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-admin-game-month{margin-top:3px;font-weight:700;font-size:8.5px;letter-spacing:.12em;color:var(--dim)}
 .wcf-admin-game-info{flex:1;min-width:0;text-align:left}
 .wcf-admin-game-venue{font-family:var(--display);font-weight:800;font-size:13.5px;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wcf-admin-game-date{margin-top:12px;font-size:11px;color:var(--dim)}
+/* Both lines are spans, so without display:block the margin did nothing
+   and the venue and date ran together ("Solar CampusMon 28 Sep"). */
+.wcf-admin-game-venue,.wcf-admin-game-date{display:block}
+.wcf-admin-game-date{margin-top:3px;font-size:11px;color:var(--dim)}
 .wcf-admin-game-badge{flex:none;font-weight:800;font-size:9px;letter-spacing:.1em;padding:6px 9px;border-radius:20px;white-space:nowrap}
 .wcf-admin-game-badge.green{color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.35)}
 .wcf-admin-game-badge.amber{color:var(--amber);background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.35)}
+.wcf-admin-game-badge.muted{color:var(--dim);background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.22)}
 .wcf-admin-game-badge.blue{color:var(--blue);background:rgba(46,116,204,.12);border:1px solid rgba(46,116,204,.35)}
 .wcf-admin-game-body{padding:0 14px 14px;border-top:1px solid rgba(148,163,184,.12)}
 .wcf-admin-score-card{margin:14px 0;padding:14px;border-radius:14px;background:rgba(13,13,26,.55);border:1px solid rgba(148,163,184,.14);text-align:center}
@@ -9763,6 +9900,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-suggestion-note{font-size:11px;color:var(--dim);line-height:1.5;margin:0 0 14px;text-align:center}
 .wcf-fairness-preview-names{font-size:11px;color:var(--dim);line-height:1.4;margin-bottom:10px}
 .wcf-lineup-group{margin-bottom:6px}
+.wcf-lineup-group-note{font-size:11.5px;color:var(--dim);margin:-4px 2px 10px}
 .wcf-lineup-group-label{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 2px 8px}
 .wcf-lineup-group-dot{width:7px;height:7px;border-radius:50%}
 
