@@ -56,7 +56,13 @@ export async function GET(req: Request) {
     await admin.from("notified_events").insert({ event_key: key });
   }
 
-  // --- Kickoff + team reminder, ~1hr before kickoff ---
+  // --- Kickoff + team reminder, before kickoff ---
+  // The window is deliberately wide (2 hours to 15 min before kickoff):
+  // GitHub runs this "every 15 minutes" schedule late and irregularly -
+  // on 24 Sep 2026 it ran at 19:29 for an 8pm game - and the old 45-70
+  // minute window missed 9 of 10 games in Aug/Sep. The first run that
+  // lands anywhere in the window sends it, once per game, and the wording
+  // gives the kickoff time rather than "in about an hour".
   const nowUkStr = nowInLondon();
   const nowMs = toMs(nowUkStr);
   const { data: games } = await admin
@@ -71,7 +77,7 @@ export async function GET(req: Request) {
     if (notifiedKeys.has(key)) continue;
 
     const minutesUntilKickoff = (toMs(kickoffCutoff(g.date, g.kickoff, 0)) - nowMs) / 60000;
-    if (minutesUntilKickoff < 45 || minutesUntilKickoff > 70) continue;
+    if (minutesUntilKickoff < 15 || minutesUntilKickoff > 120) continue;
 
     // Everyone with an actual spot, not just payment-confirmed ones -
     // payment confirmation is an admin action that often lags well behind
@@ -88,10 +94,8 @@ export async function GET(req: Request) {
         // Falls back to a generic message when team assignment hasn't
         // happened yet for this game, rather than saying "you're on null".
         const teamLabel = b.team === "white" ? whiteLabel : b.team === "red" ? redLabel : null;
-        const body = teamLabel
-          ? `You're on ${teamLabel} — kickoff at ${g.venue} is in about an hour.`
-          : `Match is in about an hour at ${g.venue}.`;
-        return sendPushToUsers([b.player_id], { title: "Kickoff in 1 hour ⏰", body, url: "/" });
+        const body = teamLabel ? `You're on ${teamLabel} at ${g.venue}.` : `See you at ${g.venue}.`;
+        return sendPushToUsers([b.player_id], { title: `Kickoff at ${g.kickoff} ⏰`, body, url: "/" });
       })
     );
 
