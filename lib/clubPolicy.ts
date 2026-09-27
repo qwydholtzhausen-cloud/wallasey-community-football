@@ -23,3 +23,9 @@ export const AUTO_REMOVE_UNPAID_BOOKINGS = false;
 // every member 2026-09-27. Setting it back to false hides it from players
 // again without touching anyone's listings.
 export const BOOT_ROOM_OPEN_TO_ALL = true;
+
+// "Add to calendar" on booked fixtures (2026-09-27). Admins only while it's
+// tested on real phones - how an iPhone's Home Screen app hands a calendar
+// file to the Calendar app can only really be checked on a device. Flip to
+// true to give it to everyone.
+export const CALENDAR_BUTTON_OPEN_TO_ALL = false;

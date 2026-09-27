@@ -7,7 +7,8 @@ import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInL
 import { predictionPoints, buildLeaderboard, buildMonthlyLeaderboards, topScorers, type ScoredPrediction } from "../lib/predictions";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer } from "../lib/teamBalance";
 import { defaultPitchCost } from "../lib/pitchCost";
-import { BOOT_ROOM_OPEN_TO_ALL } from "../lib/clubPolicy";
+import { BOOT_ROOM_OPEN_TO_ALL, CALENDAR_BUTTON_OPEN_TO_ALL } from "../lib/clubPolicy";
+import { googleCalendarUrl } from "../lib/calendar";
 import { BOOT_CATEGORIES, BOOT_CATEGORY, normaliseUkPhone, displayUkPhone, type BootCategory } from "../lib/bootRoom";
 
 // The payment link is just config, not baked into booking logic (statuses
@@ -9025,6 +9026,29 @@ function GameCard({
             : full ? (waitingList.length >= 10 ? "Waiting list full" : "Join waiting list") : "Grab a spot"}
         </button>
       )}
+      {/* Once you've got a spot. People book about a month ahead, so a
+          calendar entry is what stops the "forgot I was playing" no-shows.
+          Android gets Google Calendar (where Android calendars live);
+          everything else gets the .ics file, which iPhones open straight
+          into their own "Add to Calendar" sheet. */}
+      {myBooking && !myBooking.waiting && (CALENDAR_BUTTON_OPEN_TO_ALL || isAdmin) && (
+        <a
+          className="wcf-cal-btn"
+          href={
+            typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)
+              ? googleCalendarUrl(game)
+              : `/api/calendar/${game.id}`
+          }
+          target={typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent) ? "_blank" : undefined}
+          rel="noreferrer"
+          aria-label="Add to calendar"
+          title="Add to calendar"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4.5" width="18" height="16" rx="2.5" /><path d="M3 9.5h18M8 2.5v4M16 2.5v4M12 13v5M9.5 15.5h5" />
+          </svg>
+        </a>
+      )}
     </div>
   );
 
@@ -9488,6 +9512,12 @@ const css = `
 .wcf-toast.error{background:var(--red);color:#fff}
 
 .wcf-card-actions{display:flex;align-items:center;gap:10px;margin-top:16px}
+/* Deliberately quiet: icon only, in the same outline as "Give up spot"
+   beside it, so the booking card keeps one obvious action. A labelled
+   blue button here crowded the card. Still a full 44px to tap. */
+.wcf-cal-btn{flex:none;display:inline-grid;place-items:center;width:46px;height:46px;border-radius:12px;text-decoration:none;
+  background:transparent;border:1px solid var(--line);color:var(--dim)}
+.wcf-cal-btn:hover{color:var(--white);border-color:rgba(148,163,184,.35)}
 .wcf-book{flex:1;background:var(--red);color:#fff;border:none;padding:13px 16px;border-radius:12px;font-family:var(--display);font-weight:800;font-size:13.5px;letter-spacing:.01em;cursor:pointer;transition:.15s}
 .wcf-book:hover{background:var(--red-hi)}
 .wcf-book.cancel{background:transparent;color:var(--white);border:1px solid var(--line)}
