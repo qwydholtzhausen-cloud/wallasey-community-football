@@ -3190,6 +3190,8 @@ function App({ session }: { session: Session }) {
     return {
       monthLabel: new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
       names: leaders.map((id) => names[id]).filter(Boolean),
+      // For the card: why they won.
+      winners: leaders.map((id) => ({ id, name: names[id], wins: wins[id] ?? 0, votes: votes[id] ?? 0, goals: goals[id] ?? 0 })),
     };
   }, [pastGames, motmTallyByGame, goalRows, nowUk]);
 
@@ -4787,14 +4789,48 @@ function App({ session }: { session: Session }) {
                   <div className="wcf-season-hero-title">{currentSeasonYear}</div>
                   <div className="wcf-season-hero-sub">{gamesThisSeason} game{gamesThisSeason === 1 ? "" : "s"} played so far</div>
                 </div>
-                {playerOfMonth && (
-                  <div className="wcf-shoutout wcf-potm">
-                    🏅 Player of the Month — {playerOfMonth.monthLabel}: <strong>{playerOfMonth.names.join(" & ")}</strong>
-                    <div className="wcf-result-share">
-                      <button className="wcf-result-share-btn" onClick={sharePlayerOfMonth}><svg className="wcf-share-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></svg>Share</button>
+                {playerOfMonth && (() => {
+                  const ws = playerOfMonth.winners;
+                  const joint = ws.length > 1;
+                  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+                  return (
+                    // A photo card like the season hero above it, not a
+                    // text shout-out: the winner's face, name and why.
+                    <div className="wcf-potm-card">
+                      <div className="wcf-potm-bg" />
+                      <div className="wcf-potm-top">
+                        <span className="wcf-potm-eyebrow">{joint ? "Players of the month" : "Player of the month"} · {playerOfMonth.monthLabel}</span>
+                        <button className="wcf-potm-share" onClick={sharePlayerOfMonth} aria-label="Share Player of the Month">
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></svg>
+                          Share
+                        </button>
+                      </div>
+                      <div className="wcf-potm-main">
+                        <div className="wcf-potm-faces">
+                          {ws.slice(0, 2).map((w) => (
+                            <Avatar key={w.id} name={w.name} avatarUrl={avatarByPlayerId.get(w.id)} className="wcf-potm-face" background={avatarFor(w.name).gradient} />
+                          ))}
+                        </div>
+                        <div className="wcf-potm-who">
+                          {ws.map((w, i) => (
+                            <button key={w.id} className="wcf-potm-name" onClick={() => openPlayerCard(w.id)}>
+                              {w.name}
+                              {i < ws.length - 1 ? <span className="wcf-potm-amp"> &amp;</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {!joint && ws[0] && (
+                        <div className="wcf-potm-stats">
+                          <span><b>{ws[0].wins}</b>{ws[0].wins === 1 ? "MOTM win" : "MOTM wins"}</span>
+                          <span><b>{ws[0].votes}</b>{ws[0].votes === 1 ? "vote" : "votes"}</span>
+                          <span><b>{ws[0].goals}</b>{ws[0].goals === 1 ? "goal" : "goals"}</span>
+                        </div>
+                      )}
+                      {joint && <div className="wcf-potm-note">Level on {plural(ws[0].wins, "MOTM win", "MOTM wins")} and votes. Shared honours.</div>}
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
                 {awards.map((a) => (
                   <div key={a.id} className="wcf-shoutout">
                     {a.title} — <strong>{a.value}</strong>
@@ -5037,15 +5073,27 @@ function App({ session }: { session: Session }) {
                   {holders.length > 3 && <span className="wcf-rec-date"> +{holders.length - 3} more</span>}
                 </>
               );
-              const row = (key: string, value: React.ReactNode, label: string, detail: React.ReactNode) => (
-                <div key={key} className="wcf-rec-row">
-                  <div className="wcf-rec-val">{value}</div>
-                  <div className="wcf-rec-body">
-                    {label && <div className="wcf-rec-label">{label}</div>}
-                    <div className="wcf-rec-who">{detail}</div>
+              // Holders' faces on the right, and a gold glow on anything you hold.
+              const row = (key: string, value: React.ReactNode, label: string, detail: React.ReactNode, holders: Holder[] = []) => {
+                const faces = holders.filter((h, i, all) => all.findIndex((x) => x.playerId === h.playerId) === i).slice(0, 3);
+                const mine = holders.some((h) => h.playerId === myId);
+                return (
+                  <div key={key} className={"wcf-rec-row" + (faces.length ? " has-faces" : "") + (mine ? " mine" : "")}>
+                    <div className="wcf-rec-val">{value}</div>
+                    <div className="wcf-rec-body">
+                      {label && <div className="wcf-rec-label">{label}{mine && <span className="wcf-rec-you">You</span>}</div>}
+                      <div className="wcf-rec-who">{detail}</div>
+                    </div>
+                    {faces.length > 0 && (
+                      <div className="wcf-rec-faces">
+                        {faces.map((h) => (
+                          <Avatar key={h.playerId} name={h.name} avatarUrl={avatarByPlayerId.get(h.playerId)} className="wcf-rec-face" background={avatarFor(h.name).gradient} />
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </div>
-              );
+                );
+              };
               const scoreLine = (x: { date: string; white: number; red: number }) => (
                 <>
                   {cs.team_white_name} {x.white}–{x.red} {cs.team_red_name}
@@ -5056,8 +5104,19 @@ function App({ session }: { session: Session }) {
               const empty = !r.highestScoring;
               return (
                 <div className="wcf-board">
-                  <div className="wcf-lb-eyebrow">Record book</div>
-                  <h3 className="wcf-lb-title">Club records</h3>
+                  <div className="wcf-rec-hero">
+                    <div className="wcf-rec-hero-bg" />
+                    <div className="wcf-rec-hero-in">
+                      <div className="wcf-lb-eyebrow" style={{ color: "#f5d97a" }}>Record book</div>
+                      <h3 className="wcf-lb-title">Club records</h3>
+                      {r.mostGoalsInGame && (
+                        <div className="wcf-rec-hero-stat">
+                          <b>{r.mostGoalsInGame.goals}</b>
+                          <span>goals in one game<br />{r.mostGoalsInGame.holders[0].name}{r.mostGoalsInGame.holders.length > 1 ? ` +${r.mostGoalsInGame.holders.length - 1}` : ""}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                   <div className="wcf-lb-list-card">
                     <select
                       className="wcf-month-filter"
@@ -5075,18 +5134,18 @@ function App({ session }: { session: Session }) {
                     ) : (
                       <>
                         <div className="wcf-rec-group">In a single game</div>
-                        {r.mostGoalsInGame && row("goals", r.mostGoalsInGame.goals, "Most goals by one player", who(r.mostGoalsInGame.holders, true))}
+                        {r.mostGoalsInGame && row("goals", r.mostGoalsInGame.goals, "Most goals by one player", who(r.mostGoalsInGame.holders, true), r.mostGoalsInGame.holders)}
                         {r.biggestWin && row("win", `+${r.biggestWin.margin}`, "Biggest win", scoreLine(r.biggestWin))}
                         {r.highestScoring && row("high", r.highestScoring.total, "Most goals in a game", scoreLine(r.highestScoring))}
-                        {r.mostMotmVotesInGame && row("votes1", r.mostMotmVotesInGame.votes, "Most MOTM votes in a game", who(r.mostMotmVotesInGame.holders, true))}
+                        {r.mostMotmVotesInGame && row("votes1", r.mostMotmVotesInGame.votes, "Most MOTM votes in a game", who(r.mostMotmVotesInGame.holders, true), r.mostMotmVotesInGame.holders)}
 
                         <div className="wcf-rec-group">Over the season</div>
-                        {r.winStreak && row("ws", r.winStreak.n, "Longest winning run", who(r.winStreak.holders))}
-                        {r.unbeaten && row("ub", r.unbeaten.n, "Longest unbeaten run", who(r.unbeaten.holders))}
-                        {r.gamesInARow && row("row", r.gamesInARow.n, "Most games in a row", who(r.gamesInARow.holders))}
-                        {r.motmWins && row("mw", r.motmWins.n, "Most Man of the Match wins", who(r.motmWins.holders))}
-                        {r.motmVotes && row("mv", r.motmVotes.n, "Most MOTM votes", who(r.motmVotes.holders))}
-                        {r.promotions && row("wl", r.promotions.n, "Most times in off the waiting list", who(r.promotions.holders))}
+                        {r.winStreak && row("ws", r.winStreak.n, "Longest winning run", who(r.winStreak.holders), r.winStreak.holders)}
+                        {r.unbeaten && row("ub", r.unbeaten.n, "Longest unbeaten run", who(r.unbeaten.holders), r.unbeaten.holders)}
+                        {r.gamesInARow && row("row", r.gamesInARow.n, "Most games in a row", who(r.gamesInARow.holders), r.gamesInARow.holders)}
+                        {r.motmWins && row("mw", r.motmWins.n, "Most Man of the Match wins", who(r.motmWins.holders), r.motmWins.holders)}
+                        {r.motmVotes && row("mv", r.motmVotes.n, "Most MOTM votes", who(r.motmVotes.holders), r.motmVotes.holders)}
+                        {r.promotions && row("wl", r.promotions.n, "Most times in off the waiting list", who(r.promotions.holders), r.promotions.holders)}
 
                         {r.hatTricks.length > 0 && (
                           <>
@@ -5097,12 +5156,13 @@ function App({ session }: { session: Session }) {
                             {(showAllHatTricks ? r.hatTricks : r.hatTricks.slice(0, 5)).map((h, i) =>
                               row(
                                 h.playerId + h.date + i,
-                                <span className="wcf-rec-green">{h.goals}</span>,
+                                h.goals,
                                 "",
                                 <>
                                   <button className="wcf-name-link wcf-rec-name" onClick={() => openPlayerCard(h.playerId)}>{h.name}</button>
                                   <span className="wcf-rec-date">{h.goals} goals · {fmtDate(h.date)}</span>
-                                </>
+                                </>,
+                                [{ playerId: h.playerId, name: h.name }]
                               )
                             )}
                             {r.hatTricks.length > 5 && (
@@ -10956,8 +11016,21 @@ button.wcf-glance-card:disabled{cursor:default}
    font still wins. */
 .wcf-subtabs button{padding:9px 4px}
 .wcf-rec-group{font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin:20px 2px 8px}
+.wcf-rec-row.has-faces{grid-template-columns:58px minmax(0,1fr) auto}
+.wcf-rec-row.mine{border-color:rgba(245,217,122,.6);background:rgba(245,217,122,.08);box-shadow:0 0 22px -10px rgba(245,217,122,.7)}
+.wcf-rec-you{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:5px;background:#f5d97a;color:#0d0d1a;font-size:10px;font-weight:800;letter-spacing:.08em;vertical-align:2px;text-transform:uppercase}
+.wcf-rec-faces{display:flex;align-items:center}
+.wcf-rec-face{width:32px;height:32px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-weight:800;font-size:12px;color:#fff;box-shadow:0 0 0 2px var(--panel,#161a2b)}
+.wcf-rec-face + .wcf-rec-face{margin-left:-10px}
+.wcf-rec-hero{position:relative;overflow:hidden;border-radius:20px;border:1px solid rgba(245,217,122,.35);margin-bottom:14px;min-height:170px;background:#0d0d1a}
+.wcf-rec-hero-bg{position:absolute;inset:0;background:url(/wrapped/records.jpg) 50% 66%/cover}
+.wcf-rec-hero-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(13,13,26,.95) 0%,rgba(13,13,26,.72) 50%,rgba(13,13,26,.1) 100%)}
+.wcf-rec-hero-in{position:relative;z-index:1;padding:16px 16px 18px}
+.wcf-rec-hero-stat{display:flex;align-items:center;gap:12px;margin-top:12px}
+.wcf-rec-hero-stat b{font-family:var(--display);font-weight:800;font-size:44px;line-height:1;background:linear-gradient(180deg,#fde68a,#eab308);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wcf-rec-hero-stat span{font-size:12.5px;line-height:1.4;color:#e2e8f0;font-weight:600}
 .wcf-rec-row{display:grid;grid-template-columns:58px minmax(0,1fr);min-height:64px;gap:12px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.02);margin-bottom:8px}
-.wcf-rec-val{font-family:var(--display);font-weight:800;font-size:24px;line-height:1;text-align:center;font-variant-numeric:tabular-nums;color:var(--white,#f5f6f8)}
+.wcf-rec-val{font-family:var(--display);font-weight:800;font-size:24px;line-height:1.1;text-align:center;font-variant-numeric:tabular-nums;background:linear-gradient(180deg,#fde68a,#eab308);-webkit-background-clip:text;background-clip:text;color:transparent}
 .wcf-rec-label{font-size:13px;font-weight:700;color:var(--white,#f5f6f8)}
 .wcf-rec-who{font-size:13px;color:var(--dim);margin-top:3px;line-height:1.45}
 .wcf-rec-who .wcf-name-link,.wcf-rec-hat .wcf-name-link{font-size:13px;padding:0}
@@ -10966,6 +11039,25 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rec-who .wcf-rec-name{display:block;font-size:13px;font-weight:700;color:var(--white,#f5f6f8);text-align:left}
 .wcf-rec-who .wcf-rec-name + .wcf-rec-date{display:block;margin-top:2px}
 .wcf-rec-more{display:block;width:100%;min-height:40px;margin-top:2px;border:1px solid var(--line);border-radius:12px;background:transparent;color:var(--dim);font-weight:700;font-size:13px;cursor:pointer}
+/* Player of the Month: a photo card in the same family as the season hero. */
+.wcf-potm-card{position:relative;overflow:hidden;border-radius:20px;border:1px solid rgba(234,179,8,.45);padding:16px 16px 18px;margin-bottom:14px;background:#0d0d1a;box-shadow:0 18px 40px -22px rgba(234,179,8,.55)}
+.wcf-potm-bg{position:absolute;inset:0;background:url(/wrapped/motm.jpg) 70% 22%/cover;opacity:.9}
+.wcf-potm-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(13,13,26,.94) 0%,rgba(13,13,26,.7) 45%,rgba(13,13,26,.1) 100%),linear-gradient(0deg,rgba(13,13,26,.8),transparent 55%)}
+.wcf-potm-top,.wcf-potm-main,.wcf-potm-stats,.wcf-potm-note{position:relative;z-index:1}
+.wcf-potm-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.wcf-potm-eyebrow{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#f5d97a}
+.wcf-potm-share{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 12px;border-radius:999px;border:1px solid rgba(245,217,122,.55);background:rgba(13,13,26,.55);color:#f5d97a;font-weight:700;font-size:12.5px;cursor:pointer;flex:none}
+.wcf-potm-main{display:flex;align-items:center;gap:14px;margin-top:14px}
+.wcf-potm-faces{display:flex;flex:none}
+.wcf-potm-face{width:64px;height:64px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:22px;color:#fff;box-shadow:0 0 0 3px #eab308,0 0 22px rgba(234,179,8,.5)}
+.wcf-potm-face + .wcf-potm-face{margin-left:-14px}
+.wcf-potm-who{min-width:0;display:flex;flex-direction:column;align-items:flex-start}
+.wcf-potm-name{background:none;border:0;padding:0;color:#fff;font-family:var(--display);font-weight:800;font-size:24px;line-height:1.1;text-align:left;cursor:pointer;letter-spacing:-.01em}
+.wcf-potm-amp{color:#f5d97a}
+.wcf-potm-stats{display:flex;gap:18px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(245,217,122,.22)}
+.wcf-potm-stats span{display:flex;flex-direction:column;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.wcf-potm-stats b{font-family:var(--display);font-size:22px;color:#f5d97a;letter-spacing:0;line-height:1.1}
+.wcf-potm-note{margin-top:12px;font-size:12.5px;color:var(--dim)}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
