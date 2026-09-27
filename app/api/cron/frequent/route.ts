@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
-import { kickoffCutoff, nowInLondon, MATCH_DURATION_MINUTES } from "../../../../lib/time";
+import { kickoffCutoff, nowInLondon, previousMonthKey, MATCH_DURATION_MINUTES, MOTM_VOTE_WINDOW_MINUTES } from "../../../../lib/time";
 import { ensureFreshMonzoToken, registerMonzoWebhook } from "../../../../lib/monzo";
-import { AUTO_REMOVE_UNPAID_BOOKINGS } from "../../../../lib/clubPolicy";
+import { AUTO_REMOVE_UNPAID_BOOKINGS, WRAPPED_OPEN_TO_ALL_FROM, WRAPPED_FIRST_MONTH_FOR_ALL } from "../../../../lib/clubPolicy";
 
 // Both sides of this comparison come from the same "pretend UTC" trick in
 // lib/time.ts (real UK wall-clock digits, formatted as if they were UTC) -
@@ -402,6 +402,50 @@ export async function GET(req: Request) {
       url: "/",
     });
     await markNotified(key);
+  }
+
+  // --- "Your September, wrapped": one push per month, when it goes live ---
+  // Same rule as the app's banner: a month's Wrapped goes live once every
+  // published game in it has been played, scored and had its MOTM vote
+  // close (or the month is over). Only between 9am and 9pm, so a vote
+  // closing at 1am doesn't wake anyone - it goes out on the next daytime
+  // run instead. Only to players who actually have one (2+ games that
+  // month). No backfill needed: WRAPPED_FIRST_MONTH_FOR_ALL means no
+  // month before September 2026 can ever qualify.
+  const nowHour = Number(nowUkStr.slice(11, 13));
+  if (nowUkStr.slice(0, 10) >= WRAPPED_OPEN_TO_ALL_FROM && nowHour >= 9 && nowHour < 21) {
+    const thisMonth = nowUkStr.slice(0, 7);
+    const { data: monthRows } = await admin
+      .from("games")
+      .select("date, kickoff, published, team_white_score, team_red_score, bookings(player_id, waiting, team)")
+      .gte("date", `${previousMonthKey(nowUkStr)}-01`)
+      .lte("date", `${thisMonth}-31`);
+    const inMonth = (key: string) => (monthRows ?? []).filter((g) => g.published && g.date.startsWith(key));
+    const thisMonthGames = inMonth(thisMonth);
+    const thisMonthDone =
+      thisMonthGames.length > 0 &&
+      thisMonthGames.every(
+        (g) => g.team_white_score != null && g.team_red_score != null && kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) <= nowUkStr
+      );
+    const monthKey = thisMonthDone ? thisMonth : previousMonthKey(nowUkStr);
+    const key = `wrapped-${monthKey}`;
+    if (monthKey >= WRAPPED_FIRST_MONTH_FOR_ALL && !notifiedKeys.has(key)) {
+      const apps: Record<string, number> = {};
+      for (const g of inMonth(monthKey)) {
+        if (g.team_white_score == null) continue;
+        for (const b of (g.bookings ?? []) as Booking[]) if (!b.waiting && b.team) apps[b.player_id] = (apps[b.player_id] ?? 0) + 1;
+      }
+      const recipients = Object.keys(apps).filter((id) => apps[id] >= 2);
+      if (recipients.length > 0) {
+        const monthName = new Date(monthKey + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+        await sendPushToUsers(recipients, {
+          title: `Your ${monthName}, wrapped 🎁`,
+          body: "Your games, goals, who you win with and your nemesis. Tap to watch.",
+          url: "/",
+        });
+      }
+      await markNotified(key);
+    }
   }
 
   // --- Monzo: keep the access token fresh, retry webhook registration ---

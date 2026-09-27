@@ -4256,18 +4256,27 @@ function App({ session }: { session: Session }) {
                       {nextConfirmedRatings.map((r) => (
                         <div key={r.id} className="wcf-ratings-row">
                           <div className="wcf-ratings-name">
-                            {r.name}
+                            <span className="wcf-ratings-who">{r.name}</span>
                             {r.position && <span className="wcf-ratings-pos">{POSITION_LABEL[r.position]}</span>}
+                            {r.source !== "unrated" && (
+                              <span className={"wcf-ratings-source " + r.source}>{r.source === "admin" ? "Admin /10" : "Self /5"}</span>
+                            )}
                           </div>
                           {r.source === "unrated" ? (
-                            <span className="wcf-ratings-unrated">Unrated</span>
+                            <span className="wcf-ratings-unrated">Not rated yet</span>
                           ) : (
-                            <div className="wcf-ratings-stats">
-                              <span>F {r.fitness}</span>
-                              <span>A {r.attack}</span>
-                              <span>D {r.defence}</span>
-                              <span>GK {r.goalkeeping}</span>
-                              <span className={"wcf-ratings-source " + r.source}>{r.source === "admin" ? "Admin" : "Self"}</span>
+                            // Bars fill against each rating's own scale (admin /10,
+                            // self /5), so an 8 from an admin and a 4 from a
+                            // self-rating look the same - which they are.
+                            <div className="wcf-ratings-bars">
+                              {([["Fitness", r.fitness], ["Attack", r.attack], ["Defence", r.defence], ["Keeper", r.goalkeeping]] as const).map(([label, v]) => (
+                                <div key={label} className="wcf-ratings-bar">
+                                  <span className="wcf-ratings-bar-top"><span>{label}</span><b>{v}</b></span>
+                                  <span className="wcf-ratings-track">
+                                    <i style={{ width: `${Math.max(0, Math.min(100, ((v ?? 0) / (r.source === "admin" ? 10 : 5)) * 100))}%` }} />
+                                  </span>
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
@@ -4280,11 +4289,12 @@ function App({ session }: { session: Session }) {
                   <>
                     {!suggestedTeams ? (
                       <button className="wcf-generate-teams" onClick={() => setSuggestedTeams(generateBalancedTeams())}>
-                        🔀 Generate recommended teams
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M16 3h5v5" /><path d="M4 20L21 3" /><path d="M21 16v5h-5" /><path d="M15 15l6 6" /><path d="M4 4l5 5" /></svg>
+                        Generate recommended teams
                       </button>
                     ) : (
                       <div className="wcf-suggestion-actions">
-                        <button className="wcf-generate-teams" onClick={() => setSuggestedTeams(generateBalancedTeams())}>↻ Regenerate</button>
+                        <button className="wcf-generate-teams" onClick={() => setSuggestedTeams(generateBalancedTeams())}>Regenerate</button>
                         <button className="wcf-ghost" onClick={() => setSuggestedTeams(null)}>Discard</button>
                         <button className="wcf-apply-teams" onClick={applySuggestedTeams}>Apply this split</button>
                       </div>
@@ -11287,6 +11297,21 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-ft-dash{color:var(--dim);font-family:var(--display);font-weight:700;font-size:18px}
 .wcf-ft-team{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 .wcf-ft-scorers{font-size:12px;color:var(--dim);line-height:1.45}
+/* Fairness: ratings as labelled bars, and buttons in the app's red. */
+.wcf-ratings-row{flex-direction:column;align-items:stretch;gap:8px;padding:11px 0}
+.wcf-ratings-name{flex-wrap:wrap;gap:6px}
+.wcf-ratings-who{font-size:13.5px;font-weight:700;color:var(--white)}
+.wcf-ratings-source{margin-left:auto}
+.wcf-ratings-bars{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.wcf-ratings-bar{min-width:0}
+.wcf-ratings-bar-top{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--dim);margin-bottom:4px}
+.wcf-ratings-bar-top b{font-family:var(--display);font-size:12px;color:var(--white)}
+.wcf-ratings-track{display:block;height:5px;border-radius:5px;background:var(--panel2);overflow:hidden}
+.wcf-ratings-track i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,#e63946,#f0525e)}
+.wcf-generate-teams{display:flex;align-items:center;justify-content:center;gap:8px;background:var(--red);border-radius:999px;min-height:46px;font-weight:700;font-size:14px}
+.wcf-suggestion-actions .wcf-generate-teams{background:transparent;border:1px solid var(--line);color:var(--white)}
+.wcf-apply-teams{background:var(--red);color:#fff;border-radius:999px;min-height:46px;font-weight:700}
+.wcf-suggestion-actions .wcf-ghost{border-radius:999px;min-height:46px}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
