@@ -3232,6 +3232,18 @@ function App({ session }: { session: Session }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastGames, goalRows, motmTallyByGame, scorePredictions, profiles, myId, wrappedMonthKey, wrappedSoFar]);
   const [wrappedOpen, setWrappedOpen] = useState(false);
+  // The unwrap clip plays the first time each month's Wrapped is opened on
+  // this phone; worked out when the story opens, so reopening skips it.
+  const [wrappedIntroDue, setWrappedIntroDue] = useState(false);
+  function openWrapped() {
+    let seen = false;
+    try {
+      seen = localStorage.getItem(`wcf-wrapped-intro-${myId}-${wrappedMonthKey}`) === "true";
+    } catch {}
+    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    setWrappedIntroDue(!seen && !reduce);
+    setWrappedOpen(true);
+  }
   const wrappedDismissKey = `wcf-wrapped-dismissed-${myId}-${wrappedMonthKey}`;
   const [wrappedDismissed, setWrappedDismissed] = useState(true);
   useEffect(() => {
@@ -3639,6 +3651,13 @@ function App({ session }: { session: Session }) {
     () => (resultsMonth === "all" ? scoredPastGames : scoredPastGames.filter((g) => g.date.slice(0, 7) === resultsMonth)),
     [scoredPastGames, resultsMonth]
   );
+  // The usual venue isn't worth repeating on every Scores row; only a game
+  // somewhere else says where it was.
+  const mainResultsVenue = useMemo(() => {
+    const count: Record<string, number> = {};
+    scoredPastGames.forEach((g) => (count[g.venue] = (count[g.venue] ?? 0) + 1));
+    return Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  }, [scoredPastGames]);
 
   const headToHead = useMemo(() => {
     const white = { played: 0, won: 0, drawn: 0, lost: 0, points: 0 };
@@ -3809,7 +3828,7 @@ function App({ session }: { session: Session }) {
             {showWrappedBanner && wrapped && (
               <div className="wr-banner-wrap">
                 <style>{wrappedBannerCss}</style>
-                <button className="wr-banner" onClick={() => setWrappedOpen(true)} aria-label={`Open your ${wrapped.periodLabel} Wrapped`}>
+                <button className="wr-banner" onClick={openWrapped} aria-label={`Open your ${wrapped.periodLabel} Wrapped`}>
                   <span className="row">
                     <span className="ball">
                       <img src="/wrapped/ball.jpg" alt="" />
@@ -3835,25 +3854,31 @@ function App({ session }: { session: Session }) {
             )}
             {showPushNudge && (
               <div className="wcf-nudge-banner">
-                <div>
-                  <strong>🔔 Turn on notifications</strong>
-                  <p>Get kickoff reminders, payment nudges and spot alerts — never miss a game.</p>
-                </div>
-                <div className="wcf-nudge-actions">
-                  <button onClick={async () => { if (await enablePush()) dismissPushNudge(); }}>Enable</button>
-                  <button className="wcf-ghost" onClick={dismissPushNudge}>Not now</button>
+                <span className="wcf-nudge-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
+                </span>
+                <div className="wcf-nudge-body">
+                  <strong>Never miss a game</strong>
+                  <p>Kickoff reminders, payment nudges and a heads-up when a spot opens.</p>
+                  <div className="wcf-nudge-actions">
+                    <button onClick={async () => { if (await enablePush()) dismissPushNudge(); }}>Turn on</button>
+                    <button className="wcf-ghost" onClick={dismissPushNudge}>Not now</button>
+                  </div>
                 </div>
               </div>
             )}
             {showRatingNudge && (
               <div className="wcf-nudge-banner">
-                <div>
-                  <strong>⭐ Rate yourself</strong>
-                  <p>Helps admins put together fairer teams — takes 30 seconds.</p>
-                </div>
-                <div className="wcf-nudge-actions">
-                  <button onClick={() => setTab("account")}>Rate now</button>
-                  <button className="wcf-ghost" onClick={dismissRatingNudge}>Not now</button>
+                <span className="wcf-nudge-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M12 3l2.6 5.6 6 .7-4.4 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.4 9.3l6-.7z" /></svg>
+                </span>
+                <div className="wcf-nudge-body">
+                  <strong>Rate yourself</strong>
+                  <p>Helps admins pick fairer teams. It takes 30 seconds.</p>
+                  <div className="wcf-nudge-actions">
+                    <button onClick={() => setTab("account")}>Rate now</button>
+                    <button className="wcf-ghost" onClick={dismissRatingNudge}>Not now</button>
+                  </div>
                 </div>
               </div>
             )}
@@ -4693,16 +4718,36 @@ function App({ session }: { session: Session }) {
                     </div>
                   )}
 
-                  {isSeason && <div className="wcf-lb-prize">🏆 Top 3 at the end of the season win prizes from the pot.</div>}
-                  {!isSeason && isCurrentMonth && (
-                    <div className="wcf-lb-prize">🏃 {monthLabel} is still in progress — standings so far, not final.</div>
-                  )}
-                  {!isSeason && !isCurrentMonth && leaders.length > 0 && (
-                    <div className="wcf-shoutout wcf-potm">
-                      🏆 {monthLabel} winner — <strong>{leaders.map((l) => l.playerName).join(" & ")}</strong>: free game this month!
+                  {isSeason && (
+                    <div className="wcf-lb-prize">
+                      <span className="wcf-lb-medals" aria-hidden="true"><i className="g">1</i><i className="s">2</i><i className="b">3</i></span>
+                      <span className="wcf-lb-prize-text">
+                        Top 3 at season&apos;s end win from the pot
+                        <small>3 pts exact score · 1 pt right result · booked players only</small>
+                      </span>
                     </div>
                   )}
-                  <div className="wcf-lb-key">3 pts exact score · 1 pt correct result · booked players only</div>
+                  {!isSeason && isCurrentMonth && (
+                    <div className="wcf-lb-prize">
+                      <span className="wcf-lb-prize-ic" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                      </span>
+                      <span className="wcf-lb-prize-text">
+                        {monthLabel} is still in progress
+                        <small>Standings so far, not final.</small>
+                      </span>
+                    </div>
+                  )}
+                  {!isSeason && !isCurrentMonth && leaders.length > 0 && (
+                    <div className="wcf-lb-prize">
+                      <span className="wcf-lb-medals" aria-hidden="true"><i className="g">1</i></span>
+                      <span className="wcf-lb-prize-text">
+                        {monthLabel} winner: <b>{leaders.map((l) => l.playerName).join(" & ")}</b>
+                        <small>A free game this month.</small>
+                      </span>
+                    </div>
+                  )}
+                  {!isSeason && <div className="wcf-lb-key">3 pts exact score · 1 pt correct result · booked players only</div>}
 
                   {board.length > 0 && (
                     <div className="wcf-pl-legend">
@@ -5024,8 +5069,8 @@ function App({ session }: { session: Session }) {
                       <span className="wcf-rank" />
                       <span style={{ width: 24 }} />
                       <span className="wcf-board-name">Player</span>
-                      <span className="wcf-board-count">Apps</span>
-                      <span className="wcf-board-count">Goals</span>
+                      <span className={"wcf-board-count" + (statsSort === "apps" ? " on" : "")}>Apps</span>
+                      <span className={"wcf-board-count" + (statsSort === "goals" ? " on" : "")}>Goals</span>
                     </div>
                     {sorted.map((row, i) => {
                       const isLead = i === 0;
@@ -5050,15 +5095,14 @@ function App({ session }: { session: Session }) {
                               >
                                 {row.name}
                               </button>
-                              {(isMe || row.apps >= 5) && (
+                              {isMe && (
                                 <span className="wcf-board-badges">
-                                  {isMe && <span className="wcf-lb-you-badge">you</span>}
-                                  {row.apps >= 5 && <span className="wcf-apps-badge">🎖️ {Math.floor(row.apps / 5) * 5}</span>}
+                                  <span className="wcf-lb-you-badge">you</span>
                                 </span>
                               )}
                             </span>
-                            <span className="wcf-board-count">{row.apps}</span>
-                            <span className="wcf-board-count">{row.goals || "—"}</span>
+                            <span className={"wcf-board-count" + (statsSort === "apps" ? " on" : "")}>{row.apps}</span>
+                            <span className={"wcf-board-count" + (statsSort === "goals" ? " on" : "")}>{row.goals || "—"}</span>
                           </div>
                           {open && (
                             <div className="wcf-lb-row-detail">
@@ -5071,7 +5115,7 @@ function App({ session }: { session: Session }) {
                     })}
 
                     <div className="wcf-lb-footer">
-                      <span>Milestone badges are awarded every 5 appearances.</span>
+                      <span>Tap a row for goals per game and when they last played.</span>
                       <button onClick={() => setTab("fixtures")}>View fixtures</button>
                     </div>
                   </div>
@@ -5259,19 +5303,48 @@ function App({ session }: { session: Session }) {
                       .filter((p): p is Profile => !!p);
                   return (
                     <article key={g.id} className={"wcf-result" + (resultIndex === 0 ? " featured" : "")}>
-                      <button className="wcf-result-toggle" onClick={() => setExpandedResultId(expanded ? null : g.id)}>
-                        <div className="wcf-result-head">
-                          <div>
-                            <div className="wcf-venue">{g.venue}</div>
-                            <div className="wcf-pitch">{fmtDate(g.date)}</div>
-                          </div>
-                          <div className="wcf-result-score">
-                            <span style={{ color: cs.team_white_color }}>{g.team_white_score}</span>
-                            <span className="wcf-result-dash">–</span>
-                            <span style={{ color: cs.team_red_color }}>{g.team_red_score}</span>
-                          </div>
-                        </div>
-                        <div className="wcf-result-chevron">{expanded ? "▲ Hide details" : "▼ Tap for scorers & MOTM"}</div>
+                      <button className="wcf-result-toggle" onClick={() => setExpandedResultId(expanded ? null : g.id)} aria-expanded={expanded}>
+                        {(() => {
+                          const w = g.team_white_score ?? 0;
+                          const r = g.team_red_score ?? 0;
+                          const outcome = w > r ? "white" : r > w ? "red" : "draw";
+                          const d = new Date(g.date + "T12:00:00Z");
+                          const motmNames = !votingOpen && topVotes > 0 ? ranked.filter((x) => x.votes === topVotes).map((x) => x.candidate.player.display_name) : [];
+                          const top = scorers[0] && scorers[0].goals >= 2 ? scorers[0] : null;
+                          const away = g.venue !== mainResultsVenue;
+                          return (
+                            <div className="wcf-res-row">
+                              <div className="wcf-res-date">
+                                <b>{d.getUTCDate()}</b>
+                                <span>{d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }).toUpperCase()}</span>
+                              </div>
+                              <div className="wcf-res-mid">
+                                <div className="wcf-res-score">
+                                  <span style={{ color: cs.team_white_color }}>{w}</span>
+                                  <span className="wcf-result-dash">–</span>
+                                  <span style={{ color: cs.team_red_color }}>{r}</span>
+                                  <span
+                                    className={"wcf-res-pill " + outcome}
+                                    style={outcome === "white" ? { background: cs.team_white_color } : outcome === "red" ? { background: cs.team_red_color } : undefined}
+                                  >
+                                    {outcome === "draw" ? "Draw" : `${outcome === "white" ? cs.team_white_name : cs.team_red_name} win`}
+                                  </span>
+                                </div>
+                                <div className="wcf-res-meta">
+                                  {votingOpen ? (
+                                    <span className="wcf-res-open">MOTM voting open</span>
+                                  ) : motmNames.length > 0 ? (
+                                    <>MOTM <b>{motmNames.join(" & ")}</b></>
+                                  ) : null}
+                                  {top && <>{(votingOpen || motmNames.length > 0) && " · "}{top.player.display_name} {top.goals}</>}
+                                  {away && <>{(votingOpen || motmNames.length > 0 || top) && " · "}{g.venue}</>}
+                                  {!votingOpen && motmNames.length === 0 && !top && !away && fmtDate(g.date)}
+                                </div>
+                              </div>
+                              <svg className={"wcf-res-chev" + (expanded ? " open" : "")} viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+                            </div>
+                          );
+                        })()}
                       </button>
 
                       {expanded && (
@@ -5734,6 +5807,12 @@ function App({ session }: { session: Session }) {
           myId={myId}
           onClose={() => setWrappedOpen(false)}
           onShare={shareWrapped}
+          playIntro={wrappedIntroDue}
+          onIntroSeen={() => {
+            try {
+              localStorage.setItem(`wcf-wrapped-intro-${myId}-${wrappedMonthKey}`, "true");
+            } catch {}
+          }}
           onBook={() => {
             setWrappedOpen(false);
             setTab("fixtures");
@@ -9906,11 +9985,14 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-overdue-note{font-size:12px;color:var(--red-hi);font-weight:700;text-align:center;margin:0;flex:1}
 .wcf-update-banner{display:block;width:100%;background:var(--amber);color:#241a02;border:none;padding:10px 14px;font-size:12.5px;font-weight:800;text-align:center;cursor:pointer;font-family:var(--sans)}
 .wcf-offline-banner{display:block;width:100%;background:var(--panel2);color:var(--dim);border-bottom:1px solid var(--line);padding:10px 14px;font-size:12.5px;font-weight:700;text-align:center}
-.wcf-nudge-banner{background:linear-gradient(135deg,rgba(46,116,204,.18),rgba(46,116,204,.06));border:1px solid rgba(46,116,204,.4);border-radius:14px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.wcf-nudge-banner strong{font-size:13px;color:var(--white)}
-.wcf-nudge-banner p{font-size:12px;color:var(--dim);margin:3px 0 0;line-height:1.4}
-.wcf-nudge-actions{display:flex;gap:8px;flex-shrink:0}
-.wcf-nudge-actions button{font-size:12px;font-weight:800;padding:8px 14px;border-radius:20px;border:none;background:var(--blue);color:#fff;cursor:pointer}
+.wcf-nudge-banner{display:grid;grid-template-columns:40px minmax(0,1fr);gap:12px;align-items:start;margin-bottom:14px;padding:14px;border-radius:18px;
+  background:radial-gradient(120% 140% at 0% 0%,rgba(230,57,70,.18),transparent 60%),var(--panel);border:1px solid rgba(230,57,70,.35)}
+.wcf-nudge-icon{width:40px;height:40px;border-radius:12px;background:rgba(230,57,70,.15);color:var(--red-hi);display:grid;place-items:center}
+.wcf-nudge-body{min-width:0}
+.wcf-nudge-banner strong{display:block;font-family:var(--display);font-weight:800;font-size:15px;color:var(--white)}
+.wcf-nudge-banner p{font-size:12.5px;color:var(--dim);margin:3px 0 0;line-height:1.45}
+.wcf-nudge-actions{display:flex;gap:8px;margin-top:10px}
+.wcf-nudge-actions button{min-height:36px;font-size:13px;font-weight:700;padding:0 16px;border-radius:999px;border:none;background:var(--red);color:#fff;cursor:pointer}
 .wcf-nudge-actions button.wcf-ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
 .wcf-tab{border-radius:16px;overflow:hidden;margin-bottom:9px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line)}
 .wcf-tab.claiming{border-color:rgba(234,179,8,.28)}
@@ -10340,7 +10422,16 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-predict-gate-text{font-size:12px;color:var(--dim);line-height:1.5}
 .wcf-predict-gate-text b{color:var(--white)}
 
-.wcf-lb-prize{display:flex;align-items:center;gap:8px;background:rgba(224,167,51,.1);border:1px solid rgba(224,167,51,.35);border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:11.5px;color:var(--white);line-height:1.4}
+.wcf-lb-prize{display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:12px 14px;border-radius:16px;
+  background:radial-gradient(120% 160% at 100% 50%,rgba(245,217,122,.16),transparent 60%),var(--panel);border:1px solid rgba(245,217,122,.4)}
+.wcf-lb-medals{display:flex;flex:none}
+.wcf-lb-medals i{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-family:var(--display);font-weight:800;font-size:12px;color:#0d0d1a;box-shadow:0 0 0 2px var(--panel)}
+.wcf-lb-medals i + i{margin-left:-6px}
+.wcf-lb-medals .g{background:#eab308}.wcf-lb-medals .s{background:#cbd5e1}.wcf-lb-medals .b{background:#e0915b}
+.wcf-lb-prize-ic{flex:none;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;background:rgba(245,217,122,.14);color:#f5d97a}
+.wcf-lb-prize-text{min-width:0;font-size:13px;font-weight:700;color:var(--white);line-height:1.35}
+.wcf-lb-prize-text b{color:#f5d97a}
+.wcf-lb-prize-text small{display:block;font-size:11.5px;font-weight:500;color:var(--dim);margin-top:2px}
 .wcf-lb-key{font-size:10.5px;color:var(--dim);text-align:center;margin-bottom:12px;line-height:1.6}
 .wcf-lb{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px 14px 4px}
 .wcf-lb-rank{font-family:var(--mono);font-weight:800;font-size:12px;color:var(--dim);width:16px;flex:0 0 auto;text-align:center;display:grid;place-items:center}
@@ -11087,6 +11178,38 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-potm-stats span{display:flex;flex-direction:column;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
 .wcf-potm-stats b{font-family:var(--display);font-size:22px;color:#f5d97a;letter-spacing:0;line-height:1.1}
 .wcf-potm-note{margin-top:12px;font-size:12.5px;color:var(--dim)}
+/* Scores rows: the date leads, the result says who won, and the MOTM and
+   top scorer are on the row so most people never need to open it. */
+.wcf-res-row{display:grid;grid-template-columns:48px minmax(0,1fr) 18px;gap:12px;align-items:center}
+.wcf-res-date{text-align:center;line-height:1;padding:6px 0;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid var(--line)}
+.wcf-res-date b{display:block;font-family:var(--display);font-weight:800;font-size:19px;color:var(--white)}
+.wcf-res-date span{display:block;font-size:9.5px;font-weight:800;letter-spacing:.12em;color:var(--dim);margin-top:3px}
+.wcf-res-mid{min-width:0}
+.wcf-res-score{display:flex;align-items:center;gap:7px;font-family:var(--display);font-weight:800;font-size:21px;line-height:1.1}
+.wcf-res-pill{margin-left:4px;font-family:var(--sans);font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:3px 7px;border-radius:5px;color:#fff;white-space:nowrap}
+.wcf-res-pill.white{color:#111}
+.wcf-res-pill.draw{background:#475569}
+.wcf-res-meta{font-size:12px;color:var(--dim);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-res-meta b{color:#f5d97a;font-weight:700}
+.wcf-res-open{color:var(--green);font-weight:700}
+.wcf-res-chev{color:var(--dim);transition:transform .2s}
+.wcf-res-chev.open{transform:rotate(90deg)}
+/* Stats list, matching the Records rows: boxed rows, the sorted-by column
+   in gold, and your own row glowing gold. Later rules, so they win. */
+.wcf-board-row:not(.wcf-board-header){border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.02);margin-bottom:8px;padding:10px 12px}
+.wcf-board-row:not(.wcf-board-header):last-child{border-bottom:1px solid var(--line)}
+.wcf-board-header{padding:0 12px 8px;border-bottom:0}
+.wcf-board-row.lead{background:rgba(245,217,122,.07);border-color:rgba(245,217,122,.4);margin-bottom:8px}
+.wcf-board-row.me{background:rgba(245,217,122,.1);border-color:rgba(245,217,122,.6);box-shadow:0 0 22px -10px rgba(245,217,122,.7)}
+.wcf-board-row.me .wcf-board-name{color:var(--white)}
+.wcf-rank{font-family:var(--display);font-weight:800;font-size:13px}
+.wcf-rank-star,.wcf-rank-star svg{color:#eab308;fill:#eab308;stroke:#eab308}
+.wcf-board-count{font-family:var(--display);font-weight:800;font-size:15px;color:#cbd5e1;font-variant-numeric:tabular-nums;width:32px}
+.wcf-board-row:not(.wcf-board-header){gap:8px;padding:10px 10px}
+.wcf-board-count.on{background:linear-gradient(180deg,#fde68a,#eab308);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wcf-board-header .wcf-board-count.on{background:none;color:#f5d97a;-webkit-text-fill-color:#f5d97a}
+.wcf-apps-badge{font-family:var(--sans);text-transform:uppercase;letter-spacing:.08em;font-size:9.5px;color:#f5d97a;background:transparent;border:1px solid rgba(245,217,122,.45);border-radius:4px;padding:1px 5px}
+.wcf-lb-you-badge{background:#f5d97a;color:#0d0d1a}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted

@@ -31,6 +31,9 @@ export interface WrappedStoryProps {
   onShare: () => void;
   onBook: () => void;
   onBootRoom: () => void;
+  // The unwrap clip plays first, once per month per phone.
+  playIntro?: boolean;
+  onIntroSeen?: () => void;
 }
 
 interface Card {
@@ -720,6 +723,9 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
 
 export default function WrappedStory(props: WrappedStoryProps) {
   const [idx, setIdx] = useState(0);
+  // "playing" -> the clip; "flash" -> a white fade into the first card; "done".
+  const [intro, setIntro] = useState<"playing" | "flash" | "done">(props.playIntro ? "playing" : "done");
+  const introVideo = useRef<HTMLVideoElement | null>(null);
   const [held, setHeld] = useState(false);
   const [drag, setDrag] = useState(0);
   const [closing, setClosing] = useState(false);
@@ -756,9 +762,28 @@ export default function WrappedStory(props: WrappedStoryProps) {
     setIdx(Math.max(0, Math.min(last, i)));
   }
 
+  // The unwrap clip: marks itself seen as soon as it starts, so a close
+  // mid-clip doesn't replay it. Any failure to play just skips it - the
+  // story never waits on a video.
+  useEffect(() => {
+    if (intro !== "playing") return;
+    props.onIntroSeen?.();
+    const v = introVideo.current;
+    const give = window.setTimeout(() => setIntro("flash"), 6000);
+    v?.play().catch(() => setIntro("done"));
+    return () => window.clearTimeout(give);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intro === "playing"]);
+  useEffect(() => {
+    if (intro !== "flash") return;
+    const t = window.setTimeout(() => setIntro("done"), 650);
+    return () => window.clearTimeout(t);
+  }, [intro]);
+
   // The progress bar and auto-advance run off one clock, paused while the
   // card is held down. Stops on the last card rather than closing itself.
   useEffect(() => {
+    if (intro === "playing") return;
     clock.current = { start: performance.now(), elapsed: 0, paused: false };
     let raf = 0;
     const tick = (now: number) => {
@@ -773,7 +798,7 @@ export default function WrappedStory(props: WrappedStoryProps) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [idx, last]);
+  }, [idx, last, intro === "playing"]);
 
   function pause(p: boolean) {
     const c = clock.current;
@@ -796,7 +821,7 @@ export default function WrappedStory(props: WrappedStoryProps) {
   // Tap the left third to go back, anywhere else to go forward; hold to
   // pause; drag down to close.
   function onPointerDown(e: React.PointerEvent) {
-    if ((e.target as HTMLElement).closest("button")) return;
+    if (intro === "playing" || (e.target as HTMLElement).closest("button")) return;
     const holdTimer = window.setTimeout(() => {
       if (!pointer.current) return;
       pointer.current.held = true;
@@ -863,7 +888,23 @@ export default function WrappedStory(props: WrappedStoryProps) {
       onPointerCancel={onPointerCancel}
     >
       <style>{wrappedCss}</style>
-      <div key={card.key} data-card={card.key} className="wr-card" style={{ "--acc": card.accent } as CSSProperties}>
+      {intro === "playing" && (
+        <div className="wr-intro">
+          <video
+            ref={introVideo}
+            src="/wrapped/unwrap.mp4"
+            poster="/wrapped/unwrap-poster.jpg"
+            muted
+            playsInline
+            preload="auto"
+            onEnded={() => setIntro("flash")}
+            onError={() => setIntro("done")}
+          />
+          <button className="wr-intro-skip" onClick={(e) => { e.stopPropagation(); setIntro("done"); }}>Skip</button>
+        </div>
+      )}
+      {intro === "flash" && <div className="wr-flash" />}
+      <div key={card.key + (intro === "playing" ? "-wait" : "")} data-card={card.key} className="wr-card" style={{ "--acc": card.accent } as CSSProperties}>
         {card.photo && <div className={"wr-photo" + (STRONG_PHOTOS.has(card.photo) ? " strong" : "")} style={{ backgroundImage: `url(${card.photo})` }} />}
         <div className="wr-glow" />
         <div className="wr-in">{card.body}</div>
@@ -1216,6 +1257,14 @@ const wrappedCss = `
 .wr-h2h div{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:12px 8px 10px;text-align:center}
 .wr-h2h b{display:block;font-family:var(--display);font-size:34px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
 .wr-h2h div>span{display:block;font-size:11px;font-weight:700;color:rgba(255,255,255,.7);margin-top:4px}
+
+/* The unwrap clip, then a white flash into the first card. */
+.wr-intro{position:absolute;inset:0;z-index:8;background:#0d0d1a}
+.wr-intro video{width:100%;height:100%;object-fit:cover;display:block}
+.wr-intro-skip{position:absolute;right:14px;top:calc(env(safe-area-inset-top,0px) + 14px);min-height:36px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.35);background:rgba(13,13,26,.45);color:#fff;font:inherit;font-weight:700;font-size:13px;cursor:pointer}
+.wr-flash{position:absolute;inset:0;z-index:8;background:#fff;pointer-events:none;animation:wr-flash .65s ease-out forwards}
+@keyframes wr-flash{from{opacity:1}to{opacity:0}}
+@media (prefers-reduced-motion:reduce){.wr-flash{animation-duration:.01s}}
 
 /* The Fixtures banner that opens it: a photo card like Player of the
    Month, with the ribboned ball as its mark. */
