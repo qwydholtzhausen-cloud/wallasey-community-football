@@ -5160,11 +5160,8 @@ function App({ session }: { session: Session }) {
                           ))}
                       </div>
                       <div className="wcf-rivalry-row">
-                        <div className="wcf-rivalry-lab">
-                          <span><b>{h.white.won}</b> {wName}</span>
-                          <span className="wcf-rivalry-mid">Wins{h.white.drawn > 0 ? ` · ${h.white.drawn} ${h.white.drawn === 1 ? "draw" : "draws"}` : ""}</span>
-                          <span>{rName} <b>{h.red.won}</b></span>
-                        </div>
+                        {/* The numbers are in the table above; the bars are the picture of them. */}
+                        <div className="wcf-rivalry-cap">Wins{h.white.drawn > 0 ? ` · ${h.white.drawn} ${h.white.drawn === 1 ? "draw" : "draws"}` : ""}</div>
                         <div className="wcf-rivalry-bar">
                           {h.white.won > 0 && <i className="w" style={{ flex: h.white.won }} />}
                           {h.white.drawn > 0 && <i className="d" style={{ flex: h.white.drawn }} />}
@@ -5173,11 +5170,7 @@ function App({ session }: { session: Session }) {
                       </div>
                       {h.white.goals + h.red.goals > 0 && (
                         <div className="wcf-rivalry-row">
-                          <div className="wcf-rivalry-lab">
-                            <span><b>{h.white.goals}</b></span>
-                            <span className="wcf-rivalry-mid">Goals</span>
-                            <span><b>{h.red.goals}</b></span>
-                          </div>
+                          <div className="wcf-rivalry-cap">Goals</div>
                           <div className="wcf-rivalry-bar">
                             {h.white.goals > 0 && <i className="w" style={{ flex: h.white.goals }} />}
                             {h.red.goals > 0 && <i className="r" style={{ flex: h.red.goals }} />}
@@ -12150,9 +12143,6 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rivalry-title{font-family:var(--display);font-weight:800;font-size:15px;color:#fff}
 .wcf-rivalry-sub{margin-top:3px;font-size:12px;color:var(--dim)}
 .wcf-rivalry-row{margin-top:14px}
-.wcf-rivalry-lab{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px;font-weight:700;color:#e2e8f0}
-.wcf-rivalry-lab b{font-family:var(--display);font-size:22px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums}
-.wcf-rivalry-mid{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:center}
 .wcf-rivalry-bar{display:flex;gap:3px;height:12px;border-radius:6px;overflow:hidden;margin-top:6px}
 .wcf-rivalry-bar i{display:block}
 .wcf-rivalry .w{background:var(--wc)}
@@ -12172,6 +12162,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-h2h-table{margin-top:12px}
 .wcf-h2h-table .wcf-h2h-row{grid-template-columns:minmax(0,1fr) repeat(7,26px)}
 .wcf-h2h-table .wcf-h2h-header span:first-child{text-align:left}
+.wcf-rivalry-cap{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
