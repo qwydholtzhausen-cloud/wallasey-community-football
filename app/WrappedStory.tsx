@@ -583,7 +583,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
           <div><b><Count to={c.games} /></b><span>games played</span></div>
           <div><b><Count to={c.goals} /></b><span>goals, {(c.goals / Math.max(1, c.games)).toFixed(1)} a game</span></div>
           {c.highest && <div><b>{c.highest.white}–{c.highest.red}</b><span>goal-fest, {shortDate(c.highest.date)}</span></div>}
-          <div><b>{d.squad}</b><span>players pulled on a bib</span></div>
+          <div><b>{d.squad}</b><span>different players this month</span></div>
         </div>
         <div className="wr-grow" />
         <div className="wr-chips">
