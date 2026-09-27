@@ -12146,7 +12146,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-season-hero-stats span{display:flex;flex-direction:column;gap:4px;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#B7BDD0}
 .wcf-season-hero-stats b{font-family:var(--display);font-weight:800;font-size:20px;line-height:1;letter-spacing:0;color:#fff;font-variant-numeric:tabular-nums}
 /* Season: Whites v Reds rivalry */
-.wcf-rivalry{border-radius:20px;padding:14px 16px 16px;margin-bottom:14px;background:var(--panel);border:1px solid var(--line)}
+.wcf-rivalry{border-radius:20px;padding:14px 16px 16px;margin-bottom:14px;border:1px solid var(--line);background-color:var(--panel);background-image:linear-gradient(180deg,rgba(13,13,26,.5) 0%,rgba(13,13,26,.82) 30%,rgba(13,13,26,.95) 60%,rgba(13,13,26,.98) 100%),url('/net-rain.jpg');background-size:cover;background-position:center 40%}
 .wcf-rivalry-title{font-family:var(--display);font-weight:800;font-size:15px;color:#fff}
 .wcf-rivalry-sub{margin-top:3px;font-size:12px;color:var(--dim)}
 .wcf-rivalry-row{margin-top:14px}
