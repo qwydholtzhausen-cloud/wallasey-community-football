@@ -4473,14 +4473,21 @@ function App({ session }: { session: Session }) {
                     {nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && (
                       <p className="wcf-lineup-group-note">Teams get picked nearer kick-off.</p>
                     )}
-                    {nextGrouped.unassigned.map((b) => (
-                      <div key={b.id} className={"wcf-lineup-row" + (b.player_id === myId ? " me" : "")}>
-                        <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-lineup-avatar" />
-                        <button className="wcf-lineup-name wcf-name-link" onClick={() => openPlayerCard(b.player_id)}>
-                          {b.player.display_name}{b.player_id === myId ? " (you)" : ""}
+                    {/* A grid of faces rather than one full-width row each:
+                        sixteen rows was a long scroll to see who's playing,
+                        and faces are what people recognise at a glance. */}
+                    <div className="wcf-lineup-grid">
+                      {nextGrouped.unassigned.map((b) => (
+                        <button
+                          key={b.id}
+                          className={"wcf-lineup-chip" + (b.player_id === myId ? " me" : "")}
+                          onClick={() => openPlayerCard(b.player_id)}
+                        >
+                          <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-lineup-chip-avatar" />
+                          <span className="wcf-lineup-chip-name">{b.player_id === myId ? "You" : b.player.display_name}</span>
                         </button>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -6822,9 +6829,29 @@ function GaffAIChat({
     await supabase.from("gaffai_conversations").delete().eq("admin_id", myId);
   }
 
+  // The button floats over whatever list is underneath, so on admin
+  // screens it sat on top of each row's badge in turn. It fades and shrinks
+  // while anything scrolls, and comes back once scrolling stops. A
+  // capture-phase listener on document catches the inner scroll containers
+  // too, since scroll events don't bubble.
+  const [scrolling, setScrolling] = useState(false);
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const onScroll = () => {
+      setScrolling(true);
+      clearTimeout(t);
+      t = setTimeout(() => setScrolling(false), 650);
+    };
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener("scroll", onScroll, { capture: true });
+      clearTimeout(t);
+    };
+  }, []);
+
   return (
     <>
-      <div className="gaffai-fab-wrap">
+      <div className={"gaffai-fab-wrap" + (scrolling ? " scrolling" : "")}>
         <div className="gaffai-fab-ring" />
         <button className="gaffai-fab" onClick={() => setOpen(true)} aria-label="Open GaffAI">
           <GaffAILogo size={44} />
@@ -9793,6 +9820,16 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-pill.primary{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.32);color:#86efac}
 .wcf-lineup-row{display:flex;align-items:center;gap:11px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:9px;transition:box-shadow .2s}
 .wcf-lineup-row.me{border-color:transparent}
+.wcf-lineup-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:8px;margin-bottom:14px}
+.wcf-lineup-chip{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px 9px;border-radius:14px;cursor:pointer;
+  background:var(--panel);border:1px solid var(--line);color:var(--white);font-family:var(--sans);min-width:0}
+.wcf-lineup-chip.me{background:rgba(46,116,204,.14);border-color:rgba(46,116,204,.55)}
+.wcf-lineup-chip-avatar{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:15px;background:var(--panel2);color:var(--dim);object-fit:cover;flex:none}
+/* Two lines at most, so "Qwyd Holtzhausen" wraps rather than truncating.
+   Scoped by class: the photo-less avatar is a span too, and a bare
+   ".wcf-lineup-chip span" knocked its initial off-centre. */
+.wcf-lineup-chip-name{font-size:11px;font-weight:700;line-height:1.25;text-align:center;max-width:100%;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
 .wcf-lineup-row.me-edit{background:rgba(46,116,204,.14);border-color:var(--blue)}
 .wcf-lineup-avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;flex:0 0 auto;background:var(--panel2);color:var(--dim);object-fit:cover}
 .wcf-lineup-name{font-weight:700;font-size:14px;flex:1;min-width:0}
@@ -10371,7 +10408,8 @@ button.wcf-glance-card:disabled{cursor:default}
    so it's reachable from every tab; sheet/backdrop sit above everything
    else in the app (z-index 120, above .wcf-modal-overlay's 110) since
    it's meant to be usable mid-task regardless of what else is open. */
-.gaffai-fab-wrap{position:fixed; right:18px; bottom:78px; z-index:25}
+.gaffai-fab-wrap{position:fixed; right:18px; bottom:78px; z-index:25; transition:opacity .2s ease, transform .2s ease}
+.gaffai-fab-wrap.scrolling{opacity:.15; transform:scale(.8); pointer-events:none}
 .gaffai-fab-ring{position:absolute; inset:-6px; border-radius:50%; border:2px solid rgba(234,179,8,.55); animation:gaffaiPulse 2.2s ease-out infinite}
 @keyframes gaffaiPulse{0%{transform:scale(.85); opacity:.9}70%{transform:scale(1.35); opacity:0}100%{opacity:0}}
 .gaffai-fab{position:relative; width:52px; height:52px; border-radius:50%; border:none; cursor:pointer;
