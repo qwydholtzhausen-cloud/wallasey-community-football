@@ -4678,7 +4678,7 @@ function App({ session }: { session: Session }) {
                   <div className="wcf-shoutout wcf-potm">
                     🏅 Player of the Month — {playerOfMonth.monthLabel}: <strong>{playerOfMonth.names.join(" & ")}</strong>
                     <div className="wcf-result-share">
-                      <button className="wcf-result-share-btn" onClick={sharePlayerOfMonth}>📤 Share</button>
+                      <button className="wcf-result-share-btn" onClick={sharePlayerOfMonth}><svg className="wcf-share-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></svg>Share</button>
                     </div>
                   </div>
                 )}
@@ -4869,14 +4869,23 @@ function App({ session }: { session: Session }) {
                           >
                             <span className="wcf-rank">{isLead ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
                             <Avatar name={row.name} avatarUrl={avatarByPlayerId.get(row.id)} className="wcf-lb-row-avatar" background={a.gradient} />
-                            <button
-                              className="wcf-board-name wcf-name-link"
-                              onClick={(e) => { e.stopPropagation(); openPlayerCard(row.id); }}
-                            >
-                              {row.name}
-                            </button>
-                            {isMe && <span className="wcf-lb-you-badge">you</span>}
-                            {row.apps >= 5 && <span className="wcf-apps-badge">🎖️ {Math.floor(row.apps / 5) * 5}</span>}
+                            {/* Badges sit under the name rather than beside it:
+                                side by side they squeezed names down to
+                                "Jacob…" and "Chris H…". */}
+                            <span className="wcf-board-who">
+                              <button
+                                className="wcf-board-name wcf-name-link"
+                                onClick={(e) => { e.stopPropagation(); openPlayerCard(row.id); }}
+                              >
+                                {row.name}
+                              </button>
+                              {(isMe || row.apps >= 5) && (
+                                <span className="wcf-board-badges">
+                                  {isMe && <span className="wcf-lb-you-badge">you</span>}
+                                  {row.apps >= 5 && <span className="wcf-apps-badge">🎖️ {Math.floor(row.apps / 5) * 5}</span>}
+                                </span>
+                              )}
+                            </span>
                             <span className="wcf-board-count">{row.apps}</span>
                             <span className="wcf-board-count">{row.goals || "—"}</span>
                           </div>
@@ -5111,7 +5120,7 @@ function App({ session }: { session: Session }) {
 
                           {isAdmin && (
                             <div className="wcf-result-share">
-                              <button className="wcf-result-share-btn" onClick={() => shareResult(g)}>📤 Share result</button>
+                              <button className="wcf-result-share-btn" onClick={() => shareResult(g)}><svg className="wcf-share-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></svg>Share result</button>
                               <span className="wcf-result-admin-tag">Admin only</span>
                             </div>
                           )}
@@ -9738,6 +9747,10 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rank-star{color:var(--green);display:grid;place-items:center}
 .wcf-rank-star svg{width:20px;height:20px;fill:var(--green);stroke:var(--green)}
 .wcf-board-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800;font-size:14px}
+.wcf-board-who{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+.wcf-board-who .wcf-board-name{flex:none;max-width:100%;text-align:left}
+.wcf-board-badges{display:flex;gap:5px;align-items:center}
+.wcf-board-badges .wcf-apps-badge{margin-left:0}
 .wcf-apps-badge{display:inline-block;flex:none;white-space:nowrap;margin-left:7px;font-size:10px;font-weight:800;font-family:var(--mono);color:var(--amber);background:rgba(224,167,51,.14);border:1px solid rgba(224,167,51,.35);padding:1px 7px;border-radius:20px;vertical-align:middle}
 .wcf-board-count{font-family:var(--mono);font-weight:700;color:var(--blue);width:44px;text-align:right}
 
@@ -9785,9 +9798,11 @@ button.wcf-glance-card:disabled{cursor:default}
 
 .wcf-lb-list-card{position:relative}
 .wcf-lb-sorts{display:flex;gap:6px;padding:0 2px 10px}
-.wcf-lb-sort-btn{border-radius:20px;padding:7px 13px;cursor:pointer;font-family:var(--sans);font-weight:700;font-size:10.5px;
-  letter-spacing:.08em;text-transform:uppercase;background:rgba(148,163,184,.07);border:1px solid var(--line);color:var(--dim)}
-.wcf-lb-sort-btn.on{background:rgba(230,57,70,.16);border-color:rgba(230,57,70,.42);color:#f8b3b8}
+/* Matches the Season/Stats/Scores/Pot tabs above it - this was the one
+   toggle in the app with its own 10.5px, 29px-tall style. */
+.wcf-lb-sort-btn{flex:1;min-height:40px;border-radius:22px;padding:0 13px;cursor:pointer;font-family:var(--sans);font-weight:800;font-size:12.5px;
+  background:var(--panel);border:1px solid var(--line);color:var(--dim)}
+.wcf-lb-sort-btn.on{background:var(--red);border-color:var(--red);color:#fff}
 .wcf-lb-row-avatar{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;
   font-family:var(--display);font-weight:700;font-size:9.5px;color:#fff;object-fit:cover}
 .wcf-lb-you-badge{flex:none;font-size:10px;font-weight:700;color:var(--blue);background:rgba(46,116,204,.18);
@@ -10005,7 +10020,9 @@ button.wcf-glance-card:disabled{cursor:default}
 
 .wcf-pl-footer{display:flex;align-items:center;justify-content:space-between;padding:13px 8px 2px}
 .wcf-pl-footer span{font-size:11px;color:var(--dim)}
-.wcf-pl-footer button{background:none;border:none;padding:0;cursor:pointer;font-size:11px;font-weight:600;color:var(--blue)}
+/* Was an 11px blue text link that didn't read as tappable; now a proper
+   pill in the same style as the app's other secondary buttons. */
+.wcf-pl-footer button{flex:none;background:rgba(46,116,204,.16);border:1px solid rgba(46,116,204,.45);border-radius:20px;padding:0 15px;min-height:38px;cursor:pointer;font-size:12.5px;font-weight:800;color:#cfe0ff}
 
 .wcf-predict-reveal{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
 .wcf-predict-reveal-label{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px}
@@ -10134,7 +10151,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-result-goal-row b{font-family:var(--mono);color:var(--dim);font-weight:700}
 .wcf-result-og{margin-top:10px;font-size:11.5px;color:var(--amber);line-height:1.5}
 .wcf-result-share{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
-.wcf-result-share-btn{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-weight:800;font-size:12.5px;padding:10px;border-radius:10px;cursor:pointer}
+.wcf-result-share-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-weight:800;font-size:12.5px;padding:10px;border-radius:10px;cursor:pointer}
 .wcf-result-admin-tag{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 8px;border-radius:20px;background:rgba(230,57,70,.16);color:var(--red-hi);white-space:nowrap}
 .wcf-motm{margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
 .wcf-motm-label{font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
@@ -10271,8 +10288,10 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rating-track{height:5px;border-radius:5px;background:var(--panel2);overflow:hidden}
 .wcf-rating-fill{height:100%;border-radius:5px}
 .wcf-rating-row select{margin-top:10px;width:100%;box-sizing:border-box;appearance:none;background:var(--bg);color:var(--white);border:1px solid rgba(148,163,184,.2);padding:13px;border-radius:12px;font-size:13px;font-weight:600;font-family:var(--sans);outline:none;cursor:pointer;min-height:46px}
-.wcf-star-picker{display:flex;gap:4px;margin-top:8px}
-.wcf-star{background:none;border:none;font-size:18px;color:var(--line);cursor:pointer;padding:0;line-height:1}
+.wcf-star-picker{display:flex;gap:0;margin-top:4px;margin-left:-8px}
+/* 40px square per star: the old 18px glyph with no padding was about half
+   Apple's minimum tap size, so it was easy to land on the wrong rating. */
+.wcf-star{background:none;border:none;font-size:24px;color:var(--line);cursor:pointer;padding:0;line-height:1;width:40px;height:40px;display:grid;place-items:center}
 .wcf-star.on{color:var(--amber)}
 .wcf-push-row{flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:10px}
 .wcf-push-label{font-weight:700;font-size:12px;color:#f1f5f9}
@@ -10430,7 +10449,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .gaffai-sheet-title{font-family:var(--display); font-weight:700; font-size:14.5px}
 .gaffai-sheet-tag{font-size:9px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--amber);
   background:rgba(234,179,8,.12); border:1px solid rgba(234,179,8,.3); padding:2px 7px; border-radius:20px; margin-left:2px}
-.gaffai-sheet-reset,.gaffai-sheet-close{width:28px; height:28px; border-radius:50%; background:rgba(148,163,184,.1); border:none; color:#cbd5e1; font-size:15px; cursor:pointer}
+.gaffai-sheet-reset,.gaffai-sheet-close{width:36px; height:36px; border-radius:50%; background:rgba(148,163,184,.1); border:none; color:#cbd5e1; font-size:15px; cursor:pointer}
 .gaffai-sheet-reset{margin-left:auto}
 .gaffai-sheet-caption{padding:10px 16px 2px; font-size:11.5px; color:var(--dim); line-height:1.5}
 
@@ -10651,4 +10670,19 @@ button.wcf-glance-card:disabled{cursor:default}
    truncating the business name, and it's redundant there. */
 @media (max-width:400px){.wcf-br-flag{display:none}}
 @media (prefers-reduced-motion: reduce){.wcf-br-boot,.wcf-br-heroboot,.wcf-br-card{animation:none}}
+
+/* ─── App-wide form and button standards ────────────────────────
+   Buttons and form fields don't inherit the page font by default, so any
+   without their own font rule fell back to the phone's system font rather
+   than Inter - the nav labels, account section headers and a scatter of
+   buttons. Zero specificity (:where), so every rule that sets its own
+   font still wins. */
+:where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
+/* iOS Safari zooms the whole page when a field under 16px is focused,
+   which feels like something broke. Thirteen separate rules had drifted
+   to 10.5-15px, so the floor is set once here, last on purpose, rather
+   than patched in thirteen places to drift again. */
+.wcf-root input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),
+.wcf-root select,
+.wcf-root textarea{font-size:16px}
 `;
