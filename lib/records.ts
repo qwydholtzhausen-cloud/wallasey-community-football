@@ -185,3 +185,63 @@ export function computeRecords(input: RecordsInput): ClubRecords {
     },
   };
 }
+
+// One player's season bests, for the "Your bests" card on Records. Same
+// walk as computeRecords, just for one person, and each best is compared
+// with the club record so a tile can say when yours *is* the record.
+export interface PersonalBests {
+  games: number;
+  mostGoals: { goals: number; date: string } | null;
+  hatTricks: number;
+  winStreak: number;
+  unbeaten: number;
+  gamesInARow: number;
+  motmWins: number;
+  motmVotes: number;
+}
+
+export function computePersonalBests(input: RecordsInput, playerId: string): PersonalBests {
+  const games = input.games
+    .filter((g) => g.team_white_score != null && g.team_red_score != null)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff));
+  const gameIds = new Set(games.map((g) => g.id));
+  const dateOf = new Map(games.map((g) => [g.id, g.date]));
+
+  let mostGoals: PersonalBests["mostGoals"] = null;
+  let hatTricks = 0;
+  for (const r of input.goals) {
+    if (r.player_id !== playerId || !gameIds.has(r.game_id) || r.goals <= 0) continue;
+    if (!mostGoals || r.goals > mostGoals.goals) mostGoals = { goals: r.goals, date: dateOf.get(r.game_id)! };
+    if (r.goals >= 3) hatTricks++;
+  }
+
+  let played = 0;
+  let win = 0, bestWin = 0, unb = 0, bestUnb = 0, row = 0, bestRow = 0;
+  let motmWins = 0, motmVotes = 0;
+  for (const g of games) {
+    const b = g.bookings.find((x) => x.player_id === playerId && !x.waiting && x.team);
+    if (!b) {
+      row = 0;
+      continue;
+    }
+    played++;
+    row++;
+    bestRow = Math.max(bestRow, row);
+    const w = g.team_white_score!;
+    const r = g.team_red_score!;
+    const won = w !== r && (b.team === "white") === w > r;
+    const lost = w !== r && !won;
+    win = won ? win + 1 : 0;
+    unb = lost ? 0 : unb + 1;
+    bestWin = Math.max(bestWin, win);
+    bestUnb = Math.max(bestUnb, unb);
+    const tally = input.motmTallyByGame[g.id];
+    if (tally) {
+      const top = Math.max(0, ...Object.values(tally));
+      const mine = tally[playerId] ?? 0;
+      motmVotes += mine;
+      if (top > 0 && mine === top) motmWins++;
+    }
+  }
+  return { games: played, mostGoals, hatTricks, winStreak: bestWin, unbeaten: bestUnb, gamesInARow: bestRow, motmWins, motmVotes };
+}

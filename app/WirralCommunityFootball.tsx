@@ -15,7 +15,7 @@ import {
   WRAPPED_FIRST_MONTH_FOR_ALL,
 } from "../lib/clubPolicy";
 import { computeWrapped } from "../lib/wrapped";
-import { computeRecords, type Holder } from "../lib/records";
+import { computeRecords, computePersonalBests, type Holder } from "../lib/records";
 import WrappedStory, { drawWrappedCard, wrappedBannerCss } from "./WrappedStory";
 import { googleCalendarUrl } from "../lib/calendar";
 import { BOOT_CATEGORIES, BOOT_CATEGORY, normaliseUkPhone, displayUkPhone, type BootCategory } from "../lib/bootRoom";
@@ -3460,6 +3460,21 @@ function App({ session }: { session: Session }) {
   // the waiting list and how early games sell out. Computed like Wrapped
   // from rows already loaded (lib/records.ts). Only games whose MOTM
   // voting has closed count, so a record can't flicker mid-vote.
+  // The same season's bests for the signed-in player, for "Your bests".
+  const myBests = useMemo(
+    () =>
+      computePersonalBests(
+        {
+          games: pastGames.filter((g) => g.date.slice(0, 4) === String(activeStatsYear) && !motmVotingOpen(g)),
+          goals: goalRows,
+          motmTallyByGame,
+          names: () => "",
+        },
+        myId
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pastGames, goalRows, motmTallyByGame, activeStatsYear, myId]
+  );
   const clubRecords = useMemo(() => {
     const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
     return computeRecords({
@@ -5317,9 +5332,8 @@ function App({ session }: { session: Session }) {
                       )}
                     </div>
                   </div>
-                  <div className="wcf-lb-list-card">
-                    <select
-                      className="wcf-month-filter"
+                  <select
+                      className="wcf-month-filter wcf-rec-season"
                       value={activeStatsYear}
                       onChange={(e) => setStatsSeasonYear(Number(e.target.value))}
                     >
@@ -5329,6 +5343,53 @@ function App({ session }: { session: Session }) {
                         </option>
                       ))}
                     </select>
+                  {myBests.games > 0 && (() => {
+                    const b = myBests;
+                    // A tile is "the club record" when your best equals it.
+                    const tiles: { k: string; v: number | string; label: string; sub?: string; record: boolean }[] = [
+                      { k: "g", v: b.mostGoals?.goals ?? 0, label: "Goals in a game", sub: b.mostGoals ? fmtDate(b.mostGoals.date) : undefined, record: !!b.mostGoals && b.mostGoals.goals === r.mostGoalsInGame?.goals },
+                      { k: "w", v: b.winStreak, label: "Win streak", record: b.winStreak > 0 && b.winStreak === r.winStreak?.n },
+                      { k: "u", v: b.unbeaten, label: "Unbeaten run", record: b.unbeaten > 0 && b.unbeaten === r.unbeaten?.n },
+                      { k: "r", v: b.gamesInARow, label: "Games in a row", record: b.gamesInARow > 0 && b.gamesInARow === r.gamesInARow?.n },
+                    ];
+                    if (b.hatTricks > 0) tiles.push({ k: "h", v: b.hatTricks, label: b.hatTricks === 1 ? "Hat-trick" : "Hat-tricks", record: false });
+                    if (b.motmWins > 0) tiles.push({ k: "m", v: b.motmWins, label: b.motmWins === 1 ? "MOTM win" : "MOTM wins", record: b.motmWins === r.motmWins?.n });
+                    else if (b.motmVotes > 0) tiles.push({ k: "v", v: b.motmVotes, label: b.motmVotes === 1 ? "MOTM vote" : "MOTM votes", record: b.motmVotes === r.motmVotes?.n });
+                    const meName = myProfile?.display_name ?? "You";
+                    return (
+                      // Same family as the Player of the Month card: a photo
+                      // glow, your face in a gold ring, and a clean row of
+                      // numbers rather than boxed tiles.
+                      <div className="wcf-bests">
+                        <div className="wcf-bests-bg" />
+                        <div className="wcf-bests-head">
+                          <Avatar name={meName} avatarUrl={avatarByPlayerId.get(myId)} className="wcf-bests-face" background={avatarFor(meName).gradient} />
+                          <div className="wcf-bests-who">
+                            <span className="wcf-bests-eyebrow">Your season</span>
+                            <span className="wcf-bests-name">{meName}</span>
+                            <span className="wcf-bests-meta">{b.games} {b.games === 1 ? "game" : "games"} played</span>
+                          </div>
+                        </div>
+                        <div className="wcf-bests-grid">
+                          {tiles.map((t) => (
+                            <div key={t.k} className={"wcf-bests-stat" + (t.record ? " record" : "")}>
+                              <b>{t.v}</b>
+                              <span>{t.label}</span>
+                              {t.record ? (
+                                <em>
+                                  <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M3 18h18l-1.6-9.2-4.9 3.9L12 5l-2.5 7.7-4.9-3.9z" /></svg>
+                                  Club record
+                                </em>
+                              ) : (
+                                t.sub && <small>{t.sub}</small>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  <div className="wcf-lb-list-card">
                     {empty ? (
                       <p className="wcf-board-note">No results yet this season. Records start with the first game.</p>
                     ) : (
@@ -11388,6 +11449,24 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rec-post-score{font-size:11.5px;font-weight:700;color:var(--dim)}
 .wcf-rec-post-line{margin-top:3px}
 .wcf-rec-post-tag{display:inline-block;margin-right:6px;padding:1px 6px;border-radius:5px;background:#f5d97a;color:#0d0d1a;font-size:9.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;vertical-align:1px}
+.wcf-rec-season{margin-bottom:14px}
+.wcf-bests{position:relative;overflow:hidden;margin-bottom:14px;padding:16px 16px 18px;border-radius:20px;background:#0d0d1a;border:1px solid rgba(245,217,122,.3);box-shadow:0 18px 40px -26px rgba(245,217,122,.5)}
+.wcf-bests-bg{position:absolute;inset:0;background:url(/wrapped/glance.jpg) 80% 30%/cover;opacity:.55}
+.wcf-bests-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(13,13,26,.96) 0%,rgba(13,13,26,.78) 50%,rgba(13,13,26,.35) 100%),linear-gradient(0deg,rgba(13,13,26,.92),transparent 70%)}
+.wcf-bests-head,.wcf-bests-grid{position:relative;z-index:1}
+.wcf-bests-head{display:flex;align-items:center;gap:14px}
+.wcf-bests-face{width:56px;height:56px;border-radius:50%;flex:none;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:20px;color:#fff;box-shadow:0 0 0 3px #eab308,0 0 20px rgba(234,179,8,.45)}
+.wcf-bests-who{display:flex;flex-direction:column;min-width:0}
+.wcf-bests-eyebrow{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#f5d97a}
+.wcf-bests-name{font-family:var(--display);font-weight:800;font-size:20px;line-height:1.15;color:var(--white);letter-spacing:-.01em;margin-top:2px}
+.wcf-bests-meta{font-size:12px;color:var(--dim);margin-top:2px}
+.wcf-bests-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 10px;margin-top:16px;padding-top:14px;border-top:1px solid rgba(245,217,122,.22)}
+.wcf-bests-stat{display:flex;flex-direction:column;min-width:0}
+.wcf-bests-stat b{font-family:var(--display);font-weight:800;font-size:28px;line-height:1;color:var(--white);font-variant-numeric:tabular-nums}
+.wcf-bests-stat span{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin-top:6px;line-height:1.3}
+.wcf-bests-stat small{font-size:11px;color:var(--faint,#64748b);margin-top:2px}
+.wcf-bests-stat em{display:inline-flex;align-items:center;gap:4px;font-style:normal;font-size:10.5px;font-weight:800;color:#f5d97a;margin-top:3px}
+.wcf-bests-stat.record b{background:linear-gradient(180deg,#fde68a,#eab308);-webkit-background-clip:text;background-clip:text;color:transparent}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
