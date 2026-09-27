@@ -3910,7 +3910,7 @@ function App({ session }: { session: Session }) {
     lineup: "Next game line-up",
     results: "Results",
     account: "Your account",
-    admin: "Payments & goals",
+    admin: "Admin",
   }[tab];
 
   if (loading || !myProfile) {
@@ -4177,6 +4177,10 @@ function App({ session }: { session: Session }) {
             onGoToLineup={() => { setTab("lineup"); setLineupView("fairness"); }}
             messages={adminMessages}
             onSendMessage={sendAdminMessage}
+            onShareResult={(id) => {
+              const g = games.find((x) => x.id === id);
+              if (g) shareResult(g);
+            }}
             askConfirm={askConfirm}
           />
         )}
@@ -8750,6 +8754,7 @@ function AdminConsole({
   onGoToLineup,
   messages,
   onSendMessage,
+  onShareResult,
   askConfirm,
 }: {
   upcoming: GameRow[];
@@ -8769,6 +8774,7 @@ function AdminConsole({
   onGoToLineup: () => void;
   messages: AdminMessage[];
   onSendMessage: (recipientId: string, message: string) => Promise<void>;
+  onShareResult: (gameId: string) => void;
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
 }) {
   const shared = {
@@ -8802,27 +8808,6 @@ function AdminConsole({
   const notPaidYet = upcoming.flatMap((g) =>
     g.bookings.filter((b) => !b.waiting && b.status === "unpaid").map((b) => ({ booking: b, game: g }))
   );
-  const [pendingView, setPendingView] = useState<null | "claims" | "unpaid">(null);
-  const pendingApproval = pendingView === "unpaid" ? notPaidYet : paymentClaims;
-  // Grouped by game for the expanded "Awaiting approval" breakdown - the
-  // dashboard card's namesList() alone gives no game context, meaning an
-  // admin had to go hunting through Upcoming to find each one.
-  const pendingByGame = Object.values(
-    pendingApproval.reduce<Record<string, { game: GameRow; items: typeof pendingApproval }>>((byGame, p) => {
-      (byGame[p.game.id] ??= { game: p.game, items: [] }).items.push(p);
-      return byGame;
-    }, {})
-  ).sort((a, b) => a.game.date.localeCompare(b.game.date));
-  // Same breakdown, same reasoning, for the Overdue card - it only ever
-  // showed a flat names list with no way to actually act on it, so finding
-  // and confirming a specific overdue booking meant going hunting through
-  // Previous Fixtures by hand instead of using the dashboard shortcut.
-  const overdueByGame = Object.values(
-    overdue.reduce<Record<string, { game: GameRow; items: typeof overdue }>>((byGame, p) => {
-      (byGame[p.game.id] ??= { game: p.game, items: [] }).items.push(p);
-      return byGame;
-    }, {})
-  ).sort((a, b) => b.game.date.localeCompare(a.game.date));
   const nextGame = upcoming[0];
   const nextConfirmed = nextGame ? nextGame.bookings.filter((b) => !b.waiting) : [];
   const nextUnassigned = nextConfirmed.filter((b) => !b.team).length;
@@ -8846,8 +8831,6 @@ function AdminConsole({
   // the amount shown, same distinction the pre-removal warning already
   // makes (see the frequent cron job).
   const [expandedTabId, setExpandedTabId] = useState<string | null>(null);
-  const showPendingDetail = pendingView !== null;
-  const [showOverdueDetail, setShowOverdueDetail] = useState(false);
   const playerTabs = useMemo(() => {
     const byPlayer: Record<string, { playerId: string; playerName: string; owed: typeof overdue; pending: typeof overdue }> = {};
     for (const row of overdue) {
@@ -8884,15 +8867,12 @@ function AdminConsole({
     : messages.filter((m) => !m.read_at || new Date(m.created_at).getTime() >= messageCutoff);
   const olderMessageCount = messages.length - visibleMessages.length;
   const unreadSentCount = messages.filter((m) => !m.read_at).length;
-  // Collapsed by default - a bulk send (e.g. the automated welcome
-  // message going out to every existing player at once) can otherwise
-  // dump dozens of rows straight onto the page with no way to collapse
-  // them back down.
-  const [showMessageLog, setShowMessageLog] = useState(false);
 
   function startMessage(playerId: string, template: string) {
     setComposeTo(playerId);
     setComposeText(template);
+    setComposeOpen(true);
+    setAdminView("messages");
   }
 
   // Group presets resolve to a real list of profile ids at send time and
@@ -8914,246 +8894,163 @@ function AdminConsole({
     setComposeText("");
   }
 
+  // ── The page is four tabs now, not one long scroll (it had grown to ~5
+  // phone screens). "Today" leads with only what needs an admin.
+  const [adminView, setAdminView] = useState<"today" | "fixtures" | "payments" | "messages">("today");
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [showLaterFixtures, setShowLaterFixtures] = useState(false);
+  const [showAllResults, setShowAllResults] = useState(false);
+  const [openUnpaidGame, setOpenUnpaidGame] = useState<string | null>(null);
+  const [resultFor, setResultFor] = useState<string | null>(null);
+  const venueCount: Record<string, number> = {};
+  [...upcoming, ...previous].forEach((g) => (venueCount[g.venue] = (venueCount[g.venue] ?? 0) + 1));
+  const mainVenue = Object.entries(venueCount).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  const nowDay = nowInLondon().slice(0, 10);
+  const in28 = new Date(Date.UTC(+nowDay.slice(0, 4), +nowDay.slice(5, 7) - 1, +nowDay.slice(8, 10) + 28)).toISOString().slice(0, 10);
+  const soonUpcoming = upcoming.filter((g) => g.date <= in28);
+  const laterUpcoming = upcoming.filter((g) => g.date > in28);
+  const teamsDueSoon = !!nextGame && !teamsSet && !noBookingsYet && toMs(kickoffCutoff(nextGame.date, nextGame.kickoff, 0)) - toMs(nowInLondon()) <= 48 * 3600000;
+
+  // Needs-you items, each with the one button that deals with it.
+  type Todo = { key: string; tone: "gold" | "red" | "blue"; icon: string; title: string; sub: string; label: string; act: () => void };
+  const todos: Todo[] = [];
+  paymentClaims.slice(0, 3).forEach(({ booking: b, game: g }) =>
+    todos.push({
+      key: "claim-" + b.id,
+      tone: "gold",
+      icon: "£",
+      title: `${b.player.display_name} says they've paid`,
+      sub: `${fmtDate(g.date)} · £${g.price}`,
+      label: "Confirm",
+      act: () => onSetStatus(b.id, "confirmed"),
+    })
+  );
+  if (paymentClaims.length > 3) todos.push({ key: "claims-more", tone: "gold", icon: "£", title: `${paymentClaims.length - 3} more payments to check`, sub: "On the Payments tab", label: "View", act: () => setAdminView("payments") });
+  unscored.forEach((g) =>
+    todos.push({ key: "score-" + g.id, tone: "blue", icon: "⚽", title: `Enter the score for ${fmtDate(g.date)}`, sub: `${g.bookings.filter((b) => !b.waiting).length} played`, label: "Enter", act: () => setResultFor(g.id) })
+  );
+  if (teamsDueSoon && nextGame)
+    todos.push({ key: "teams", tone: "blue", icon: "⇄", title: `Pick teams for ${fmtDate(nextGame.date)}`, sub: `${nextConfirmed.length} booked, ${nextUnassigned} not on a team`, label: "Pick", act: onGoToLineup });
+  if (owingTabs.length > 0)
+    todos.push({
+      key: "owing",
+      tone: "red",
+      icon: "!",
+      title: `${owingTabs.length} ${owingTabs.length === 1 ? "player owes" : "players owe"} £${owingTotal}`,
+      sub: namesList(owingTabs.map((t) => t.playerName.split(" ")[0])) + " · past games",
+      label: "Chase",
+      act: () => setAdminView("payments"),
+    });
+  if (drafts.length > 0)
+    todos.push({ key: "drafts", tone: "blue", icon: "✎", title: `${drafts.length} draft ${drafts.length === 1 ? "fixture" : "fixtures"} not published`, sub: namesList(drafts.map((g) => fmtDate(g.date))), label: "View", act: () => setAdminView("fixtures") });
+  const paymentsBadge = paymentClaims.length + owingTabs.length;
+
+  const shownResults = showAllResults ? previous : previous.slice(0, 4);
+  const openFixture = (id: string) => {
+    setAdminView("fixtures");
+    if (expandedId !== id) onToggleExpand(id);
+  };
+
   return (
     <>
-      <div className="wcf-console-section">
-        <span className="wcf-console-section-label">At a glance</span>
-        <span className="wcf-console-section-rule" />
-      </div>
-      <div className="wcf-glance-grid">
-        <div className={"wcf-glance-card" + (unscored.length === 0 ? " clear" : " amber")}>
-          <div className="wcf-glance-top">
-            <span className="wcf-glance-num">{unscored.length === 0 ? "" : unscored.length}</span>
-            <span className="wcf-glance-tile">{unscored.length === 0 ? "✓" : "◷"}</span>
-          </div>
-          <div className="wcf-glance-label">{unscored.length === 0 ? "Scores up to date" : "Scores to enter"}</div>
-          <div className="wcf-glance-names">{unscored.length === 0 ? "All games scored" : namesList(unscored.map((g) => fmtDate(g.date)))}</div>
-        </div>
-        <button
-          className={"wcf-glance-card" + (overdue.length === 0 ? " clear" : " red") + (overdue.length > 0 ? " expandable" : "")}
-          onClick={() => overdue.length > 0 && setShowOverdueDetail((v) => !v)}
-        >
-          <div className="wcf-glance-top">
-            <span className="wcf-glance-num">{overdue.length === 0 ? "" : overdue.length}</span>
-            <span className="wcf-glance-tile">{overdue.length === 0 ? "✓" : "£"}</span>
-          </div>
-          <div className="wcf-glance-label">{overdue.length === 0 ? "Nothing overdue" : "Overdue payments"}</div>
-          <div className="wcf-glance-names">{overdue.length === 0 ? "All settled up" : namesList(overdue.map((o) => o.booking.player.display_name.split(" ")[0]))}</div>
-          {overdue.length > 0 && <div className="wcf-glance-expand">{showOverdueDetail ? "Hide detail" : "Tap for detail"}</div>}
-        </button>
-        <button
-          className={"wcf-glance-card" + (paymentClaims.length === 0 ? " clear" : " amber") + (paymentClaims.length > 0 ? " expandable" : "")}
-          onClick={() => paymentClaims.length > 0 && setPendingView((v) => (v === "claims" ? null : "claims"))}
-        >
-          <div className="wcf-glance-top">
-            <span className="wcf-glance-num">{paymentClaims.length === 0 ? "" : paymentClaims.length}</span>
-            <span className="wcf-glance-tile">{paymentClaims.length === 0 ? "✓" : "?"}</span>
-          </div>
-          <div className="wcf-glance-label">{paymentClaims.length === 0 ? "No payments to check" : paymentClaims.length === 1 ? "Payment to check" : "Payments to check"}</div>
-          <div className="wcf-glance-names">
-            {paymentClaims.length === 0
-              ? "Nobody's waiting on you"
-              : paymentClaims.length === 1
-                ? `${paymentClaims[0].booking.player.display_name} says they've paid for ${fmtDate(paymentClaims[0].game.date)}`
-                : namesList(paymentClaims.map((p) => p.booking.player.display_name.split(" ")[0]))}
-          </div>
-          {paymentClaims.length > 0 && <div className="wcf-glance-expand">{pendingView === "claims" ? "Hide detail" : "Check now"}</div>}
-        </button>
-        <button
-          className={"wcf-glance-card" + (notPaidYet.length === 0 ? " clear" : " calm") + (notPaidYet.length > 0 ? " expandable" : "")}
-          onClick={() => notPaidYet.length > 0 && setPendingView((v) => (v === "unpaid" ? null : "unpaid"))}
-        >
-          <div className="wcf-glance-top">
-            <span className="wcf-glance-num">{notPaidYet.length === 0 ? "" : notPaidYet.length}</span>
-            <span className="wcf-glance-tile">{notPaidYet.length === 0 ? "✓" : "…"}</span>
-          </div>
-          <div className="wcf-glance-label">{notPaidYet.length === 0 ? "Everyone's paid up" : "Not paid yet"}</div>
-          <div className="wcf-glance-names">{notPaidYet.length === 0 ? "All upcoming bookings paid" : "Upcoming games. Nothing to do; reminders go out automatically."}</div>
-        </button>
-        <div className={"wcf-glance-card wide" + (drafts.length === 0 ? " clear" : " blue")}>
-          <div className="wcf-glance-top">
-            <span className="wcf-glance-num">{drafts.length === 0 ? "" : drafts.length}</span>
-            <span className="wcf-glance-tile">{drafts.length === 0 ? "✓" : "✎"}</span>
-          </div>
-          <div className="wcf-glance-label">{drafts.length === 0 ? "No drafts" : drafts.length === 1 ? "Draft fixture" : "Draft fixtures"}</div>
-          <div className="wcf-glance-names">{drafts.length === 0 ? "Nothing waiting" : namesList(drafts.map((g) => g.venue))}</div>
-        </div>
-        <button className={"wcf-glance-card wide" + (teamsSet || noBookingsYet ? " clear" : " crimson")} onClick={onGoToLineup}>
-          <div className="wcf-glance-top">
-            <span className="wcf-glance-num small">{noBookingsYet ? "No one booked yet" : teamsSet ? "Teams set" : "Teams not set"}</span>
-            <span className="wcf-glance-tile">{noBookingsYet ? "…" : teamsSet ? "✓" : "⇄"}</span>
-          </div>
-          {nextGame && <div className="wcf-glance-names">{nextGame.venue} · {fmtDate(nextGame.date)}{!teamsSet && !noBookingsYet ? ` — ${nextUnassigned} unassigned` : ""}</div>}
-        </button>
-      </div>
-
-      {showOverdueDetail && overdueByGame.length > 0 && (
-        <div className="wcf-pending-detail">
-          <div className="wcf-pending-head">
-            <span>OVERDUE PAYMENTS</span>
-            <span className="wcf-pending-head-rule" />
-          </div>
-          {overdueByGame.map(({ game, items }) => {
-            const claimedPaid = items.filter((i) => i.booking.status === "pending");
-            const notPaid = items.filter((i) => i.booking.status === "unpaid");
-            return (
-              <div key={game.id} className="wcf-pending-game">
-                <div className="wcf-pending-game-head">
-                  <span className="wcf-pending-game-venue">{game.venue}</span>
-                  <span className="wcf-pending-game-date">{fmtDate(game.date)}</span>
-                </div>
-                {claimedPaid.map(({ booking: b }) => (
-                  <div key={b.id} className="wcf-pending-row">
-                    <span className="wcf-pending-dot paid" />
-                    <span className="wcf-pending-name-wrap">
-                      <span className="wcf-pending-name">{b.player.display_name}</span>
-                      <span className="wcf-pending-booked">Booked {fmtDateTime(b.created_at)}</span>
-                    </span>
-                    <span className="wcf-pending-status paid">Says paid</span>
-                    <button className="wcf-pending-confirm" onClick={() => onSetStatus(b.id, "confirmed")}>Confirm</button>
-                  </div>
-                ))}
-                {notPaid.map(({ booking: b }) => (
-                  <div key={b.id} className="wcf-pending-row">
-                    <span className="wcf-pending-dot unpaid" />
-                    <span className="wcf-pending-name-wrap">
-                      <span className="wcf-pending-name">{b.player.display_name}</span>
-                      <span className="wcf-pending-booked">Booked {fmtDateTime(b.created_at)}</span>
-                    </span>
-                    <span className="wcf-pending-status unpaid">Not yet paid</span>
-                    <button
-                      className="wcf-admin-approve-override"
-                      onClick={async () => {
-                        if (await askConfirm(`Confirm ${b.player.display_name} as paid?`, "They haven't marked this as paid themselves.", "Confirm anyway")) {
-                          onSetStatus(b.id, "confirmed");
-                        }
-                      }}
-                    >
-                      Approve anyway
-                    </button>
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {showPendingDetail && pendingByGame.length > 0 && (
-        <div className="wcf-pending-detail">
-          <div className="wcf-pending-head">
-            <span>{pendingView === "unpaid" ? "NOT PAID YET · UPCOMING" : "PAYMENTS TO CHECK"}</span>
-            <span className="wcf-pending-head-rule" />
-          </div>
-          {pendingByGame.map(({ game, items }) => {
-            // "Payment Pending" (unpaid) and "Awaiting Approval" (pending -
-            // they've already tapped I've paid) are genuinely different
-            // situations - mixing them in one flat list with an identical
-            // Approve button made it easy to confirm someone as paid who
-            // hasn't actually claimed to have paid at all.
-            const claimedPaid = items.filter((i) => i.booking.status === "pending");
-            const notPaid = items.filter((i) => i.booking.status === "unpaid");
-            return (
-              <div key={game.id} className="wcf-pending-game">
-                <div className="wcf-pending-game-head">
-                  <span className="wcf-pending-game-venue">{game.venue}</span>
-                  <span className="wcf-pending-game-date">{fmtDate(game.date)}</span>
-                </div>
-                {claimedPaid.map(({ booking: b }) => (
-                  <div key={b.id} className="wcf-pending-row">
-                    <span className="wcf-pending-dot paid" />
-                    <span className="wcf-pending-name-wrap">
-                      <span className="wcf-pending-name">{b.player.display_name}</span>
-                      <span className="wcf-pending-booked">Booked {fmtDateTime(b.created_at)}</span>
-                    </span>
-                    <span className="wcf-pending-status paid">Says paid</span>
-                    <button className="wcf-pending-confirm" onClick={() => onSetStatus(b.id, "confirmed")}>Confirm</button>
-                  </div>
-                ))}
-                {notPaid.map(({ booking: b }) => (
-                  <div key={b.id} className="wcf-pending-row">
-                    <span className="wcf-pending-dot unpaid" />
-                    <span className="wcf-pending-name-wrap">
-                      <span className="wcf-pending-name">{b.player.display_name}</span>
-                      <span className="wcf-pending-booked">Booked {fmtDateTime(b.created_at)}</span>
-                    </span>
-                    <span className="wcf-pending-status unpaid">Not yet paid</span>
-                    <button
-                      className="wcf-admin-approve-override"
-                      onClick={async () => {
-                        if (await askConfirm(`Confirm ${b.player.display_name} as paid?`, "They haven't marked this as paid themselves.", "Confirm anyway")) {
-                          onSetStatus(b.id, "confirmed");
-                        }
-                      }}
-                    >
-                      Approve anyway
-                    </button>
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="wcf-console-section">
-        <span className="wcf-console-section-label">Messages</span>
-        <span className="wcf-console-section-rule" />
-        {unreadSentCount > 0 && <span className="wcf-console-section-meta">{unreadSentCount} unread</span>}
-      </div>
-      <div className="wcf-msg-compose">
-        <select value={composeTo} onChange={(e) => setComposeTo(e.target.value)}>
-          <option value="">Choose a recipient…</option>
-          <option value="__all__">Everyone ({profiles.length})</option>
-          {owingTabs.length > 0 && <option value="__owing__">Players who owe ({owingTabs.length})</option>}
-          {nextGame && nextConfirmed.length > 0 && <option value="__next__">Next game roster ({nextConfirmed.length})</option>}
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>{p.display_name}</option>
-          ))}
-        </select>
-        <textarea
-          className="wcf-msg-compose-box"
-          placeholder="Write a message…"
-          value={composeText}
-          onChange={(e) => setComposeText(e.target.value)}
-        />
-        <button className="wcf-msg-compose-send" disabled={!composeTo || !composeText.trim() || sendingMessage} onClick={sendMessage}>
-          {sendingMessage ? "Sending…" : "Send message"}
-        </button>
-      </div>
-      {messages.length > 0 && (
-        <>
-          <button className="wcf-msg-log-toggle" onClick={() => setShowMessageLog((v) => !v)}>
-            <span className="wcf-msg-log-toggle-label">Sent log</span>
-            <span className="wcf-msg-log-toggle-count">{messages.length}</span>
+      <div className="wcf-subtabs wcf-admin-tabs">
+        {([
+          ["today", "Today", todos.length],
+          ["fixtures", "Fixtures", 0],
+          ["payments", "Payments", paymentsBadge],
+          ["messages", "Messages", 0],
+        ] as const).map(([k, label, n]) => (
+          <button key={k} className={adminView === k ? "active" : ""} onClick={() => setAdminView(k)}>
+            {label}
+            {n > 0 && <i className="wcf-admin-tab-badge">{n}</i>}
           </button>
-          {showMessageLog && (
-            <div className="wcf-msg-log">
-              {visibleMessages.map((m) => (
-                <div key={m.id} className="wcf-msg-log-row">
-                  <div className="wcf-msg-log-top">
-                    <span className="wcf-msg-log-name">{m.recipient?.display_name ?? "Unknown"}</span>
-                    <span className={"wcf-msg-log-status " + (m.read_at ? "read" : "unread")}>{m.read_at ? "Read" : "Unread"}</span>
-                  </div>
-                  <div className="wcf-msg-log-text">{m.message}</div>
-                  <div className="wcf-msg-log-when">{fmtDateTime(m.created_at)}{m.read_at ? ` · read ${fmtDateTime(m.read_at)}` : ""}</div>
-                </div>
-              ))}
-              {!showOlderMessages && olderMessageCount > 0 && (
-                <button className="wcf-show-more-toggle" onClick={() => setShowOlderMessages(true)}>
-                  Show {olderMessageCount} older
-                </button>
-              )}
+        ))}
+      </div>
+
+      {adminView === "today" && (
+        <>
+          <div className={"wcf-needs" + (todos.length === 0 ? " clear" : "")}>
+            <div className="wcf-needs-head">
+              <b>{todos.length === 0 ? "All clear" : "Needs you"}</b>
+              <span>{todos.length === 0 ? "Nothing waiting on an admin ✓" : `${todos.length} ${todos.length === 1 ? "thing" : "things"}`}</span>
             </div>
+            {todos.map((t) => (
+              <div key={t.key} className="wcf-todo">
+                <span className={"wcf-todo-ic " + t.tone}>{t.icon}</span>
+                <span className="wcf-todo-tx"><b>{t.title}</b><span>{t.sub}</span></span>
+                <button className={"wcf-todo-btn " + t.tone} onClick={t.act}>{t.label}</button>
+              </div>
+            ))}
+          </div>
+
+          {nextGame && (
+            <div className="wcf-admin-next">
+              <div className="wcf-admin-next-k">Next game</div>
+              <div className="wcf-admin-next-t">{fmtDate(nextGame.date)} · {nextGame.kickoff}{nextGame.venue !== mainVenue ? ` · ${nextGame.venue}` : ""}</div>
+              <div className="wcf-admin-next-chips">
+                <span className="wcf-chip g">{nextConfirmed.length}/{nextGame.max_players} booked</span>
+                {nextGame.bookings.some((b) => b.waiting) && <span className="wcf-chip w">{nextGame.bookings.filter((b) => b.waiting).length} waiting</span>}
+                <span className={"wcf-chip" + (teamsSet ? " g" : teamsDueSoon ? " r" : "")}>{noBookingsYet ? "No one booked" : teamsSet ? "Teams set" : "Teams not set"}</span>
+                {nextConfirmed.filter((b) => b.status !== "confirmed" && !b.pot_exempt_reason).length > 0 && (
+                  <span className="wcf-chip">{nextConfirmed.filter((b) => b.status !== "confirmed" && !b.pot_exempt_reason).length} not paid</span>
+                )}
+              </div>
+              <div className="wcf-admin-next-acts">
+                <button className="wcf-pill-btn ghost" onClick={() => openFixture(nextGame.id)}>Open fixture</button>
+                {!teamsSet && !noBookingsYet && <button className="wcf-pill-btn ghost" onClick={onGoToLineup}>Pick teams</button>}
+              </div>
+            </div>
+          )}
+
+          <div className="wcf-admin-calm">
+            <div><b>{unscored.length === 0 ? "✓" : unscored.length}</b><span>{unscored.length === 0 ? "All scores entered" : "Scores to enter"}</span></div>
+            <div><b>{notPaidYet.length}</b><span>Upcoming not paid yet</span></div>
+            <div><b>{drafts.length}</b><span>{drafts.length === 1 ? "Draft" : "Drafts"}</span></div>
+          </div>
+        </>
+      )}
+
+      {adminView === "fixtures" && (
+        <>
+          <div className="wcf-admin-group"><span>Upcoming · next 4 weeks</span><span>{upcoming.length} in total</span></div>
+          {upcoming.length === 0 && <p className="wcf-empty small">No upcoming fixtures.</p>}
+          {soonUpcoming.map((g) => (
+            <AdminGameRow key={g.id} game={g} past={false} mainVenue={mainVenue} onEnterResult={setResultFor} {...shared} />
+          ))}
+          {laterUpcoming.length > 0 && !showLaterFixtures && (
+            <button className="wcf-rec-more" onClick={() => setShowLaterFixtures(true)}>Show {laterUpcoming.length} later {laterUpcoming.length === 1 ? "fixture" : "fixtures"}</button>
+          )}
+          {showLaterFixtures && laterUpcoming.map((g) => (
+            <AdminGameRow key={g.id} game={g} past={false} mainVenue={mainVenue} onEnterResult={setResultFor} {...shared} />
+          ))}
+          <div className="wcf-admin-group"><span>Results</span><span>{previous.length} {previous.length === 1 ? "game" : "games"}</span></div>
+          {previous.length === 0 && <p className="wcf-empty small">No past fixtures yet.</p>}
+          {shownResults.map((g) => (
+            <AdminGameRow key={g.id} game={g} past mainVenue={mainVenue} onEnterResult={setResultFor} {...shared} />
+          ))}
+          {previous.length > 4 && (
+            <button className="wcf-rec-more" onClick={() => setShowAllResults((v) => !v)}>{showAllResults ? "Show fewer" : `Show all ${previous.length} results`}</button>
           )}
         </>
       )}
 
-      <div className="wcf-console-section">
-        <span className="wcf-console-section-label">Tabs</span>
-        <span className="wcf-console-section-rule" />
-        {owingTotal > 0 && <span className="wcf-console-section-meta warn">£{owingTotal} out</span>}
-      </div>
+      {adminView === "payments" && (
+        <>
+          <div className="wcf-admin-group"><span>To check</span><b className="gold">{paymentClaims.length || ""}</b></div>
+          {paymentClaims.length === 0 && <p className="wcf-empty small">Nobody&apos;s waiting on a payment check.</p>}
+          {paymentClaims.length > 0 && (
+            <div className="wcf-admin-card">
+              {paymentClaims.map(({ booking: b, game: g }) => (
+                <div key={b.id} className="wcf-todo">
+                  <span className="wcf-todo-ic gold">£</span>
+                  <span className="wcf-todo-tx"><b>{b.player.display_name}</b><span>Says paid · {fmtDate(g.date)} · £{g.price} · booked {fmtDateTime(b.created_at)}</span></span>
+                  <button className="wcf-todo-btn gold" onClick={() => onSetStatus(b.id, "confirmed")}>Confirm</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="wcf-admin-group"><span>Owed from past games</span>{owingTotal > 0 && <b className="red">£{owingTotal}</b>}</div>
       {owingTabs.length === 0 && <p className="wcf-empty small">Nothing outstanding — everyone's settled up.</p>}
       {owingTabs.map((row) => {
         const owedTotal = row.owed.reduce((sum, o) => sum + o.game.price, 0);
@@ -9212,24 +9109,121 @@ function AdminConsole({
         );
       })}
 
-      <div className="wcf-console-section">
-        <span className="wcf-console-section-label">Upcoming</span>
-        <span className="wcf-console-section-rule" />
-        <span className="wcf-console-section-meta">{upcoming.length} game{upcoming.length === 1 ? "" : "s"}</span>
-      </div>
-      {upcoming.length === 0 && <p className="wcf-empty small">No upcoming fixtures.</p>}
-      {upcoming.map((g) => (
-        <AdminGameRow key={g.id} game={g} past={false} {...shared} />
-      ))}
-      <div className="wcf-console-section">
-        <span className="wcf-console-section-label">Previous</span>
-        <span className="wcf-console-section-rule" />
-        <span className="wcf-console-section-meta">{previous.length} game{previous.length === 1 ? "" : "s"}</span>
-      </div>
-      {previous.length === 0 && <p className="wcf-empty small">No past fixtures yet.</p>}
-      {previous.map((g) => (
-        <AdminGameRow key={g.id} game={g} past {...shared} />
-      ))}
+
+          <div className="wcf-admin-group"><span>Not paid yet · upcoming</span><span>{notPaidYet.length}</span></div>
+          <p className="wcf-admin-hint">Normal: people pay nearer the game, and reminders go out automatically.</p>
+          {(() => {
+            const byGame = Object.values(
+              notPaidYet.reduce<Record<string, { game: GameRow; items: typeof notPaidYet }>>((acc, p) => {
+                (acc[p.game.id] ??= { game: p.game, items: [] }).items.push(p);
+                return acc;
+              }, {})
+            ).sort((a, b) => a.game.date.localeCompare(b.game.date));
+            if (byGame.length === 0) return null;
+            return (
+              <div className="wcf-admin-card">
+                {byGame.map(({ game: g, items }) => {
+                  const open = openUnpaidGame === g.id;
+                  return (
+                    <div key={g.id}>
+                      <button className="wcf-admin-fold" onClick={() => setOpenUnpaidGame(open ? null : g.id)}>
+                        <b>{fmtDate(g.date)}</b>
+                        <span>{items.length <= 2 ? items.map((i) => i.booking.player.display_name.split(" ")[0]).join(", ") : `${items.length} players`} {open ? "▾" : "›"}</span>
+                      </button>
+                      {open && items.map(({ booking: b }) => (
+                        <div key={b.id} className="wcf-pending-row">
+                          <span className="wcf-pending-dot unpaid" />
+                          <span className="wcf-pending-name-wrap">
+                            <span className="wcf-pending-name">{b.player.display_name}</span>
+                            <span className="wcf-pending-booked">Booked {fmtDateTime(b.created_at)}</span>
+                          </span>
+                          <button
+                            className="wcf-admin-approve-override"
+                            onClick={async () => {
+                              if (await askConfirm(`Confirm ${b.player.display_name} as paid?`, "They haven't marked this as paid themselves.", "Confirm anyway")) {
+                                onSetStatus(b.id, "confirmed");
+                              }
+                            }}
+                          >
+                            Mark paid
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </>
+      )}
+
+      {adminView === "messages" && (
+        <>
+          {!composeOpen ? (
+            <div className="wcf-admin-compose-card">
+              <span className="wcf-todo-ic red">✉</span>
+              <span className="wcf-todo-tx"><b>New message</b><span>To a player, everyone who owes, or the next game&apos;s players</span></span>
+              <button className="wcf-todo-btn red" onClick={() => setComposeOpen(true)}>Write</button>
+            </div>
+          ) : (
+            <div className="wcf-msg-compose">
+              <select value={composeTo} onChange={(e) => setComposeTo(e.target.value)}>
+                <option value="">Choose a recipient…</option>
+                <option value="__all__">Everyone ({profiles.length})</option>
+                {owingTabs.length > 0 && <option value="__owing__">Players who owe ({owingTabs.length})</option>}
+                {nextGame && nextConfirmed.length > 0 && <option value="__next__">Next game roster ({nextConfirmed.length})</option>}
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>{p.display_name}</option>
+                ))}
+              </select>
+              <textarea className="wcf-msg-compose-box" placeholder="Write a message…" value={composeText} onChange={(e) => setComposeText(e.target.value)} />
+              <div className="wcf-admin-compose-acts">
+                <button className="wcf-pill-btn ghost" onClick={() => { setComposeOpen(false); setComposeTo(""); setComposeText(""); }}>Cancel</button>
+                <button className="wcf-pill-btn red" disabled={!composeTo || !composeText.trim() || sendingMessage} onClick={async () => { await sendMessage(); setComposeOpen(false); }}>
+                  {sendingMessage ? "Sending…" : "Send"}
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="wcf-admin-group"><span>Sent</span><span>{messages.length}{unreadSentCount > 0 ? ` · ${unreadSentCount} unread` : ""}</span></div>
+          {messages.length === 0 && <p className="wcf-empty small">No messages sent yet.</p>}
+          {messages.length > 0 && (
+            <div className="wcf-msg-log">
+              {visibleMessages.map((m) => (
+                <div key={m.id} className="wcf-msg-log-row">
+                  <div className="wcf-msg-log-top">
+                    <span className="wcf-msg-log-name">{m.recipient?.display_name ?? "Unknown"}</span>
+                    <span className={"wcf-msg-log-status " + (m.read_at ? "read" : "unread")}>{m.read_at ? "Read" : "Unread"}</span>
+                  </div>
+                  <div className="wcf-msg-log-text">{m.message}</div>
+                  <div className="wcf-msg-log-when">{fmtDateTime(m.created_at)}{m.read_at ? ` · read ${fmtDateTime(m.read_at)}` : ""}</div>
+                </div>
+              ))}
+              {!showOlderMessages && olderMessageCount > 0 && (
+                <button className="wcf-show-more-toggle" onClick={() => setShowOlderMessages(true)}>
+                  Show {olderMessageCount} older
+                </button>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {resultFor && (() => {
+        const g = [...previous, ...upcoming].find((x) => x.id === resultFor);
+        if (!g) return null;
+        return (
+          <ResultSheet
+            game={g}
+            goalRows={goalRows}
+            cs={cs}
+            onSave={onSaveResult}
+            onShare={onShareResult}
+            onClose={() => setResultFor(null)}
+          />
+        );
+      })()}
     </>
   );
 }
@@ -9237,7 +9231,8 @@ function AdminConsole({
 function AdminGameRow({
   game,
   past,
-  goalRows,
+  mainVenue,
+  onEnterResult,
   cs,
   profiles,
   expandedId,
@@ -9245,13 +9240,14 @@ function AdminGameRow({
   onSetStatus,
   onRemoveBooking,
   onDeleteGame,
-  onSaveResult,
   onAddBooking,
   onSetPotExempt,
   askConfirm,
 }: {
   game: GameRow;
   past: boolean;
+  mainVenue: string;
+  onEnterResult: (gameId: string) => void;
   goalRows: GoalRow[];
   cs: ClubSettings;
   profiles: Profile[];
@@ -9268,66 +9264,17 @@ function AdminGameRow({
   const expanded = expandedId === game.id;
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const waitingList = game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
-  const goalsByPlayer: Record<string, number> = {};
-  const ownGoalsByPlayer: Record<string, number> = {};
-  goalRows
-    .filter((r) => r.game_id === game.id)
-    .forEach((r) => {
-      goalsByPlayer[r.player_id] = r.goals;
-      ownGoalsByPlayer[r.player_id] = r.own_goals;
-    });
-  const [whiteScore, setWhiteScore] = useState(game.team_white_score?.toString() ?? "");
-  const [redScore, setRedScore] = useState(game.team_red_score?.toString() ?? "");
-  const [goalDraft, setGoalDraft] = useState<Record<string, number>>(goalsByPlayer);
-  const [ownGoalDraft, setOwnGoalDraft] = useState<Record<string, number>>(ownGoalsByPlayer);
   const [addPlayerId, setAddPlayerId] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [showSettled, setShowSettled] = useState(false);
-  useEffect(() => {
-    setWhiteScore(game.team_white_score?.toString() ?? "");
-    setRedScore(game.team_red_score?.toString() ?? "");
-    setGoalDraft(goalsByPlayer);
-    setOwnGoalDraft(ownGoalsByPlayer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game.team_white_score, game.team_red_score, goalRows, expanded]);
+  // The booking whose actions sheet is open (tap ⋯ on a row).
+  const [actionFor, setActionFor] = useState<BookingRow | null>(null);
 
   const bookedIds = new Set(game.bookings.map((b) => b.player_id));
   const eligiblePlayers = profiles.filter((p) => !bookedIds.has(p.id)).sort((a, b) => a.display_name.localeCompare(b.display_name));
 
-  const dirty =
-    whiteScore !== (game.team_white_score?.toString() ?? "") ||
-    redScore !== (game.team_red_score?.toString() ?? "") ||
-    confirmed.some(
-      (b) =>
-        (goalDraft[b.player_id] ?? 0) !== (goalsByPlayer[b.player_id] ?? 0) ||
-        (ownGoalDraft[b.player_id] ?? 0) !== (ownGoalsByPlayer[b.player_id] ?? 0)
-    );
-
-  // Own goals are tracked purely for who-to-blame banter and never touch a
-  // player's real Goals stat - deliberately NOT auto-credited to "the other
-  // team", since a player who switches sides mid-match makes that guess
-  // unreliable. The reconciliation check below is a single combined total
-  // rather than a per-team split for the same reason.
-  const attributedTotal =
-    Object.values(goalDraft).reduce((sum, n) => sum + n, 0) + Object.values(ownGoalDraft).reduce((sum, n) => sum + n, 0);
-  const enteredTotal = (whiteScore === "" ? 0 : Number(whiteScore)) + (redScore === "" ? 0 : Number(redScore));
-  const scoreEntered = whiteScore !== "" && redScore !== "";
-
-  async function submitResult() {
-    setSaving(true);
-    await onSaveResult(
-      game.id,
-      whiteScore === "" ? null : Number(whiteScore),
-      redScore === "" ? null : Number(redScore),
-      goalDraft,
-      ownGoalDraft
-    );
-    setSaving(false);
-  }
-
   const dateObj = new Date(game.date + "T00:00:00");
   const dayNum = dateObj.getDate();
   const monthAbbr = dateObj.toLocaleDateString("en-GB", { month: "short" }).toUpperCase();
+  const weekday = dateObj.toLocaleDateString("en-GB", { weekday: "short" });
   const gameUnassigned = confirmed.filter((b) => !b.team).length;
   const gameTeamsSet = confirmed.length === 0 || gameUnassigned === 0;
   const scored = game.team_white_score != null && game.team_red_score != null;
@@ -9336,10 +9283,52 @@ function AdminGameRow({
   // 48 hours of kick-off. Both sides go through toMs(): kickoffCutoff() and
   // nowInLondon() are UK wall-clock-as-UTC and must never meet Date.now().
   const teamsDueSoon = !past && toMs(kickoffCutoff(game.date, game.kickoff, 0)) - toMs(nowInLondon()) <= 48 * 3600000;
-  const badge = !past
-    ? gameTeamsSet ? "TEAMS SET" : teamsDueSoon ? "NO TEAMS" : "TEAMS LATER"
-    : scored ? `${game.team_white_score}–${game.team_red_score}` : "SCORE";
-  const badgeTone = !past ? (gameTeamsSet ? "green" : teamsDueSoon ? "amber" : "muted") : scored ? "blue" : "amber";
+  const isOwing = (b: BookingRow) => b.status !== "confirmed" && !b.pot_exempt_reason;
+  const owingCount = confirmed.filter(isOwing).length;
+  const badge = !game.published
+    ? "DRAFT"
+    : !past
+      ? gameTeamsSet ? "TEAMS SET" : teamsDueSoon ? "NO TEAMS" : null
+      : scored ? `${game.team_white_score}–${game.team_red_score}` : "ENTER SCORE";
+  const badgeTone = !game.published ? "blue" : !past ? (gameTeamsSet ? "green" : "amber") : scored ? "score" : "amber";
+
+  // Everyone in booking order (first come, first served), numbered, with
+  // the booking time on every row. Who still owes is called out above.
+  const owing = confirmed.filter(isOwing);
+
+  const chip = (b: BookingRow) =>
+    b.pot_exempt_reason ? (
+      <span className="wcf-st free">Free</span>
+    ) : b.status === "confirmed" ? (
+      <span className="wcf-st paid">Paid</span>
+    ) : b.status === "pending" ? (
+      <span className="wcf-st says">Says paid</span>
+    ) : (
+      <span className="wcf-st owe">Not paid</span>
+    );
+
+  const row = (b: BookingRow, i: number) => (
+    <div key={b.id} className="wcf-arow">
+      <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-arow-av" background={avatarFor(b.player.display_name).gradient} />
+      <span className="wcf-arow-name">
+        {i + 1}. {b.player.display_name}
+        {/* When they booked stays on every row - admins use it to settle
+            who was first, on upcoming and past games alike. */}
+        <small>
+          Booked {fmtDateTime(b.created_at)}
+          {b.status === "confirmed" && b.auto_confirmed ? " · paid via Monzo" : b.status === "confirmed" && b.confirmer ? ` · approved by ${b.confirmer.display_name.split(" ")[0]}` : ""}
+          {b.pot_exempt_reason ? ` · ${b.pot_exempt_reason === "prize" ? "prize" : b.pot_exempt_reason === "carried_over" ? "carried over" : "free"}` : ""}
+        </small>
+      </span>
+      {chip(b)}
+      <button className="wcf-arow-more" onClick={() => setActionFor(b)} aria-label={`Actions for ${b.player.display_name}`}>⋯</button>
+    </div>
+  );
+
+  async function act(fn: () => Promise<void> | void) {
+    setActionFor(null);
+    await fn();
+  }
 
   return (
     <div className={"wcf-admin-game" + (past ? "" : " upcoming") + (expanded ? " open" : "")}>
@@ -9349,180 +9338,55 @@ function AdminGameRow({
           <span className="wcf-admin-game-month">{monthAbbr}</span>
         </span>
         <span className="wcf-admin-game-info">
-          <span className="wcf-admin-game-venue">{game.venue}</span>
-          <span className="wcf-admin-game-date">{fmtDate(game.date)} · {game.kickoff} · {confirmed.length}/{game.max_players} booked</span>
+          <span className="wcf-admin-game-venue">{weekday} · {game.kickoff}{game.venue !== mainVenue ? ` · ${game.venue}` : ""}</span>
+          <span className="wcf-admin-game-date">
+            {confirmed.length}/{game.max_players} {past ? "played" : "booked"}
+            {waitingList.length > 0 && !past ? ` · ${waitingList.length} waiting` : ""}
+            {owingCount > 0 ? ` · ${owingCount} not paid` : ""}
+          </span>
         </span>
-        <span className={"wcf-admin-game-badge " + badgeTone}>{badge}</span>
+        {badge && <span className={"wcf-admin-game-badge " + badgeTone}>{badge}</span>}
       </button>
       {expanded && (
         <div className="wcf-admin-game-body">
           {past && (
-            <div className="wcf-admin-score-card">
-              <div className="wcf-admin-score-eyebrow">Enter result</div>
-              <div className="wcf-admin-score">
-                <span style={{ color: cs.team_white_color }}>{cs.team_white_name.toUpperCase()}</span>
-                <input type="number" min={0} value={whiteScore} onChange={(e) => setWhiteScore(e.target.value)} />
-                <span className="wcf-admin-score-dash">–</span>
-                <input type="number" min={0} value={redScore} onChange={(e) => setRedScore(e.target.value)} />
-                <span style={{ color: cs.team_red_color }}>{cs.team_red_name.toUpperCase()}</span>
-              </div>
-              {scoreEntered && (
-                <div className={"wcf-recon " + (attributedTotal === enteredTotal ? "ok" : "pending")}>
-                  <span className="wcf-recon-dot" />
-                  {attributedTotal} of {enteredTotal} attributed to scorers
-                </div>
+            <div className="wcf-admin-result-bar">
+              {scored ? (
+                <>
+                  <span className="wcf-admin-result-score">
+                    <span style={{ color: cs.team_white_color }}>{cs.team_white_name}</span> {game.team_white_score}–{game.team_red_score}{" "}
+                    <span style={{ color: cs.team_red_color }}>{cs.team_red_name}</span>
+                  </span>
+                  <button className="wcf-pill-btn ghost" onClick={() => onEnterResult(game.id)}>Edit result</button>
+                </>
+              ) : (
+                <button className="wcf-pill-btn red wide" onClick={() => onEnterResult(game.id)}>Enter result</button>
               )}
             </div>
           )}
 
-          {past && confirmed.length > 0 && (
-            <div className="wcf-scorers-card">
-              {([
-                ["white", confirmed.filter((b) => b.team === "white"), cs.team_white_name, cs.team_white_color],
-                ["red", confirmed.filter((b) => b.team === "red"), cs.team_red_name, cs.team_red_color],
-                ["unassigned", confirmed.filter((b) => !b.team), "Unassigned", "#94a3b8"],
-              ] as const)
-                .filter(([, group]) => group.length > 0)
-                .map(([key, group, name, color]) => (
-                  <div key={key} className="wcf-scorers-team">
-                    <div className="wcf-scorers-team-head">
-                      <span className="wcf-scorers-team-swatch" style={{ background: color }} />
-                      <span className="wcf-scorers-team-name" style={{ color }}>{name}</span>
-                    </div>
-                    <div className="wcf-scorers-col-head">
-                      <span />
-                      <small>Goals</small>
-                      <small>OG</small>
-                    </div>
-                    {group.map((b) => (
-                      <div key={b.id} className="wcf-scorers-row">
-                        <span className="wcf-scorers-name">
-                          {b.player.display_name}
-                          {(ownGoalDraft[b.player_id] ?? 0) > 0 && <span className="wcf-scorers-og-flag">Own goal</span>}
-                        </span>
-                        <div className="wcf-scorers-stepper">
-                          <button
-                            onClick={() => setGoalDraft((g) => ({ ...g, [b.player_id]: Math.max(0, (g[b.player_id] ?? 0) - 1) }))}
-                            disabled={(goalDraft[b.player_id] ?? 0) <= 0}
-                          >
-                            −
-                          </button>
-                          <span>{goalDraft[b.player_id] ?? 0}</span>
-                          <button onClick={() => setGoalDraft((g) => ({ ...g, [b.player_id]: (g[b.player_id] ?? 0) + 1 }))}>+</button>
-                        </div>
-                        <div className="wcf-scorers-stepper og">
-                          <button
-                            onClick={() => setOwnGoalDraft((g) => ({ ...g, [b.player_id]: Math.max(0, (g[b.player_id] ?? 0) - 1) }))}
-                            disabled={(ownGoalDraft[b.player_id] ?? 0) <= 0}
-                          >
-                            −
-                          </button>
-                          <span>{ownGoalDraft[b.player_id] ?? 0}</span>
-                          <button onClick={() => setOwnGoalDraft((g) => ({ ...g, [b.player_id]: (g[b.player_id] ?? 0) + 1 }))}>+</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ))}
+          {confirmed.length === 0 && <p className="wcf-empty small">No one booked in.</p>}
+          {confirmed.length > 0 && (
+            <div className={"wcf-admin-owing" + (owing.length === 0 ? " clear" : "")}>
+              {owing.length === 0
+                ? "✓ Everyone's paid or on a free game"
+                : `${owing.length} not paid: ${owing.map((b) => b.player.display_name.split(" ")[0] + (b.status === "pending" ? " (says paid)" : "")).join(", ")}`}
             </div>
           )}
-
-          {confirmed.length === 0 && <p className="wcf-empty small">No one booked in.</p>}
-          {(() => {
-            const renderRow = (b: BookingRow) => (
-              <div key={b.id} className="wcf-admin-player-row">
-                <span className={"wcf-admin-player-dot " + (b.status === "confirmed" ? "confirmed" : "pending")} />
-                <span className="wcf-admin-player-name">
-                  {b.player.display_name}
-                  <span className="wcf-confirmed-by">Booked {fmtDateTime(b.created_at)}</span>
-                  {b.status === "confirmed" && b.confirmer && <span className="wcf-confirmed-by">Payment approved by {b.confirmer.display_name}</span>}
-                  {b.status === "confirmed" && b.auto_confirmed && <span className="wcf-confirmed-by">Payment approved via Monzo</span>}
-                </span>
-                <div className="wcf-admin-status">
-                  <StatusBadge status={b.status} />
-                  {b.status !== "confirmed" ? (
-                    <button className="wcf-admin-approve" onClick={() => onSetStatus(b.id, "confirmed")}>Approve</button>
-                  ) : (
-                    <button className="wcf-admin-undo" onClick={() => onSetStatus(b.id, "unpaid")}>Undo</button>
-                  )}
-                </div>
-                <select
-                  className={"wcf-admin-pot-select" + (b.pot_exempt_reason ? " exempt" : "")}
-                  value={b.pot_exempt_reason ?? ""}
-                  onChange={(e) => onSetPotExempt(b.id, (e.target.value || null) as PotExemptReason | null)}
-                  title="Whether this booking counts toward pot income"
-                >
-                  <option value="">Pays</option>
-                  <option value="prize">Free — prize</option>
-                  <option value="carried_over">Free — carried over</option>
-                  <option value="other">Free — other</option>
-                </select>
-                <button
-                  className="wcf-admin-remove"
-                  onClick={async () => {
-                    const msg = past
-                      ? "This deletes their booking for this game entirely - no appearance, no pot charge, nothing left behind."
-                      : "Their spot opens up to the waiting list.";
-                    if (await askConfirm(`Remove ${b.player.display_name} from this game?`, msg, "Remove")) {
-                      onRemoveBooking(b.id);
-                    }
-                  }}
-                  aria-label="Remove from game"
-                >
-                  ×
-                </button>
-              </div>
-            );
-
-            // Past games only - once most players are paid up, their rows
-            // are just clutter on top of the new scorer-entry card above.
-            // Still fully reachable (remove/pot-exempt etc. all still
-            // work), just collapsed by default - same pattern as archived
-            // feed items / older messages elsewhere in the app.
-            if (!past) return confirmed.map(renderRow);
-            const outstanding = confirmed.filter((b) => b.status !== "confirmed");
-            const settled = confirmed.filter((b) => b.status === "confirmed");
-            return (
-              <>
-                {outstanding.map(renderRow)}
-                {settled.length > 0 && (
-                  <>
-                    <button className="wcf-show-more-toggle" onClick={() => setShowSettled((v) => !v)}>
-                      {showSettled ? "Hide" : "Show"} {settled.length} settled {settled.length === 1 ? "player" : "players"}
-                    </button>
-                    {showSettled && settled.map(renderRow)}
-                  </>
-                )}
-              </>
-            );
-          })()}
-
-          {past && confirmed.length > 0 && (
-            <button className="wcf-save" onClick={submitResult} disabled={!dirty || saving}>
-              {saving ? "Saving…" : "Save result"}
-            </button>
-          )}
+          {confirmed.map(row)}
 
           {waitingList.length > 0 && (
             <>
-              <h4 className="wcf-edit-subhead">Waiting list · {waitingList.length}</h4>
+              <div className="wcf-admin-wl">Waiting list · {waitingList.length}</div>
               {waitingList.map((b, i) => (
-                <div key={b.id} className="wcf-admin-player-row">
-                  <span className="wcf-admin-player-name">
+                <div key={b.id} className="wcf-arow">
+                  <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-arow-av" background={avatarFor(b.player.display_name).gradient} />
+                  <span className="wcf-arow-name">
                     {i + 1}. {b.player.display_name}
-                    <span className="wcf-confirmed-by">Joined {fmtDateTime(b.created_at)}</span>
+                    <small>Joined {fmtDateTime(b.created_at)}</small>
                   </span>
-                  <button
-                    className="wcf-admin-remove"
-                    onClick={async () => {
-                      if (await askConfirm(`Remove ${b.player.display_name} from the waiting list?`, "They'll need to rejoin if they want a spot again.", "Remove")) {
-                        onRemoveBooking(b.id);
-                      }
-                    }}
-                    aria-label="Remove from waiting list"
-                  >
-                    ×
-                  </button>
+                  <span />
+                  <button className="wcf-arow-more" onClick={() => setActionFor(b)} aria-label={`Actions for ${b.player.display_name}`}>⋯</button>
                 </div>
               ))}
             </>
@@ -9537,7 +9401,7 @@ function AdminGameRow({
                 ))}
               </select>
               <button
-                className="wcf-ghost"
+                className="wcf-pill-btn ghost"
                 disabled={!addPlayerId}
                 onClick={() => {
                   onAddBooking(game.id, addPlayerId);
@@ -9550,7 +9414,7 @@ function AdminGameRow({
           )}
 
           <button
-            className="wcf-admin-delete-game"
+            className="wcf-admin-delete-link"
             onClick={async () => {
               const when = past ? "past" : "upcoming";
               const hasBookings = confirmed.length > 0 || waitingList.length > 0;
@@ -9569,6 +9433,282 @@ function AdminGameRow({
           </button>
         </div>
       )}
+
+      {actionFor && (
+        <div className="wcf-sheet-overlay" onClick={() => setActionFor(null)}>
+          <div className="wcf-squad-sheet wcf-action-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="wcf-sheet-handle-wrap"><div className="wcf-sheet-handle" /></div>
+            <div className="wcf-action-head">
+              <b>{actionFor.player.display_name}</b>
+              <small>
+                {fmtDate(game.date)} · {actionFor.waiting ? "joined the waiting list" : "booked"} {fmtDateTime(actionFor.created_at)}
+              </small>
+            </div>
+            {actionFor.waiting ? (
+              <button
+                className="wcf-action-opt danger"
+                onClick={() =>
+                  act(async () => {
+                    if (await askConfirm(`Remove ${actionFor.player.display_name} from the waiting list?`, "They'll need to rejoin if they want a spot again.", "Remove")) {
+                      onRemoveBooking(actionFor.id);
+                    }
+                  })
+                }
+              >
+                Remove from waiting list
+              </button>
+            ) : (
+              <>
+                {actionFor.status === "pending" && (
+                  <button className="wcf-action-opt" onClick={() => act(() => onSetStatus(actionFor.id, "confirmed"))}>✓ Confirm payment</button>
+                )}
+                {actionFor.status === "unpaid" && (
+                  <button
+                    className="wcf-action-opt"
+                    onClick={() =>
+                      act(async () => {
+                        if (await askConfirm(`Confirm ${actionFor.player.display_name} as paid?`, "They haven't marked this as paid themselves.", "Confirm anyway")) {
+                          onSetStatus(actionFor.id, "confirmed");
+                        }
+                      })
+                    }
+                  >
+                    ✓ Mark as paid
+                  </button>
+                )}
+                {actionFor.status === "confirmed" && (
+                  <button className="wcf-action-opt" onClick={() => act(() => onSetStatus(actionFor.id, "unpaid"))}>↩ Undo payment</button>
+                )}
+                {actionFor.pot_exempt_reason ? (
+                  <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, null))}>£ Make it a paying game again</button>
+                ) : (
+                  <>
+                    <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "prize"))}>🎁 Free game: prize</button>
+                    <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "carried_over"))}>🔄 Free game: carried over</button>
+                    <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "other"))}>🎁 Free game: other</button>
+                  </>
+                )}
+                <button
+                  className="wcf-action-opt danger"
+                  onClick={() =>
+                    act(async () => {
+                      const msg = past
+                        ? "This deletes their booking for this game entirely - no appearance, no pot charge, nothing left behind."
+                        : "Their spot opens up to the waiting list.";
+                      if (await askConfirm(`Remove ${actionFor.player.display_name} from this game?`, msg, "Remove")) {
+                        onRemoveBooking(actionFor.id);
+                      }
+                    })
+                  }
+                >
+                  ✕ Remove from game
+                </button>
+              </>
+            )}
+            <button className="wcf-action-opt cancel" onClick={() => setActionFor(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Entering a result in three steps - the score on a big scoreboard, then
+// who scored (tap a face once per goal), then a check before it goes out.
+// Replaces two small number boxes and four tiny steppers per player.
+function ResultSheet({
+  game,
+  goalRows,
+  cs,
+  onSave,
+  onShare,
+  onClose,
+}: {
+  game: GameRow;
+  goalRows: GoalRow[];
+  cs: ClubSettings;
+  onSave: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>) => Promise<void>;
+  onShare: (gameId: string) => void;
+  onClose: () => void;
+}) {
+  const players = game.bookings.filter((b) => !b.waiting);
+  const initialGoals: Record<string, number> = {};
+  const initialOwn: Record<string, number> = {};
+  goalRows
+    .filter((r) => r.game_id === game.id)
+    .forEach((r) => {
+      initialGoals[r.player_id] = r.goals;
+      initialOwn[r.player_id] = r.own_goals;
+    });
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [white, setWhite] = useState(game.team_white_score ?? 0);
+  const [red, setRed] = useState(game.team_red_score ?? 0);
+  const [goals, setGoals] = useState<Record<string, number>>(initialGoals);
+  const [own, setOwn] = useState<Record<string, number>>(initialOwn);
+  const [ogMode, setOgMode] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const groups = ([
+    ["white", players.filter((b) => b.team === "white"), cs.team_white_name, cs.team_white_color, white],
+    ["red", players.filter((b) => b.team === "red"), cs.team_red_name, cs.team_red_color, red],
+    ["none", players.filter((b) => !b.team), "Not on a team", "#94a3b8", null],
+  ] as const).filter(([, g]) => g.length > 0);
+  const sum = (ids: BookingRow[], m: Record<string, number>) => ids.reduce((n, b) => n + (m[b.player_id] ?? 0), 0);
+  const totalAssigned = sum(players, goals) + sum(players, own);
+  const totalScore = white + red;
+  const ownTotal = sum(players, own);
+
+  const bump = (id: string, by: number) => {
+    const set = ogMode ? setOwn : setGoals;
+    set((m) => ({ ...m, [id]: Math.max(0, (m[id] ?? 0) + by) }));
+  };
+  const scorerLine = (group: BookingRow[]) =>
+    group
+      .filter((b) => (goals[b.player_id] ?? 0) > 0)
+      .sort((a, b) => (goals[b.player_id] ?? 0) - (goals[a.player_id] ?? 0))
+      .map((b) => `${b.player.display_name} ${goals[b.player_id]}`)
+      .join(", ") || "No scorers entered";
+
+  async function save() {
+    setSaving(true);
+    await onSave(game.id, white, red, goals, own);
+    setSaving(false);
+    setStep(4);
+  }
+
+  const stepper = (label: string, color: string, v: number, set: (n: number) => void) => (
+    <div className="wcf-rs-board-row">
+      <span className="wcf-rs-team" style={{ color }}>{label.toUpperCase()}</span>
+      <span className="wcf-rs-stepper">
+        <button onClick={() => set(Math.max(0, v - 1))} aria-label={`${label} minus one`}>−</button>
+        <b style={{ color }}>{v}</b>
+        <button className="plus" onClick={() => set(v + 1)} aria-label={`${label} plus one`}>+</button>
+      </span>
+    </div>
+  );
+
+  return (
+    <div className="wcf-rs" role="dialog" aria-modal="true" aria-label={`Result for ${fmtDate(game.date)}`}>
+      <div className="wcf-rs-inner">
+        <div className="wcf-rs-top">
+          <b>{step === 1 ? `${fmtDate(game.date)} · result` : step === 2 ? "Who scored?" : step === 3 ? "All good?" : "Saved"}</b>
+          <button onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        {step < 4 && (
+          <div className="wcf-rs-steps">
+            <i className="on" /><i className={step >= 2 ? "on" : ""} /><i className={step >= 3 ? "on" : ""} />
+          </div>
+        )}
+
+        {step === 1 && (
+          <>
+            <div className="wcf-rs-board">
+              {stepper(cs.team_white_name, cs.team_white_color, white, setWhite)}
+              {stepper(cs.team_red_name, cs.team_red_color, red, setRed)}
+            </div>
+            <button className="wcf-rs-cta" onClick={() => setStep(2)}>Next: who scored</button>
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            {ogMode && <div className="wcf-rs-og">Own-goal mode: tap whoever put it in their own net. <button onClick={() => setOgMode(false)}>Done</button></div>}
+            {groups.map(([key, group, name, color, target]) => {
+              const assigned = sum([...group], goals);
+              return (
+                <div key={key}>
+                  <div className="wcf-rs-teamhead">
+                    <b style={{ color }}>{name.toUpperCase()}</b>
+                    {target != null && (
+                      <span className={assigned === target ? "ok" : "todo"}>{assigned} of {target}{assigned === target ? " ✓" : ""}</span>
+                    )}
+                  </div>
+                  <div className="wcf-rs-chips">
+                    {group.map((b) => {
+                      const n = (ogMode ? own : goals)[b.player_id] ?? 0;
+                      const og = own[b.player_id] ?? 0;
+                      return (
+                        <span key={b.id} className={"wcf-rs-chip" + (n > 0 ? " has" : "") + (ogMode ? " og" : "")}>
+                          <button className="wcf-rs-chip-main" onClick={() => bump(b.player_id, 1)}>
+                            <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-rs-chip-av" background={avatarFor(b.player.display_name).gradient} />
+                            {b.player.display_name.split(" ")[0]}
+                            {!ogMode && og > 0 && <em>OG</em>}
+                          </button>
+                          {n > 0 && (
+                            <>
+                              <span className="wcf-rs-count">{n}</span>
+                              <button className="wcf-rs-minus" onClick={() => bump(b.player_id, -1)} aria-label={`Take one off ${b.player.display_name}`}>−</button>
+                            </>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            <p className="wcf-rs-hint">
+              Tap a player once per goal; − takes one off.{" "}
+              {totalAssigned === totalScore
+                ? "Every goal is accounted for."
+                : totalAssigned < totalScore
+                  ? `${totalScore - totalAssigned} ${totalScore - totalAssigned === 1 ? "goal isn't" : "goals aren't"} assigned yet. Fine to leave if you're not sure.`
+                  : `That's ${totalAssigned - totalScore} more than the score. Check the numbers.`}
+              {ownTotal > 0 ? ` Own goals: ${ownTotal}.` : ""}
+            </p>
+            {!ogMode && <button className="wcf-rs-oglink" onClick={() => setOgMode(true)}>Was one an own goal?</button>}
+            <div className="wcf-rs-row">
+              <button className="wcf-rs-ghost" onClick={() => { setOgMode(false); setStep(1); }}>Back</button>
+              <button className="wcf-rs-cta" onClick={() => { setOgMode(false); setStep(3); }}>Next: check</button>
+            </div>
+          </>
+        )}
+
+        {step === 3 && (
+          <>
+            <div className="wcf-rs-summary">
+              <div className="k">Full time · {fmtDate(game.date)}</div>
+              <div className="sc">
+                <span>{cs.team_white_name.toUpperCase()}</span>
+                <b style={{ color: cs.team_white_color }}>{white}</b>
+                <b className="dash">–</b>
+                <b style={{ color: cs.team_red_color }}>{red}</b>
+                <span>{cs.team_red_name.toUpperCase()}</span>
+              </div>
+              <div className="who">
+                <div><b>{cs.team_white_name}:</b> {scorerLine(players.filter((b) => b.team === "white"))}</div>
+                <div><b>{cs.team_red_name}:</b> {scorerLine(players.filter((b) => b.team === "red"))}</div>
+                {ownTotal > 0 && <div><b>Own goals:</b> {players.filter((b) => (own[b.player_id] ?? 0) > 0).map((b) => `${b.player.display_name} ${own[b.player_id]}`).join(", ")}</div>}
+              </div>
+              <div className="ticks">
+                <div><i>✓</i>Posts &quot;Full time&quot; to the feed, plus any hat-tricks or records</div>
+                <div><i>✓</i>Updates Scores, Stats, Records and Wrapped</div>
+              </div>
+            </div>
+            <div className="wcf-rs-row">
+              <button className="wcf-rs-ghost" onClick={() => setStep(2)}>Back</button>
+              <button className="wcf-rs-cta" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save result"}</button>
+            </div>
+          </>
+        )}
+
+        {step === 4 && (
+          <>
+            <div className="wcf-rs-summary">
+              <div className="k">Saved ✓</div>
+              <div className="sc">
+                <span>{cs.team_white_name.toUpperCase()}</span>
+                <b style={{ color: cs.team_white_color }}>{white}</b>
+                <b className="dash">–</b>
+                <b style={{ color: cs.team_red_color }}>{red}</b>
+                <span>{cs.team_red_name.toUpperCase()}</span>
+              </div>
+            </div>
+            <button className="wcf-rs-cta" onClick={() => onShare(game.id)}>Share result image</button>
+            <button className="wcf-rs-ghost wide" onClick={onClose}>Done</button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -11654,6 +11794,126 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pl-row.lead{background:rgba(245,217,122,.07)}
 .wcf-predict-top{margin-bottom:16px}
 .wcf-pl-exact{font-size:11px;font-weight:700;color:#f5d97a;white-space:nowrap}
+/* ── Admin, redesigned: four tabs, "Needs you" first, compact fixtures. */
+.wcf-admin-tabs button{position:relative}
+.wcf-admin-tab-badge{position:absolute;top:-7px;right:-4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#eab308;color:#0d0d1a;font-style:normal;font-size:10.5px;font-weight:800;display:grid;place-items:center}
+.wcf-needs{border-radius:20px;padding:14px;margin-bottom:12px;border:1px solid rgba(245,217,122,.4);background:radial-gradient(120% 140% at 0% 0%,rgba(245,217,122,.12),transparent 60%),var(--panel)}
+.wcf-needs.clear{border-color:rgba(34,197,94,.35);background:radial-gradient(120% 140% at 0% 0%,rgba(34,197,94,.12),transparent 60%),var(--panel)}
+.wcf-needs-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:2px}
+.wcf-needs-head b{font-family:var(--display);font-weight:800;font-size:18px;color:var(--white)}
+.wcf-needs-head span{font-size:12px;font-weight:700;color:#f5d97a}
+.wcf-needs.clear .wcf-needs-head span{color:var(--green,#86efac)}
+.wcf-todo{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 0;border-top:1px solid var(--line)}
+.wcf-needs .wcf-todo:first-of-type{border-top:0}
+.wcf-todo-ic{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;font-weight:800;font-size:14px}
+.wcf-todo-ic.gold{background:rgba(245,217,122,.16);color:#f5d97a}.wcf-todo-ic.red{background:rgba(230,57,70,.16);color:var(--red-hi)}.wcf-todo-ic.blue{background:rgba(127,176,236,.16);color:#7fb0ec}
+.wcf-todo-tx{min-width:0}
+.wcf-todo-tx b{display:block;font-size:13.5px;color:var(--white);line-height:1.3}
+.wcf-todo-tx span{display:block;font-size:11.5px;color:var(--dim);margin-top:2px;line-height:1.35}
+.wcf-todo-btn{min-height:34px;padding:0 14px;border-radius:999px;border:0;font-weight:700;font-size:12.5px;cursor:pointer;white-space:nowrap}
+.wcf-todo-btn.gold{background:#f5d97a;color:#0d0d1a}.wcf-todo-btn.red{background:var(--red);color:#fff}.wcf-todo-btn.blue{background:rgba(127,176,236,.18);color:#cfe0ff;border:1px solid rgba(127,176,236,.45)}
+.wcf-admin-next{border-radius:18px;padding:13px 14px;margin-bottom:12px;border:1px solid rgba(34,197,94,.35);background:radial-gradient(120% 90% at 50% 0%,rgba(34,197,94,.12),transparent 60%),#10131f}
+.wcf-admin-next-k{font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--green,#86efac)}
+.wcf-admin-next-t{font-family:var(--display);font-weight:800;font-size:18px;margin-top:3px;color:var(--white)}
+.wcf-admin-next-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.wcf-chip{font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid var(--line);color:#cbd5e1}
+.wcf-chip.g{color:var(--green,#86efac);border-color:rgba(134,239,172,.4)}.wcf-chip.w{color:#f5d97a;border-color:rgba(245,217,122,.45)}.wcf-chip.r{color:var(--red-hi);border-color:rgba(230,57,70,.45)}
+.wcf-admin-next-acts{display:flex;gap:8px;margin-top:11px;flex-wrap:wrap}
+.wcf-pill-btn{min-height:38px;padding:0 16px;border-radius:999px;font-weight:700;font-size:13px;cursor:pointer;border:1px solid transparent}
+.wcf-pill-btn.ghost{background:transparent;border-color:var(--line);color:var(--white)}
+.wcf-pill-btn.red{background:var(--red);color:#fff}
+.wcf-pill-btn.wide{width:100%}
+.wcf-pill-btn:disabled{opacity:.45;cursor:default}
+.wcf-admin-calm{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.wcf-admin-calm div{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 11px}
+.wcf-admin-calm b{display:block;font-family:var(--display);font-weight:800;font-size:19px;color:var(--white)}
+.wcf-admin-calm span{display:block;font-size:10.5px;font-weight:600;color:var(--dim);line-height:1.3;margin-top:2px}
+.wcf-admin-group{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:18px 2px 8px;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.wcf-admin-group:first-child{margin-top:4px}
+.wcf-admin-group b{font-family:var(--display);font-size:13px;letter-spacing:.02em}
+.wcf-admin-group b.gold{color:#f5d97a}.wcf-admin-group b.red{color:var(--red-hi)}
+.wcf-admin-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:2px 12px}
+.wcf-admin-card .wcf-todo:first-child{border-top:0}
+.wcf-admin-fold{display:flex;justify-content:space-between;align-items:center;width:100%;padding:12px 2px;background:none;border:0;border-bottom:1px solid var(--line);color:var(--white);font-size:13px;cursor:pointer}
+.wcf-admin-fold span{color:var(--dim);font-size:12px;font-weight:600}
+.wcf-admin-hint{font-size:12px;color:var(--dim);margin:-2px 2px 8px;line-height:1.45}
+.wcf-admin-compose-card{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center;padding:13px 14px;border-radius:16px;background:var(--panel);border:1px solid var(--line)}
+.wcf-admin-compose-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+/* compact fixture rows */
+.wcf-admin-game-badge.score{background:rgba(255,255,255,.06);border-color:var(--line);color:var(--white);font-family:var(--display)}
+.wcf-arow{display:grid;grid-template-columns:32px minmax(0,1fr) auto 32px;gap:10px;align-items:center;padding:9px 2px;border-bottom:1px solid var(--line)}
+.wcf-arow-av{width:32px;height:32px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-weight:800;font-size:12px;color:#fff}
+.wcf-arow-name{min-width:0;font-size:13.5px;font-weight:700;color:var(--white);line-height:1.3}
+.wcf-arow-name small{display:block;font-size:11px;font-weight:500;color:var(--dim);margin-top:1px}
+.wcf-arow-more{width:32px;height:32px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--dim);font-size:17px;line-height:1;cursor:pointer}
+.wcf-st{font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:999px;white-space:nowrap}
+.wcf-st.paid{color:var(--green,#86efac);background:rgba(34,197,94,.12)}.wcf-st.owe{color:var(--red-hi);background:rgba(230,57,70,.12)}
+.wcf-st.says{color:#f5d97a;background:rgba(245,217,122,.14)}.wcf-st.free{color:#cbd5e1;background:rgba(255,255,255,.08)}
+.wcf-admin-result-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 0 10px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.wcf-admin-result-score{font-family:var(--display);font-weight:800;font-size:16px;color:var(--white)}
+.wcf-admin-owing{margin:4px 0 4px;padding:9px 12px;border-radius:12px;font-size:12.5px;font-weight:700;color:var(--red-hi);background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.35)}
+.wcf-admin-owing.clear{color:var(--green,#86efac);background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.3)}
+.wcf-admin-wl{font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#f5d97a;margin:14px 2px 2px}
+.wcf-admin-delete-link{display:block;margin:14px auto 2px;background:none;border:0;color:var(--red-hi);font-size:12.5px;font-weight:700;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+/* per-player actions sheet */
+.wcf-action-sheet{padding:0 16px calc(env(safe-area-inset-bottom,0px) + 14px)}
+.wcf-action-head{padding:8px 2px 10px;border-bottom:1px solid var(--line)}
+.wcf-action-head b{display:block;font-family:var(--display);font-size:17px;color:var(--white)}
+.wcf-action-head small{display:block;font-size:12px;color:var(--dim);margin-top:2px}
+.wcf-action-opt{display:block;width:100%;text-align:left;padding:14px 4px;background:none;border:0;border-bottom:1px solid var(--line);color:var(--white);font-size:14.5px;font-weight:600;cursor:pointer}
+.wcf-action-opt.danger{color:var(--red-hi)}
+.wcf-action-opt.cancel{border-bottom:0;text-align:center;color:var(--dim)}
+/* result entry */
+.wcf-rs{position:fixed;inset:0;z-index:120;background:rgba(6,7,14,.97);overflow-y:auto;-webkit-overflow-scrolling:touch}
+.wcf-rs-inner{max-width:480px;margin:0 auto;padding:calc(env(safe-area-inset-top,0px) + 16px) 16px calc(env(safe-area-inset-bottom,0px) + 28px)}
+.wcf-rs-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.wcf-rs-top b{font-family:var(--display);font-weight:800;font-size:18px;color:var(--white)}
+.wcf-rs-top button{width:40px;height:40px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--dim);font-size:16px;cursor:pointer}
+.wcf-rs-steps{display:flex;gap:5px;margin:12px 0 16px}
+.wcf-rs-steps i{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.15)}
+.wcf-rs-steps i.on{background:#f5d97a}
+.wcf-rs-board{border-radius:20px;padding:10px 14px;border:1px solid var(--line);background:radial-gradient(120% 90% at 50% 0%,rgba(34,197,94,.12),transparent 60%),#10131f}
+.wcf-rs-board-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0}
+.wcf-rs-board-row+.wcf-rs-board-row{border-top:1px solid var(--line)}
+.wcf-rs-team{font-family:var(--display);font-weight:800;font-size:17px;letter-spacing:.06em}
+.wcf-rs-stepper{display:flex;align-items:center;gap:14px}
+.wcf-rs-stepper button{width:52px;height:52px;border-radius:16px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#fff;font-size:26px;font-weight:700;cursor:pointer}
+.wcf-rs-stepper button.plus{background:rgba(255,255,255,.12)}
+.wcf-rs-stepper b{min-width:48px;text-align:center;font-family:var(--display);font-weight:800;font-size:44px;font-variant-numeric:tabular-nums}
+.wcf-rs-cta{display:block;width:100%;min-height:52px;margin-top:16px;border-radius:999px;border:0;background:var(--red);color:#fff;font-weight:800;font-size:15px;cursor:pointer}
+.wcf-rs-cta:disabled{opacity:.6}
+.wcf-rs-ghost{min-height:52px;padding:0 20px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--white);font-weight:700;font-size:14px;cursor:pointer}
+.wcf-rs-ghost.wide{display:block;width:100%;margin-top:10px}
+.wcf-rs-row{display:flex;gap:10px;margin-top:16px}
+.wcf-rs-row .wcf-rs-cta{margin-top:0;flex:1}
+.wcf-rs-teamhead{display:flex;justify-content:space-between;align-items:baseline;margin:14px 2px 8px}
+.wcf-rs-teamhead b{font-family:var(--display);font-size:14px;letter-spacing:.06em}
+.wcf-rs-teamhead span{font-size:12px;font-weight:800}
+.wcf-rs-teamhead .ok{color:var(--green,#86efac)}.wcf-rs-teamhead .todo{color:#f5d97a}
+.wcf-rs-chips{display:flex;flex-wrap:wrap;gap:8px}
+.wcf-rs-chip{position:relative;display:inline-flex;align-items:center;border-radius:999px;background:var(--panel);border:1px solid var(--line)}
+.wcf-rs-chip.has{border-color:rgba(134,239,172,.55);background:rgba(34,197,94,.12)}
+.wcf-rs-chip.og.has{border-color:rgba(245,217,122,.6);background:rgba(245,217,122,.12)}
+.wcf-rs-chip-main{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:0 13px 0 6px;background:none;border:0;color:var(--white);font-size:13px;font-weight:700;cursor:pointer}
+.wcf-rs-chip-main em{font-style:normal;font-size:9.5px;font-weight:800;color:#f5d97a;border:1px solid rgba(245,217,122,.5);border-radius:4px;padding:0 4px}
+.wcf-rs-chip-av{width:32px;height:32px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-weight:800;font-size:11px;color:#fff}
+.wcf-rs-count{position:absolute;top:-7px;left:26px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--green2,#22c55e);color:#06200f;font-family:var(--display);font-weight:800;font-size:11px;display:grid;place-items:center}
+.wcf-rs-chip.og .wcf-rs-count{background:#f5d97a}
+.wcf-rs-minus{width:30px;height:30px;margin-right:6px;border-radius:50%;border:1px solid var(--line);background:rgba(0,0,0,.25);color:var(--white);font-size:16px;line-height:1;cursor:pointer}
+.wcf-rs-hint{font-size:12.5px;color:var(--dim);line-height:1.5;margin:14px 2px 0}
+.wcf-rs-oglink{margin-top:8px;background:none;border:0;padding:0;color:var(--dim);font-size:12.5px;font-weight:700;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.wcf-rs-og{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);font-size:12.5px;color:#f5d97a;font-weight:600}
+.wcf-rs-og button{min-height:32px;padding:0 12px;border-radius:999px;border:0;background:#f5d97a;color:#0d0d1a;font-weight:800;font-size:12px;cursor:pointer}
+.wcf-rs-summary{border-radius:20px;padding:16px 14px;text-align:center;border:1px solid rgba(245,217,122,.4);background:radial-gradient(120% 120% at 50% 0%,rgba(245,217,122,.12),transparent 60%),var(--panel)}
+.wcf-rs-summary .k{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#f5d97a}
+.wcf-rs-summary .sc{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px;font-family:var(--display);font-weight:800}
+.wcf-rs-summary .sc b{font-size:44px}.wcf-rs-summary .sc b.dash{font-size:26px;color:var(--dim)}
+.wcf-rs-summary .sc span{font-size:12px;letter-spacing:.08em;color:var(--dim)}
+.wcf-rs-summary .who{font-size:13px;color:#cbd5e1;margin-top:10px;line-height:1.55;text-align:left}
+.wcf-rs-summary .who b{color:var(--white)}
+.wcf-rs-summary .ticks{display:flex;flex-direction:column;gap:6px;margin-top:12px;text-align:left}
+.wcf-rs-summary .ticks div{font-size:12.5px;color:#cbd5e1;display:flex;gap:8px}
+.wcf-rs-summary .ticks i{font-style:normal;color:var(--green,#86efac);font-weight:800}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
