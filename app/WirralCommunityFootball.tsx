@@ -1944,6 +1944,16 @@ function App({ session }: { session: Session }) {
     await loadAdminMessages();
   }
 
+  async function markAllMessagesRead() {
+    const { error } = await supabase
+      .from("admin_messages")
+      .update({ read_at: new Date().toISOString() })
+      .eq("recipient_id", myId)
+      .is("read_at", null);
+    if (error) return notifyError(error.message);
+    await loadAdminMessages();
+  }
+
   async function enablePush() {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       notifyError("Push isn't supported in this browser");
@@ -3804,12 +3814,14 @@ function App({ session }: { session: Session }) {
   }, [scoredPastGames]);
 
   const headToHead = useMemo(() => {
-    const white = { played: 0, won: 0, drawn: 0, lost: 0, points: 0 };
-    const red = { played: 0, won: 0, drawn: 0, lost: 0, points: 0 };
+    const white = { played: 0, won: 0, drawn: 0, lost: 0, points: 0, goals: 0 };
+    const red = { played: 0, won: 0, drawn: 0, lost: 0, points: 0, goals: 0 };
     pastGames.forEach((g) => {
       if (g.team_white_score == null || g.team_red_score == null) return;
       white.played++;
       red.played++;
+      white.goals += g.team_white_score;
+      red.goals += g.team_red_score;
       if (g.team_white_score > g.team_red_score) {
         white.won++; white.points += 3; red.lost++;
       } else if (g.team_white_score < g.team_red_score) {
@@ -3822,20 +3834,11 @@ function App({ session }: { session: Session }) {
   }, [pastGames]);
 
   // Last 5 scored games, oldest to newest for display - pastGames is
-  // already sorted most-recent-first, so take 5 then reverse. Same W/D/L
-  // math as headToHead above, just not accumulated.
-  const formGuide = useMemo(() => {
-    const recent = pastGames.filter((g) => g.team_white_score != null && g.team_red_score != null).slice(0, 5).reverse();
-    const resultFor = (g: GameRow, side: Team) => {
-      const own = side === "white" ? g.team_white_score! : g.team_red_score!;
-      const other = side === "white" ? g.team_red_score! : g.team_white_score!;
-      return own > other ? "w" : own < other ? "l" : "d";
-    };
-    return {
-      white: recent.map((g) => resultFor(g, "white")),
-      red: recent.map((g) => resultFor(g, "red")),
-    };
-  }, [pastGames]);
+  // already sorted most-recent-first, so take 5 then reverse.
+  const formGuide = useMemo(
+    () => pastGames.filter((g) => g.team_white_score != null && g.team_red_score != null).slice(0, 5).reverse(),
+    [pastGames]
+  );
 
   // For banter - a running win streak, purely derived from the same
   // scored games as headToHead. pastGames is already sorted most-recent
@@ -3860,10 +3863,10 @@ function App({ session }: { session: Session }) {
     return { winner: streakWinner, count, otherLastWon: otherLastWin?.date ?? null };
   }, [pastGames]);
 
-  // Private per-player record - computed from the same past-games data as
+  // Per-player record - computed from the same past-games data as
   // headToHead above rather than stored anywhere, so it's always in sync
-  // and (per the user's request) never has to be back-filled or migrated.
-  // Only ever shown to the player themselves in Account.
+  // and never has to be back-filled or migrated. Shown in the Account
+  // header; the same numbers are public on the player card.
   const myRecord = useMemo(() => {
     let played = 0, won = 0, drawn = 0, lost = 0;
     pastGames.forEach((g) => {
@@ -3881,6 +3884,11 @@ function App({ session }: { session: Session }) {
     });
     return { played, won, drawn, lost, winPct: played > 0 ? Math.round((won / played) * 100) : null };
   }, [pastGames, myId]);
+
+  const myGoalsAllTime = useMemo(
+    () => goalRows.reduce((sum, r) => (r.player_id === myId ? sum + r.goals : sum), 0),
+    [goalRows, myId]
+  );
 
   // Same "computed, not stored" pattern as myRecord above - upcomingGames
   // is already sorted soonest-first, so this just needs to keep that order
@@ -5016,13 +5024,27 @@ function App({ session }: { session: Session }) {
             </div>
 
             {resultsView === "season" && (() => {
-              const gamesThisSeason = pastGames.filter((g) => g.date.slice(0, 4) === String(currentSeasonYear)).length;
+              const seasonGames = pastGames.filter((g) => g.date.slice(0, 4) === String(currentSeasonYear));
+              const gamesThisSeason = seasonGames.length;
+              // The season's headline numbers, from the scored games only.
+              const scoredSeason = seasonGames.filter((g) => g.team_white_score != null && g.team_red_score != null);
+              const seasonGoals = scoredSeason.reduce((sum, g) => sum + g.team_white_score! + g.team_red_score!, 0);
+              const seasonPlayers = new Set(scoredSeason.flatMap((g) => g.bookings.filter((b) => !b.waiting && b.team).map((b) => b.player_id))).size;
               return (
               <>
                 <div className="wcf-season-hero">
                   <div className="wcf-season-hero-eyebrow">Season {currentSeasonYear - SEASON_EPOCH_YEAR + 1}</div>
                   <div className="wcf-season-hero-title">{currentSeasonYear}</div>
-                  <div className="wcf-season-hero-sub">{gamesThisSeason} game{gamesThisSeason === 1 ? "" : "s"} played so far</div>
+                  {scoredSeason.length > 0 ? (
+                    <div className="wcf-season-hero-stats">
+                      <span><b>{gamesThisSeason}</b>{gamesThisSeason === 1 ? "Game" : "Games"}</span>
+                      <span><b>{seasonGoals}</b>Goals</span>
+                      <span><b>{seasonPlayers}</b>Players</span>
+                      <span><b>{(seasonGoals / scoredSeason.length).toFixed(1)}</b>Per game</span>
+                    </div>
+                  ) : (
+                    <div className="wcf-season-hero-sub">{gamesThisSeason} game{gamesThisSeason === 1 ? "" : "s"} played so far</div>
+                  )}
                 </div>
                 {playerOfMonth && (() => {
                   const ws = playerOfMonth.winners;
@@ -5098,49 +5120,77 @@ function App({ session }: { session: Session }) {
                   );
                 })()}
 
-                {(headToHead.white.played > 0 || headToHead.red.played > 0) && (
-                  <div className="wcf-h2h">
-                    <div className="wcf-h2h-title">{cs.team_white_name} v {cs.team_red_name}</div>
-                    <div className="wcf-h2h-row wcf-h2h-header">
-                      <span>Team</span><span>P</span><span>W</span><span>D</span><span>L</span><span>Pts</span>
-                    </div>
-                    {([["white", headToHead.white, cs.team_white_name, cs.team_white_color], ["red", headToHead.red, cs.team_red_name, cs.team_red_color]] as const)
-                      .slice()
-                      .sort((a, b) => b[1].points - a[1].points)
-                      .map(([key, row, name, color]) => (
-                        <div key={key} className="wcf-h2h-row">
-                          <span className="wcf-h2h-team"><span className="wcf-h2h-dot" style={{ background: color }} />{name}</span>
-                          <span>{row.played}</span><span>{row.won}</span><span>{row.drawn}</span><span>{row.lost}</span>
-                          <span className="wcf-h2h-pts">{row.points}</span>
+                {headToHead.white.played > 0 && (() => {
+                  // One rivalry, not two mirrored table rows: results and
+                  // goals as bars, then the last five actual scores.
+                  const h = headToHead;
+                  const wName = cs.team_white_name;
+                  const rName = cs.team_red_name;
+                  const summary =
+                    h.white.won === h.red.won
+                      ? h.white.goals === h.red.goals
+                        ? `Dead level after ${h.white.played} games.`
+                        : `Level on wins after ${h.white.played} games. ${h.white.goals > h.red.goals ? wName : rName} ahead on goals.`
+                      : `${h.white.won > h.red.won ? wName : rName} lead by ${Math.abs(h.white.won - h.red.won)} ${Math.abs(h.white.won - h.red.won) === 1 ? "win" : "wins"} after ${h.white.played} games.`;
+                  const openScore = (id: string) => {
+                    setResultsMonth("all");
+                    setExpandedResultId(id);
+                    setResultsView("fixtures");
+                    setTimeout(() => document.getElementById("result-" + id)?.scrollIntoView({ block: "start", behavior: "smooth" }), 60);
+                  };
+                  return (
+                    <div className="wcf-rivalry" style={{ "--wc": cs.team_white_color, "--rc": cs.team_red_color } as React.CSSProperties}>
+                      <div className="wcf-rivalry-title">{wName} v {rName}</div>
+                      <div className="wcf-rivalry-sub">{summary}</div>
+                      <div className="wcf-rivalry-row">
+                        <div className="wcf-rivalry-lab">
+                          <span><b>{h.white.won}</b> {wName}</span>
+                          <span className="wcf-rivalry-mid">Wins{h.white.drawn > 0 ? ` · ${h.white.drawn} ${h.white.drawn === 1 ? "draw" : "draws"}` : ""}</span>
+                          <span>{rName} <b>{h.red.won}</b></span>
                         </div>
-                      )
-                    )}
-
-                    {formGuide.white.length > 0 && (
-                      <div className="wcf-form-block">
-                        <div className="wcf-form-label">Form — last {formGuide.white.length}</div>
-                        {([["white", formGuide.white, cs.team_white_name, cs.team_white_color], ["red", formGuide.red, cs.team_red_name, cs.team_red_color]] as const).map(
-                          ([key, results, name, color]) => (
-                            <div key={key} className="wcf-form-row">
-                              <span className="wcf-form-team"><span className="wcf-h2h-dot" style={{ background: color }} />{name}</span>
-                              <div className="wcf-form-dots">
-                                {results.map((r, i) => (
-                                  <span
-                                    key={i}
-                                    className={"wcf-form-dot " + r + (i === results.length - 1 ? " latest" : "")}
-                                    style={i === results.length - 1 ? { color: r === "w" ? "var(--green)" : r === "l" ? "var(--red-hi)" : "var(--dim)" } : undefined}
-                                  >
-                                    {r.toUpperCase()}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )
-                        )}
+                        <div className="wcf-rivalry-bar">
+                          {h.white.won > 0 && <i className="w" style={{ flex: h.white.won }} />}
+                          {h.white.drawn > 0 && <i className="d" style={{ flex: h.white.drawn }} />}
+                          {h.red.won > 0 && <i className="r" style={{ flex: h.red.won }} />}
+                        </div>
                       </div>
-                    )}
-                  </div>
-                )}
+                      {h.white.goals + h.red.goals > 0 && (
+                        <div className="wcf-rivalry-row">
+                          <div className="wcf-rivalry-lab">
+                            <span><b>{h.white.goals}</b></span>
+                            <span className="wcf-rivalry-mid">Goals</span>
+                            <span><b>{h.red.goals}</b></span>
+                          </div>
+                          <div className="wcf-rivalry-bar">
+                            {h.white.goals > 0 && <i className="w" style={{ flex: h.white.goals }} />}
+                            {h.red.goals > 0 && <i className="r" style={{ flex: h.red.goals }} />}
+                          </div>
+                        </div>
+                      )}
+                      {formGuide.length > 0 && (
+                        <div className="wcf-rivalry-row">
+                          <div className="wcf-rivalry-k">Last {formGuide.length} · {wName} first</div>
+                          <div className="wcf-rivalry-scores">
+                            {formGuide.map((g, i) => {
+                              const res = g.team_white_score! > g.team_red_score! ? "w" : g.team_white_score! < g.team_red_score! ? "r" : "d";
+                              return (
+                                <button key={g.id} className={"wcf-rivalry-score " + res + (i === formGuide.length - 1 ? " latest" : "")} onClick={() => openScore(g.id)}>
+                                  <b>{g.team_white_score}–{g.team_red_score}</b>
+                                  <span>{new Date(g.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="wcf-rivalry-key">
+                            <span><i className="w" />{wName} won</span>
+                            <span><i className="r" />{rName} won</span>
+                            <span><i className="d" />Draw</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </>
               );
             })()}
@@ -5529,7 +5579,7 @@ function App({ session }: { session: Session }) {
                       .map((v) => profiles.find((p) => p.id === v.voter_id))
                       .filter((p): p is Profile => !!p);
                   return (
-                    <article key={g.id} className={"wcf-result" + (resultIndex === 0 ? " featured" : "")}>
+                    <article key={g.id} id={"result-" + g.id} className={"wcf-result" + (resultIndex === 0 ? " featured" : "")}>
                       <button className="wcf-result-toggle" onClick={() => setExpandedResultId(expanded ? null : g.id)} aria-expanded={expanded}>
                         {(() => {
                           const w = g.team_white_score ?? 0;
@@ -6002,6 +6052,8 @@ function App({ session }: { session: Session }) {
             ratingPlayerId={ratingPlayerId}
             onToggleRatingPlayer={(id) => setRatingPlayerId((cur) => (cur === id ? null : id))}
             myRecord={myRecord}
+            myGoals={myGoalsAllTime}
+            onOpenMyCard={() => openPlayerCard(myId)}
             myUpcomingBookings={myUpcomingBookings}
             myTabOwed={myTabOwed}
             myTabPending={myTabPending}
@@ -6009,6 +6061,7 @@ function App({ session }: { session: Session }) {
             askConfirm={askConfirm}
             messages={adminMessages}
             onMarkMessageRead={markMessageRead}
+            onMarkAllRead={markAllMessagesRead}
           />
         )}
       </main>
@@ -7665,35 +7718,60 @@ function GaffAIChat({
 // a small generic wrapper since Account groups several of these back to
 // back (settings, rating, guides, and - for admins - roles/log/settings/
 // awards) rather than each hand-rolling its own toggle button.
+// Line icons for the Account settings rows, in place of the old ◆ ★ ◎
+// symbol tiles.
+function SetIcon({ name }: { name: "bell" | "user" | "phone" | "cake" | "star" | "mobile" | "mail" | "users" | "list" | "gear" | "trophy" }) {
+  const paths: Record<typeof name, React.ReactNode> = {
+    bell: <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></>,
+    user: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
+    phone: <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z" />,
+    cake: <><rect x="3" y="10" width="18" height="11" rx="2" /><path d="M12 10V6M8 10V7M16 10V7M3 15c3 2 6-2 9 0s6 2 9 0" /></>,
+    star: <path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.5L12 17.3l-5.9 3.2 1.3-6.5-4.9-4.6 6.6-.8z" />,
+    mobile: <><rect x="6" y="2" width="12" height="20" rx="2.5" /><path d="M11 18h2" /></>,
+    mail: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></>,
+    users: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6" /></>,
+    list: <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />,
+    gear: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>,
+    trophy: <><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" /><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></>,
+  };
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {paths[name]}
+    </svg>
+  );
+}
+
 function AccordionSection({
   icon,
   tone,
   title,
   meta,
   value,
+  valueTone,
   open,
   onToggle,
   children,
 }: {
-  icon: string;
+  icon: React.ReactNode;
   tone?: "blue" | "amber" | "red";
   title: string;
   meta?: string;
   value?: string;
+  valueTone?: "ok" | "add";
   open: boolean;
   onToggle: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <div className="wcf-acc-section">
-      <button className="wcf-acc-section-head" onClick={onToggle}>
+    <div className={"wcf-acc-section" + (open ? " open" : "")}>
+      <button className="wcf-acc-section-head" onClick={onToggle} aria-expanded={open}>
         <span className={"wcf-acc-section-tile" + (tone ? " " + tone : "")}>{icon}</span>
         <span className="wcf-acc-section-body">
           <span className="wcf-acc-section-title">{title}</span>
           {meta && <span className="wcf-acc-section-meta">{meta}</span>}
         </span>
-        {value && <span className="wcf-acc-section-value">{value}</span>}
-        <span className="wcf-acc-section-chevron">{open ? "▲" : "▼"}</span>
+        {value && <span className={"wcf-acc-section-value" + (valueTone ? " " + valueTone : "")}>{value}</span>}
+        <span className="wcf-acc-section-chevron" aria-hidden="true">›</span>
       </button>
       {open && (
         <div className="wcf-acc-section-panel">
@@ -7743,12 +7821,15 @@ function AccountPanel({
   ratingPlayerId,
   onToggleRatingPlayer,
   myRecord,
+  myGoals,
+  onOpenMyCard,
   myUpcomingBookings,
   myTabOwed,
   myTabPending,
   onMarkPaid,
   messages,
   onMarkMessageRead,
+  onMarkAllRead,
   askConfirm,
 }: {
   profile: Profile;
@@ -7757,6 +7838,8 @@ function AccountPanel({
   isOwner: boolean;
   profiles: Profile[];
   myRecord: { played: number; won: number; drawn: number; lost: number; winPct: number | null };
+  myGoals: number;
+  onOpenMyCard: () => void;
   myUpcomingBookings: { game: GameRow; booking: BookingRow }[];
   myTabOwed: { game: GameRow; booking: BookingRow }[];
   myTabPending: { game: GameRow; booking: BookingRow }[];
@@ -7796,6 +7879,7 @@ function AccountPanel({
   onSendTestPush: () => Promise<void>;
   messages: AdminMessage[];
   onMarkMessageRead: (id: string) => void;
+  onMarkAllRead: () => void;
 }) {
   const [name, setName] = useState(profile.display_name);
   const [contactName, setContactName] = useState(myEmergencyContact?.contact_name ?? "");
@@ -7811,16 +7895,19 @@ function AccountPanel({
   const [renameDraft, setRenameDraft] = useState("");
   const filteredRoleProfiles = profiles.filter((p) => p.display_name.toLowerCase().includes(roleSearch.trim().toLowerCase()));
   const [pushBusy, setPushBusy] = useState(false);
-  // Collapsed by default - only the time-sensitive cards above (messages,
-  // your tab, upcoming bookings) stay always open. Everything here is
-  // either "set once, rarely touched again" or admin reference tooling.
-  const [openAccountSettings, setOpenAccountSettings] = useState(false);
+  // Settings rows are collapsed by default and only one is open at a time -
+  // everything there is "set once, rarely touched again".
+  const [openSetting, setOpenSetting] = useState<"name" | "contact" | "birthday" | "rating" | null>(null);
+  const toggleSetting = (k: "name" | "contact" | "birthday" | "rating") => setOpenSetting((cur) => (cur === k ? null : k));
+  // A player can have a dozen unread reminders; the newest two are what
+  // matter, and each one shows two lines until tapped.
+  const [showAllUnread, setShowAllUnread] = useState(false);
+  const [openMessageIds, setOpenMessageIds] = useState<Set<string>>(() => new Set());
   // Regulars book weeks ahead, so the full list can run to 20; the next few
   // are what matter day to day.
   const [showAllBookings, setShowAllBookings] = useState(false);
   const BOOKINGS_SHOWN = 3;
-  const [openRating, setOpenRating] = useState(false);
-  const [openGuides, setOpenGuides] = useState(false);
+  const nth = (n: number) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
   const [openClubSettings, setOpenClubSettings] = useState(false);
   const [openAwards, setOpenAwards] = useState(false);
   const [openGuide, setOpenGuide] = useState<"install" | "notifications" | null>(null);
@@ -7838,33 +7925,111 @@ function AccountPanel({
   }, [myEmergencyContact]);
   useEffect(() => setDobDraft(myBirthday?.date_of_birth ?? ""), [myBirthday]);
 
+  // Automatic reminders are sent with no sender; anything an admin typed
+  // carries their id, so it can say who it's from.
+  const senderLabel = (m: AdminMessage) =>
+    m.sender_id ? `From ${profiles.find((p) => p.id === m.sender_id)?.display_name ?? "an admin"}` : "From the club";
+  const INBOX_SHOWN = 2;
+  const inboxRow = (m: AdminMessage) => {
+    const open = openMessageIds.has(m.id);
+    return (
+      <div key={m.id} className={"wcf-inbox-row" + (m.read_at ? "" : " unread") + (open ? " open" : "")}>
+        <button
+          className="wcf-inbox-row-head"
+          aria-expanded={open}
+          onClick={() =>
+            setOpenMessageIds((cur) => {
+              const next = new Set(cur);
+              if (next.has(m.id)) next.delete(m.id);
+              else next.add(m.id);
+              return next;
+            })
+          }
+        >
+          <span className="wcf-inbox-row-dot" aria-hidden="true" />
+          <span className="wcf-inbox-row-main">
+            <span className="wcf-inbox-row-top">
+              <span className="wcf-inbox-row-from">{senderLabel(m)}</span>
+              <span className="wcf-inbox-row-when">{fmtDateTime(m.created_at)}</span>
+            </span>
+            <span className="wcf-inbox-row-body">{m.message}</span>
+          </span>
+        </button>
+        {open && !m.read_at && (
+          <button className="wcf-inbox-row-read" onClick={() => onMarkMessageRead(m.id)}>Mark as read</button>
+        )}
+      </div>
+    );
+  };
+
+  // iPhones only allow notifications once the app is on the home screen, so
+  // there "Turn on" shows the install guide first instead of failing.
+  async function turnOnNotifications() {
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const standalone =
+      window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    if (ios && !standalone) {
+      setOpenGuide("install");
+      return;
+    }
+    setPushBusy(true);
+    await onEnablePush();
+    setPushBusy(false);
+  }
+
+  const setValue = (done: boolean) => (done ? "Set ✓" : "Add");
+
   return (
     <div className="wcf-account">
-      <div className="wcf-account-card">
-        <div className="wcf-account-avatar-wrap">
-          <Avatar name={profile.display_name} avatarUrl={profile.avatar_url} className="wcf-avatar big" />
-          <label className="wcf-account-avatar-edit" aria-label="Change profile photo">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
-            <input
-              type="file"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (file) await onUploadAvatar(file);
-              }}
-            />
-          </label>
-          {profile.avatar_url && (
-            <button className="wcf-account-avatar-remove" onClick={() => onRemoveAvatar()} aria-label="Remove photo">×</button>
-          )}
+      {/* Same family as the Player of the Month and "Your season" cards:
+          your face and your record, tapping through to your player card. */}
+      <div className="wcf-me">
+        <div className="wcf-me-top">
+          <div className="wcf-account-avatar-wrap">
+            <Avatar name={profile.display_name} avatarUrl={profile.avatar_url} className="wcf-avatar wcf-me-avatar" />
+            <label className="wcf-account-avatar-edit" aria-label="Change profile photo">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) await onUploadAvatar(file);
+                }}
+              />
+            </label>
+            {profile.avatar_url && (
+              <button className="wcf-account-avatar-remove" onClick={() => onRemoveAvatar()} aria-label="Remove photo">×</button>
+            )}
+          </div>
+          <button className="wcf-me-who" onClick={onOpenMyCard}>
+            <span className="wcf-me-name">{profile.display_name}</span>
+            <span className={"wcf-role-badge small " + profile.role}>{ROLE_LABEL[profile.role]}</span>
+          </button>
         </div>
-        <div>
-          <div className="wcf-account-name">{profile.display_name}</div>
-          <div className="wcf-account-email">{email}</div>
-        </div>
-        <span className={"wcf-role-badge " + profile.role}>{ROLE_LABEL[profile.role]}</span>
+        {myRecord.played > 0 ? (
+          <button className="wcf-me-record" onClick={onOpenMyCard}>
+            <span className="wcf-me-stats">
+              <span><b>{myRecord.played}</b>Played</span>
+              <span><b>{myRecord.won}</b>Won</span>
+              <span><b>{myGoals}</b>{myGoals === 1 ? "Goal" : "Goals"}</span>
+              <span><b>{myRecord.winPct}%</b>Win rate</span>
+            </span>
+            <span className="wcf-me-bar" aria-hidden="true">
+              {myRecord.won > 0 && <i className="w" style={{ flex: myRecord.won }} />}
+              {myRecord.drawn > 0 && <i className="d" style={{ flex: myRecord.drawn }} />}
+              {myRecord.lost > 0 && <i className="l" style={{ flex: myRecord.lost }} />}
+            </span>
+            <span className="wcf-me-foot">
+              <span>{myRecord.won}W · {myRecord.drawn}D · {myRecord.lost}L</span>
+              <span className="wcf-me-link">View your player card ›</span>
+            </span>
+          </button>
+        ) : (
+          <p className="wcf-me-empty">Your record starts after your first game.</p>
+        )}
       </div>
 
       {myMessages.length > 0 && (
@@ -7878,46 +8043,23 @@ function AccountPanel({
                 {unreadMessages.length} UNREAD
               </span>
             )}
+            {unreadMessages.length > 1 && (
+              <button className="wcf-inbox-allread" onClick={onMarkAllRead}>Mark all read</button>
+            )}
           </div>
-          {unreadMessages.map((m) => (
-            <div key={m.id} className="wcf-inbox-msg unread">
-              <div className="wcf-inbox-msg-top">
-                <span className="wcf-inbox-msg-tile">✎</span>
-                <div className="wcf-acc-section-body">
-                  <div className="wcf-inbox-msg-from">From an admin</div>
-                  <div className="wcf-inbox-msg-when">{fmtDateTime(m.created_at)}</div>
-                </div>
-                <span className="wcf-inbox-new">NEW</span>
-              </div>
-              <div className="wcf-inbox-msg-body">{m.message}</div>
-              <button className="wcf-inbox-mark-read" onClick={() => onMarkMessageRead(m.id)}>Mark as read</button>
-            </div>
-          ))}
-          {unreadMessages.length === 0 && (
-            <p className="wcf-empty small">No new messages.</p>
+          {(showAllUnread ? unreadMessages : unreadMessages.slice(0, INBOX_SHOWN)).map(inboxRow)}
+          {unreadMessages.length > INBOX_SHOWN && (
+            <button className="wcf-rec-more" onClick={() => setShowAllUnread((v) => !v)}>
+              {showAllUnread ? "Show fewer" : `${unreadMessages.length - INBOX_SHOWN} more unread`}
+            </button>
           )}
+          {unreadMessages.length === 0 && <p className="wcf-empty small">No new messages.</p>}
           {readMessages.length > 0 && (
-            <AccordionSection
-              icon="✓"
-              title="Read messages"
-              meta={`${readMessages.length} message${readMessages.length === 1 ? "" : "s"}`}
-              open={openReadMessages}
-              onToggle={() => setOpenReadMessages((v) => !v)}
-            >
-              {readMessages.map((m) => (
-                <div key={m.id} className="wcf-inbox-msg">
-                  <div className="wcf-inbox-msg-top">
-                    <span className="wcf-inbox-msg-tile">✎</span>
-                    <div className="wcf-acc-section-body">
-                      <div className="wcf-inbox-msg-from">From an admin</div>
-                      <div className="wcf-inbox-msg-when">{fmtDateTime(m.created_at)}</div>
-                    </div>
-                  </div>
-                  <div className="wcf-inbox-msg-body">{m.message}</div>
-                </div>
-              ))}
-            </AccordionSection>
+            <button className="wcf-rec-more quiet" onClick={() => setOpenReadMessages((v) => !v)}>
+              {openReadMessages ? "Hide read messages" : `Read messages (${readMessages.length})`}
+            </button>
           )}
+          {openReadMessages && readMessages.map(inboxRow)}
         </>
       )}
 
@@ -7988,6 +8130,10 @@ function AccountPanel({
           </div>
           {(showAllBookings ? myUpcomingBookings : myUpcomingBookings.slice(0, BOOKINGS_SHOWN)).map(({ game, booking }) => {
             const d = new Date(game.date + "T00:00:00");
+            // Same queue order as the fixture card's "2nd in line".
+            const queuePos = booking.waiting
+              ? game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)).findIndex((b) => b.id === booking.id) + 1
+              : 0;
             return (
               <div key={game.id} className="wcf-booking-row">
                 <div className="wcf-booking-date-tile">
@@ -7999,7 +8145,7 @@ function AccountPanel({
                   <div className="wcf-booking-meta">{fmtDate(game.date)} · {game.kickoff}</div>
                 </div>
                 {booking.waiting ? (
-                  <span className="wcf-booking-badge amber">WAITING LIST</span>
+                  <span className="wcf-booking-badge amber">{queuePos === 1 ? "NEXT IN LINE" : queuePos > 1 ? `${nth(queuePos).toUpperCase()} IN LINE` : "WAITING LIST"}</span>
                 ) : (
                   <StatusBadge status={booking.status} />
                 )}
@@ -8015,147 +8161,152 @@ function AccountPanel({
       )}
 
       <div className="wcf-console-section">
-        <span className="wcf-console-section-label">Settings &amp; reference</span>
+        <span className="wcf-console-section-label">Settings</span>
         <span className="wcf-console-section-rule" />
       </div>
 
-      <AccordionSection icon="◆" tone="blue" title="Account settings" meta={pushOn ? "Notifications on" : "Notifications off"} open={openAccountSettings} onToggle={() => setOpenAccountSettings((v) => !v)}>
-        <label className="wcf-account-field">
-          Display name
-          <div className="wcf-account-rename">
-            <input value={name} onChange={(e) => setName(e.target.value)} />
-            <button
-              onClick={async () => {
-                if (await askConfirm(`Change your display name?`, `Change it to "${name.trim()}"?`, "Save", false)) onRename(name);
-              }}
-              disabled={!name.trim() || name.trim() === profile.display_name}
-            >
-              Save
-            </button>
+      {/* Out of the settings list on purpose: kickoff reminders, spot
+          alerts and Wrapped all depend on it. */}
+      <div className={"wcf-notif-card" + (pushOn ? " on" : "")}>
+        <span className="wcf-notif-ic"><SetIcon name="bell" /></span>
+        <div className="wcf-notif-text">
+          <div className="wcf-notif-title">{pushOn ? "Notifications on" : "Notifications are off"}</div>
+          <div className="wcf-notif-sub">
+            {pushOn ? "Kickoff reminders, payment nudges, spots opening up" : "You'll miss kickoff reminders and spots opening up"}
           </div>
-        </label>
+        </div>
+        {pushOn ? (
+          <button
+            className="wcf-push-toggle on"
+            disabled={pushBusy}
+            aria-label="Turn off notifications"
+            aria-pressed
+            onClick={async () => {
+              setPushBusy(true);
+              await onDisablePush();
+              setPushBusy(false);
+            }}
+          >
+            <span className="wcf-push-toggle-knob" />
+          </button>
+        ) : (
+          <button className="wcf-notif-on" disabled={pushBusy} onClick={turnOnNotifications}>Turn on</button>
+        )}
+      </div>
+      {pushOn && (
+        <button className="wcf-notif-test" onClick={onSendTestPush}>Send me a test notification</button>
+      )}
 
-        <label className="wcf-account-field" style={{ marginTop: 14 }}>
-          Emergency contact
-          <div className="wcf-account-emergency">
-            <input placeholder="Contact name" value={contactName} onChange={(e) => setContactName(e.target.value)} />
-            <input placeholder="Phone number" type="tel" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
-            <button
-              onClick={() => onSaveEmergencyContact(contactName.trim(), contactPhone.trim())}
-              disabled={
-                !contactName.trim() ||
-                !contactPhone.trim() ||
-                (contactName.trim() === (myEmergencyContact?.contact_name ?? "") &&
-                  contactPhone.trim() === (myEmergencyContact?.contact_phone ?? ""))
-              }
-            >
-              Save
-            </button>
-          </div>
-          <span className="wcf-push-sub">Who to call if something happens during a game. Only you and admins can see this.</span>
-        </label>
-
-        <label className="wcf-account-field" style={{ marginTop: 14 }}>
-          Date of birth
-          <div className="wcf-account-emergency">
-            <input
-              type="date"
-              value={dobDraft}
-              max={nowInLondon().slice(0, 10)}
-              min="1920-01-01"
-              onChange={(e) => setDobDraft(e.target.value)}
-            />
-            <button onClick={() => onSaveBirthday(dobDraft)} disabled={!dobDraft || dobDraft === (myBirthday?.date_of_birth ?? "")}>
-              Save
-            </button>
-          </div>
-          <span className="wcf-push-sub">Optional - only you and admins can see this. Lets GaffAI flag your birthday to the admins, and helps with squad planning.</span>
-        </label>
-
-        <div className="wcf-push-section">
-          <div className="wcf-push-row">
-            <div>
-              <div className="wcf-push-label">Game-day notifications</div>
-              <div className="wcf-push-sub">Kickoff reminders, payment nudges, spots opening up</div>
+      <div className="wcf-set-label">Your details</div>
+      <div className="wcf-set-group">
+        <AccordionSection icon={<SetIcon name="user" />} title="Display name" value={profile.display_name} open={openSetting === "name"} onToggle={() => toggleSetting("name")}>
+          <label className="wcf-account-field">
+            Display name
+            <div className="wcf-account-rename">
+              <input value={name} onChange={(e) => setName(e.target.value)} />
+              <button
+                onClick={async () => {
+                  if (await askConfirm(`Change your display name?`, `Change it to "${name.trim()}"?`, "Save", false)) onRename(name);
+                }}
+                disabled={!name.trim() || name.trim() === profile.display_name}
+              >
+                Save
+              </button>
             </div>
-            <button
-              className={"wcf-push-toggle " + (pushOn ? "on" : "")}
-              disabled={pushBusy}
-              aria-label={pushOn ? "Turn off notifications" : "Turn on notifications"}
-              aria-pressed={pushOn}
-              onClick={async () => {
-                setPushBusy(true);
-                if (pushOn) await onDisablePush();
-                else await onEnablePush();
-                setPushBusy(false);
-              }}
-            >
-              <span className="wcf-push-toggle-knob" />
-            </button>
-          </div>
-          {pushOn && (
-            <button className="wcf-ghost wcf-push-test" onClick={onSendTestPush}>
-              Send me a test push
-            </button>
-          )}
-          {!pushOn && (
-            <p className="wcf-push-note">
-              Note: the app must be added to your Home Screen for notifications to work — see &quot;Getting set up&quot; below if you haven&apos;t yet.
+          </label>
+        </AccordionSection>
+
+        <AccordionSection
+          icon={<SetIcon name="phone" />}
+          title="Emergency contact"
+          value={setValue(!!myEmergencyContact)}
+          valueTone={myEmergencyContact ? "ok" : "add"}
+          open={openSetting === "contact"}
+          onToggle={() => toggleSetting("contact")}
+        >
+          <label className="wcf-account-field">
+            Emergency contact
+            <div className="wcf-account-emergency">
+              <input placeholder="Contact name" value={contactName} onChange={(e) => setContactName(e.target.value)} />
+              <input placeholder="Phone number" type="tel" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
+              <button
+                onClick={() => onSaveEmergencyContact(contactName.trim(), contactPhone.trim())}
+                disabled={
+                  !contactName.trim() ||
+                  !contactPhone.trim() ||
+                  (contactName.trim() === (myEmergencyContact?.contact_name ?? "") &&
+                    contactPhone.trim() === (myEmergencyContact?.contact_phone ?? ""))
+                }
+              >
+                Save
+              </button>
+            </div>
+            <span className="wcf-push-sub">Who to call if something happens during a game. Only you and admins can see this.</span>
+          </label>
+        </AccordionSection>
+
+        <AccordionSection
+          icon={<SetIcon name="cake" />}
+          title="Birthday"
+          value={setValue(!!myBirthday)}
+          valueTone={myBirthday ? "ok" : "add"}
+          open={openSetting === "birthday"}
+          onToggle={() => toggleSetting("birthday")}
+        >
+          <label className="wcf-account-field">
+            Date of birth
+            <div className="wcf-account-emergency">
+              <input
+                type="date"
+                value={dobDraft}
+                max={nowInLondon().slice(0, 10)}
+                min="1920-01-01"
+                onChange={(e) => setDobDraft(e.target.value)}
+              />
+              <button onClick={() => onSaveBirthday(dobDraft)} disabled={!dobDraft || dobDraft === (myBirthday?.date_of_birth ?? "")}>
+                Save
+              </button>
+            </div>
+            <span className="wcf-push-sub">Optional - only you and admins can see this. Lets GaffAI flag your birthday to the admins, and helps with squad planning.</span>
+          </label>
+        </AccordionSection>
+
+        <AccordionSection
+          icon={<SetIcon name="star" />}
+          title="Rate yourself"
+          meta="Helps admins pick fair teams"
+          value={setValue(!!myRating)}
+          valueTone={myRating ? "ok" : "add"}
+          open={openSetting === "rating"}
+          onToggle={() => toggleSetting("rating")}
+        >
+          <div className="wcf-rating-section">
+            <p className="wcf-rating-note">
+              Only visible to you and admins — once an admin rates you, theirs takes over.
             </p>
-          )}
-        </div>
+            <RatingForm initial={myRating} onSave={onSaveSelfRating} saveLabel={myRating ? "Update my rating" : "Save my rating"} />
+          </div>
+        </AccordionSection>
+      </div>
 
-        <button className="wcf-signout" onClick={onSignOut}>Sign out</button>
-      </AccordionSection>
-
-      <AccordionSection
-        icon="★"
-        tone="amber"
-        title="Your rating &amp; record"
-        meta={myRecord.played > 0 ? `${myRecord.played} played · ${myRecord.winPct}% win rate` : "No games yet"}
-        value={myRating ? ((myRating.fitness + myRating.attack + myRating.defence) / 3).toFixed(1) : undefined}
-        open={openRating}
-        onToggle={() => setOpenRating((v) => !v)}
-      >
-        <div className="wcf-rating-section">
-          <h3>Rate yourself</h3>
-          <p className="wcf-rating-note">
-            Helps admins put together fair teams. Only visible to you and admins — once an admin rates you, theirs takes over.
-          </p>
-          <RatingForm initial={myRating} onSave={onSaveSelfRating} saveLabel={myRating ? "Update my rating" : "Save my rating"} />
-        </div>
-
-        <div className="wcf-record-section">
-          <h3>My record</h3>
-          <p className="wcf-rating-note">Only visible to you — worked out from every past game you had a spot in.</p>
-          {myRecord.played === 0 ? (
-            <p className="wcf-record-empty">No results yet — this fills in once you've played a game.</p>
-          ) : (
-            <>
-              <div className="wcf-record-pct">{myRecord.winPct}%<span>win rate</span></div>
-              <div className="wcf-record-row">
-                <div><strong>{myRecord.played}</strong><span>Played</span></div>
-                <div><strong>{myRecord.won}</strong><span>Won</span></div>
-                <div><strong>{myRecord.drawn}</strong><span>Drawn</span></div>
-                <div><strong>{myRecord.lost}</strong><span>Lost</span></div>
-              </div>
-            </>
-          )}
-        </div>
-      </AccordionSection>
-
-      <AccordionSection icon="◎" tone="blue" title="Getting set up" meta="Home screen &amp; notifications" open={openGuides} onToggle={() => setOpenGuides((v) => !v)}>
-        <button className="wcf-guide-row" onClick={() => setOpenGuide("install")}>
-          <span className="wcf-guide-tile">📱</span>
-          <span className="wcf-guide-title">Add to your home screen</span>
-          <span className="wcf-guide-arrow">›</span>
+      <div className="wcf-set-label">Help</div>
+      <div className="wcf-set-group">
+        <button className="wcf-set-link" onClick={() => setOpenGuide("install")}>
+          <span className="wcf-acc-section-tile"><SetIcon name="mobile" /></span>
+          <span className="wcf-set-link-title">Add to your home screen</span>
+          <span className="wcf-set-chev" aria-hidden="true">›</span>
         </button>
-        <button className="wcf-guide-row" onClick={() => setOpenGuide("notifications")}>
-          <span className="wcf-guide-tile">🔔</span>
-          <span className="wcf-guide-title">Enable notifications</span>
-          <span className="wcf-guide-arrow">›</span>
+        <button className="wcf-set-link" onClick={() => setOpenGuide("notifications")}>
+          <span className="wcf-acc-section-tile"><SetIcon name="bell" /></span>
+          <span className="wcf-set-link-title">How to turn on notifications</span>
+          <span className="wcf-set-chev" aria-hidden="true">›</span>
         </button>
-      </AccordionSection>
+        <div className="wcf-set-link static">
+          <span className="wcf-acc-section-tile"><SetIcon name="mail" /></span>
+          <span className="wcf-set-link-title">Signed in as</span>
+          <span className="wcf-set-email">{email}</span>
+        </div>
+      </div>
 
       {openGuide && (
         <div className="wcf-lightbox" onClick={() => setOpenGuide(null)}>
@@ -8177,7 +8328,8 @@ function AccountPanel({
       )}
 
       {isAdmin && (
-        <AccordionSection icon="◈" tone="blue" title="Manage roles" meta={`${profiles.length} players`} open={showRoles} onToggle={() => setShowRoles((v) => !v)}>
+        <div className="wcf-set-group">
+        <AccordionSection icon={<SetIcon name="users" />} title="Manage roles" meta={`${profiles.length} players`} open={showRoles} onToggle={() => setShowRoles((v) => !v)}>
           {pushStats && (
             <div className="wcf-roles-stats">
               <div className="wcf-roles-stat blue">
@@ -8343,10 +8495,8 @@ function AccountPanel({
           })}
           </div>
         </AccordionSection>
-      )}
 
-      {isAdmin && (
-        <AccordionSection icon="≡" tone="blue" title="Activity log" meta={`${auditLog.length} entries`} open={showAuditLog} onToggle={onToggleAuditLog}>
+        <AccordionSection icon={<SetIcon name="list" />} title="Activity log" meta={`${auditLog.length} entries`} open={showAuditLog} onToggle={onToggleAuditLog}>
           {auditLog.length === 0 && <p className="wcf-empty">No activity logged yet.</p>}
           <div className="wcf-audit-list">
             {auditLog.map((entry) => (
@@ -8365,19 +8515,18 @@ function AccountPanel({
             ))}
           </div>
         </AccordionSection>
-      )}
 
-      {isAdmin && (
-        <AccordionSection icon="⚙" tone="blue" title="Club settings" meta={`${clubSettings.team_white_name} vs ${clubSettings.team_red_name}`} open={openClubSettings} onToggle={() => setOpenClubSettings((v) => !v)}>
+        <AccordionSection icon={<SetIcon name="gear" />} title="Club settings" meta={`${clubSettings.team_white_name} vs ${clubSettings.team_red_name}`} open={openClubSettings} onToggle={() => setOpenClubSettings((v) => !v)}>
           <ClubSettingsForm settings={clubSettings} onSave={onSaveClubSettings} />
         </AccordionSection>
-      )}
 
-      {isAdmin && (
-        <AccordionSection icon="🏆" tone="amber" title="Awards" meta={`${awards.length} published`} open={openAwards} onToggle={() => setOpenAwards((v) => !v)}>
+        <AccordionSection icon={<SetIcon name="trophy" />} title="Awards" meta={`${awards.length} published`} open={openAwards} onToggle={() => setOpenAwards((v) => !v)}>
           <AwardsForm awards={awards} onAdd={onAddAward} onDelete={onDeleteAward} askConfirm={askConfirm} />
         </AccordionSection>
+        </div>
       )}
+
+      <button className="wcf-signout" onClick={onSignOut}>Sign out</button>
     </div>
   );
 }
@@ -11914,6 +12063,95 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rs-summary .ticks{display:flex;flex-direction:column;gap:6px;margin-top:12px;text-align:left}
 .wcf-rs-summary .ticks div{font-size:12.5px;color:#cbd5e1;display:flex;gap:8px}
 .wcf-rs-summary .ticks i{font-style:normal;color:var(--green,#86efac);font-weight:800}
+/* Account: header card in the Player of the Month family */
+.wcf-me{position:relative;overflow:hidden;border-radius:20px;border:1px solid rgba(245,217,122,.35);padding:16px;margin-bottom:6px;background:radial-gradient(120% 90% at 100% 0%,rgba(245,217,122,.13),transparent 55%),radial-gradient(90% 80% at 0% 100%,rgba(230,57,70,.12),transparent 60%),#111427;box-shadow:0 18px 40px -24px rgba(234,179,8,.45)}
+.wcf-me-top{display:flex;align-items:center;gap:14px}
+.wcf-avatar.wcf-me-avatar{width:64px;height:64px;font-size:22px;box-shadow:0 0 0 3px rgba(245,217,122,.55)}
+.wcf-me-who{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:6px;background:none;border:0;padding:0;text-align:left;cursor:pointer;color:inherit}
+.wcf-me-name{font-family:var(--display);font-weight:800;font-size:21px;line-height:1.15;color:#fff;overflow-wrap:anywhere}
+.wcf-me-who .wcf-role-badge.small{margin-left:0}
+.wcf-me-record{display:block;width:100%;margin-top:14px;padding:12px 0 0;border:0;border-top:1px solid var(--line);background:none;text-align:left;cursor:pointer;color:inherit}
+.wcf-me-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.wcf-me-stats span{display:flex;flex-direction:column;gap:4px;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.wcf-me-stats b{font-family:var(--display);font-weight:800;font-size:22px;line-height:1;letter-spacing:0;color:var(--gold,#f5d97a);font-variant-numeric:tabular-nums}
+.wcf-me-bar{display:flex;gap:2px;height:6px;border-radius:4px;overflow:hidden;margin-top:12px}
+.wcf-me-bar i{display:block}
+.wcf-me-bar .w{background:var(--green)}
+.wcf-me-bar .d{background:#475569}
+.wcf-me-bar .l{background:var(--red)}
+.wcf-me-foot{display:flex;justify-content:space-between;gap:8px;margin-top:10px;font-size:12px;font-weight:700;color:var(--dim);font-variant-numeric:tabular-nums}
+.wcf-me-link{color:var(--gold,#f5d97a)}
+.wcf-me-empty{margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:12.5px;color:var(--dim)}
+/* Account: compact inbox */
+.wcf-inbox-allread{flex:none;background:none;border:0;padding:4px 0 4px 4px;color:var(--gold,#f5d97a);font-weight:700;font-size:12px;cursor:pointer}
+.wcf-inbox-row{border-radius:14px;margin-bottom:8px;background:var(--panel);border:1px solid var(--line)}
+.wcf-inbox-row-head{display:flex;gap:10px;width:100%;padding:11px 13px;background:none;border:0;text-align:left;cursor:pointer;color:inherit}
+.wcf-inbox-row-dot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:4px;background:transparent}
+.wcf-inbox-row.unread .wcf-inbox-row-dot{background:var(--red-hi)}
+.wcf-inbox-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.wcf-inbox-row-top{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.wcf-inbox-row-from{font-weight:800;color:#f1f5f9;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-inbox-row:not(.unread) .wcf-inbox-row-from{color:var(--dim)}
+.wcf-inbox-row-when{flex:none;color:#64748b;font-size:11px}
+.wcf-inbox-row-body{font-size:13px;line-height:1.45;color:#cbd5e1;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line}
+.wcf-inbox-row.open .wcf-inbox-row-body{display:block;-webkit-line-clamp:unset}
+.wcf-inbox-row-read{display:block;margin:0 13px 12px 31px;padding:8px 12px;border-radius:10px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.4);color:var(--gold,#f5d97a);font-weight:700;font-size:12px;cursor:pointer}
+.wcf-rec-more.quiet{border-style:dashed;margin-bottom:8px}
+/* Account: notifications card and settings list */
+.wcf-notif-card{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;background:linear-gradient(160deg,rgba(245,217,122,.1),transparent 60%),var(--panel);border:1px solid rgba(245,217,122,.45)}
+.wcf-notif-card.on{background:var(--panel);border-color:rgba(34,197,94,.3)}
+.wcf-notif-ic{flex:none;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(245,217,122,.14);color:var(--gold,#f5d97a)}
+.wcf-notif-card.on .wcf-notif-ic{background:rgba(34,197,94,.12);color:var(--green)}
+.wcf-notif-text{flex:1;min-width:0}
+.wcf-notif-title{font-weight:800;font-size:13.5px;color:#f1f5f9}
+.wcf-notif-sub{margin-top:3px;font-size:11.5px;line-height:1.35;color:var(--dim)}
+.wcf-notif-on{flex:none;padding:9px 12px;border-radius:10px;border:0;background:var(--gold,#f5d97a);color:#0d0d1a;font-weight:800;font-size:12px;cursor:pointer}
+.wcf-notif-test{display:block;margin:8px auto 0;background:none;border:0;color:var(--dim);font-size:12px;font-weight:600;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.wcf-set-label{margin:18px 2px 8px;font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#64748b}
+.wcf-set-group{border-radius:16px;overflow:hidden;margin-bottom:10px;background:var(--panel);border:1px solid var(--line)}
+.wcf-set-group .wcf-acc-section{margin:0;border:0;border-radius:0;background:none}
+.wcf-set-group>*+*{border-top:1px solid var(--line)!important}
+.wcf-set-group .wcf-acc-section-head{min-height:52px;padding:11px 13px}
+.wcf-set-group .wcf-acc-section-tile,.wcf-set-link .wcf-acc-section-tile{background:rgba(148,163,184,.1);border-color:transparent;color:#e2e8f0}
+.wcf-set-group .wcf-acc-section-title{font-weight:600;font-size:13.5px}
+.wcf-set-group .wcf-acc-section-meta{margin-top:3px}
+.wcf-set-group .wcf-acc-section-value{font-family:var(--sans);font-weight:600;font-size:12px;color:var(--dim);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-acc-section-value.ok{color:var(--green)}
+.wcf-acc-section-value.add{color:var(--gold,#f5d97a);font-weight:800}
+.wcf-set-group .wcf-acc-section-chevron{font-size:18px;line-height:1;color:#64748b;transition:transform .15s}
+.wcf-set-group .wcf-acc-section.open .wcf-acc-section-chevron{transform:rotate(90deg)}
+.wcf-set-link{display:flex;align-items:center;gap:11px;width:100%;min-height:52px;padding:11px 13px;background:none;border:0;text-align:left;cursor:pointer;color:inherit}
+.wcf-set-link.static{cursor:default}
+.wcf-set-link-title{flex:1;min-width:0;font-weight:600;font-size:13.5px;color:#f1f5f9}
+.wcf-set-chev{font-size:18px;color:#64748b}
+.wcf-set-email{flex:none;max-width:55%;font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-season-hero-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:12px}
+.wcf-season-hero-stats span{display:flex;flex-direction:column;gap:4px;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#B7BDD0}
+.wcf-season-hero-stats b{font-family:var(--display);font-weight:800;font-size:20px;line-height:1;letter-spacing:0;color:#fff;font-variant-numeric:tabular-nums}
+/* Season: Whites v Reds rivalry */
+.wcf-rivalry{border-radius:20px;padding:14px 16px 16px;margin-bottom:14px;background:var(--panel);border:1px solid var(--line)}
+.wcf-rivalry-title{font-family:var(--display);font-weight:800;font-size:15px;color:#fff}
+.wcf-rivalry-sub{margin-top:3px;font-size:12px;color:var(--dim)}
+.wcf-rivalry-row{margin-top:14px}
+.wcf-rivalry-lab{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px;font-weight:700;color:#e2e8f0}
+.wcf-rivalry-lab b{font-family:var(--display);font-size:22px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums}
+.wcf-rivalry-mid{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:center}
+.wcf-rivalry-bar{display:flex;gap:3px;height:12px;border-radius:6px;overflow:hidden;margin-top:6px}
+.wcf-rivalry-bar i{display:block}
+.wcf-rivalry .w{background:var(--wc)}
+.wcf-rivalry .r{background:var(--rc)}
+.wcf-rivalry .d{background:#475569}
+.wcf-rivalry-k{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.wcf-rivalry-scores{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin-top:8px}
+.wcf-rivalry-score{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 2px 7px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.03);box-shadow:inset 0 3px 0 #475569;cursor:pointer;color:inherit}
+.wcf-rivalry-score b{font-family:var(--display);font-size:14px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wcf-rivalry-score span{font-size:9.5px;font-weight:600;color:var(--dim);white-space:nowrap}
+.wcf-rivalry-score.w{background:rgba(255,255,255,.03);box-shadow:inset 0 3px 0 var(--wc);border-color:color-mix(in srgb,var(--wc) 50%,transparent)}
+.wcf-rivalry-score.r{background:rgba(255,255,255,.03);box-shadow:inset 0 3px 0 var(--rc);border-color:color-mix(in srgb,var(--rc) 50%,transparent)}
+.wcf-rivalry-score.d{background:rgba(255,255,255,.03)}
+.wcf-rivalry-score.latest{background:rgba(245,217,122,.08)}
+.wcf-rivalry-key{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px;font-size:11px;color:var(--dim)}
+.wcf-rivalry-key i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
