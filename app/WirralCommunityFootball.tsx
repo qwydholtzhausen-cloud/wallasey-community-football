@@ -1456,6 +1456,7 @@ function App({ session }: { session: Session }) {
   const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([]);
   const [birthdays, setBirthdays] = useState<PlayerBirthday[]>([]);
   const [lineupView, setLineupView] = useState<"sheet" | "fairness" | "predict">("sheet");
+  const [showTeamRatings, setShowTeamRatings] = useState(false);
   const [predictView, setPredictView] = useState<string>("season");
   const [predictOpenId, setPredictOpenId] = useState<string | null>(null);
   const [suggestedTeams, setSuggestedTeams] = useState<{ white: string[]; red: string[] } | null>(null);
@@ -4435,7 +4436,7 @@ function App({ session }: { session: Session }) {
             <div className="wcf-subtabs">
               <button className={lineupView === "sheet" ? "active" : ""} onClick={() => setLineupView("sheet")}>Team Sheet</button>
               {isAdmin && (
-                <button className={lineupView === "fairness" ? "active" : ""} onClick={() => setLineupView("fairness")}>Fairness</button>
+                <button className={lineupView === "fairness" ? "active" : ""} onClick={() => setLineupView("fairness")}>Teams</button>
               )}
               <button className={lineupView === "predict" ? "active" : ""} onClick={() => setLineupView("predict")}>Predict</button>
             </div>
@@ -4444,189 +4445,241 @@ function App({ session }: { session: Session }) {
               <>
                 {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
 
-                {nextGame && nextConfirmedRatings.length > 0 && (
-                  <div className="wcf-ratings-table">
-                    <h4>Player ratings</h4>
-                    <div className="wcf-ratings-rows">
-                      {nextConfirmedRatings.map((r) => (
-                        <div key={r.id} className="wcf-ratings-row">
-                          <div className="wcf-ratings-name">
-                            <span className="wcf-ratings-who">{r.name}</span>
-                            {r.position && <span className="wcf-ratings-pos">{POSITION_LABEL[r.position]}</span>}
-                            {r.source !== "unrated" && (
-                              <span className={"wcf-ratings-source " + r.source}>{r.source === "admin" ? "Admin /10" : "Self /5"}</span>
-                            )}
-                          </div>
-                          {r.source === "unrated" ? (
-                            <span className="wcf-ratings-unrated">Not rated yet</span>
-                          ) : (
-                            // Bars fill against each rating's own scale (admin /10,
-                            // self /5), so an 8 from an admin and a 4 from a
-                            // self-rating look the same - which they are.
-                            <div className="wcf-ratings-bars">
-                              {([["Fitness", r.fitness], ["Attack", r.attack], ["Defence", r.defence], ["Keeper", r.goalkeeping]] as const).map(([label, v]) => (
-                                <div key={label} className="wcf-ratings-bar">
-                                  <span className="wcf-ratings-bar-top"><span>{label}</span><b>{v}</b></span>
-                                  <span className="wcf-ratings-track">
-                                    <i style={{ width: `${Math.max(0, Math.min(100, ((v ?? 0) / (r.source === "admin" ? 10 : 5)) * 100))}%` }} />
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {nextGame && nextConfirmed.length > 0 && (
-                  <>
-                    {!suggestedTeams ? (
-                      <button className="wcf-generate-teams" onClick={() => setSuggestedTeams(generateBalancedTeams())}>
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M16 3h5v5" /><path d="M4 20L21 3" /><path d="M21 16v5h-5" /><path d="M15 15l6 6" /><path d="M4 4l5 5" /></svg>
-                        Generate recommended teams
-                      </button>
-                    ) : (
-                      <div className="wcf-suggestion-actions">
-                        <button className="wcf-generate-teams" onClick={() => setSuggestedTeams(generateBalancedTeams())}>Regenerate</button>
-                        <button className="wcf-ghost" onClick={() => setSuggestedTeams(null)}>Discard</button>
-                        <button className="wcf-apply-teams" onClick={applySuggestedTeams}>Apply this split</button>
-                      </div>
-                    )}
-                    {suggestedTeams && (
-                      <p className="wcf-suggestion-note">
-                        Preview only — nothing's saved until you tap "Apply this split", and you can still hand-tweak anyone in Team Sheet afterward.
-                      </p>
-                    )}
-                  </>
-                )}
-
-                {nextGame && !suggestedTeams && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && nextConfirmed.length === 0 && (
-                  <p className="wcf-empty">No one&apos;s booked in yet.</p>
-                )}
-                {nextGame && !suggestedTeams && nextConfirmed.length > 0 && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && (
-                  <p className="wcf-empty">No one&apos;s assigned to Whites/Reds yet — generate a suggestion above, or assign manually in Team Sheet.</p>
-                )}
-
-                {nextGame && suggestedTeams && (() => {
-                  const currentScore = balanceScore(teamFairness.white, teamFairness.red);
-                  const suggestedScore = balanceScore(teamStats(suggestedTeams.white), teamStats(suggestedTeams.red));
-                  if (currentScore === null && suggestedScore === null) return null;
-                  const diff = currentScore !== null && suggestedScore !== null ? suggestedScore - currentScore : null;
-                  const badgeClass = (s: number) => (s >= 85 ? "high" : s >= 60 ? "mid" : "low");
-                  return (
-                    <div className="wcf-balance-compare">
-                      <div className="wcf-balance-row">
-                        <span>Current Team Sheet</span>
-                        {currentScore !== null ? (
-                          <span className={"wcf-balance-badge " + badgeClass(currentScore)}>⚖️ {currentScore}%</span>
-                        ) : (
-                          <span className="wcf-balance-badge none">Not enough ratings</span>
-                        )}
-                      </div>
-                      <div className="wcf-balance-row">
-                        <span>Suggested Split</span>
-                        {suggestedScore !== null ? (
-                          <span className={"wcf-balance-badge " + badgeClass(suggestedScore)}>⚖️ {suggestedScore}%</span>
-                        ) : (
-                          <span className="wcf-balance-badge none">Not enough ratings</span>
-                        )}
-                      </div>
-                      {diff !== null && Math.abs(diff) >= 3 && (
-                        <p className="wcf-balance-verdict">
-                          {diff > 0
-                            ? `The suggested split is ${diff}% more balanced than the current Team Sheet.`
-                            : `Your current Team Sheet is already ${-diff}% more balanced than this suggestion.`}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })()}
-
                 {nextGame && (() => {
-                  const previewWhiteIds = suggestedTeams?.white ?? nextGrouped.white.map((b) => b.player_id);
-                  const previewRedIds = suggestedTeams?.red ?? nextGrouped.red.map((b) => b.player_id);
-                  if (previewWhiteIds.length === 0 && previewRedIds.length === 0) return null;
-                  const white = teamStats(previewWhiteIds);
-                  const red = teamStats(previewRedIds);
-                  const flags = fairnessFlags(white, red);
-                  const namesFor = (ids: string[]) => ids.map((id) => nextConfirmed.find((b) => b.player_id === id)?.player.display_name ?? "?");
+                  // Picking teams first; the ratings behind them fold away
+                  // below. Shows the suggested split if one's been generated,
+                  // otherwise the saved teams, otherwise the Generate button.
+                  const savedWhite = nextGrouped.white.map((b) => b.player_id);
+                  const savedRed = nextGrouped.red.map((b) => b.player_id);
+                  const hasSaved = savedWhite.length > 0 || savedRed.length > 0;
+                  const whiteIds = suggestedTeams?.white ?? savedWhite;
+                  const redIds = suggestedTeams?.red ?? savedRed;
+                  const showing = suggestedTeams || hasSaved;
+                  const white = teamStats(whiteIds);
+                  const red = teamStats(redIds);
+                  const score = showing ? balanceScore(white, red) : null;
+                  const savedScore = suggestedTeams && hasSaved ? balanceScore(teamFairness.white, teamFairness.red) : null;
+                  const verdict = score === null ? "Not enough ratings to judge" : score >= 85 ? "Well balanced" : score >= 60 ? "Fairly even" : "Uneven";
+                  const rating = (id: string) => nextConfirmedRatings.find((r) => r.id === id);
+                  const POS_ORDER: Record<string, number> = { keeper: 0, defence: 1, midfield: 2, attack: 3 };
+                  const POS_SHORT: Record<string, string> = { keeper: "GK", defence: "DEF", midfield: "MID", attack: "ATT" };
+                  const lineup = (ids: string[]) =>
+                    ids
+                      .map((id) => ({ id, name: nextConfirmed.find((b) => b.player_id === id)?.player.display_name ?? "?", pos: rating(id)?.position ?? null }))
+                      .sort((a, b) => (POS_ORDER[a.pos ?? ""] ?? 4) - (POS_ORDER[b.pos ?? ""] ?? 4) || a.name.localeCompare(b.name));
+
+                  // A keeper note that says what to do, not just "keepers
+                  // aren't evenly split" when only one is booked at all.
+                  const keeperScore = (id: string) => {
+                    const r = rating(id);
+                    return r && r.goalkeeping != null ? r.goalkeeping / (r.source === "admin" ? 10 : 5) : -1;
+                  };
+                  const keeperLabel = (id: string) => {
+                    const r = rating(id)!;
+                    return `${r.goalkeeping}/${r.source === "admin" ? 10 : 5}`;
+                  };
+                  const bestKeeper = (ids: string[]) => ids.filter((id) => rating(id)?.position !== "keeper").sort((a, b) => keeperScore(b) - keeperScore(a))[0];
+                  const keepersW = whiteIds.filter((id) => rating(id)?.position === "keeper");
+                  const keepersR = redIds.filter((id) => rating(id)?.position === "keeper");
+                  let keeperNote: string | null = null;
+                  if (showing && keepersW.length + keepersR.length === 1) {
+                    const onWhite = keepersW.length === 1;
+                    const k = (onWhite ? keepersW : keepersR)[0];
+                    const other = bestKeeper(onWhite ? redIds : whiteIds);
+                    keeperNote = `Only one keeper is booked (${nextConfirmed.find((b) => b.player_id === k)?.player.display_name}, on ${onWhite ? cs.team_white_name : cs.team_red_name}).${
+                      other && keeperScore(other) >= 0
+                        ? ` ${onWhite ? cs.team_red_name : cs.team_white_name} will need someone in goal: ${rating(other)!.name} rates highest there (${keeperLabel(other)}).`
+                        : ""
+                    }`;
+                  } else if (showing && keepersW.length + keepersR.length === 0) {
+                    const bw = bestKeeper(whiteIds);
+                    const br = bestKeeper(redIds);
+                    if (bw && br && keeperScore(bw) >= 0 && keeperScore(br) >= 0) {
+                      keeperNote = `No keeper booked. Best in goal: ${rating(bw)!.name} (${cs.team_white_name}, ${keeperLabel(bw)}) and ${rating(br)!.name} (${cs.team_red_name}, ${keeperLabel(br)}).`;
+                    }
+                  }
+                  const flags = showing
+                    ? fairnessFlags(white, red).filter((f) => !(keeperNote && f.startsWith("Keepers")))
+                    : [];
+
                   return (
                     <>
-                      <div className="wcf-fairness-teams">
-                        {([["white", white, previewWhiteIds, cs.team_white_name, cs.team_white_color], ["red", red, previewRedIds, cs.team_red_name, cs.team_red_color]] as const).map(
-                          ([key, stats, ids, name, color]) => (
-                            <div key={key} className="wcf-fairness-card">
-                              <div className="wcf-fairness-card-head" style={{ color }}>{name}</div>
-                              {suggestedTeams && (
-                                <div className="wcf-fairness-preview-names">{namesFor(ids).join(", ")}</div>
-                              )}
-                              {(["fitness", "attack", "defence"] as const).map((metric) => (
-                                <div key={metric} className="wcf-fairness-metric">
-                                  <div className="wcf-fairness-metric-top">
-                                    <span>{metric[0].toUpperCase()}{metric.slice(1)}</span>
-                                    <span>{stats.rated ? stats[metric].toFixed(1) : "—"}</span>
-                                  </div>
-                                  <div className="wcf-fairness-track">
-                                    <div className="wcf-fairness-fill" style={{ width: `${(stats[metric] / 5) * 100}%`, background: color ?? undefined }} />
-                                  </div>
-                                </div>
-                              ))}
-                              <div className="wcf-fairness-positions">
-                                {POSITIONS.map((p) => (
-                                  <span key={p} className="wcf-fairness-pos-tag">{POSITION_LABEL[p]} · {stats.positions[p]}</span>
-                                ))}
-                              </div>
-                              <div className="wcf-fairness-rated-note">{stats.rated} of {stats.total} rated</div>
+                      <div className="wcf-teams-hero">
+                        <div className="wcf-teams-k">
+                          {fmtDate(nextGame.date)} · {nextConfirmed.length} booked
+                        </div>
+                        {!showing ? (
+                          <>
+                            <div className="wcf-teams-t">Teams not picked yet</div>
+                            <div className="wcf-teams-s">
+                              {nextConfirmed.length > 0
+                                ? "Generate a balanced split from everyone's ratings, or pick them by hand on the Team Sheet."
+                                : "No one's booked in yet."}
                             </div>
-                          )
+                            {nextConfirmed.length > 0 && (
+                              <button className="wcf-teams-go" onClick={() => setSuggestedTeams(generateBalancedTeams())}>
+                                Generate teams
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <div className="wcf-teams-top">
+                              {score !== null && (
+                                <div className="wcf-teams-ring" style={{ "--pct": `${score}%` } as React.CSSProperties}>
+                                  <div>{score}%</div>
+                                </div>
+                              )}
+                              <div>
+                                <div className="wcf-teams-t">{verdict}</div>
+                                <div className="wcf-teams-s">
+                                  {suggestedTeams
+                                    ? "Suggested split. Nothing changes until you use it, and you can still move anyone on the Team Sheet."
+                                    : "These are the saved teams."}
+                                  {savedScore !== null && score !== null && Math.abs(score - savedScore) >= 3 &&
+                                    (score > savedScore ? ` That's ${score - savedScore}% more balanced than the saved teams.` : ` The saved teams are ${savedScore - score}% more balanced.`)}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="wcf-teams-acts">
+                              {suggestedTeams ? (
+                                <>
+                                  <button className="wcf-teams-ghost" onClick={() => setSuggestedTeams(generateBalancedTeams())}>↻ Shuffle again</button>
+                                  <button className="wcf-teams-ghost" onClick={() => setSuggestedTeams(null)} aria-label="Discard the suggestion">✕</button>
+                                  <button className="wcf-teams-go" onClick={applySuggestedTeams}>Use these teams</button>
+                                </>
+                              ) : (
+                                <button className="wcf-teams-ghost wide" onClick={() => setSuggestedTeams(generateBalancedTeams())}>Generate a new split</button>
+                              )}
+                            </div>
+                          </>
                         )}
                       </div>
 
-                      {flags.length === 0 ? (
-                        <p className="wcf-fairness-ok">✅ No notable imbalances found.</p>
-                      ) : (
-                        <div className="wcf-fairness-flags">
+                      {showing && (
+                        <>
+                          <div className="wcf-teams-cols">
+                            {([["white", whiteIds, cs.team_white_name, cs.team_white_color], ["red", redIds, cs.team_red_name, cs.team_red_color]] as const).map(([key, ids, name, color]) => (
+                              <div key={key} className="wcf-teams-col" style={{ "--team": color } as React.CSSProperties}>
+                                <div className="wcf-teams-col-h"><span>{name}</span><span>{ids.length}</span></div>
+                                {lineup(ids).map((p) => (
+                                  <div key={p.id} className="wcf-teams-pl">
+                                    <Avatar name={p.name} avatarUrl={avatarByPlayerId.get(p.id)} className="wcf-teams-av" background={avatarFor(p.name).gradient} />
+                                    <span className="wcf-teams-nm">{p.name}</span>
+                                    {p.pos && <span className={"wcf-teams-pos" + (p.pos === "keeper" ? " gk" : "")}>{POS_SHORT[p.pos]}</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+
+                          {white.rated > 0 && red.rated > 0 && (
+                            <div className="wcf-teams-card" style={{ "--wc": cs.team_white_color, "--rc": cs.team_red_color } as React.CSSProperties}>
+                              <div className="wcf-teams-card-h">How they compare</div>
+                              {(["fitness", "attack", "defence"] as const).map((m) => (
+                                <div key={m} className="wcf-teams-cmp">
+                                  <div className="wcf-teams-cmp-l">
+                                    <span>{white[m].toFixed(1)}</span>
+                                    <span>{m[0].toUpperCase() + m.slice(1)}</span>
+                                    <span>{red[m].toFixed(1)}</span>
+                                  </div>
+                                  <div className="wcf-teams-bar">
+                                    <i className="w" style={{ flex: Math.max(white[m], 0.1) }} />
+                                    <i className="r" style={{ flex: Math.max(red[m], 0.1) }} />
+                                  </div>
+                                </div>
+                              ))}
+                              {(white.rated < white.total || red.rated < red.total) && (
+                                <div className="wcf-teams-rated">{white.rated + red.rated} of {white.total + red.total} rated</div>
+                              )}
+                            </div>
+                          )}
+
+                          {keeperNote && <div className="wcf-teams-note">🧤 {keeperNote}</div>}
                           {flags.map((f) => (
-                            <div key={f} className="wcf-fairness-flag">⚠️ {f}</div>
+                            <div key={f} className="wcf-teams-note">⚠️ {f}</div>
                           ))}
-                        </div>
+                        </>
                       )}
                     </>
                   );
                 })()}
 
-                {balanceHistory.rows.length > 0 && (
-                  <div className="wcf-balance-log">
-                    <h4>Balance history</h4>
-                    <div className="wcf-balance-log-row wcf-balance-log-header">
-                      <span>Fixture</span><span>Method</span><span>Result</span><span>Margin</span>
-                    </div>
-                    {balanceHistory.rows.map((r) => (
-                      <div key={r.id} className="wcf-balance-log-row">
-                        <div className="wcf-balance-log-venue">{r.venue}<span>{fmtDate(r.date)}</span></div>
-                        <span className={"wcf-balance-log-method " + r.method}>{r.method}</span>
-                        <span className="wcf-balance-log-result">{r.whiteScore}–{r.redScore}</span>
-                        <span className="wcf-balance-log-margin" style={{ color: r.margin <= 2 ? "var(--green)" : r.margin >= 5 ? "var(--red-hi)" : "var(--white)" }}>
-                          {r.margin}
-                        </span>
-                      </div>
-                    ))}
-                    {(balanceHistory.avgGenerated !== null || balanceHistory.avgManual !== null) && (
-                      <div className="wcf-balance-avg-row">
-                        <div className="wcf-balance-avg-card">
-                          <b style={{ color: "#7CAEF0" }}>{balanceHistory.avgGenerated !== null ? balanceHistory.avgGenerated.toFixed(1) : "—"}</b>
-                          <span>Avg margin · Generated</span>
-                        </div>
-                        <div className="wcf-balance-avg-card">
-                          <b style={{ color: "var(--dim)" }}>{balanceHistory.avgManual !== null ? balanceHistory.avgManual.toFixed(1) : "—"}</b>
-                          <span>Avg margin · Manual</span>
+                {nextGame && nextConfirmedRatings.length > 0 && (
+                  <>
+                    <button className="wcf-teams-row" onClick={() => setShowTeamRatings((v) => !v)} aria-expanded={showTeamRatings}>
+                      Player ratings
+                      <span>
+                        {nextConfirmedRatings.filter((r) => r.source !== "unrated").length} rated{" "}
+                        <b className={showTeamRatings ? "open" : ""}>›</b>
+                      </span>
+                    </button>
+                    {showTeamRatings && (
+                      <div className="wcf-ratings-table">
+                        <div className="wcf-ratings-rows">
+                          {nextConfirmedRatings.map((r) => (
+                            <div key={r.id} className="wcf-ratings-row">
+                              <div className="wcf-ratings-name">
+                                <span className="wcf-ratings-who">{r.name}</span>
+                                {r.position && <span className="wcf-ratings-pos">{POSITION_LABEL[r.position]}</span>}
+                                {r.source !== "unrated" && (
+                                  <span className={"wcf-ratings-source " + r.source}>{r.source === "admin" ? "Admin /10" : "Self /5"}</span>
+                                )}
+                              </div>
+                              {r.source === "unrated" ? (
+                                <span className="wcf-ratings-unrated">Not rated yet</span>
+                              ) : (
+                                // Bars fill against each rating's own scale (admin /10,
+                                // self /5), so an 8 from an admin and a 4 from a
+                                // self-rating look the same - which they are.
+                                <div className="wcf-ratings-bars">
+                                  {([["Fitness", r.fitness], ["Attack", r.attack], ["Defence", r.defence], ["Keeper", r.goalkeeping]] as const).map(([label, v]) => (
+                                    <div key={label} className="wcf-ratings-bar">
+                                      <span className="wcf-ratings-bar-top"><span>{label}</span><b>{v}</b></span>
+                                      <span className="wcf-ratings-track">
+                                        <i style={{ width: `${Math.max(0, Math.min(100, ((v ?? 0) / (r.source === "admin" ? 10 : 5)) * 100))}%` }} />
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
-                  </div>
+                  </>
                 )}
+
+                {balanceHistory.rows.length > 0 && (() => {
+                  const margins = balanceHistory.rows.map((r) => r.margin);
+                  const avg = margins.reduce((s, m) => s + m, 0) / margins.length;
+                  const generated = balanceHistory.rows.filter((r) => r.method === "generated").length;
+                  return (
+                    <div className="wcf-teams-card">
+                      <div className="wcf-teams-card-h">
+                        Recent games <span>avg margin {avg.toFixed(1)}</span>
+                      </div>
+                      <div className="wcf-teams-hist-s">
+                        Winning margin, newest first.{" "}
+                        {generated === 0
+                          ? "All picked by hand so far."
+                          : `Generated teams: avg ${balanceHistory.avgGenerated?.toFixed(1) ?? "—"}. By hand: avg ${balanceHistory.avgManual?.toFixed(1) ?? "—"}.`}
+                      </div>
+                      <div className="wcf-teams-hist">
+                        {balanceHistory.rows.map((r) => (
+                          <i
+                            key={r.id}
+                            className={(r.margin <= 1 ? "ok" : r.margin >= 6 ? "big" : "") + (r.method === "generated" ? " gen" : "")}
+                            title={`${fmtDate(r.date)}: ${r.whiteScore}–${r.redScore}${r.method === "generated" ? " (generated)" : ""}`}
+                          >
+                            {r.margin}
+                          </i>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </>
             )}
 
@@ -12648,6 +12701,49 @@ button.wcf-glance-card:disabled{cursor:default}
 .gaffai-sugg-toggle{display:inline-flex; align-items:center; gap:8px; margin-top:12px; padding:8px 12px; border-radius:12px; border:1px solid var(--line); background:var(--panel); color:#e2e8f0; font-weight:700; font-size:12.5px; cursor:pointer}
 .gaffai-sugg-toggle span{font-size:16px; line-height:1; color:#f5d97a; transition:transform .15s}
 .gaffai-sugg-toggle.open span{transform:rotate(90deg)}
+.wcf-teams-hero{border-radius:20px;padding:14px 16px;margin-bottom:12px;border:1px solid rgba(245,217,122,.4);background:radial-gradient(100% 90% at 100% 0%,rgba(245,217,122,.14),transparent 60%),#111427}
+.wcf-teams-k{font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#f5d97a}
+.wcf-teams-t{margin-top:6px;font-family:var(--display);font-weight:800;font-size:17px;color:#fff}
+.wcf-teams-s{margin-top:3px;font-size:12px;line-height:1.45;color:var(--dim)}
+.wcf-teams-top{display:flex;align-items:center;gap:14px;margin-top:8px}
+.wcf-teams-top .wcf-teams-t{margin-top:0}
+.wcf-teams-ring{flex:none;width:70px;height:70px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(#eab308 0 var(--pct),rgba(148,163,184,.18) var(--pct) 100%)}
+.wcf-teams-ring div{width:56px;height:56px;border-radius:50%;background:#111427;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:17px;color:#fff;font-variant-numeric:tabular-nums}
+.wcf-teams-acts{display:flex;gap:8px;margin-top:12px}
+.wcf-teams-go{flex:1;margin-top:12px;min-height:44px;padding:10px 14px;border:0;border-radius:12px;background:var(--red);color:#fff;font-weight:800;font-size:13.5px;cursor:pointer}
+.wcf-teams-acts .wcf-teams-go{margin-top:0}
+.wcf-teams-ghost{flex:none;min-height:44px;padding:10px 13px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:#e2e8f0;font-weight:700;font-size:13px;cursor:pointer}
+.wcf-teams-ghost.wide{flex:1}
+.wcf-teams-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin-bottom:10px}
+.wcf-teams-col{border-radius:16px;padding:10px;background:var(--panel);border:1px solid var(--line);box-shadow:inset 0 3px 0 var(--team)}
+.wcf-teams-col-h{display:flex;justify-content:space-between;margin:2px 2px 8px;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.wcf-teams-pl{display:flex;align-items:center;gap:7px;padding:4px 2px;font-size:12px;font-weight:600;color:#f1f5f9;min-width:0}
+.wcf-teams-av{flex:none;width:24px;height:24px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-size:9.5px;font-weight:800;color:#fff}
+.wcf-teams-nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-teams-pos{margin-left:auto;flex:none;font-size:9px;font-weight:800;letter-spacing:.06em;color:#64748b}
+.wcf-teams-pos.gk{color:#f5d97a}
+.wcf-teams-card{border-radius:16px;padding:12px 14px;margin-bottom:10px;background:var(--panel);border:1px solid var(--line)}
+.wcf-teams-card-h{display:flex;justify-content:space-between;margin-bottom:10px;font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.wcf-teams-card-h span{letter-spacing:.04em}
+.wcf-teams-cmp{margin-bottom:10px}
+.wcf-teams-cmp-l{display:flex;justify-content:space-between;font-size:12px;font-weight:700;color:#f1f5f9;font-variant-numeric:tabular-nums}
+.wcf-teams-cmp-l span:nth-child(2){font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.wcf-teams-bar{display:flex;gap:3px;height:8px;border-radius:5px;overflow:hidden;margin-top:5px}
+.wcf-teams-bar i{display:block}
+.wcf-teams-bar .w{background:var(--wc)}
+.wcf-teams-bar .r{background:var(--rc)}
+.wcf-teams-rated{font-size:11px;color:var(--dim)}
+.wcf-teams-note{margin-bottom:8px;padding:10px 12px;border-radius:12px;background:rgba(245,217,122,.07);border:1px solid rgba(245,217,122,.3);font-size:12px;line-height:1.45;color:#e2e8f0}
+.wcf-teams-row{display:flex;justify-content:space-between;align-items:center;width:100%;margin:4px 0 10px;min-height:46px;padding:10px 14px;border-radius:14px;background:var(--panel);border:1px solid var(--line);color:#f1f5f9;font-weight:700;font-size:13px;cursor:pointer;text-align:left}
+.wcf-teams-row span{font-weight:600;font-size:12px;color:var(--dim)}
+.wcf-teams-row b{display:inline-block;margin-left:4px;color:#64748b;font-size:16px;transition:transform .15s}
+.wcf-teams-row b.open{transform:rotate(90deg)}
+.wcf-teams-hist-s{font-size:12px;color:var(--dim);line-height:1.4}
+.wcf-teams-hist{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.wcf-teams-hist i{font-style:normal;font-size:11px;font-weight:800;padding:4px 7px;border-radius:7px;background:rgba(148,163,184,.1);color:#e2e8f0;font-variant-numeric:tabular-nums}
+.wcf-teams-hist i.ok{background:rgba(134,239,172,.12);color:var(--green)}
+.wcf-teams-hist i.big{background:rgba(230,57,70,.16);color:var(--red-hi)}
+.wcf-teams-hist i.gen{box-shadow:inset 0 0 0 1px rgba(245,217,122,.6)}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
