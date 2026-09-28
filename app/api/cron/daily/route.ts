@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
-import { kickoffCutoff, nowInLondon, previousMonthKey, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../../../../lib/time";
+import { kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../../../../lib/time";
 import { generateWeeklyDigest } from "../../../../lib/gaffai/digest";
 import { motmWinners, goalsLookup } from "../../../../lib/motm";
 
@@ -106,70 +106,8 @@ export async function GET(req: Request) {
     await markNotified(key);
   }
 
-  // --- Player of the Month ---
-  // Announced once the month's last published game is played and its vote
-  // has closed (same rule as the app and Wrapped), else last month's on the
-  // 1st. The key stops a second announcement when the 1st comes round.
-  const thisMonth = nowUk.slice(0, 7);
-  const { data: thisMonthRows } = await admin
-    .from("games")
-    .select("date, kickoff, team_white_score, team_red_score")
-    .eq("published", true)
-    .gte("date", `${thisMonth}-01`)
-    .lte("date", `${thisMonth}-31`);
-  const thisMonthFinished =
-    (thisMonthRows ?? []).length > 0 &&
-    (thisMonthRows ?? []).every(
-      (g) => g.team_white_score != null && g.team_red_score != null && kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) <= nowUk
-    );
-  const monthKey = thisMonthFinished ? thisMonth : previousMonthKey(nowUk);
-  const potmKey = `potm-${monthKey}`;
-  if (!notifiedKeys.has(potmKey)) {
-    const monthGames = typedGames.filter((g) => g.date.startsWith(monthKey));
-    if (monthGames.length >= 2) {
-      const wins: Record<string, number> = {};
-      const voteTotals: Record<string, number> = {};
-      for (const g of monthGames) {
-        const gameVotes = allVotes.filter((v) => v.game_id === g.id);
-        if (gameVotes.length === 0) continue;
-        const tally: Record<string, number> = {};
-        for (const v of gameVotes) tally[v.candidate_id] = (tally[v.candidate_id] ?? 0) + 1;
-        const gameWinners = motmWinners(tally, goalsIn(g.id));
-        for (const [id, count] of Object.entries(tally)) {
-          voteTotals[id] = (voteTotals[id] ?? 0) + count;
-          if (gameWinners.includes(id)) wins[id] = (wins[id] ?? 0) + 1;
-        }
-      }
-      const contenders = Object.keys(wins);
-      if (contenders.length > 0) {
-        const maxWins = Math.max(...contenders.map((id) => wins[id]));
-        let leaders = contenders.filter((id) => wins[id] === maxWins);
-        if (leaders.length > 1) {
-          const maxVotes = Math.max(...leaders.map((id) => voteTotals[id] ?? 0));
-          leaders = leaders.filter((id) => (voteTotals[id] ?? 0) === maxVotes);
-        }
-        // Then goals that month, same as the app's Player of the Month card.
-        if (leaders.length > 1) {
-          const monthIds = new Set(monthGames.map((g) => g.id));
-          const monthGoals = (id: string) => (allGoalRows ?? []).filter((r) => r.player_id === id && monthIds.has(r.game_id)).reduce((sum, r) => sum + r.goals, 0);
-          const maxGoals = Math.max(...leaders.map(monthGoals));
-          leaders = leaders.filter((id) => monthGoals(id) === maxGoals);
-        }
-        const { data: winners } = await admin.from("profiles").select("display_name").in("id", leaders);
-        const names = (winners ?? []).map((w) => w.display_name).join(" & ");
-        const monthLabel = new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
-
-        if (names) {
-          await sendPushBroadcast({
-            title: "Player of the Month 🏅",
-            body: `${names} is Player of the Month for ${monthLabel}.`,
-            url: "/",
-          });
-        }
-      }
-    }
-    await markNotified(potmKey);
-  }
+  // Player of the Month is announced from the frequent cron (lib/potmAnnounce.ts),
+  // at 8am UK all year round - this job runs at 7am in winter.
 
   // --- GaffAI weekly digest for admins, Monday mornings only ---
   // Reuses notified_events for idempotency exactly like MOTM/POTM above -

@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
-import { kickoffCutoff, nowInLondon, previousMonthKey, MATCH_DURATION_MINUTES, MOTM_VOTE_WINDOW_MINUTES } from "../../../../lib/time";
+import { kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, MONTH_RELEASE_HOUR, MATCH_DURATION_MINUTES, MOTM_VOTE_WINDOW_MINUTES } from "../../../../lib/time";
 import { ensureFreshMonzoToken, registerMonzoWebhook } from "../../../../lib/monzo";
 import { AUTO_REMOVE_UNPAID_BOOKINGS, WRAPPED_OPEN_TO_ALL_FROM, WRAPPED_FIRST_MONTH_FOR_ALL } from "../../../../lib/clubPolicy";
 import { nextOpenGame, fmtJourneyDate, type JourneyGame } from "../../../../lib/memberJourney";
+import { announcePlayerOfMonth } from "../../../../lib/potmAnnounce";
 
 // Both sides of this comparison come from the same "pretend UTC" trick in
 // lib/time.ts (real UK wall-clock digits, formatted as if they were UTC) -
@@ -563,13 +564,19 @@ export async function GET(req: Request) {
   // --- "Your September, wrapped": one push per month, when it goes live ---
   // Same rule as the app's banner: a month's Wrapped goes live once every
   // published game in it has been played, scored and had its MOTM vote
-  // close (or the month is over). Only between 9am and 9pm, so a vote
-  // closing at 1am doesn't wake anyone - it goes out on the next daytime
-  // run instead. Only to players who actually have one (2+ games that
+  // close, released at 8am the next morning (lib/time.ts monthReleaseAt),
+  // together with Player of the Month. Only between 8am and 9pm. Only to players who actually have one (2+ games that
   // month). No backfill needed: WRAPPED_FIRST_MONTH_FOR_ALL means no
   // month before September 2026 can ever qualify.
   const nowHour = Number(nowUkStr.slice(11, 13));
-  if (nowUkStr.slice(0, 10) >= WRAPPED_OPEN_TO_ALL_FROM && nowHour >= 9 && nowHour < 21) {
+  if (nowHour >= MONTH_RELEASE_HOUR && nowHour < 21) {
+    try {
+      await announcePlayerOfMonth(admin, nowUkStr, notifiedKeys, markNotified);
+    } catch (err) {
+      console.error("Player of the Month announcement failed", err);
+    }
+  }
+  if (nowUkStr.slice(0, 10) >= WRAPPED_OPEN_TO_ALL_FROM && nowHour >= MONTH_RELEASE_HOUR && nowHour < 21) {
     const thisMonth = nowUkStr.slice(0, 7);
     const { data: monthRows } = await admin
       .from("games")
@@ -578,11 +585,13 @@ export async function GET(req: Request) {
       .lte("date", `${thisMonth}-31`);
     const inMonth = (key: string) => (monthRows ?? []).filter((g) => g.published && g.date.startsWith(key));
     const thisMonthGames = inMonth(thisMonth);
+    const lastGame = [...thisMonthGames].sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)).at(-1);
     const thisMonthDone =
       thisMonthGames.length > 0 &&
       thisMonthGames.every(
         (g) => g.team_white_score != null && g.team_red_score != null && kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) <= nowUkStr
-      );
+      ) &&
+      nowUkStr >= monthReleaseAt(lastGame!.date, lastGame!.kickoff);
     const monthKey = thisMonthDone ? thisMonth : previousMonthKey(nowUkStr);
     const key = `wrapped-${monthKey}`;
     if (monthKey >= WRAPPED_FIRST_MONTH_FOR_ALL && !notifiedKeys.has(key)) {

@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
 import { motmWinners, goalsLookup } from "../lib/motm";
-import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey } from "../lib/time";
+import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt } from "../lib/time";
 import { predictionPoints, buildLeaderboard, buildMonthlyLeaderboards, topScorers, type ScoredPrediction } from "../lib/predictions";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer } from "../lib/teamBalance";
 import { defaultPitchCost } from "../lib/pitchCost";
@@ -3379,9 +3379,11 @@ function App({ session }: { session: Session }) {
     // last month's.
     const thisKey = nowUk.slice(0, 7);
     const thisMonthGames = games.filter((g) => g.published && g.date.startsWith(thisKey));
+    const lastOfMonth = [...thisMonthGames].sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)).at(-1);
     const thisMonthFinished =
       thisMonthGames.length > 0 &&
-      thisMonthGames.every((g) => g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g));
+      thisMonthGames.every((g) => g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g)) &&
+      nowUk >= monthReleaseAt(lastOfMonth!.date, lastOfMonth!.kickoff);
     const monthKey = thisMonthFinished ? thisKey : previousMonthKey(nowUk);
     const monthGames = pastGames.filter(
       (g) => g.date.startsWith(monthKey) && g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g)
@@ -3445,11 +3447,14 @@ function App({ session }: { session: Session }) {
   const thisMonthKey = nowUk.slice(0, 7);
   const thisMonthDone = useMemo(() => {
     const month = games.filter((g) => g.published && g.date.startsWith(thisMonthKey));
+    const last = [...month].sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)).at(-1);
+    // Released at 8am the morning after the last vote closes (lib/time.ts).
     return (
       month.length > 0 &&
       month.every(
         (g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk && g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g)
-      )
+      ) &&
+      nowUk >= monthReleaseAt(last!.date, last!.kickoff)
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [games, thisMonthKey, nowUk]);

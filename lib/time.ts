@@ -62,3 +62,15 @@ export function previousMonthKey(nowUkStr: string) {
   const d = new Date(Date.UTC(y, mo - 2, 1));
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
+
+// When a finished month's Wrapped and Player of the Month are released: 8am
+// UK on the morning after the month's last game's MOTM vote closes. A vote
+// closing at 1am releases at 8am that day; one closing after 8am releases at
+// 8am the next day. Same pretend-UTC frame as kickoffCutoff().
+export const MONTH_RELEASE_HOUR = 8;
+export function monthReleaseAt(lastGameDate: string, lastGameKickoff: string) {
+  const closes = kickoffCutoff(lastGameDate, lastGameKickoff, MOTM_VOTE_WINDOW_MINUTES);
+  const release = `${String(MONTH_RELEASE_HOUR).padStart(2, "0")}:00`;
+  if (closes.slice(11, 16) <= release) return `${closes.slice(0, 10)}T${release}`;
+  return kickoffCutoff(closes.slice(0, 10), release, 24 * 60);
+}
