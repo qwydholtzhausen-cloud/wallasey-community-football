@@ -6769,7 +6769,8 @@ type GaffAIAction =
   | { kind: "send_reminder"; playerId: string; playerName: string; message: string }
   | { kind: "publish_fixture"; gameId: string; venue: string; date: string }
   | { kind: "matchday_push"; gameId: string; venue: string; date: string; spotsLeft: number; targetCount: number }
-  | { kind: "set_pot_exempt"; bookingId: string; playerName: string; gameLabel: string; reason: string };
+  | { kind: "set_pot_exempt"; bookingId: string; playerName: string; gameLabel: string; reason: string }
+  | { kind: "remove_duplicate"; removeId: string; removeName: string; keepId: string; keepName: string };
 
 interface GaffAIMessage {
   role: "user" | "assistant";

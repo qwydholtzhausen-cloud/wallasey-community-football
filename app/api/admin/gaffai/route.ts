@@ -11,6 +11,7 @@ import {
   executePublishFixture,
   executeMatchdayPush,
   executeSetPotExempt,
+  executeRemoveDuplicate,
   computeNudges,
   type MarkPaidAction,
   type CreateFixtureAction,
@@ -18,6 +19,7 @@ import {
   type PublishFixtureAction,
   type MatchdayPushAction,
   type SetPotExemptAction,
+  type RemoveDuplicateAction,
 } from "../../../../lib/gaffai/toolImpl";
 import { nowInLondon } from "../../../../lib/time";
 
@@ -98,7 +100,7 @@ export async function POST(req: Request) {
     // model output alone can trigger a mutation. Every field is
     // re-validated fresh against the DB before anything happens.
     if (body.type === "confirm_action") {
-      const action = body.action as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction;
+      const action = body.action as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction;
       try {
         if (action.kind === "mark_paid") {
           await executeMarkPaid(admin, callerId, action);
@@ -123,6 +125,10 @@ export async function POST(req: Request) {
         if (action.kind === "set_pot_exempt") {
           await executeSetPotExempt(admin, callerId, action);
           return NextResponse.json({ type: "action_result", ok: true, text: `Done — ${action.playerName}'s booking for ${action.gameLabel} is now free (${action.reason}).` });
+        }
+        if (action.kind === "remove_duplicate") {
+          await executeRemoveDuplicate(admin, callerId, action);
+          return NextResponse.json({ type: "action_result", ok: true, text: `Done — removed the unused ${action.removeName} account. ${action.keepName} is untouched.` });
         }
         return NextResponse.json({ type: "error", error: "Unknown action" }, { status: 400 });
       } catch (err) {
@@ -173,7 +179,7 @@ export async function POST(req: Request) {
       // Reset every round - only reflects whichever tools were called in
       // the round immediately before the model's final answer, not
       // anything called earlier in the conversation.
-      let proposalFromLastRound: MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | null = null;
+      let proposalFromLastRound: MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | null = null;
 
       while (response.stop_reason === "tool_use" && rounds < MAX_TOOL_ROUNDS) {
         rounds++;
@@ -194,9 +200,10 @@ export async function POST(req: Request) {
                 block.name === "propose_send_reminder" ||
                 block.name === "propose_publish_fixture" ||
                 block.name === "propose_matchday_push" ||
-                block.name === "propose_set_pot_exempt"
+                block.name === "propose_set_pot_exempt" ||
+                block.name === "propose_remove_duplicate_account"
               ) {
-                proposalFromLastRound = result as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction;
+                proposalFromLastRound = result as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction;
               }
               return { type: "tool_result" as const, tool_use_id: block.id, content: JSON.stringify(result) };
             } catch (err) {

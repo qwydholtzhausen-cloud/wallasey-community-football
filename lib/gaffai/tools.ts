@@ -94,7 +94,7 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
   {
     name: "find_possible_duplicate_players",
     description:
-      "Players who share the exact same display name (case-insensitive) - likely duplicate profiles from someone signing up twice. Check this before trusting a headcount or 'has X ever played' question if the name seems generic, since a duplicate profile silently splits that person's real history across two records.",
+      "Likely duplicate accounts from someone signing up twice: same name, near-identical names (typos like 'jordanbosworth' vs 'jordanboswortb') or near-identical email addresses. For each pair it gives the evidence for both (email confirmed, last sign-in, last opened the app, bookings/goals/votes/predictions), which one to keep, and whether the unused one can be removed with propose_remove_duplicate_account. Also check this before trusting a headcount or 'has X ever played' if a name seems generic, since a duplicate splits someone's history.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -325,6 +325,19 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     description:
       "Players whose birthday falls within the next N days (default 14), based on month/day only - the year on file doesn't matter. Returns the age they're turning, how many days away, and their next booked game if they have one (next_game: booking_id/venue/date, already looked up - don't call find_games separately to get this). Only includes players who've added their date of birth.",
     input_schema: { type: "object", properties: { days: { type: "number", description: "Default 14" } } },
+  },
+  {
+    name: "propose_remove_duplicate_account",
+    description:
+      "Prepare (but do NOT execute) removing an UNUSED duplicate account, keeping the other. Only works when the account being removed is a plain player account with no history at all (no bookings, goals, votes, predictions, Boot Room) and has never signed in, or was last signed into before the one being kept - otherwise it refuses and explains, and that pair needs a manual merge. Always run find_possible_duplicate_players first and use its ids. Returns a proposal with a Confirm button; nothing changes until the admin taps it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        remove_player_id: { type: "string", description: "The unused duplicate" },
+        keep_player_id: { type: "string", description: "The account the person actually uses" },
+      },
+      required: ["remove_player_id", "keep_player_id"],
+    },
   },
   {
     name: "propose_set_pot_exempt",

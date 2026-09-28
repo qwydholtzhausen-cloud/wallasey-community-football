@@ -122,6 +122,13 @@ export interface MatchdayPushAction {
   spotsLeft: number;
   targetCount: number;
 }
+export interface RemoveDuplicateAction {
+  kind: "remove_duplicate";
+  removeId: string;
+  removeName: string;
+  keepId: string;
+  keepName: string;
+}
 export interface SetPotExemptAction {
   kind: "set_pot_exempt";
   bookingId: string;
@@ -546,20 +553,100 @@ async function findPushNotificationIssues(admin: SupabaseClient) {
 // "Chris Hogan" profiles, one active and one that's never booked, which
 // has already caused two other tools to give wrong answers by silently
 // conflating them before this existed.
+// How much real history an account holds - anything above zero here means
+// removing it would lose something, so it's never offered for removal.
+const HISTORY_TABLES: { table: string; column: string; label: string }[] = [
+  { table: "bookings", column: "player_id", label: "bookings" },
+  { table: "game_stats", column: "player_id", label: "goal records" },
+  { table: "motm_votes", column: "voter_id", label: "MOTM votes cast" },
+  { table: "motm_votes", column: "candidate_id", label: "MOTM votes received" },
+  { table: "score_predictions", column: "player_id", label: "predictions" },
+  { table: "boot_room_listings", column: "player_id", label: "Boot Room listings" },
+  { table: "boot_room_endorsements", column: "player_id", label: "Boot Room recommendations" },
+  { table: "booking_cancellations", column: "player_id", label: "past drop-outs" },
+];
+
+async function accountHistory(admin: SupabaseClient, playerId: string) {
+  const counts: Record<string, number> = {};
+  await Promise.all(
+    HISTORY_TABLES.map(async ({ table, column, label }) => {
+      const { count } = await admin.from(table).select("*", { count: "exact", head: true }).eq(column, playerId);
+      if (count) counts[label] = (counts[label] ?? 0) + count;
+    })
+  );
+  return counts;
+}
+
+async function accountEvidence(admin: SupabaseClient, p: { id: string; display_name: string; role: string; created_at: string; last_active_at?: string | null; avatar_url?: string | null }) {
+  const { data: u } = await admin.auth.admin.getUserById(p.id);
+  const history = await accountHistory(admin, p.id);
+  return {
+    id: p.id,
+    name: p.display_name,
+    role: p.role,
+    joined_uk: pseudoUtcFromRealInstant(p.created_at),
+    email_confirmed: !!u?.user?.email_confirmed_at,
+    last_signed_in_uk: u?.user?.last_sign_in_at ? pseudoUtcFromRealInstant(u.user.last_sign_in_at) : "never",
+    last_opened_app_uk: p.last_active_at ? pseudoUtcFromRealInstant(p.last_active_at) : "no record (tracking began 28 Sep 2026)",
+    has_photo: !!p.avatar_url,
+    history,
+    has_any_history: Object.keys(history).length > 0,
+    last_sign_in_ms: u?.user?.last_sign_in_at ? new Date(u.user.last_sign_in_at).getTime() : 0,
+  };
+}
+
+// Likely duplicates: identical names, near-identical ones (a typo like
+// "jordanbosworth" / "jordanboswortb"), or the same email before the @.
+function editDistance(a: string, b: string) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+
 async function findPossibleDuplicatePlayers(admin: SupabaseClient) {
-  const { data: profiles } = await admin.from("profiles").select("id, display_name, role, created_at");
-  const byName: Record<string, { id: string; display_name: string; role: string; created_at: string }[]> = {};
-  for (const p of profiles ?? []) {
-    const key = p.display_name.trim().toLowerCase();
-    (byName[key] ??= []).push(p);
-  }
-  return Object.values(byName)
-    .filter((group) => group.length > 1)
-    .map((group) => ({
-      name: group[0].display_name,
-      count: group.length,
-      profiles: group.map((p) => ({ role: p.role, created_at: p.created_at })),
-    }));
+  const { data: profiles } = await admin.from("profiles").select("id, display_name, role, created_at, last_active_at, avatar_url");
+  const { data: usersPage } = await admin.auth.admin.listUsers({ perPage: 1000 });
+  const emailLocal: Record<string, string> = {};
+  for (const u of usersPage?.users ?? []) emailLocal[u.id] = (u.email ?? "").split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+  const norm = (n: string) => n.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const list = profiles ?? [];
+  const pairs: [number, number, string][] = [];
+  for (let i = 0; i < list.length; i++)
+    for (let j = i + 1; j < list.length; j++) {
+      const a = norm(list[i].display_name);
+      const b = norm(list[j].display_name);
+      const ea = emailLocal[list[i].id];
+      const eb = emailLocal[list[j].id];
+      let why = "";
+      if (a && a === b) why = "same name";
+      else if (a.length >= 6 && b.length >= 6 && editDistance(a, b) <= 2) why = "near-identical names";
+      else if (ea && eb && ea.length >= 5 && (ea === eb || editDistance(ea, eb) <= 1)) why = "near-identical email addresses";
+      if (why) pairs.push([i, j, why]);
+    }
+  const groups = await Promise.all(
+    pairs.map(async ([i, j, why]) => {
+      const [a, b] = await Promise.all([accountEvidence(admin, list[i]), accountEvidence(admin, list[j])]);
+      // Keep whichever has history, else whichever signed in most recently.
+      const keep = a.has_any_history !== b.has_any_history ? (a.has_any_history ? a : b) : a.last_sign_in_ms >= b.last_sign_in_ms ? a : b;
+      const other = keep === a ? b : a;
+      const removable = !other.has_any_history && other.role === "player" && (other.last_signed_in_uk === "never" || other.last_sign_in_ms <= keep.last_sign_in_ms);
+      const strip = ({ last_sign_in_ms, ...rest }: typeof a) => (void last_sign_in_ms, rest);
+      return {
+        why,
+        accounts: [strip(a), strip(b)],
+        suggest_keep: keep.name,
+        suggest_remove: other.name,
+        can_remove_with_gaffai: removable,
+        note: removable
+          ? `${other.name} holds no history, so it can be removed with propose_remove_duplicate_account (keep_player_id ${keep.id}, remove_player_id ${other.id}).`
+          : `Both accounts hold history (or the unused one is an admin), so this needs a manual merge in the Admin console - GaffAI won't remove it.`,
+      };
+    })
+  );
+  return { found: groups.length, groups };
 }
 
 async function findPlayersWithoutBookings(admin: SupabaseClient) {
@@ -1410,6 +1497,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   propose_publish_fixture: proposePublishFixture,
   propose_matchday_push: proposeMatchdayPush,
   propose_set_pot_exempt: proposeSetPotExempt,
+  propose_remove_duplicate_account: proposeRemoveDuplicateAccount,
   get_average_age: getAverageAge,
   find_upcoming_birthdays: findUpcomingBirthdays,
   save_standing_fact: saveStandingFact,
@@ -1892,4 +1980,48 @@ export async function executeSetPotExempt(admin: SupabaseClient, callerId: strin
   await admin
     .from("audit_log")
     .insert({ actor_id: callerId, action: "GaffAI set pot-exempt", details: `${action.playerName} — ${action.gameLabel} (${action.reason})` });
+}
+
+// Removing a duplicate account is only ever offered for an empty one: a
+// plain player account with no history anywhere, that has never signed in
+// or was last used before the account being kept. Anything else needs a
+// manual merge. Checked when proposed and again on confirm.
+async function checkRemovableDuplicate(admin: SupabaseClient, removeId: string, keepId: string, callerId: string) {
+  if (!removeId || !keepId || removeId === keepId) throw new Error("Need two different accounts.");
+  if (removeId === callerId) throw new Error("You can't remove your own account this way.");
+  const { data: profs } = await admin.from("profiles").select("id, display_name, role, created_at, last_active_at, avatar_url").in("id", [removeId, keepId]);
+  const remove = profs?.find((p) => p.id === removeId);
+  const keep = profs?.find((p) => p.id === keepId);
+  if (!remove || !keep) throw new Error("One of those accounts no longer exists.");
+  if (remove.role !== "player") throw new Error(`${remove.display_name} is an admin account - GaffAI never removes those.`);
+  const [r, k] = await Promise.all([accountEvidence(admin, remove), accountEvidence(admin, keep)]);
+  if (r.has_any_history) {
+    throw new Error(`${remove.display_name} has history (${Object.entries(r.history).map(([l, n]) => `${n} ${l}`).join(", ")}), so removing it would lose that. This needs a manual merge.`);
+  }
+  if (r.last_sign_in_ms > 0 && r.last_sign_in_ms > k.last_sign_in_ms) {
+    throw new Error(`${remove.display_name} was signed into more recently than ${keep.display_name}, so it may be the one they actually use. Check with them first.`);
+  }
+  return { remove, keep, evidence: r };
+}
+
+async function proposeRemoveDuplicateAccount(
+  admin: SupabaseClient,
+  args: { remove_player_id: string; keep_player_id: string },
+  callerId?: string
+): Promise<RemoveDuplicateAction> {
+  const { remove, keep } = await checkRemovableDuplicate(admin, args.remove_player_id, args.keep_player_id, callerId ?? "");
+  return { kind: "remove_duplicate", removeId: remove.id, removeName: remove.display_name, keepId: keep.id, keepName: keep.display_name };
+}
+
+export async function executeRemoveDuplicate(admin: SupabaseClient, callerId: string, action: RemoveDuplicateAction) {
+  const { remove, keep, evidence } = await checkRemovableDuplicate(admin, action.removeId, action.keepId, callerId);
+  // Same removal as the Admin console's delete: the login goes, and the
+  // profile (and its empty settings rows) go with it.
+  const { error } = await admin.auth.admin.deleteUser(remove.id);
+  if (error) throw new Error(error.message);
+  await admin.from("audit_log").insert({
+    actor_id: callerId,
+    action: "GaffAI removed unused duplicate account",
+    details: `${remove.display_name} (kept ${keep.display_name}; never used: last sign-in ${evidence.last_signed_in_uk}, no bookings or other history)`,
+  });
 }
