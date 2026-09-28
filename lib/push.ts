@@ -14,6 +14,19 @@ export interface PushPayload {
   title: string;
   body: string;
   url?: string;
+  // Groups sends for the open-rate numbers GaffAI reports; defaults to a
+  // slug of the title ("Teams are out 👕" -> "teams-are-out").
+  kind?: string;
+}
+
+function kindFromTitle(title: string) {
+  return (
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "notification"
+  );
 }
 
 export interface PushResult {
@@ -42,6 +55,23 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
     .in("user_id", allowedIds);
   if (!subs || subs.length === 0) return { sent: 0, failed: 0 };
 
+  // One row per person reached, so taps can be counted. Its random id rides
+  // along in the payload and the service worker reports it back on tap.
+  // Best-effort: if the table's missing or the insert fails, the push
+  // still goes out, just untracked.
+  const sendIds = new Map<string, string>();
+  try {
+    const reached = [...new Set(subs.map((s) => s.user_id))];
+    const kind = payload.kind ?? kindFromTitle(payload.title);
+    const { data: rows } = await admin
+      .from("notification_sends")
+      .insert(reached.map((player_id) => ({ player_id, kind, title: payload.title })))
+      .select("id, player_id");
+    for (const r of rows ?? []) sendIds.set(r.player_id, r.id);
+  } catch (err) {
+    console.error("Logging notification sends failed", err);
+  }
+
   let sent = 0;
   let failed = 0;
 
@@ -50,7 +80,7 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth_key } },
-          JSON.stringify(payload)
+          JSON.stringify({ ...payload, sid: sendIds.get(sub.user_id) })
         );
         sent++;
       } catch (err) {

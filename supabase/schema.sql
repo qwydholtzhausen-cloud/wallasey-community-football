@@ -1721,3 +1721,76 @@ create table if not exists public.monthly_snapshots (
 alter table public.monthly_snapshots enable row level security;
 drop policy if exists "monthly_snapshots_select" on public.monthly_snapshots;
 create policy "monthly_snapshots_select" on public.monthly_snapshots for select using (auth.role() = 'authenticated');
+
+-- ─────────────────────────────────────────────────────────────────
+-- Activity data (2026-09-28): drop-outs, notification sends/opens and
+-- last active. Admins only, and only surfaced through GaffAI (same as
+-- Wrapped engagement) - nothing here is shown in the app.
+-- ─────────────────────────────────────────────────────────────────
+
+-- Every booking that's removed, kept after the row itself is deleted:
+-- who, which game, and how long before kickoff. "self" = the player gave
+-- up their spot, "admin" = an admin removed them, "system" = the unpaid
+-- auto-removal. Deleting a whole fixture (which cascades to its bookings)
+-- is not a drop-out, so those are skipped.
+create table if not exists public.booking_cancellations (
+  id uuid primary key default gen_random_uuid(),
+  player_id uuid not null references public.profiles (id) on delete cascade,
+  game_id uuid not null references public.games (id) on delete cascade,
+  was_waiting boolean not null,
+  booked_at timestamptz not null,
+  cancelled_at timestamptz not null default now(),
+  minutes_before_kickoff int not null,
+  reason text not null check (reason in ('self', 'admin', 'system')),
+  removed_by uuid references public.profiles (id) on delete set null
+);
+create index if not exists booking_cancellations_player_idx on public.booking_cancellations (player_id, cancelled_at);
+alter table public.booking_cancellations enable row level security;
+drop policy if exists "booking_cancellations_select_admin" on public.booking_cancellations;
+create policy "booking_cancellations_select_admin" on public.booking_cancellations for select using (public.is_admin());
+
+create or replace function public.log_booking_cancellation() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  g record;
+begin
+  select date, kickoff into g from public.games where id = old.game_id;
+  if not found then
+    return old; -- the whole fixture is being deleted
+  end if;
+  insert into public.booking_cancellations (player_id, game_id, was_waiting, booked_at, minutes_before_kickoff, reason, removed_by)
+  values (
+    old.player_id,
+    old.game_id,
+    old.waiting,
+    old.created_at,
+    floor(extract(epoch from (((g.date + g.kickoff::time) at time zone 'Europe/London') - now())) / 60)::int,
+    case when auth.uid() is null then 'system' when auth.uid() = old.player_id then 'self' else 'admin' end,
+    auth.uid()
+  );
+  return old;
+end;
+$$;
+
+drop trigger if exists booking_cancellation_log on public.bookings;
+create trigger booking_cancellation_log after delete on public.bookings
+  for each row execute function public.log_booking_cancellation();
+
+-- One row per notification per person, written by the server when it
+-- sends; opened_at is set when they tap it (the tap reports the row's
+-- random id back, so no login is needed).
+create table if not exists public.notification_sends (
+  id uuid primary key default gen_random_uuid(),
+  player_id uuid not null references public.profiles (id) on delete cascade,
+  kind text not null,
+  title text not null,
+  sent_at timestamptz not null default now(),
+  opened_at timestamptz
+);
+create index if not exists notification_sends_kind_idx on public.notification_sends (kind, sent_at);
+alter table public.notification_sends enable row level security;
+drop policy if exists "notification_sends_select_admin" on public.notification_sends;
+create policy "notification_sends_select_admin" on public.notification_sends for select using (public.is_admin());
+
+-- When each person last opened the app (updated at most every 30 min).
+alter table public.profiles add column if not exists last_active_at timestamptz;

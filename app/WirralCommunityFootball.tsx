@@ -1724,6 +1724,26 @@ function App({ session }: { session: Session }) {
     if (data) setMonzoUnmatched(data as unknown as MonzoUnmatchedRow[]);
   }, []);
 
+  // When this person last opened the app, for GaffAI's "who's gone quiet?".
+  // Written on open and whenever the app comes back to the foreground, at
+  // most every 30 minutes. Never shown in the app.
+  const lastActiveWrite = useRef(0);
+  useEffect(() => {
+    const touch = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastActiveWrite.current < 30 * 60000) return;
+      lastActiveWrite.current = Date.now();
+      supabase
+        .from("profiles")
+        .update({ last_active_at: new Date().toISOString() })
+        .eq("id", myId)
+        .then(() => {});
+    };
+    touch();
+    document.addEventListener("visibilitychange", touch);
+    return () => document.removeEventListener("visibilitychange", touch);
+  }, [myId]);
+
   const loadAll = useCallback(
     () =>
       Promise.all([
@@ -8696,7 +8716,12 @@ function AccountPanel({
                     </button>
                   )}
                   {p.avatar_url && (
-                    <button className="wcf-ghost" onClick={() => onAdminRemoveAvatar(p.id)}>
+                    <button
+                      className="wcf-ghost"
+                      onClick={async () => {
+                        if (await askConfirm("Remove this photo?", `${p.display_name}'s profile photo will be deleted. They can add a new one any time.`, "Remove", true)) onAdminRemoveAvatar(p.id);
+                      }}
+                    >
                       Remove photo
                     </button>
                   )}
@@ -9710,7 +9735,7 @@ function AdminGameRow({
   const expanded = expandedId === game.id;
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const waitingList = game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
-  const [addPlayerId, setAddPlayerId] = useState("");
+  const [addPlayerSearch, setAddPlayerSearch] = useState("");
   // The booking whose actions sheet is open (tap ⋯ on a row).
   const [actionFor, setActionFor] = useState<BookingRow | null>(null);
 
@@ -9838,26 +9863,40 @@ function AdminGameRow({
             </>
           )}
 
-          {eligiblePlayers.length > 0 && (
-            <div className="wcf-admin-add-player">
-              <select value={addPlayerId} onChange={(e) => setAddPlayerId(e.target.value)}>
-                <option value="">Add a player who didn&apos;t book…</option>
-                {eligiblePlayers.map((p) => (
-                  <option key={p.id} value={p.id}>{p.display_name}</option>
-                ))}
-              </select>
-              <button
-                className="wcf-pill-btn ghost"
-                disabled={!addPlayerId}
-                onClick={() => {
-                  onAddBooking(game.id, addPlayerId);
-                  setAddPlayerId("");
-                }}
-              >
-                Add
-              </button>
-            </div>
-          )}
+          {eligiblePlayers.length > 0 && (() => {
+            // Type to find someone instead of scrolling a 60-name dropdown.
+            const q = addPlayerSearch.trim().toLowerCase();
+            const matches = q ? eligiblePlayers.filter((p) => p.display_name.toLowerCase().includes(q)).slice(0, 6) : [];
+            return (
+              <div className="wcf-admin-add-player">
+                <input
+                  type="search"
+                  value={addPlayerSearch}
+                  onChange={(e) => setAddPlayerSearch(e.target.value)}
+                  placeholder="Add a player who didn't book…"
+                  aria-label="Search for a player to add"
+                />
+                {q && (
+                  <div className="wcf-admin-add-results">
+                    {matches.length === 0 && <div className="wcf-admin-add-none">No one called &quot;{addPlayerSearch.trim()}&quot;</div>}
+                    {matches.map((p) => (
+                      <button
+                        key={p.id}
+                        className="wcf-admin-add-result"
+                        onClick={() => {
+                          onAddBooking(game.id, p.id);
+                          setAddPlayerSearch("");
+                        }}
+                      >
+                        <span>{p.display_name}</span>
+                        <b>Add</b>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           <button
             className="wcf-admin-delete-link"
@@ -11071,7 +11110,13 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-admin-delete-game{width:100%;min-height:44px;background:rgba(240,82,94,.1);border:1px dashed rgba(240,82,94,.3);color:var(--red-hi);padding:10px;border-radius:12px;font-weight:700;font-size:11.5px;cursor:pointer;margin-top:12px}
 .wcf-admin-game-body > .wcf-save{width:100%;margin:12px 0}
 .wcf-admin-game-body > .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed}
-.wcf-admin-add-player{display:flex;gap:8px;margin-top:12px}
+.wcf-admin-add-player{display:flex;flex-direction:column;gap:6px;margin-top:12px}
+.wcf-admin-add-player input{width:100%;min-height:44px;background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:9px 12px;border-radius:12px;font-size:13px;font-family:var(--sans);box-sizing:border-box}
+.wcf-admin-add-results{display:flex;flex-direction:column;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:var(--panel)}
+.wcf-admin-add-result{display:flex;justify-content:space-between;align-items:center;min-height:42px;padding:8px 12px;background:none;border:0;color:#f1f5f9;font-size:13px;cursor:pointer;text-align:left}
+.wcf-admin-add-result+.wcf-admin-add-result{border-top:1px solid var(--line)}
+.wcf-admin-add-result b{font-size:12px;color:#f5d97a}
+.wcf-admin-add-none{padding:10px 12px;font-size:12.5px;color:var(--dim)}
 .wcf-admin-add-player select{flex:1;min-height:44px;background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:9px 12px;border-radius:12px;font-size:12px;font-family:var(--sans);box-sizing:border-box}
 .wcf-admin-add-player .wcf-ghost{min-height:44px;padding:0 16px;border-radius:12px;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.36);color:#7fb0ec;font-weight:700;font-size:11.5px}
 .wcf-admin-add-player .wcf-ghost:disabled{opacity:.4;cursor:not-allowed;background:rgba(148,163,184,.06);border-color:rgba(148,163,184,.16);color:var(--dim)}

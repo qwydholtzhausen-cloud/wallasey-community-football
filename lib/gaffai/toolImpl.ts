@@ -1040,6 +1040,124 @@ async function forgetStandingFact(admin: SupabaseClient, args: { fact_id: string
   return { forgotten: true };
 }
 
+// Drop-outs: bookings removed before a game, kept by a database trigger
+// (the booking row itself is deleted). Not shown in the app.
+async function findDropouts(
+  admin: SupabaseClient,
+  args: { player_name_contains?: string; days?: number; within_hours?: number; include_waiting_list?: boolean }
+) {
+  const since = new Date(Date.now() - (args.days ?? 60) * 86400000).toISOString();
+  let q = admin
+    .from("booking_cancellations")
+    .select("player_id, game_id, was_waiting, booked_at, cancelled_at, minutes_before_kickoff, reason, removed_by, games(date, kickoff, venue)")
+    .gte("cancelled_at", since)
+    .order("cancelled_at", { ascending: false });
+  if (!args.include_waiting_list) q = q.eq("was_waiting", false);
+  if (args.within_hours != null) q = q.lte("minutes_before_kickoff", Math.round(args.within_hours * 60));
+  const { data, error } = await q;
+  if (error) throw new Error("Drop-out tracking isn't set up yet (the booking_cancellations table is missing).");
+  type Row = {
+    player_id: string;
+    was_waiting: boolean;
+    booked_at: string;
+    cancelled_at: string;
+    minutes_before_kickoff: number;
+    reason: string;
+    removed_by: string | null;
+    games: { date: string; kickoff: string; venue: string } | null;
+  };
+  const rows = (data ?? []) as unknown as Row[];
+  const names = await namesById(admin, rows.flatMap((r) => [r.player_id, r.removed_by ?? ""]));
+  let out = rows.map((r) => ({
+    player: names[r.player_id] ?? "Unknown",
+    game: r.games ? `${r.games.venue}, ${r.games.date} ${r.games.kickoff}` : "Unknown game",
+    from_waiting_list: r.was_waiting,
+    booked_at_uk: pseudoUtcFromRealInstant(r.booked_at),
+    removed_at_uk: pseudoUtcFromRealInstant(r.cancelled_at),
+    hours_before_kickoff: Math.round((r.minutes_before_kickoff / 60) * 10) / 10,
+    reason: r.reason === "self" ? "gave up their spot" : r.reason === "admin" ? `removed by ${names[r.removed_by ?? ""] ?? "an admin"}` : "auto-removed (unpaid)",
+  }));
+  if (args.player_name_contains) {
+    const n = args.player_name_contains.toLowerCase();
+    out = out.filter((r) => r.player.toLowerCase().includes(n));
+  }
+  const perPlayer: Record<string, number> = {};
+  for (const r of out) perPlayer[r.player] = (perPlayer[r.player] ?? 0) + 1;
+  return {
+    tracking_started: "2026-09-28",
+    total: out.length,
+    by_player: Object.entries(perPlayer).sort((a, b) => b[1] - a[1]).map(([player, count]) => ({ player, count })),
+    dropouts: out.slice(0, 60),
+  };
+}
+
+// Notification reach and taps, from notification_sends. Not shown in the app.
+async function getNotificationStats(admin: SupabaseClient, args: { days?: number; kind_contains?: string }) {
+  const since = new Date(Date.now() - (args.days ?? 30) * 86400000).toISOString();
+  let q = admin.from("notification_sends").select("kind, title, sent_at, opened_at").gte("sent_at", since);
+  if (args.kind_contains) q = q.ilike("kind", `%${args.kind_contains}%`);
+  const { data, error } = await q;
+  if (error) throw new Error("Notification tracking isn't set up yet (the notification_sends table is missing).");
+  const byKind: Record<string, { example_title: string; sent: number; opened: number; last_sent: string }> = {};
+  for (const r of data ?? []) {
+    const k = (byKind[r.kind] ??= { example_title: r.title, sent: 0, opened: 0, last_sent: r.sent_at });
+    k.sent++;
+    if (r.opened_at) k.opened++;
+    if (r.sent_at > k.last_sent) k.last_sent = r.sent_at;
+  }
+  return {
+    tracking_started: "2026-09-28",
+    note: "sent = people reached (one per person, however many devices). Opened = tapped the notification; reading it on the lock screen without tapping isn't counted.",
+    kinds: Object.entries(byKind)
+      .map(([kind, v]) => ({
+        kind,
+        example_title: v.example_title,
+        sent: v.sent,
+        opened: v.opened,
+        open_rate: v.sent ? `${Math.round((v.opened / v.sent) * 100)}%` : "-",
+        last_sent_uk: pseudoUtcFromRealInstant(v.last_sent),
+      }))
+      .sort((a, b) => b.sent - a.sent),
+  };
+}
+
+// When members last opened the app (profiles.last_active_at). Not shown in the app.
+async function findInactivePlayers(admin: SupabaseClient, args: { inactive_days?: number; player_name_contains?: string }) {
+  const { data: profiles, error } = await admin.from("profiles").select("id, display_name, last_active_at, created_at");
+  if (error) throw new Error("Last-active tracking isn't set up yet (profiles.last_active_at is missing).");
+  const { data: games } = await admin.from("games").select("date, kickoff, team_white_score, bookings(player_id, waiting)");
+  const nowUk = nowInLondon();
+  const lastPlayed: Record<string, string> = {};
+  const upcoming: Record<string, number> = {};
+  for (const g of (games ?? []) as { date: string; kickoff: string; team_white_score: number | null; bookings: { player_id: string; waiting: boolean }[] }[]) {
+    const future = kickoffCutoff(g.date, g.kickoff, 0) > nowUk;
+    for (const b of g.bookings ?? []) {
+      if (b.waiting) continue;
+      if (future) upcoming[b.player_id] = (upcoming[b.player_id] ?? 0) + 1;
+      else if (g.team_white_score != null && (!lastPlayed[b.player_id] || g.date > lastPlayed[b.player_id])) lastPlayed[b.player_id] = g.date;
+    }
+  }
+  const describe = (p: { id: string; display_name: string; last_active_at: string | null }) => ({
+    player: p.display_name,
+    last_opened_app_uk: p.last_active_at ? pseudoUtcFromRealInstant(p.last_active_at) : "not since tracking started (28 Sep 2026)",
+    upcoming_bookings: upcoming[p.id] ?? 0,
+    last_played: lastPlayed[p.id] ?? "never",
+  });
+  if (args.player_name_contains) {
+    const n = args.player_name_contains.toLowerCase();
+    return { tracking_started: "2026-09-28", players: (profiles ?? []).filter((p) => p.display_name.toLowerCase().includes(n)).map(describe) };
+  }
+  const cutoff = Date.now() - (args.inactive_days ?? 21) * 86400000;
+  const quiet = (profiles ?? []).filter((p) => !p.last_active_at || new Date(p.last_active_at).getTime() < cutoff);
+  return {
+    tracking_started: "2026-09-28",
+    note: "Anyone marked 'not since tracking started' may simply not have opened the app since 28 Sep 2026 - treat that as unknown until tracking has run for a few weeks.",
+    total_members: (profiles ?? []).length,
+    inactive_count: quiet.length,
+    players: quiet.map(describe).sort((a, b) => a.player.localeCompare(b.player)),
+  };
+}
+
 // Wrapped engagement: who opened their month's story, watched it to the
 // final score card, and shared it. Deliberately not shown anywhere in the
 // app - admins get it by asking GaffAI.
@@ -1298,6 +1416,9 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   forget_standing_fact: forgetStandingFact,
   find_boot_room_listings: findBootRoomListings,
   get_wrapped_engagement: getWrappedEngagement,
+  find_dropouts: findDropouts,
+  get_notification_stats: getNotificationStats,
+  find_inactive_players: findInactivePlayers,
   find_flagged_feedback: findFlaggedFeedback,
 };
 

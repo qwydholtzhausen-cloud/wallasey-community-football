@@ -271,6 +271,44 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     },
   },
   {
+    name: "find_dropouts",
+    description:
+      "Bookings that were removed before a game: who, which game, how long before kickoff, whether they were on the waiting list, and why (self = they gave up their spot, admin = an admin removed them, system = auto-removed for not paying). Recorded from 28 Sep 2026 onwards; earlier drop-outs weren't kept. Use for 'who drops out most', 'late drop-outs this month', 'has X pulled out of games', 'how reliable is X'. A cancelled/deleted fixture never counts. Not shown in the app.",
+    input_schema: {
+      type: "object",
+      properties: {
+        player_name_contains: { type: "string", description: "Only this player (partial name match)" },
+        days: { type: "number", description: "How far back, default 60" },
+        within_hours: { type: "number", description: "Only drop-outs this close to kickoff, e.g. 24 for late drop-outs" },
+        include_waiting_list: { type: "boolean", description: "Include people leaving the waiting list (default false - usually not a drop-out)" },
+      },
+    },
+  },
+  {
+    name: "get_notification_stats",
+    description:
+      "How many people each kind of push notification reached and how many tapped it (open rate), e.g. teams are out, vote for Man of the Match, kickoff reminders, payment nudges. Recorded from 28 Sep 2026. Use for 'are people opening the notifications', 'which notifications work', 'did anyone tap the teams message'. Not shown in the app.",
+    input_schema: {
+      type: "object",
+      properties: {
+        days: { type: "number", description: "How far back, default 30" },
+        kind_contains: { type: "string", description: "Only kinds matching this, e.g. 'teams' or 'kickoff'" },
+      },
+    },
+  },
+  {
+    name: "find_inactive_players",
+    description:
+      "When members last opened the app, and who has gone quiet: players who haven't opened it in N days, and whether they have any upcoming bookings or when they last played. Tracking started 28 Sep 2026, so anyone with no record yet simply hasn't opened the app since then. Use for 'who's gone quiet', 'who hasn't been on the app', 'when did X last use the app'. Not shown in the app.",
+    input_schema: {
+      type: "object",
+      properties: {
+        inactive_days: { type: "number", description: "Not opened in at least this many days, default 21" },
+        player_name_contains: { type: "string", description: "Look up one player's last active time instead" },
+      },
+    },
+  },
+  {
     name: "find_flagged_feedback",
     description:
       "Answers an admin has flagged as wrong for later review (via the flag button on a GaffAI reply) - the original question, the answer that was flagged, who flagged it, and when. Use this for anything like 'what have people flagged about you' or 'any known mistakes to review'.",
