@@ -4,6 +4,7 @@ import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
 import { kickoffCutoff, nowInLondon, previousMonthKey, MATCH_DURATION_MINUTES, MOTM_VOTE_WINDOW_MINUTES } from "../../../../lib/time";
 import { ensureFreshMonzoToken, registerMonzoWebhook } from "../../../../lib/monzo";
 import { AUTO_REMOVE_UNPAID_BOOKINGS, WRAPPED_OPEN_TO_ALL_FROM, WRAPPED_FIRST_MONTH_FOR_ALL } from "../../../../lib/clubPolicy";
+import { nextOpenGame, fmtJourneyDate, type JourneyGame } from "../../../../lib/memberJourney";
 
 // Both sides of this comparison come from the same "pretend UTC" trick in
 // lib/time.ts (real UK wall-clock digits, formatted as if they were UTC) -
@@ -14,10 +15,12 @@ function toMs(pseudoUtc: string) {
 }
 
 interface Booking {
+  id: string;
   player_id: string;
   status: string;
   waiting: boolean;
   team: "white" | "red" | null;
+  pot_exempt_reason: string | null;
 }
 
 interface GameRef {
@@ -67,7 +70,7 @@ export async function GET(req: Request) {
   const nowMs = toMs(nowUkStr);
   const { data: games } = await admin
     .from("games")
-    .select("id, date, kickoff, venue, max_players, team_white_score, team_red_score, bookings(player_id, status, waiting, team)");
+    .select("id, date, kickoff, venue, pitch, price, published, max_players, team_white_score, team_red_score, bookings(id, player_id, status, waiting, team, pot_exempt_reason)");
   const { data: settings } = await admin.from("club_settings").select("team_white_name, team_red_name").single();
   const whiteLabel = settings?.team_white_name || "Whites";
   const redLabel = settings?.team_red_name || "Reds";
@@ -437,6 +440,90 @@ export async function GET(req: Request) {
     for (const g of dueGames) await markNotified(`fixture-announced-${g.id}`);
   }
 
+  // --- First game: a hello on the morning of it, and a follow-up after ---
+  // "First" = no earlier game they've actually played. Both are tied to
+  // dates (today / yesterday), so nobody gets one for a game long past.
+  // Inbox + push, since most members don't have notifications on.
+  type CronGame = Omit<JourneyGame, "bookings"> & { team_red_score: number | null; bookings: Booking[] };
+  const allGames = (games ?? []) as unknown as CronGame[];
+  const playedBefore = (playerId: string, beforeDate: string) =>
+    allGames.some((x) => x.date < beforeDate && x.team_white_score != null && x.bookings.some((b) => b.player_id === playerId && !b.waiting));
+  const { data: codeRows } = await admin.from("profiles").select("id, display_name, payment_code");
+  const profileOf = (id: string) => (codeRows ?? []).find((p) => p.id === id);
+  const yesterday = new Date(Date.UTC(+todayDate.slice(0, 4), +todayDate.slice(5, 7) - 1, +todayDate.slice(8, 10) - 1)).toISOString().slice(0, 10);
+  const hhmm = nowUkStr.slice(11, 16);
+
+  for (const g of allGames) {
+    if (g.date !== todayDate || !g.published || hhmm < "09:00") continue;
+    if (toMs(kickoffCutoff(g.date, g.kickoff, 0)) - nowMs < 60 * 60000) continue;
+    for (const b of g.bookings.filter((x) => !x.waiting)) {
+      const key = `first-game-${b.player_id}`;
+      if (notifiedKeys.has(key) || playedBefore(b.player_id, g.date)) continue;
+      const p = profileOf(b.player_id);
+      const pay =
+        b.status === "unpaid"
+          ? ` It's £${g.price}: pay by bank transfer${p?.payment_code ? ` with your reference ${p.payment_code}` : ""} (details in Account).`
+          : "";
+      await admin.from("admin_messages").insert({
+        recipient_id: b.player_id,
+        sender_id: null,
+        message: `Tonight's your first game with us, ${(p?.display_name ?? "").split(" ")[0]} 👋 ${g.venue}, kicking off at ${g.kickoff} (${g.pitch}). Your team will be on the Line-up tab once it's picked.${pay} Say hello to one of the admins when you get there. Enjoy it!`,
+      });
+      await sendPushToUsers([b.player_id], { title: "Your first game is tonight 👋", body: `${g.venue}, ${g.kickoff}. Check the Line-up tab for your team.`, url: "/" });
+      await markNotified(key);
+    }
+  }
+
+  if (hhmm >= "10:00") {
+    for (const g of allGames) {
+      if (g.date !== yesterday || g.team_white_score == null) continue;
+      for (const b of g.bookings.filter((x) => !x.waiting)) {
+        const key = `after-first-game-${b.player_id}`;
+        if (notifiedKeys.has(key) || playedBefore(b.player_id, g.date)) continue;
+        const p = profileOf(b.player_id);
+        const nextBooked = allGames
+          .filter((x) => kickoffCutoff(x.date, x.kickoff, 0) > nowUkStr && x.bookings.some((y) => y.player_id === b.player_id && !y.waiting))
+          .sort((x, y) => x.date.localeCompare(y.date))[0];
+        const open = nextOpenGame(allGames as unknown as JourneyGame[], nowUkStr);
+        const next = nextBooked
+          ? `See you on ${fmtJourneyDate(nextBooked.date)}!`
+          : open
+            ? `The next game with a free spot is ${fmtJourneyDate(open.date)}, and you can join the waiting list on any sooner game in Fixtures.`
+            : "Games are full at the moment, but join the waiting list on any game in Fixtures and you'll get a message if a spot opens.";
+        await admin.from("admin_messages").insert({
+          recipient_id: b.player_id,
+          sender_id: null,
+          message: `Good to have you at your first game last night, ${(p?.display_name ?? "").split(" ")[0]}! ${next} You can also vote for Man of the Match and see the stats on the Results tab.`,
+        });
+        await sendPushToUsers([b.player_id], {
+          title: "Good to have you last night ⚽",
+          body: nextBooked ? `See you on ${fmtJourneyDate(nextBooked.date)}.` : "Open the app to book your next game.",
+          url: "/",
+        });
+        await markNotified(key);
+      }
+    }
+  }
+
+  // --- Birthday: the player hears their game is free ---
+  // Sent when an admin makes a booking free for a birthday (the free game
+  // itself stays an admin decision, often prompted by GaffAI).
+  for (const g of allGames) {
+    if (kickoffCutoff(g.date, g.kickoff, 0) <= nowUkStr) continue;
+    for (const b of g.bookings.filter((x) => x.pot_exempt_reason === "birthday" && !x.waiting)) {
+      const key = `birthday-free-${b.id}`;
+      if (notifiedKeys.has(key)) continue;
+      if (hhmm < "09:00" || hhmm >= "21:00") continue;
+      await admin.from("admin_messages").insert({
+        recipient_id: b.player_id,
+        sender_id: null,
+        message: `Happy birthday from everyone at Wirral Community Football 🎂 Your game on ${fmtJourneyDate(g.date)} is on us. Have a good one!`,
+      });
+      await sendPushToUsers([b.player_id], { title: "Happy birthday 🎂", body: `Your game on ${fmtJourneyDate(g.date)} is on us.`, url: "/" });
+      await markNotified(key);
+    }
+  }
+
   // --- Welcome message for new players, via inbox + push ---
   // Not time-window-gated like the reminders above - fires the first
   // frequent-cron run after a profile exists, whether it came from
@@ -450,14 +537,24 @@ export async function GET(req: Request) {
     if (notifiedKeys.has(key)) continue;
 
     const firstName = p.display_name.split(" ")[0];
+    // Honest about how far ahead games fill: if the next free spot is weeks
+    // away, say when it is and point to the waiting lists for sooner games,
+    // rather than "grab a spot" and a page of full games.
+    const open = nextOpenGame((games ?? []) as unknown as JourneyGame[], nowUkStr);
+    const openDays = open ? (toMs(kickoffCutoff(open.date, open.kickoff, 0)) - nowMs) / 86400000 : null;
+    const whereToStart = !open
+      ? "Games are all full right now, so join the waiting list on any game in Fixtures: if someone drops out you move up, and you'll get a message the moment you're in."
+      : openDays! <= 10
+        ? `The next game with a free spot is ${fmtJourneyDate(open.date)} at ${open.kickoff} (${open.venue}), so head to Fixtures and grab it.`
+        : `Games book up a few weeks ahead: the next one with a free spot is ${fmtJourneyDate(open.date)} (${open.venue}). For anything sooner, join the waiting list on a game in Fixtures: if someone drops out you move up, and you'll get a message the moment you're in.`;
     await admin.from("admin_messages").insert({
       recipient_id: p.id,
       sender_id: null,
-      message: `Welcome to Wirral Community Football, ${firstName}! 👋 Head to Fixtures to browse upcoming games and grab a spot — payment details show up once you're booked. Worth turning on notifications in Account too, so you don't miss spots opening up or payment reminders. See you on the pitch!`,
+      message: `Welcome to Wirral Community Football, ${firstName}! 👋 ${whereToStart} Payment details show up once you're booked. Worth turning on notifications in Account, so you don't miss a spot opening up. See you on the pitch!`,
     });
     await sendPushToUsers([p.id], {
       title: "Welcome to the club! ⚽",
-      body: "Head to Fixtures to grab a spot on the next game.",
+      body: open && openDays! <= 10 ? `Next free spot: ${fmtJourneyDate(open.date)}. Head to Fixtures to grab it.` : "Games book up fast. Open the app to see the next free spot and join a waiting list.",
       url: "/",
     });
     await markNotified(key);

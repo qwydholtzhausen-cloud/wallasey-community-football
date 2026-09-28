@@ -6,6 +6,7 @@ import { sendPushToUsers } from "../push";
 import { defaultPitchCost } from "../pitchCost";
 import { BOOT_CATEGORY, type BootCategory } from "../bootRoom";
 import { WRAPPED_OPEN_TO_ALL_FROM } from "../clubPolicy";
+import { computeJourney, fmtJourneyDate } from "../memberJourney";
 
 // Same "pretend UTC" trick as everywhere else this pattern's used
 // (app/api/cron/frequent/route.ts, app/WirralCommunityFootball.tsx) -
@@ -1507,6 +1508,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   find_dropouts: findDropouts,
   get_notification_stats: getNotificationStats,
   find_inactive_players: findInactivePlayers,
+  get_member_journey: getMemberJourney,
   find_flagged_feedback: findFlaggedFeedback,
 };
 
@@ -1810,6 +1812,66 @@ async function computeBirthdayNudge(admin: SupabaseClient): Promise<Nudge | null
   };
 }
 
+// Member journey alerts: the points where people get lost - can't log in,
+// never booked, came once, drifted away - plus games being full so far
+// ahead that a new member can't get one. Each lists names so an admin can
+// reach out personally; the keys change when the people do.
+async function computeJourneyNudges(admin: SupabaseClient): Promise<Nudge[]> {
+  const j = await computeJourney(admin);
+  const names = (people: { name: string }[]) =>
+    people.length <= 8 ? people.map((p) => p.name).join(", ") : `${people.slice(0, 8).map((p) => p.name).join(", ")} and ${people.length - 8} more`;
+  const out: Nudge[] = [];
+  if (j.unconfirmed.length > 0) {
+    out.push({
+      key: contentKey("journey-unconfirmed", j.unconfirmed.map((p) => p.id)),
+      text: `${j.unconfirmed.length} sign-up${j.unconfirmed.length === 1 ? " hasn't" : "s haven't"} confirmed their email, so they can't log in: ${names(j.unconfirmed)}. You can send a login code from Account → Manage roles.`,
+    });
+  }
+  if (j.neverBooked.length > 0) {
+    out.push({
+      key: contentKey("journey-never-booked", j.neverBooked.map((p) => p.id)),
+      text: `${j.neverBooked.length} member${j.neverBooked.length === 1 ? " joined" : "s joined"} 2+ weeks ago and never booked a game: ${names(j.neverBooked)}.${j.nextOpen ? ` The next game with a free spot is ${fmtJourneyDate(j.nextOpen.date)}.` : ""}`,
+    });
+  }
+  if (j.oneAndDone.length > 0) {
+    out.push({
+      key: contentKey("journey-one-and-done", j.oneAndDone.map((p) => p.id)),
+      text: `${j.oneAndDone.length} player${j.oneAndDone.length === 1 ? "" : "s"} came to one game and haven't booked again: ${names(j.oneAndDone)}.`,
+    });
+  }
+  if (j.lapsed.length > 0) {
+    out.push({
+      key: contentKey("journey-lapsed", j.lapsed.map((p) => p.id)),
+      text: `${j.lapsed.length} regular${j.lapsed.length === 1 ? " hasn't" : "s haven't"} played in 4+ weeks and ${j.lapsed.length === 1 ? "has" : "have"} nothing booked: ${names(j.lapsed)}.`,
+    });
+  }
+  if (j.nextOpen && j.nextOpen.daysAway > 21) {
+    out.push({
+      key: contentKey("journey-full", [j.nextOpen.date]),
+      text: `Every game is full until ${fmtJourneyDate(j.nextOpen.date)} (${Math.round(j.nextOpen.daysAway / 7)} weeks away), so a new member can't get a game before then except off a waiting list. Worth adding fixtures if pitches allow.`,
+    });
+  }
+  return out;
+}
+
+// The whole journey on request: where every member is, with names.
+async function getMemberJourney(admin: SupabaseClient) {
+  const j = await computeJourney(admin);
+  return {
+    members: j.counts.members,
+    next_game_with_a_free_spot: j.nextOpen ? `${j.nextOpen.venue}, ${j.nextOpen.date} ${j.nextOpen.kickoff} (${j.nextOpen.daysAway} days away)` : "none - every published game is full",
+    never_booked_at_all: j.counts.neverBookedAtAll,
+    played_once: j.counts.playedOnce,
+    regulars_5_plus_games: j.counts.regulars,
+    cannot_log_in_unconfirmed_email: j.unconfirmed.map((p) => ({ name: p.name, joined: p.joined })),
+    joined_2_weeks_plus_never_booked: j.neverBooked.map((p) => ({ name: p.name, joined: p.joined })),
+    came_once_not_back: j.oneAndDone.map((p) => ({ name: p.name, played: p.lastPlayed })),
+    drifted_4_weeks_plus_nothing_booked: j.lapsed.map((p) => ({ name: p.name, last_played: p.lastPlayed, games: p.games })),
+    automatic_messages:
+      "New members get a welcome (with the next free game), first-timers get a message on the morning of their first game and a follow-up the morning after, and a birthday message goes out when a booking is made free for their birthday. Nothing automatic goes to people who drift away - that's left to admins, personally.",
+  };
+}
+
 // Pure deterministic queries, same as suggest_balanced_teams - no
 // Anthropic API call anywhere in here, so computing this on every app
 // load costs nothing beyond a handful of fast Supabase round trips.
@@ -1826,6 +1888,7 @@ export async function computeNudges(admin: SupabaseClient): Promise<Nudge[]> {
     computeMatchdayNotFullNudge(admin),
     computeBirthdayNudge(admin),
   ]);
+  const journey = await computeJourneyNudges(admin).catch(() => [] as Nudge[]);
   const candidates = [
     unpaid,
     overdue,
@@ -1837,6 +1900,7 @@ export async function computeNudges(admin: SupabaseClient): Promise<Nudge[]> {
     leadTimeTrend,
     matchdayNotFull,
     birthdays,
+    ...journey,
   ].filter((n): n is Nudge => n !== null);
   if (candidates.length === 0) return [];
 

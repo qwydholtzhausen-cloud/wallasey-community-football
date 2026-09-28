@@ -309,6 +309,12 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
     },
   },
   {
+    name: "get_member_journey",
+    description:
+      "Where every member is in their journey with the club, with names: sign-ups who can't log in (unconfirmed email), members who joined 2+ weeks ago and never booked, players who came once and haven't returned, regulars who've drifted (4+ weeks, nothing booked), and the next game with a free spot. Use for 'who have we lost', 'who should we reach out to', 'how are new members getting on', 'who came once'. For a drifted or one-game player, offer to draft a personal message (propose_send_reminder).",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "find_flagged_feedback",
     description:
       "Answers an admin has flagged as wrong for later review (via the flag button on a GaffAI reply) - the original question, the answer that was flagged, who flagged it, and when. Use this for anything like 'what have people flagged about you' or 'any known mistakes to review'.",

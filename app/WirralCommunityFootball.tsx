@@ -7932,6 +7932,13 @@ function GaffAIChat({
             <div className="gaffai-messages" ref={scrollRef}>
               {nudges.map((n) => {
                 const money = /^(unpaid|overdue)-/.test(n.key);
+                const reachOut = /^journey-(never-booked|one-and-done|lapsed)-/.test(n.key);
+                const label = money ? "Draft a reminder" : reachOut ? "Draft messages" : "What should I do?";
+                const ask = money
+                  ? `Draft a short payment reminder for this: ${n.text}`
+                  : reachOut
+                    ? `Draft a short, friendly personal message for each of these players, one at a time, that I can send: ${n.text}`
+                    : `What should I do about this? ${n.text}`;
                 return (
                   <div key={n.key} className="gaffai-needs">
                     <div className="gaffai-needs-k">Needs you</div>
@@ -7940,9 +7947,9 @@ function GaffAIChat({
                       <button
                         className="gaffai-needs-go"
                         disabled={loading}
-                        onClick={() => send(money ? `Draft a short payment reminder for this: ${n.text}` : `What should I do about this? ${n.text}`)}
+                        onClick={() => send(ask)}
                       >
-                        {money ? "Draft a reminder" : "What should I do?"}
+                        {label}
                       </button>
                       <button className="gaffai-needs-x" onClick={() => dismissNudge(n.key)}>Dismiss</button>
                     </div>
