@@ -1464,6 +1464,8 @@ function App({ session }: { session: Session }) {
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string; undo?: () => void } | null>(null);
+  // Bookings this admin has just confirmed themselves (see the payment watcher).
+  const selfConfirmedRef = useRef<Set<string>>(new Set());
 
   // In-app replacement for window.confirm() - same "confirm before acting"
   // behaviour everywhere it's used, just styled to match the app instead
@@ -1849,7 +1851,9 @@ function App({ session }: { session: Session }) {
       if (!mine) return;
       nextStatus[g.id] = mine.status;
       nextWaiting[g.id] = mine.waiting;
-      if (prevStatus[g.id] && prevStatus[g.id] !== "confirmed" && mine.status === "confirmed") {
+      // Skipped when you confirmed it yourself (an admin's own booking),
+      // so it doesn't replace the "marked paid · Undo" bar.
+      if (prevStatus[g.id] && prevStatus[g.id] !== "confirmed" && mine.status === "confirmed" && !selfConfirmedRef.current.has(mine.id)) {
         notifySuccess(`✓ Payment confirmed for ${g.venue} · ${fmtDate(g.date)}`);
       }
       if (prevWaiting[g.id] === true && mine.waiting === false) {
@@ -2171,6 +2175,7 @@ function App({ session }: { session: Session }) {
       patch.confirmed_at = new Date().toISOString();
     }
     const before = games.flatMap((g) => g.bookings).find((b) => b.id === bookingId);
+    if (status === "confirmed") selfConfirmedRef.current.add(bookingId);
     const { error } = await supabase.from("bookings").update(patch).eq("id", bookingId);
     if (error) return notifyError(error.message);
     // No "are you sure?" on confirming - one tap, with Undo for a slip.
@@ -2192,6 +2197,7 @@ function App({ session }: { session: Session }) {
   async function confirmPayments(bookingIds: string[]) {
     const befores = games.flatMap((g) => g.bookings).filter((b) => bookingIds.includes(b.id) && b.status !== "confirmed");
     if (befores.length === 0) return;
+    befores.forEach((b) => selfConfirmedRef.current.add(b.id));
     const { error } = await supabase
       .from("bookings")
       .update({ status: "confirmed", confirmed_by: myId, confirmed_at: new Date().toISOString() })
