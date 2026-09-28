@@ -641,7 +641,7 @@ async function findPossibleDuplicatePlayers(admin: SupabaseClient) {
         suggest_remove: other.name,
         can_remove_with_gaffai: removable,
         note: removable
-          ? `${other.name} holds no history, so it can be removed with propose_remove_duplicate_account (keep_player_id ${keep.id}, remove_player_id ${other.id}).`
+          ? `${other.name} looks unused (no history${other.last_signed_in_uk === "never" ? ", never signed in" : ""}) and could be removed with propose_remove_duplicate_account (keep_player_id ${keep.id}, remove_player_id ${other.id}). It's probably the same person signing up twice, but an account that has never signed in could also be a different real person who hasn't logged in yet (a relative or friend with a similar name or email) - say that, and let the admin decide.`
           : `Both accounts hold history (or the unused one is an admin), so this needs a manual merge in the Admin console - GaffAI won't remove it.`,
       };
     })
@@ -1987,12 +1987,16 @@ export async function executeSetPotExempt(admin: SupabaseClient, callerId: strin
 // or was last used before the account being kept. Anything else needs a
 // manual merge. Checked when proposed and again on confirm.
 async function checkRemovableDuplicate(admin: SupabaseClient, removeId: string, keepId: string, callerId: string) {
-  if (!removeId || !keepId || removeId === keepId) throw new Error("Need two different accounts.");
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuid.test(removeId ?? "") || !uuid.test(keepId ?? "")) {
+    throw new Error("Those aren't account ids. Call find_possible_duplicate_players again and use the ids it gives for this pair - don't tell the admin anything was removed.");
+  }
+  if (removeId === keepId) throw new Error("Need two different accounts.");
   if (removeId === callerId) throw new Error("You can't remove your own account this way.");
   const { data: profs } = await admin.from("profiles").select("id, display_name, role, created_at, last_active_at, avatar_url").in("id", [removeId, keepId]);
   const remove = profs?.find((p) => p.id === removeId);
   const keep = profs?.find((p) => p.id === keepId);
-  if (!remove || !keep) throw new Error("One of those accounts no longer exists.");
+  if (!remove || !keep) throw new Error("Couldn't find one of those account ids. Call find_possible_duplicate_players again for the current ids.");
   if (remove.role !== "player") throw new Error(`${remove.display_name} is an admin account - GaffAI never removes those.`);
   const [r, k] = await Promise.all([accountEvidence(admin, remove), accountEvidence(admin, keep)]);
   if (r.has_any_history) {
