@@ -3524,8 +3524,12 @@ function App({ session }: { session: Session }) {
     } catch {}
     setWrappedDismissed(true);
   }
+  // Admins only differ from players while previewing the month in progress
+  // before the open date; after that everyone sees the same thing (so no
+  // August story once the preview ends, just nothing until September's
+  // 8am release).
   const showWrappedBanner =
-    !!wrapped && !wrappedDismissed && (isAdmin || (wrappedOpenToAll && wrappedMonthKey >= WRAPPED_FIRST_MONTH_FOR_ALL));
+    !!wrapped && !wrappedDismissed && (wrappedSoFar || (wrappedOpenToAll && wrappedMonthKey >= WRAPPED_FIRST_MONTH_FOR_ALL));
 
   async function shareWrapped() {
     if (!wrapped) return;
