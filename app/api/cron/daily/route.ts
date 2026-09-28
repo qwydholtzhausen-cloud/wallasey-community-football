@@ -199,6 +199,11 @@ export async function GET(req: Request) {
   } catch (err) {
     console.error("Saving monthly snapshots failed", err);
   }
+  try {
+    await applyRetention(admin);
+  } catch (err) {
+    console.error("Data retention clean-up failed", err);
+  }
 
   return NextResponse.json({ ok: true });
 }
@@ -303,5 +308,46 @@ async function saveMonthlySnapshots(
         .map(([id, n]) => ({ id, name: nameOf(id), goals: n })),
     };
     await admin.from("monthly_snapshots").insert({ month_key: month, data });
+  }
+}
+
+// What the privacy page (app/privacy/page.tsx) promises about keeping data:
+//   - app activity (last opened, notification taps, Wrapped views,
+//     drop-outs/no-shows): 12 months;
+//   - after 2 years without playing or opening the app: personal details
+//     removed (photo, emergency contact, date of birth, ratings). Name,
+//     bookings and payments stay, so results and the accounts stay right.
+// Change the page if this changes.
+async function applyRetention(admin: SupabaseClient) {
+  const yearAgo = new Date(Date.now() - 365 * 86400000).toISOString();
+  await admin.from("notification_sends").delete().lt("sent_at", yearAgo);
+  await admin.from("wrapped_events").delete().lt("created_at", yearAgo);
+  await admin.from("booking_cancellations").delete().lt("cancelled_at", yearAgo);
+  await admin.from("profiles").update({ last_active_at: null }).lt("last_active_at", yearAgo);
+
+  const twoYearsAgo = new Date(Date.now() - 2 * 365 * 86400000);
+  const cutoffDate = twoYearsAgo.toISOString().slice(0, 10);
+  const { data: profiles } = await admin.from("profiles").select("id, created_at, last_active_at, avatar_url, role");
+  const { data: recent } = await admin.from("bookings").select("player_id, games!inner(date)").gte("games.date", cutoffDate);
+  const activeRecently = new Set((recent ?? []).map((b) => b.player_id));
+  const dormant = (profiles ?? []).filter(
+    (p) =>
+      p.role === "player" &&
+      !activeRecently.has(p.id) &&
+      new Date(p.created_at) < twoYearsAgo &&
+      (!p.last_active_at || new Date(p.last_active_at) < twoYearsAgo)
+  );
+  for (const p of dormant) {
+    await Promise.all([
+      admin.from("emergency_contacts").delete().eq("player_id", p.id),
+      admin.from("player_birthdays").delete().eq("player_id", p.id),
+      admin.from("player_self_ratings").delete().eq("player_id", p.id),
+      admin.from("player_admin_ratings").delete().eq("player_id", p.id),
+      admin.from("rating_history").delete().eq("player_id", p.id),
+    ]);
+    if (p.avatar_url) {
+      await admin.storage.from("avatars").remove([`${p.id}.jpg`]);
+      await admin.from("profiles").update({ avatar_url: null }).eq("id", p.id);
+    }
   }
 }

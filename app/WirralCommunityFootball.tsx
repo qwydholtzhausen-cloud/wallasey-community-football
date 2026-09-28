@@ -1426,7 +1426,7 @@ function SignIn() {
         )}
 
         <p className="wcf-privacy-note">
-          We only store your name, email, and booking history to run the club — nothing else.
+          We use your details to run the club. <a href="/privacy">How we look after them</a>
         </p>
       </div>
     </div>
@@ -8255,7 +8255,7 @@ function TeamCallout({ tone, icon, title, children }: { tone: "gold" | "red" | "
 
 // Line icons for the Account settings rows, in place of the old ◆ ★ ◎
 // symbol tiles.
-function SetIcon({ name }: { name: "bell" | "user" | "phone" | "cake" | "star" | "mobile" | "mail" | "users" | "list" | "gear" | "trophy" }) {
+function SetIcon({ name }: { name: "bell" | "user" | "phone" | "cake" | "star" | "mobile" | "mail" | "users" | "list" | "gear" | "trophy" | "shield" }) {
   const paths: Record<typeof name, React.ReactNode> = {
     bell: <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></>,
     user: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
@@ -8268,6 +8268,7 @@ function SetIcon({ name }: { name: "bell" | "user" | "phone" | "cake" | "star" |
     list: <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />,
     gear: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>,
     trophy: <><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" /><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></>,
+    shield: <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />,
   };
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -8838,6 +8839,11 @@ function AccountPanel({
           <span className="wcf-set-link-title">How to turn on notifications</span>
           <span className="wcf-set-chev" aria-hidden="true">›</span>
         </button>
+        <a className="wcf-set-link" href="/privacy">
+          <span className="wcf-acc-section-tile"><SetIcon name="shield" /></span>
+          <span className="wcf-set-link-title">Privacy</span>
+          <span className="wcf-set-chev" aria-hidden="true">›</span>
+        </a>
         <div className="wcf-set-link static">
           <span className="wcf-acc-section-tile"><SetIcon name="mail" /></span>
           <span className="wcf-set-link-title">Signed in as</span>
@@ -12966,6 +12972,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-ec-sub{margin-top:1px;font-size:11.5px;color:var(--dim)}
 .wcf-ec-call{flex:none;padding:7px 10px;border-radius:10px;background:rgba(134,239,172,.1);border:1px solid rgba(134,239,172,.35);color:var(--green);font-weight:800;font-size:12px;text-decoration:none;font-variant-numeric:tabular-nums}
 .wcf-ec-none{flex:none;font-size:11.5px;font-weight:700;color:#64748b}
+.wcf-privacy-note a{color:#f5d97a;font-weight:700;text-decoration:none}
+a.wcf-set-link{text-decoration:none}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
