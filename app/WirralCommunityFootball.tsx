@@ -3600,33 +3600,40 @@ function App({ session }: { session: Session }) {
 
   // Club records for the selected season - single-game bests, runs, MOTM,
   // the waiting list and how early games sell out. Computed like Wrapped
-  // from rows already loaded (lib/records.ts). Only games whose MOTM
-  // voting has closed count, so a record can't flicker mid-vote.
+  // from rows already loaded (lib/records.ts). A game counts as soon as its
+  // score is in (same as the Feed's record posts); only its MOTM votes wait
+  // until voting closes, so MOTM records can't flicker mid-vote.
+  const closedMotmTallies = useMemo(() => {
+    const out: Record<string, Record<string, number>> = {};
+    for (const g of pastGames) if (motmTallyByGame[g.id] && !motmVotingOpen(g)) out[g.id] = motmTallyByGame[g.id];
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastGames, motmTallyByGame, nowUk]);
   // The same season's bests for the signed-in player, for "Your bests".
   const myBests = useMemo(
     () =>
       computePersonalBests(
         {
-          games: pastGames.filter((g) => g.date.slice(0, 4) === String(activeStatsYear) && !motmVotingOpen(g)),
+          games: pastGames.filter((g) => g.date.slice(0, 4) === String(activeStatsYear) && g.team_white_score != null && g.team_red_score != null),
           goals: goalRows,
-          motmTallyByGame,
+          motmTallyByGame: closedMotmTallies,
           names: () => "",
         },
         myId
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pastGames, goalRows, motmTallyByGame, activeStatsYear, myId]
+    [pastGames, goalRows, closedMotmTallies, activeStatsYear, myId]
   );
   const clubRecords = useMemo(() => {
     const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
     return computeRecords({
-      games: pastGames.filter((g) => g.date.slice(0, 4) === String(activeStatsYear) && !motmVotingOpen(g)),
+      games: pastGames.filter((g) => g.date.slice(0, 4) === String(activeStatsYear) && g.team_white_score != null && g.team_red_score != null),
       goals: goalRows,
-      motmTallyByGame,
+      motmTallyByGame: closedMotmTallies,
       names: (id) => nameById.get(id) ?? "Former player",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastGames, goalRows, motmTallyByGame, motmWinnerIdsByGame, profiles, activeStatsYear]);
+  }, [pastGames, goalRows, closedMotmTallies, profiles, activeStatsYear]);
 
   const nextGame = upcomingGames[0];
   const nextConfirmed = useMemo(
@@ -6565,7 +6572,7 @@ function App({ session }: { session: Session }) {
           results.push(w === rr ? "D" : (bk.team === "white") === w > rr ? "W" : "L");
         }
         const pb = computePersonalBests(
-          { games: seasonGames.filter((g) => !motmVotingOpen(g)), goals: goalRows, motmTallyByGame, names: () => "" },
+          { games: seasonGames.filter((g) => g.team_white_score != null && g.team_red_score != null), goals: goalRows, motmTallyByGame: closedMotmTallies, names: () => "" },
           playerCardId
         );
         const topGoals = Math.max(0, ...playerStats.map((p) => p.goals));
