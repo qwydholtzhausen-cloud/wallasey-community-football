@@ -1163,7 +1163,14 @@ async function findDropouts(
     booked_at_uk: pseudoUtcFromRealInstant(r.booked_at),
     removed_at_uk: pseudoUtcFromRealInstant(r.cancelled_at),
     hours_before_kickoff: Math.round((r.minutes_before_kickoff / 60) * 10) / 10,
-    reason: r.reason === "self" ? "gave up their spot" : r.reason === "admin" ? `removed by ${names[r.removed_by ?? ""] ?? "an admin"}` : "auto-removed (unpaid)",
+    reason:
+      r.reason === "no_show"
+        ? `didn't show (removed after the game by ${names[r.removed_by ?? ""] ?? "an admin"})`
+        : r.reason === "self"
+          ? "gave up their spot"
+          : r.reason === "admin"
+            ? `removed by ${names[r.removed_by ?? ""] ?? "an admin"}`
+            : "auto-removed (unpaid)",
   }));
   if (args.player_name_contains) {
     const n = args.player_name_contains.toLowerCase();

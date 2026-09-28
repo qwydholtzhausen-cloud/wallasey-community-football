@@ -273,7 +273,7 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
   {
     name: "find_dropouts",
     description:
-      "Bookings that were removed before a game: who, which game, how long before kickoff, whether they were on the waiting list, and why (self = they gave up their spot, admin = an admin removed them, system = auto-removed for not paying). Recorded from 28 Sep 2026 onwards; earlier drop-outs weren't kept. Use for 'who drops out most', 'late drop-outs this month', 'has X pulled out of games', 'how reliable is X'. A cancelled/deleted fixture never counts. Not shown in the app.",
+      "Bookings that were removed before a game: who, which game, how long before kickoff, whether they were on the waiting list, and why (self = they gave up their spot, admin = an admin removed them before the game, no_show = removed after kickoff because they didn't turn up, system = auto-removed for not paying). Recorded from 28 Sep 2026 onwards; earlier drop-outs weren't kept. Use for 'who drops out most', 'late drop-outs this month', 'any no-shows', 'has X pulled out of games', 'how reliable is X'. A cancelled/deleted fixture never counts. Not shown in the app.",
     input_schema: {
       type: "object",
       properties: {

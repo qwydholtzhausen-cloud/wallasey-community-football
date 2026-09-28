@@ -1804,3 +1804,67 @@ alter table public.gaffai_dismissed_nudges drop constraint if exists gaffai_dism
 alter table public.gaffai_dismissed_nudges add constraint gaffai_dismissed_nudges_dismissed_by_fkey
   foreign key (dismissed_by) references public.profiles (id) on delete cascade;
 alter table public.gaffai_dismissed_nudges add primary key (nudge_key, dismissed_by);
+
+-- ─────────────────────────────────────────────────────────────────
+-- 2026-09-28: (1) removing someone after kickoff is recorded as a no-show;
+-- (2) the waiting list is only promoted for games that haven't kicked off,
+-- so removing a no-show from a finished game can't pull a waiting-list
+-- player into a game they never played (and leave them owing for it).
+-- ─────────────────────────────────────────────────────────────────
+alter table public.booking_cancellations drop constraint if exists booking_cancellations_reason_check;
+alter table public.booking_cancellations add constraint booking_cancellations_reason_check
+  check (reason in ('self', 'admin', 'system', 'no_show'));
+
+create or replace function public.log_booking_cancellation() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  g record;
+  mins int;
+begin
+  select date, kickoff into g from public.games where id = old.game_id;
+  if not found then
+    return old; -- the whole fixture is being deleted
+  end if;
+  mins := floor(extract(epoch from (((g.date + g.kickoff::time) at time zone 'Europe/London') - now())) / 60)::int;
+  insert into public.booking_cancellations (player_id, game_id, was_waiting, booked_at, minutes_before_kickoff, reason, removed_by)
+  values (
+    old.player_id,
+    old.game_id,
+    old.waiting,
+    old.created_at,
+    mins,
+    case
+      when auth.uid() is null then 'system'
+      when auth.uid() = old.player_id then 'self'
+      when mins < 0 and not old.waiting then 'no_show'
+      else 'admin'
+    end,
+    auth.uid()
+  );
+  return old;
+end;
+$$;
+
+create or replace function public.bookings_promote_waiting()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if old.waiting = false and exists (
+    select 1 from public.games g
+    where g.id = old.game_id and ((g.date + g.kickoff::time) at time zone 'Europe/London') > now()
+  ) then
+    update public.bookings
+    set waiting = false, promoted_at = now()
+    where id = (
+      select id from public.bookings
+      where game_id = old.game_id and waiting = true
+      order by created_at asc
+      limit 1
+    );
+  end if;
+  return old;
+end;
+$$;

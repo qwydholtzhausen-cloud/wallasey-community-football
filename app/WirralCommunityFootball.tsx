@@ -1724,6 +1724,14 @@ function App({ session }: { session: Session }) {
     if (data) setMonzoUnmatched(data as unknown as MonzoUnmatchedRow[]);
   }, []);
 
+  // Check for a newer notification service worker each time the app opens,
+  // so changes to it (like counting taps) reach phones promptly.
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {});
+    }
+  }, []);
+
   // When this person last opened the app, for GaffAI's "who's gone quiet?".
   // Written on open and whenever the app comes back to the foreground, at
   // most every 30 minutes. Never shown in the app.
@@ -10009,15 +10017,15 @@ function AdminGameRow({
                   onClick={() =>
                     act(async () => {
                       const msg = past
-                        ? "This deletes their booking for this game entirely - no appearance, no pot charge, nothing left behind."
+                        ? "Removes their booking for this game - no appearance, no pot charge. It's kept as a no-show for the stats (GaffAI can report no-shows)."
                         : "Their spot opens up to the waiting list.";
-                      if (await askConfirm(`Remove ${actionFor.player.display_name} from this game?`, msg, "Remove")) {
+                      if (await askConfirm(past ? `${actionFor.player.display_name} didn't show?` : `Remove ${actionFor.player.display_name} from this game?`, msg, "Remove")) {
                         onRemoveBooking(actionFor.id);
                       }
                     })
                   }
                 >
-                  ✕ Remove from game
+                  {past ? "✕ Didn't show: remove" : "✕ Remove from game"}
                 </button>
               </>
             )}
