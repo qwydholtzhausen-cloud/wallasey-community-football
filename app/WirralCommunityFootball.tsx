@@ -3374,7 +3374,15 @@ function App({ session }: { session: Session }) {
   // mid-month leaderboard that flips around), staying up for the whole
   // next month.
   const playerOfMonth = useMemo(() => {
-    const monthKey = previousMonthKey(nowUk);
+    // Announced as soon as the month's last published game is played and its
+    // vote has closed (same rule as Wrapped), not on the 1st - otherwise
+    // last month's.
+    const thisKey = nowUk.slice(0, 7);
+    const thisMonthGames = games.filter((g) => g.published && g.date.startsWith(thisKey));
+    const thisMonthFinished =
+      thisMonthGames.length > 0 &&
+      thisMonthGames.every((g) => g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g));
+    const monthKey = thisMonthFinished ? thisKey : previousMonthKey(nowUk);
     const monthGames = pastGames.filter(
       (g) => g.date.startsWith(monthKey) && g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g)
     );
@@ -3420,7 +3428,7 @@ function App({ session }: { session: Session }) {
       // For the card: why they won.
       winners: leaders.map((id) => ({ id, name: names[id], wins: wins[id] ?? 0, votes: votes[id] ?? 0, goals: goals[id] ?? 0 })),
     };
-  }, [pastGames, motmTallyByGame, motmWinnerIdsByGame, goalRows, nowUk]);
+  }, [games, pastGames, motmTallyByGame, motmWinnerIdsByGame, goalRows, nowUk]);
 
   // Monthly Wrapped: your own story of last month, same "last completed
   // month" window as Player of the Month above, and computed the same way

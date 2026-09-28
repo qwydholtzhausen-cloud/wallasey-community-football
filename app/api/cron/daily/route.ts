@@ -107,7 +107,22 @@ export async function GET(req: Request) {
   }
 
   // --- Player of the Month ---
-  const monthKey = previousMonthKey(nowUk);
+  // Announced once the month's last published game is played and its vote
+  // has closed (same rule as the app and Wrapped), else last month's on the
+  // 1st. The key stops a second announcement when the 1st comes round.
+  const thisMonth = nowUk.slice(0, 7);
+  const { data: thisMonthRows } = await admin
+    .from("games")
+    .select("date, kickoff, team_white_score, team_red_score")
+    .eq("published", true)
+    .gte("date", `${thisMonth}-01`)
+    .lte("date", `${thisMonth}-31`);
+  const thisMonthFinished =
+    (thisMonthRows ?? []).length > 0 &&
+    (thisMonthRows ?? []).every(
+      (g) => g.team_white_score != null && g.team_red_score != null && kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) <= nowUk
+    );
+  const monthKey = thisMonthFinished ? thisMonth : previousMonthKey(nowUk);
   const potmKey = `potm-${monthKey}`;
   if (!notifiedKeys.has(potmKey)) {
     const monthGames = typedGames.filter((g) => g.date.startsWith(monthKey));
