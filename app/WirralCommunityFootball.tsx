@@ -1463,7 +1463,7 @@ function App({ session }: { session: Session }) {
   const [ratingPlayerId, setRatingPlayerId] = useState<string | null>(null);
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const [toast, setToast] = useState<{ kind: "success" | "error"; text: string; undo?: () => void } | null>(null);
 
   // In-app replacement for window.confirm() - same "confirm before acting"
   // behaviour everywhere it's used, just styled to match the app instead
@@ -1862,7 +1862,7 @@ function App({ session }: { session: Session }) {
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 6000);
+    const t = setTimeout(() => setToast(null), toast.undo ? 8000 : 6000);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -2170,8 +2170,45 @@ function App({ session }: { session: Session }) {
       patch.confirmed_by = myId;
       patch.confirmed_at = new Date().toISOString();
     }
+    const before = games.flatMap((g) => g.bookings).find((b) => b.id === bookingId);
     const { error } = await supabase.from("bookings").update(patch).eq("id", bookingId);
     if (error) return notifyError(error.message);
+    // No "are you sure?" on confirming - one tap, with Undo for a slip.
+    if (status === "confirmed" && before && before.status !== "confirmed") {
+      const prev = before.status;
+      setToast({
+        kind: "success",
+        text: `${before.player.display_name} marked paid`,
+        undo: async () => {
+          setToast(null);
+          const { error: undoErr } = await supabase.from("bookings").update({ status: prev, confirmed_by: null, confirmed_at: null }).eq("id", bookingId);
+          if (undoErr) notifyError(undoErr.message);
+        },
+      });
+    }
+  }
+
+  // Everyone who says they've paid, confirmed in one go (with one Undo).
+  async function confirmPayments(bookingIds: string[]) {
+    const befores = games.flatMap((g) => g.bookings).filter((b) => bookingIds.includes(b.id) && b.status !== "confirmed");
+    if (befores.length === 0) return;
+    const { error } = await supabase
+      .from("bookings")
+      .update({ status: "confirmed", confirmed_by: myId, confirmed_at: new Date().toISOString() })
+      .in("id", befores.map((b) => b.id));
+    if (error) return notifyError(error.message);
+    setToast({
+      kind: "success",
+      text: `${befores.length} payment${befores.length === 1 ? "" : "s"} confirmed`,
+      undo: async () => {
+        setToast(null);
+        const results = await Promise.all(
+          befores.map((b) => supabase.from("bookings").update({ status: b.status, confirmed_by: null, confirmed_at: null }).eq("id", b.id))
+        );
+        const failed = results.find((r) => r.error);
+        if (failed?.error) notifyError(failed.error.message);
+      },
+    });
   }
 
   // Keeps the booking's own status untouched (still a real spot, never
@@ -4003,7 +4040,16 @@ function App({ session }: { session: Session }) {
 
   return (
     <>
-      {toast && <div className={"wcf-toast " + toast.kind}>{toast.text}</div>}
+      {toast && (
+        <div className={"wcf-toast " + toast.kind + (toast.undo ? " has-undo" : "")}>
+          <span>{toast.text}</span>
+          {toast.undo && (
+            <button className="wcf-toast-undo" onClick={toast.undo}>
+              Undo
+            </button>
+          )}
+        </div>
+      )}
       <header className="wcf-top">
         <button className="wcf-brand" onClick={() => setTab("fixtures")} aria-label="Go to fixtures">
           <span className="wcf-logo">
@@ -4293,6 +4339,7 @@ function App({ session }: { session: Session }) {
               if (g) shareResult(g);
             }}
             emergencyContacts={emergencyContacts}
+            onConfirmPayments={confirmPayments}
             askConfirm={askConfirm}
           />
         )}
@@ -9452,6 +9499,7 @@ function AdminConsole({
   onSendMessage,
   onShareResult,
   emergencyContacts,
+  onConfirmPayments,
   askConfirm,
 }: {
   upcoming: GameRow[];
@@ -9473,6 +9521,7 @@ function AdminConsole({
   onSendMessage: (recipientId: string, message: string) => Promise<void>;
   onShareResult: (gameId: string) => void;
   emergencyContacts: EmergencyContact[];
+  onConfirmPayments: (bookingIds: string[]) => void;
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
 }) {
   const shared = {
@@ -9735,7 +9784,24 @@ function AdminConsole({
 
       {adminView === "payments" && (
         <>
-          <div className="wcf-admin-group"><span>To check</span><b className="gold">{paymentClaims.length || ""}</b></div>
+          <div className="wcf-admin-group">
+            <span>To check</span>
+            <b className="gold">{paymentClaims.length || ""}</b>
+            {paymentClaims.length >= 2 && (
+              <button
+                className="wcf-confirm-all"
+                onClick={async () => {
+                  const total = paymentClaims.reduce((sum, c) => sum + c.game.price, 0);
+                  const names = paymentClaims.map((c) => c.booking.player.display_name.split(" ")[0]).join(", ");
+                  if (await askConfirm(`Confirm all ${paymentClaims.length} payments?`, `£${total} from ${names}. Check they're in the bank first.`, "Confirm all", false)) {
+                    onConfirmPayments(paymentClaims.map((c) => c.booking.id));
+                  }
+                }}
+              >
+                Confirm all
+              </button>
+            )}
+          </div>
           {paymentClaims.length === 0 && <p className="wcf-empty small">Nobody&apos;s waiting on a payment check.</p>}
           {paymentClaims.length > 0 && (
             <div className="wcf-admin-card">
@@ -12974,6 +13040,9 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-ec-none{flex:none;font-size:11.5px;font-weight:700;color:#64748b}
 .wcf-privacy-note a{color:#f5d97a;font-weight:700;text-decoration:none}
 a.wcf-set-link{text-decoration:none}
+.wcf-toast.has-undo{display:flex;align-items:center;gap:12px}
+.wcf-toast-undo{flex:none;margin-left:auto;padding:6px 14px;border-radius:9px;border:0;background:#04140a;color:#86efac;font-weight:800;font-size:12.5px;cursor:pointer}
+.wcf-confirm-all{margin-left:auto;padding:6px 11px;border-radius:9px;border:0;background:#f5d97a;color:#0d0d1a;font-weight:800;font-size:12px;cursor:pointer}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
