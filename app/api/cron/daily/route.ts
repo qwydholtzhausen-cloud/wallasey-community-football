@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
 import { kickoffCutoff, nowInLondon, previousMonthKey, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../../../../lib/time";
 import { generateWeeklyDigest } from "../../../../lib/gaffai/digest";
+import { motmWinners, goalsLookup } from "../../../../lib/motm";
 
 interface CronBooking {
   player_id: string;
@@ -49,6 +50,9 @@ export async function GET(req: Request) {
 
   const { data: votes } = await admin.from("motm_votes").select("game_id, candidate_id");
   const allVotes = votes ?? [];
+  // For the club's MOTM tie-break (lib/motm.ts): a tie on votes goes to more goals that game.
+  const { data: allGoalRows } = await admin.from("game_stats").select("game_id, player_id, goals");
+  const goalsIn = goalsLookup(allGoalRows);
 
   const { data: notified } = await admin.from("notified_events").select("event_key");
   const notifiedKeys = new Set((notified ?? []).map((r) => r.event_key));
@@ -71,9 +75,9 @@ export async function GET(req: Request) {
 
     const tally: Record<string, number> = {};
     for (const v of gameVotes) tally[v.candidate_id] = (tally[v.candidate_id] ?? 0) + 1;
-    // Joint winners when the top count is shared, same as the app.
-    const topCount = Math.max(...Object.values(tally));
-    const winnerIds = Object.keys(tally).filter((id) => tally[id] === topCount);
+    // Same rule as the app: most votes, a tie goes to more goals, still level is joint.
+    const winnerIds = motmWinners(tally, goalsIn(g.id));
+    const topCount = tally[winnerIds[0]] ?? 0;
 
     const { data: winnerProfiles } = await admin.from("profiles").select("id, display_name").in("id", winnerIds);
     const names = (winnerProfiles ?? []).map((p) => p.display_name).join(" & ");
@@ -115,11 +119,10 @@ export async function GET(req: Request) {
         if (gameVotes.length === 0) continue;
         const tally: Record<string, number> = {};
         for (const v of gameVotes) tally[v.candidate_id] = (tally[v.candidate_id] ?? 0) + 1;
-        const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-        const topCount = ranked[0][1];
-        for (const [id, count] of ranked) {
+        const gameWinners = motmWinners(tally, goalsIn(g.id));
+        for (const [id, count] of Object.entries(tally)) {
           voteTotals[id] = (voteTotals[id] ?? 0) + count;
-          if (count === topCount) wins[id] = (wins[id] ?? 0) + 1;
+          if (gameWinners.includes(id)) wins[id] = (wins[id] ?? 0) + 1;
         }
       }
       const contenders = Object.keys(wins);
@@ -129,6 +132,13 @@ export async function GET(req: Request) {
         if (leaders.length > 1) {
           const maxVotes = Math.max(...leaders.map((id) => voteTotals[id] ?? 0));
           leaders = leaders.filter((id) => (voteTotals[id] ?? 0) === maxVotes);
+        }
+        // Then goals that month, same as the app's Player of the Month card.
+        if (leaders.length > 1) {
+          const monthIds = new Set(monthGames.map((g) => g.id));
+          const monthGoals = (id: string) => (allGoalRows ?? []).filter((r) => r.player_id === id && monthIds.has(r.game_id)).reduce((sum, r) => sum + r.goals, 0);
+          const maxGoals = Math.max(...leaders.map(monthGoals));
+          leaders = leaders.filter((id) => monthGoals(id) === maxGoals);
         }
         const { data: winners } = await admin.from("profiles").select("display_name").in("id", leaders);
         const names = (winners ?? []).map((w) => w.display_name).join(" & ");
@@ -252,10 +262,10 @@ async function saveMonthlySnapshots(
     for (const g of monthGames) {
       const tally: Record<string, number> = {};
       for (const v of votes) if (v.game_id === g.id) tally[v.candidate_id] = (tally[v.candidate_id] ?? 0) + 1;
-      const top = Math.max(0, ...Object.values(tally));
+      const gameWinners = motmWinners(tally, goalsLookup(stats)(g.id));
       for (const [id, c] of Object.entries(tally)) {
         voteTotals[id] = (voteTotals[id] ?? 0) + c;
-        if (top > 0 && c === top) wins[id] = (wins[id] ?? 0) + 1;
+        if (gameWinners.includes(id)) wins[id] = (wins[id] ?? 0) + 1;
       }
     }
     let leaders = Object.keys(wins);

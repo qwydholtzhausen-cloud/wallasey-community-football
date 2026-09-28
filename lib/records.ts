@@ -1,3 +1,4 @@
+import { motmWinners, goalsLookup } from "./motm";
 // Club records for a season: single-game bests (most goals in a game,
 // hat-tricks, biggest win), players' runs (win streaks, games in a row),
 // MOTM, the waiting list, and how early games sell out. Pure and DB-free
@@ -109,16 +110,17 @@ export function computeRecords(input: RecordsInput): ClubRecords {
   )[0];
 
   // MOTM: most votes in one game, plus season totals of wins and votes.
+  const goalsIn = goalsLookup(input.goals);
   let bestVotes: { votes: number; holders: Holder[] } | null = null;
   const motmWins: Record<string, number> = {};
   const motmVotes: Record<string, number> = {};
   for (const g of games) {
     const tally = input.motmTallyByGame[g.id];
     if (!tally) continue;
-    const top = Math.max(0, ...Object.values(tally));
+    const winners = motmWinners(tally, goalsIn(g.id));
     for (const [id, n] of Object.entries(tally)) {
       motmVotes[id] = (motmVotes[id] ?? 0) + n;
-      if (top > 0 && n === top) motmWins[id] = (motmWins[id] ?? 0) + 1;
+      if (winners.includes(id)) motmWins[id] = (motmWins[id] ?? 0) + 1;
       const h = { playerId: id, name: names(id), date: g.date };
       if (!bestVotes || n > bestVotes.votes) bestVotes = { votes: n, holders: [h] };
       else if (n === bestVotes.votes) bestVotes.holders.push(h);
@@ -237,10 +239,8 @@ export function computePersonalBests(input: RecordsInput, playerId: string): Per
     bestUnb = Math.max(bestUnb, unb);
     const tally = input.motmTallyByGame[g.id];
     if (tally) {
-      const top = Math.max(0, ...Object.values(tally));
-      const mine = tally[playerId] ?? 0;
-      motmVotes += mine;
-      if (top > 0 && mine === top) motmWins++;
+      motmVotes += tally[playerId] ?? 0;
+      if (motmWinners(tally, goalsLookup(input.goals)(g.id)).includes(playerId)) motmWins++;
     }
   }
   return { games: played, mostGoals, hatTricks, winStreak: bestWin, unbeaten: bestUnb, gamesInARow: bestRow, motmWins, motmVotes };

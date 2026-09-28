@@ -1,3 +1,4 @@
+import { motmWinners, goalsLookup } from "./motm";
 // Shared between the in-app "Generate recommended teams" button
 // (app/WirralCommunityFootball.tsx) and GaffAI's suggest_balanced_teams
 // tool (lib/gaffai/toolImpl.ts) - one source of truth so the two surfaces
@@ -130,11 +131,9 @@ export function computePerformanceStats(
     if (!relevantGameIds.has(v.game_id)) continue;
     (tallyByGame[v.game_id] ??= {})[v.candidate_id] = (tallyByGame[v.game_id][v.candidate_id] ?? 0) + 1;
   }
+  const goalsIn = goalsLookup(goalRows.filter((r) => relevantGameIds.has(r.game_id)));
   for (const gid of relevantGameIds) {
-    const tally = tallyByGame[gid] ?? {};
-    const topVotes = Math.max(0, ...Object.values(tally));
-    if (topVotes === 0) continue;
-    for (const pid of playerIds) if (tally[pid] === topVotes) acc[pid].motm++;
+    for (const pid of motmWinners(tallyByGame[gid], goalsIn(gid))) if (acc[pid]) acc[pid].motm++;
   }
 
   const result: Record<string, PerformanceStats> = {};

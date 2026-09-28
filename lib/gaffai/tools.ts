@@ -117,7 +117,7 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
   {
     name: "get_motm_winner",
     description:
-      "The Man of the Match winner(s) for one specific game, resolved with the real tiebreak rule (most votes wins; a tie on votes means joint winners - never an arbitrary pick). Returns voting_open:true with no winners if voting hasn't closed yet.",
+      "The Man of the Match winner(s) for one specific game, resolved with the club's rule (most votes wins; a tie on votes goes to whoever scored more goals that game; only still-level is joint winners). Returns voting_open:true with no winners if voting hasn't closed yet.",
     input_schema: { type: "object", properties: { game_id: { type: "string" } }, required: ["game_id"] },
   },
   {

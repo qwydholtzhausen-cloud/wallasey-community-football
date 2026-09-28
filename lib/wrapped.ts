@@ -1,3 +1,4 @@
+import { motmWinners, goalsLookup } from "./motm";
 // "Wrapped": a player's own story of a period (a month while admins test
 // it, then the whole year). Pure and DB-free like lib/predictions.ts - the
 // app already has every row this needs loaded (games with their bookings
@@ -199,14 +200,15 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
     })
     .sort((a, b) => b.us - b.them - (a.us - a.them) || b.us - a.us);
 
-  // MOTM: most votes in a game wins it; ties are joint winners.
+  // MOTM: the club's rule (lib/motm.ts) - most votes, a tie goes to more
+  // goals that game, still level is joint.
   let motmWins = 0;
   let motmVotes = 0;
+  const goalsIn = goalsLookup(input.goals);
   for (const g of games) {
     const tally = input.motmTallyByGame[g.id];
     if (!tally) continue;
-    const top = Math.max(0, ...Object.values(tally));
-    if (top > 0 && tally[me] === top) motmWins++;
+    if (motmWinners(tally, goalsIn(g.id)).includes(me)) motmWins++;
     motmVotes += tally[me] ?? 0;
   }
   const promotions = games.filter((g) => g.bookings.some((b) => b.player_id === me && !b.waiting && b.team && b.promoted_at)).length;

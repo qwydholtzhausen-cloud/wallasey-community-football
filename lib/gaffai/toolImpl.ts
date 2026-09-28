@@ -7,6 +7,7 @@ import { defaultPitchCost } from "../pitchCost";
 import { BOOT_CATEGORY, type BootCategory } from "../bootRoom";
 import { WRAPPED_OPEN_TO_ALL_FROM } from "../clubPolicy";
 import { computeJourney, fmtJourneyDate } from "../memberJourney";
+import { motmWinners, goalsLookup } from "../motm";
 
 // Same "pretend UTC" trick as everywhere else this pattern's used
 // (app/api/cron/frequent/route.ts, app/WirralCommunityFootball.tsx) -
@@ -238,9 +239,10 @@ async function getMotmWinnerRaw(admin: SupabaseClient, gameId: string) {
   for (const v of rows) tally[v.candidate_id] = (tally[v.candidate_id] ?? 0) + 1;
   const nameOf = await namesById(admin, Object.keys(tally));
 
-  const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-  const topVotes = ranked[0]?.[1] ?? 0;
-  const winners = topVotes > 0 ? ranked.filter(([, count]) => count === topVotes).map(([id, count]) => ({ name: nameOf[id] ?? "Unknown", votes: count })) : [];
+  // The club's rule (lib/motm.ts): a tie on votes goes to more goals that game.
+  const { data: gameGoals } = await admin.from("game_stats").select("game_id, player_id, goals").eq("game_id", gameId);
+  const winnerIds = motmWinners(tally, goalsLookup(gameGoals)(gameId));
+  const winners = winnerIds.map((id) => ({ name: nameOf[id] ?? "Unknown", votes: tally[id] }));
 
   return { game_id: gameId, voting_open: false, winners, total_votes: rows.length };
 }
@@ -355,14 +357,14 @@ async function getPlayerDetail(admin: SupabaseClient, args: { player_id: string 
     goals = (goalRows ?? []).reduce((sum, r) => sum + r.goals, 0);
 
     const { data: votesForGames } = await admin.from("motm_votes").select("game_id, candidate_id").in("game_id", pastSeasonGameIds);
+    const { data: seasonGoals } = await admin.from("game_stats").select("game_id, player_id, goals").in("game_id", pastSeasonGameIds);
+    const goalsIn = goalsLookup(seasonGoals);
     const byGame: Record<string, Record<string, number>> = {};
     for (const v of votesForGames ?? []) {
       (byGame[v.game_id] ??= {})[v.candidate_id] = (byGame[v.game_id][v.candidate_id] ?? 0) + 1;
     }
     for (const gid of pastSeasonGameIds) {
-      const tally = byGame[gid] ?? {};
-      const topVotes = Math.max(0, ...Object.values(tally));
-      if (topVotes > 0 && tally[args.player_id] === topVotes) motmRecognitions++;
+      if (motmWinners(byGame[gid], goalsIn(gid)).includes(args.player_id)) motmRecognitions++;
     }
   }
 
@@ -733,8 +735,9 @@ async function getPlayerOfMonth(admin: SupabaseClient, args: { month?: string })
   const gameIds = monthGames.map((g) => g.id);
   const [{ data: votes }, { data: goalRows }] = await Promise.all([
     admin.from("motm_votes").select("game_id, candidate_id").in("game_id", gameIds),
-    admin.from("game_stats").select("player_id, goals").in("game_id", gameIds),
+    admin.from("game_stats").select("game_id, player_id, goals").in("game_id", gameIds),
   ]);
+  const goalsIn = goalsLookup(goalRows);
 
   const wins: Record<string, number> = {};
   const voteTotals: Record<string, number> = {};
@@ -747,11 +750,10 @@ async function getPlayerOfMonth(admin: SupabaseClient, args: { month?: string })
   }
   for (const g of monthGames) {
     const tally = tallyByGame[g.id] ?? {};
-    const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-    const topCount = ranked[0]?.[1] ?? 0;
-    for (const [playerId, count] of ranked) {
+    const gameWinners = motmWinners(tally, goalsIn(g.id));
+    for (const [playerId, count] of Object.entries(tally)) {
       voteTotals[playerId] = (voteTotals[playerId] ?? 0) + count;
-      if (topCount > 0 && count === topCount) wins[playerId] = (wins[playerId] ?? 0) + 1;
+      if (gameWinners.includes(playerId)) wins[playerId] = (wins[playerId] ?? 0) + 1;
     }
   }
 

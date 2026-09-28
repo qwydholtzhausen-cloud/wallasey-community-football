@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
+import { motmWinners, goalsLookup } from "../lib/motm";
 import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey } from "../lib/time";
 import { predictionPoints, buildLeaderboard, buildMonthlyLeaderboards, topScorers, type ScoredPrediction } from "../lib/predictions";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer } from "../lib/teamBalance";
@@ -2558,15 +2559,10 @@ function App({ session }: { session: Session }) {
 
     // Same reveal rule as the in-app MOTM display - never share a winner
     // before voting's actually closed.
-    const candidates = game.bookings.filter((b) => !b.waiting);
-    const tally = motmTallyByGame[game.id] ?? {};
-    const ranked = candidates
-      .map((c) => ({ name: c.player.display_name, votes: tally[c.player_id] ?? 0 }))
-      .sort((a, b) => b.votes - a.votes);
-    const motmTopVotes = ranked[0]?.votes ?? 0;
+    const winnerIds = motmWinnerIdsByGame[game.id] ?? [];
     const motmWinner =
-      !motmVotingOpen(game) && motmTopVotes > 0
-        ? ranked.filter((r) => r.votes === motmTopVotes).map((r) => r.name).join(" & ")
+      !motmVotingOpen(game) && winnerIds.length > 0
+        ? winnerIds.map((id) => game.bookings.find((b) => b.player_id === id)?.player.display_name ?? "").filter(Boolean).join(" & ")
         : null;
 
     try {
@@ -2948,6 +2944,15 @@ function App({ session }: { session: Session }) {
     }
     return map;
   }, [motmVotes]);
+  // Each game's Man of the Match under the club's rule (lib/motm.ts): most
+  // votes, a tie goes to more goals that game, still level is joint.
+  // Only read once voting's closed, same as the tally.
+  const motmWinnerIdsByGame = useMemo(() => {
+    const goalsIn = goalsLookup(goalRows);
+    const map: Record<string, string[]> = {};
+    for (const [gameId, tally] of Object.entries(motmTallyByGame)) map[gameId] = motmWinners(tally, goalsIn(gameId));
+    return map;
+  }, [motmTallyByGame, goalRows]);
 
   const potLedger = useMemo(() => {
     // Only games that have been played. Counting a future game as soon as
@@ -3102,10 +3107,10 @@ function App({ session }: { session: Session }) {
 
       if (!motmVotingOpen(g)) {
         const tally = motmTallyByGame[g.id] ?? {};
-        const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-        const topVotes = ranked[0]?.[1] ?? 0;
-        const winners = (topVotes > 0 ? ranked.filter(([, votes]) => votes === topVotes) : [])
-          .map(([id]) => g.bookings.find((b) => b.player_id === id)?.player)
+        const winnerIds = motmWinnerIdsByGame[g.id] ?? [];
+        const topVotes = winnerIds.length ? tally[winnerIds[0]] ?? 0 : 0;
+        const winners = winnerIds
+          .map((id) => g.bookings.find((b) => b.player_id === id)?.player)
           .filter((p): p is Profile => !!p);
         if (winners.length > 0) {
           items.push({
@@ -3291,7 +3296,7 @@ function App({ session }: { session: Session }) {
     }
 
     return items.sort((a, b) => b.ts - a.ts);
-  }, [games, pastGames, motmTallyByGame, myMotmVoteByGame, myId, potLedger, profiles, goalRows, cs.team_white_name, cs.team_red_name, cs.team_white_color, cs.team_red_color, nowUk]);
+  }, [games, pastGames, motmTallyByGame, motmWinnerIdsByGame, myMotmVoteByGame, myId, potLedger, profiles, goalRows, cs.team_white_name, cs.team_red_name, cs.team_white_color, cs.team_red_color, nowUk]);
 
   const visibleFeedItems = useMemo(() => {
     // In the normal feed view, archived items are hidden. The "Show
@@ -3336,12 +3341,11 @@ function App({ session }: { session: Session }) {
 
     for (const g of monthGames) {
       const tally = motmTallyByGame[g.id] ?? {};
-      const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-      const topCount = ranked[0]?.[1] ?? 0;
-      for (const [playerId, count] of ranked) {
+      const gameWinners = motmWinnerIdsByGame[g.id] ?? [];
+      for (const [playerId, count] of Object.entries(tally)) {
         votes[playerId] = (votes[playerId] ?? 0) + count;
         names[playerId] ??= g.bookings.find((b) => b.player_id === playerId)?.player.display_name ?? "";
-        if (topCount > 0 && count === topCount) wins[playerId] = (wins[playerId] ?? 0) + 1;
+        if (gameWinners.includes(playerId)) wins[playerId] = (wins[playerId] ?? 0) + 1;
       }
     }
 
@@ -3364,7 +3368,7 @@ function App({ session }: { session: Session }) {
       // For the card: why they won.
       winners: leaders.map((id) => ({ id, name: names[id], wins: wins[id] ?? 0, votes: votes[id] ?? 0, goals: goals[id] ?? 0 })),
     };
-  }, [pastGames, motmTallyByGame, goalRows, nowUk]);
+  }, [pastGames, motmTallyByGame, motmWinnerIdsByGame, goalRows, nowUk]);
 
   // Monthly Wrapped: your own story of last month, same "last completed
   // month" window as Player of the Month above, and computed the same way
@@ -3416,7 +3420,7 @@ function App({ session }: { session: Session }) {
       prevShort: label(before, { month: "long" }),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastGames, goalRows, motmTallyByGame, scorePredictions, profiles, myId, wrappedMonthKey, wrappedSoFar]);
+  }, [pastGames, goalRows, motmTallyByGame, motmWinnerIdsByGame, scorePredictions, profiles, myId, wrappedMonthKey, wrappedSoFar]);
   const [wrappedOpen, setWrappedOpen] = useState(false);
   // The unwrap clip plays the first time each month's Wrapped is opened on
   // this phone; worked out when the story opens, so reopening skips it.
@@ -3557,7 +3561,7 @@ function App({ session }: { session: Session }) {
       names: (id) => nameById.get(id) ?? "Former player",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastGames, goalRows, motmTallyByGame, profiles, activeStatsYear]);
+  }, [pastGames, goalRows, motmTallyByGame, motmWinnerIdsByGame, profiles, activeStatsYear]);
 
   const nextGame = upcomingGames[0];
   const nextConfirmed = useMemo(
@@ -3640,18 +3644,11 @@ function App({ session }: { session: Session }) {
     goalRows.filter((r) => seasonGameIds.has(r.game_id)).forEach((r) => bump(r.player_id, "goals", r.goals));
     seasonGames.forEach((g) => {
       if (motmVotingOpen(g)) return;
-      const tally = motmTallyByGame[g.id] ?? {};
-      const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-      const topVotes = ranked[0]?.[1] ?? 0;
-      if (topVotes > 0) {
-        for (const [playerId, votes] of ranked) {
-          if (votes === topVotes) bump(playerId, "motm", 1);
-        }
-      }
+      for (const playerId of motmWinnerIdsByGame[g.id] ?? []) bump(playerId, "motm", 1);
     });
     return stats;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastGames, goalRows, motmTallyByGame, currentSeasonYear]);
+  }, [pastGames, goalRows, motmTallyByGame, motmWinnerIdsByGame, currentSeasonYear]);
 
   // Standalone (not memoized) so the same math can score both the live
   // saved split and a not-yet-applied suggestion before committing to it.
@@ -5668,6 +5665,8 @@ function App({ session }: { session: Session }) {
                     .map((c) => ({ candidate: c, votes: tally[c.player_id] ?? 0 }))
                     .sort((a, b) => b.votes - a.votes);
                   const topVotes = ranked[0]?.votes ?? 0;
+                  // Winners under the club's rule (a tie on votes goes to more goals).
+                  const winnerIds = motmWinnerIdsByGame[g.id] ?? [];
                   const expanded = expandedResultId === g.id;
                   // Only ever read once voting's closed (the vote buttons
                   // above never surface this) - keeps voting itself
@@ -5686,7 +5685,7 @@ function App({ session }: { session: Session }) {
                           const r = g.team_red_score ?? 0;
                           const outcome = w > r ? "white" : r > w ? "red" : "draw";
                           const d = new Date(g.date + "T12:00:00Z");
-                          const motmNames = !votingOpen && topVotes > 0 ? ranked.filter((x) => x.votes === topVotes).map((x) => x.candidate.player.display_name) : [];
+                          const motmNames = !votingOpen ? ranked.filter((x) => winnerIds.includes(x.candidate.player_id)).map((x) => x.candidate.player.display_name) : [];
                           const top = scorers[0] && scorers[0].goals >= 2 ? scorers[0] : null;
                           const away = g.venue !== mainResultsVenue;
                           return (
@@ -5833,7 +5832,8 @@ function App({ session }: { session: Session }) {
                           })()}
 
                           {!votingOpen && totalVotes > 0 && (() => {
-                            const winners = ranked.filter((x) => x.votes === topVotes);
+                            const winners = ranked.filter((x) => winnerIds.includes(x.candidate.player_id));
+                            const winVotes = winners[0]?.votes ?? topVotes;
                             const teamLabel = (t: string | null) => (t === "white" ? cs.team_white_name : t === "red" ? cs.team_red_name : null);
                             const winnerTeams = [...new Set(winners.map((w) => teamLabel(w.candidate.team)).filter(Boolean))];
                             return (
@@ -5857,7 +5857,7 @@ function App({ session }: { session: Session }) {
                                       ))}
                                     </div>
                                     <div className="wcf-motm-card-sub">
-                                      <b>{topVotes} of {totalVotes} votes</b>
+                                      <b>{winVotes} of {totalVotes} votes</b>
                                       {winnerTeams.length > 0 && ` · ${winnerTeams.join(" & ")}`}
                                     </div>
                                   </div>
@@ -5865,7 +5865,7 @@ function App({ session }: { session: Session }) {
                                 <div className="wcf-motm-rank">
                                   {ranked.filter((x) => x.votes > 0).map((x) => {
                                     const voters = votersFor(x.candidate.player_id);
-                                    const top = x.votes === topVotes;
+                                    const top = winnerIds.includes(x.candidate.player_id);
                                     return (
                                       <button
                                         key={x.candidate.id}
