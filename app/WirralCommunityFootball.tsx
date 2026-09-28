@@ -132,7 +132,7 @@ interface Profile {
 type Team = "white" | "red";
 
 type PotExemptReason = "prize" | "carried_over" | "other";
-const POT_EXEMPT_LABEL: Record<PotExemptReason, string> = { prize: "🎁 Free — prize", carried_over: "🔄 Free — carried over", other: "🎁 Free — other" };
+const POT_EXEMPT_LABEL: Record<PotExemptReason, string> = { prize: "Free · prize", carried_over: "Free · carried over", other: "Free · other" };
 
 interface BookingRow {
   id: string;
@@ -1845,7 +1845,7 @@ function App({ session }: { session: Session }) {
         notifySuccess(`✓ Payment confirmed for ${g.venue} · ${fmtDate(g.date)}`);
       }
       if (prevWaiting[g.id] === true && mine.waiting === false) {
-        notifySuccess(`🎉 A spot opened up — you're in for ${g.venue} · ${fmtDate(g.date)}!`);
+        notifySuccess(`✓ You're in for ${g.venue} · ${fmtDate(g.date)}: a spot opened up`);
       }
     });
     prevStatusRef.current = nextStatus;
@@ -4013,11 +4013,11 @@ function App({ session }: { session: Session }) {
         </button>
       </header>
 
-      {isOffline && <div className="wcf-offline-banner">📡 You&apos;re offline — showing what was last loaded</div>}
+      {isOffline && <div className="wcf-offline-banner">Offline · showing what was last loaded</div>}
 
       {updateAvailable && (
         <button className="wcf-update-banner" onClick={() => window.location.reload()}>
-          🔄 New version available — tap to refresh
+          ↻ New version available · tap to refresh
         </button>
       )}
 
@@ -4770,17 +4770,42 @@ function App({ session }: { session: Session }) {
                 </div>
                 {nextConfirmed.length === 0 && <p className="wcf-empty">No one&apos;s booked in yet.</p>}
 
+                {isAdmin && editingLineup && (
+                  // A live count, then anyone still to place first.
+                  <>
+                    <div className="wcf-lineup-count">
+                      <span>
+                        <b>{editGrouped.white.length}</b> {cs.team_white_name} · <b>{editGrouped.red.length}</b> {cs.team_red_name}
+                      </span>
+                      {editGrouped.unassigned.length > 0 ? (
+                        <span className="todo">{editGrouped.unassigned.length} to place</span>
+                      ) : (
+                        <span className="done">All placed ✓</span>
+                      )}
+                    </div>
+                    <button
+                      className="wcf-lineup-gen"
+                      onClick={() => {
+                        cancelEditingLineup();
+                        setLineupView("fairness");
+                      }}
+                    >
+                      Generate teams instead ›
+                    </button>
+                  </>
+                )}
                 {isAdmin && editingLineup && (() => {
-                  return ([["white", editGrouped.white, cs.team_white_name, cs.team_white_color], ["red", editGrouped.red, cs.team_red_name, cs.team_red_color], ["unassigned", editGrouped.unassigned, "Unassigned", null]] as const).map(
+                  return ([["unassigned", editGrouped.unassigned, "To place", null], ["white", editGrouped.white, cs.team_white_name, cs.team_white_color], ["red", editGrouped.red, cs.team_red_name, cs.team_red_color]] as const).map(
                     ([key, group, name, color]) =>
                       group.length > 0 && (
-                        <div key={key} className="wcf-lineup-group">
+                        <div key={key} className={"wcf-lineup-group" + (key === "unassigned" ? " todo" : "")}>
                           <div className="wcf-lineup-group-label">
                             {color && <span className="wcf-lineup-group-dot" style={{ background: color }} />}
                             {name} · {group.length}
                           </div>
                           {group.map((b) => (
                             <div key={b.id} className={"wcf-lineup-row" + (b.player_id === myId ? " me-edit" : "")}>
+                              <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-lineup-av" background={avatarFor(b.player.display_name).gradient} />
                               <span className="wcf-lineup-name">{b.player.display_name}{b.player_id === myId ? " (you)" : ""}</span>
                               <div className="wcf-lineup-picks">
                                 <button
@@ -4880,7 +4905,7 @@ function App({ session }: { session: Session }) {
                             </>
                           ) : (
                             <>
-                              <button className="wcf-ghost" onClick={startEditingPositions}>✋ Drag to arrange</button>
+                              <button className="wcf-ghost" onClick={startEditingPositions}>Drag to arrange</button>
                               {nextGame?.lineup_positions && (
                                 <button className="wcf-ghost danger" onClick={resetPositions}>Reset to auto</button>
                               )}
@@ -6046,7 +6071,7 @@ function App({ session }: { session: Session }) {
                                   })()}
                                 {exactCount > 0 && (
                                   <div className="wcf-predict-fact">
-                                    🎯 {exactCount} player{exactCount === 1 ? "" : "s"} called the exact score.
+                                    {exactCount} player{exactCount === 1 ? "" : "s"} called the exact score.
                                   </div>
                                 )}
                               </div>
@@ -8137,7 +8162,7 @@ function GaffAIChat({
                       aria-label="Flag this answer as wrong"
                       title={flaggedIndexes.has(i) ? "Flagged for review" : "Flag as wrong"}
                     >
-                      {flaggedIndexes.has(i) ? "🚩" : "⚑"}
+                      ⚑
                     </button>
                   )}
                   {m.action && m.actionState === "pending" && (
@@ -8389,6 +8414,8 @@ function AccountPanel({
   const [openReadMessages, setOpenReadMessages] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
   const [roleSearch, setRoleSearch] = useState("");
+  const [roleMenuFor, setRoleMenuFor] = useState<string | null>(null);
+  const [openRoleTool, setOpenRoleTool] = useState<"add" | "code" | null>(null);
   const [renamingPlayerId, setRenamingPlayerId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const filteredRoleProfiles = profiles.filter((p) => p.display_name.toLowerCase().includes(roleSearch.trim().toLowerCase()));
@@ -8830,29 +8857,34 @@ function AccountPanel({
         <AccordionSection icon={<SetIcon name="users" />} title="Manage roles" meta={`${profiles.length} players`} open={showRoles} onToggle={() => setShowRoles((v) => !v)}>
           {pushStats && (
             <div className="wcf-roles-stats">
-              <div className="wcf-roles-stat blue">
+              <div className="wcf-roles-stat">
                 <span className="wcf-roles-stat-num">{pushStats.subscribed}</span>
-                <span className="wcf-roles-stat-label">of {pushStats.total} subscribed</span>
+                <span className="wcf-roles-stat-label">of {pushStats.total} get notifications</span>
               </div>
-              <div className="wcf-roles-stat dim">
+              <div className="wcf-roles-stat">
                 <span className="wcf-roles-stat-num">{profiles.length}</span>
-                <span className="wcf-roles-stat-label">total players</span>
+                <span className="wcf-roles-stat-label">members</span>
               </div>
             </div>
           )}
-          <AddPlayerForm onAdd={onAddPlayer} />
-          <LoginCodeForm onGenerate={onGenerateLoginCode} />
+          {/* The two forms open on demand instead of always taking up the top. */}
+          <div className="wcf-roles-tools">
+            <button className={"wcf-roles-tool" + (openRoleTool === "add" ? " on" : "")} onClick={() => setOpenRoleTool((t) => (t === "add" ? null : "add"))}>
+              + Add a player
+            </button>
+            <button className={"wcf-roles-tool" + (openRoleTool === "code" ? " on" : "")} onClick={() => setOpenRoleTool((t) => (t === "code" ? null : "code"))}>
+              Send a login code
+            </button>
+          </div>
+          {openRoleTool === "add" && <AddPlayerForm onAdd={onAddPlayer} />}
+          {openRoleTool === "code" && <LoginCodeForm onGenerate={onGenerateLoginCode} />}
 
-          {profiles.length > 8 && (
-            <input
-              className="wcf-roles-search"
-              placeholder="🔍 Search players…"
-              value={roleSearch}
-              onChange={(e) => setRoleSearch(e.target.value)}
-            />
-          )}
+          <label className="wcf-roles-search-wrap">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+            <input className="wcf-roles-search" placeholder={`Search ${profiles.length} members…`} value={roleSearch} onChange={(e) => setRoleSearch(e.target.value)} />
+          </label>
           {roleSearch.trim() && filteredRoleProfiles.length === 0 && (
-            <p className="wcf-empty small">No players match &quot;{roleSearch.trim()}&quot;.</p>
+            <p className="wcf-empty small">No one matches &quot;{roleSearch.trim()}&quot;.</p>
           )}
           <div className="wcf-roles-list">
           {filteredRoleProfiles.map((p) => {
@@ -8863,10 +8895,102 @@ function AccountPanel({
             // touch an existing admin or co-owner's role.
             const canDelete =
               p.role === "player" ? !isSelf : (p.role === "admin" || p.role === "co-owner") ? isOwner && !isSelf : false;
+            const rated = adminRatings.some((r) => r.player_id === p.id);
+            const menuOpen = roleMenuFor === p.id;
+            const act = (fn: () => void) => {
+              setRoleMenuFor(null);
+              fn();
+            };
             return (
-              <div key={p.id} className="wcf-roles-row">
-                {renamingPlayerId === p.id ? (
-                  <div className="wcf-account-rename">
+              <div key={p.id} className={"wcf-roles-row" + (menuOpen || renamingPlayerId === p.id || ratingPlayerId === p.id ? " open" : "")}>
+                <div className="wcf-roles-row-top">
+                  <Avatar name={p.display_name} avatarUrl={p.avatar_url} className="wcf-roles-avatar" background={avatarFor(p.display_name).gradient} />
+                  <div className="wcf-roles-who">
+                    <div className="wcf-roles-name">
+                      {p.display_name}
+                      {isSelf ? " (you)" : ""}
+                      {p.role !== "player" && <span className={"wcf-role-badge small " + p.role}>{ROLE_LABEL[p.role]}</span>}
+                    </div>
+                    <div className="wcf-roles-sub">{rated ? "Rated" : "Not rated"}</div>
+                  </div>
+                  <button className="wcf-roles-more" onClick={() => setRoleMenuFor(menuOpen ? null : p.id)} aria-label={`Actions for ${p.display_name}`} aria-expanded={menuOpen}>
+                    ⋯
+                  </button>
+                </div>
+
+                {menuOpen && (
+                  <div className="wcf-roles-menu">
+                    <button onClick={() => act(() => onToggleRatingPlayer(p.id))}>{rated ? "Edit rating" : "Rate player"}</button>
+                    <button onClick={() => act(() => { setRenamingPlayerId(p.id); setRenameDraft(p.display_name); })}>Rename</button>
+                    {p.role === "player" && (
+                      <button
+                        onClick={() =>
+                          act(async () => {
+                            if (await askConfirm("Make admin?", `${p.display_name} will be able to manage fixtures, payments, and other players.`, "Make admin", false)) onSetRole(p.id, "admin");
+                          })
+                        }
+                      >
+                        Make admin<small>Can manage fixtures, payments and players</small>
+                      </button>
+                    )}
+                    {p.role === "admin" && isOwner && (
+                      <>
+                        <button
+                          onClick={() =>
+                            act(async () => {
+                              if (await askConfirm("Make co-owner?", `Only you'll be able to change or remove ${p.display_name}'s access afterwards.`, "Make co-owner", false)) onSetRole(p.id, "co-owner");
+                            })
+                          }
+                        >
+                          Make co-owner
+                        </button>
+                        <button
+                          onClick={() =>
+                            act(async () => {
+                              const title = isSelf ? "Remove your own admin access?" : `Remove admin access from ${p.display_name}?`;
+                              const msg = isSelf ? "You'll need the owner (or the SQL Editor) to get it back." : "They'll go back to being a regular player.";
+                              if (await askConfirm(title, msg, "Remove admin")) onSetRole(p.id, "player");
+                            })
+                          }
+                        >
+                          Remove admin
+                        </button>
+                      </>
+                    )}
+                    {p.role === "co-owner" && isOwner && (
+                      <button
+                        onClick={() =>
+                          act(async () => {
+                            const title = isSelf ? "Remove your own co-owner access?" : `Remove co-owner access from ${p.display_name}?`;
+                            const msg = isSelf ? "You'll need the owner to get it back." : "They'll become an admin.";
+                            if (await askConfirm(title, msg, "Remove co-owner")) onSetRole(p.id, "admin");
+                          })
+                        }
+                      >
+                        Remove co-owner
+                      </button>
+                    )}
+                    {p.avatar_url && (
+                      <button
+                        onClick={() =>
+                          act(async () => {
+                            if (await askConfirm("Remove this photo?", `${p.display_name}'s profile photo will be deleted. They can add a new one any time.`, "Remove", true)) onAdminRemoveAvatar(p.id);
+                          })
+                        }
+                      >
+                        Remove photo
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button className="danger" onClick={() => act(() => onDeleteProfile(p.id, p.display_name))}>
+                        Delete account<small>Asks you to confirm first</small>
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {renamingPlayerId === p.id && (
+                  <div className="wcf-account-rename" style={{ marginTop: 10 }}>
                     <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} autoFocus />
                     <button
                       disabled={!renameDraft.trim() || renameDraft.trim() === p.display_name}
@@ -8881,105 +9005,7 @@ function AccountPanel({
                     </button>
                     <button className="wcf-ghost" onClick={() => setRenamingPlayerId(null)}>Cancel</button>
                   </div>
-                ) : (
-                  <div className="wcf-roles-row-top">
-                    <Avatar name={p.display_name} avatarUrl={p.avatar_url} className="wcf-roles-avatar" />
-                    <span>{p.display_name}{isSelf ? " (you)" : ""} <span className={"wcf-role-badge small " + p.role}>{ROLE_LABEL[p.role]}</span></span>
-                  </div>
                 )}
-                <div className="wcf-roles-actions">
-                  {renamingPlayerId !== p.id && (
-                    <button
-                      className="wcf-ghost"
-                      onClick={() => { setRenamingPlayerId(p.id); setRenameDraft(p.display_name); }}
-                    >
-                      Rename
-                    </button>
-                  )}
-                  {p.avatar_url && (
-                    <button
-                      className="wcf-ghost"
-                      onClick={async () => {
-                        if (await askConfirm("Remove this photo?", `${p.display_name}'s profile photo will be deleted. They can add a new one any time.`, "Remove", true)) onAdminRemoveAvatar(p.id);
-                      }}
-                    >
-                      Remove photo
-                    </button>
-                  )}
-                  {p.role === "player" && (
-                    <button
-                      className="wcf-ghost"
-                      onClick={async () => {
-                        if (
-                          await askConfirm(
-                            "Make admin?",
-                            `${p.display_name} will be able to manage fixtures, payments, and other players.`,
-                            "Make admin",
-                            false
-                          )
-                        ) {
-                          onSetRole(p.id, "admin");
-                        }
-                      }}
-                    >
-                      Make admin
-                    </button>
-                  )}
-                  {p.role === "admin" && isOwner && (
-                    <>
-                      <button
-                        className="wcf-ghost"
-                        onClick={async () => {
-                          const title = isSelf ? "Remove your own admin access?" : `Remove admin access from ${p.display_name}?`;
-                          const msg = isSelf ? "You'll need the owner (or the SQL Editor) to get it back." : "They'll go back to being a regular player.";
-                          if (await askConfirm(title, msg, "Remove admin")) onSetRole(p.id, "player");
-                        }}
-                      >
-                        Remove admin
-                      </button>
-                      <button
-                        className="wcf-ghost"
-                        onClick={async () => {
-                          if (
-                            await askConfirm(
-                              "Make co-owner?",
-                              `Only you'll be able to change or remove ${p.display_name}'s access afterwards.`,
-                              "Make co-owner",
-                              false
-                            )
-                          ) {
-                            onSetRole(p.id, "co-owner");
-                          }
-                        }}
-                      >
-                        Make co-owner
-                      </button>
-                    </>
-                  )}
-                  {p.role === "co-owner" && isOwner && (
-                    <button
-                      className="wcf-ghost"
-                      onClick={async () => {
-                        const title = isSelf ? "Remove your own co-owner access?" : `Remove co-owner access from ${p.display_name}?`;
-                        const msg = isSelf ? "You'll need the owner to get it back." : "They'll become an admin.";
-                        if (await askConfirm(title, msg, "Remove co-owner")) onSetRole(p.id, "admin");
-                      }}
-                    >
-                      Remove co-owner
-                    </button>
-                  )}
-                  {canDelete && (
-                    <button
-                      className="wcf-ghost danger"
-                      onClick={() => onDeleteProfile(p.id, p.display_name)}
-                    >
-                      Delete
-                    </button>
-                  )}
-                  <button className="wcf-ghost" onClick={() => onToggleRatingPlayer(p.id)}>
-                    {adminRatings.some((r) => r.player_id === p.id) ? "Rated ✓" : "Rate"}
-                  </button>
-                </div>
                 {ratingPlayerId === p.id && (
                   <div style={{ marginTop: 14 }}>
                     <RatingForm
@@ -9236,7 +9262,7 @@ function AwardsForm({
           </div>
           {a.note && <div className="wcf-award-note">{a.note}</div>}
           <div className="wcf-award-bottom">
-            {a.image_url && <span className="wcf-award-tag">📷 Photo</span>}
+            {a.image_url && <span className="wcf-award-tag">Photo</span>}
             {a.video_url && <span className="wcf-award-tag">🎥 Video</span>}
             <button
               className="wcf-admin-remove"
@@ -9256,7 +9282,7 @@ function AwardsForm({
         <div className="wcf-team-settings">
           <label className="wcf-team-field wide">
             Title
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. 🏆 Player of the Season" required />
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Player of the Season" required />
           </label>
           <label className="wcf-team-field wide">
             Value
@@ -9269,13 +9295,13 @@ function AwardsForm({
         </div>
         <div className="wcf-upload-row">
           <label className="wcf-upload-box">
-            <span className="wcf-upload-glyph">📷</span>
+            <span className="wcf-upload-glyph"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg></span>
             <span className="wcf-upload-label">Photo</span>
             <span className="wcf-upload-state">{imageFile ? imageFile.name : "Optional"}</span>
             <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
           </label>
           <label className="wcf-upload-box">
-            <span className="wcf-upload-glyph">🎥</span>
+            <span className="wcf-upload-glyph"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2" y="6" width="14" height="12" rx="2" /><path d="M16 10l6-3v10l-6-3" /></svg></span>
             <span className="wcf-upload-label">Video</span>
             <span className="wcf-upload-state">{videoFile ? videoFile.name : `Under ${MAX_AWARD_VIDEO_MB}MB`}</span>
             <input type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)} />
@@ -10149,9 +10175,9 @@ function AdminGameRow({
                   <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, null))}>£ Make it a paying game again</button>
                 ) : (
                   <>
-                    <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "prize"))}>🎁 Free game: prize</button>
-                    <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "carried_over"))}>🔄 Free game: carried over</button>
-                    <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "other"))}>🎁 Free game: other</button>
+                    <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "prize"))}>Free game: prize</button>
+                    <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "carried_over"))}>Free game: carried over</button>
+                    <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "other"))}>Free game: other</button>
                   </>
                 )}
                 <button
@@ -11110,7 +11136,7 @@ const css = `
 .wcf-edit label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
 .wcf-edit input{background:var(--bg);border:1px solid var(--line);color:var(--white);padding:9px;border-radius:10px;font-size:13px;font-family:var(--sans)}
 .wcf-edit-actions{grid-column:1/-1;display:flex;gap:8px}
-.wcf-save{grid-column:1/-1;background:var(--green);color:#04140a;border:none;padding:11px;border-radius:9px;font-weight:800;cursor:pointer;font-size:13px}
+.wcf-save{grid-column:1/-1;background:var(--red);color:#fff;border:none;padding:11px;min-height:44px;border-radius:12px;font-weight:800;cursor:pointer;font-size:13px}
 .wcf-save-red{width:100%;min-height:46px;padding:13px;border-radius:12px;cursor:pointer;font-weight:800;font-size:12px;color:#fff;border:1px solid rgba(230,57,70,.5);background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5))}
 .wcf-save-amber{width:100%;min-height:48px;padding:14px;border-radius:14px;cursor:pointer;font-weight:800;font-size:13px;color:#fff;border:1px solid rgba(234,179,8,.5);background:linear-gradient(135deg,var(--amber),rgba(234,179,8,.45))}
 .wcf-console-section{display:flex;align-items:center;gap:10px;padding:26px 2px 12px}
@@ -11179,7 +11205,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-tab-line-date{margin-top:4px;font-size:10.5px;color:#64748b}
 .wcf-tab-line-price{flex:none;font-family:var(--mono);font-weight:600;font-size:12px;color:#cbd5e1}
 .wcf-tab-line-remove{flex:none;width:36px;height:36px;border-radius:10px;background:rgba(240,82,94,.1);border:1px solid rgba(240,82,94,.3);color:var(--red-hi);font-size:16px;cursor:pointer;line-height:1;display:grid;place-items:center}
-.wcf-tab-nudge{width:100%;margin-top:12px;min-height:44px;padding:12px;border-radius:12px;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.36);color:#7fb0ec;font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-tab-nudge{width:100%;margin-top:12px;min-height:44px;padding:12px;border-radius:12px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);color:#f5d97a;font-weight:700;font-size:11.5px;cursor:pointer}
 .wcf-pending-detail{margin:10px 0 14px;padding:14px;border-radius:18px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid rgba(234,179,8,.3)}
 .wcf-pending-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
 .wcf-pending-head span{font-family:var(--sans);font-weight:800;font-size:10px;letter-spacing:.16em;color:#f5d97a}
@@ -11299,7 +11325,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-admin-add-result b{font-size:12px;color:#f5d97a}
 .wcf-admin-add-none{padding:10px 12px;font-size:12.5px;color:var(--dim)}
 .wcf-admin-add-player select{flex:1;min-height:44px;background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:9px 12px;border-radius:12px;font-size:12px;font-family:var(--sans);box-sizing:border-box}
-.wcf-admin-add-player .wcf-ghost{min-height:44px;padding:0 16px;border-radius:12px;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.36);color:#7fb0ec;font-weight:700;font-size:11.5px}
+.wcf-admin-add-player .wcf-ghost{min-height:44px;padding:0 16px;border-radius:12px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);color:#f5d97a;font-weight:700;font-size:11.5px}
 .wcf-admin-add-player .wcf-ghost:disabled{opacity:.4;cursor:not-allowed;background:rgba(148,163,184,.06);border-color:rgba(148,163,184,.16);color:var(--dim)}
 
 
@@ -11461,7 +11487,7 @@ button.wcf-glance-card:disabled{cursor:default}
    ".wcf-lineup-chip span" knocked its initial off-centre. */
 .wcf-lineup-chip-name{font-size:11px;font-weight:700;line-height:1.25;text-align:center;max-width:100%;overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
-.wcf-lineup-row.me-edit{background:rgba(46,116,204,.14);border-color:var(--blue)}
+.wcf-lineup-row.me-edit{background:rgba(245,217,122,.07);border-color:rgba(245,217,122,.45)}
 .wcf-lineup-avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;flex:0 0 auto;background:var(--panel2);color:var(--dim);object-fit:cover}
 .wcf-lineup-name{font-weight:700;font-size:14px;flex:1;min-width:0}
 .wcf-name-link{background:none;border:none;padding:0;margin:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
@@ -11849,7 +11875,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-account-email{font-size:12px;color:var(--dim);margin-top:2px}
 .wcf-role-badge{margin-left:auto;font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--dim)}
 .wcf-role-badge.admin{color:var(--green);border:1px solid rgba(51,169,87,.4)}
-.wcf-role-badge.co-owner{color:var(--blue);border:1px solid rgba(46,116,204,.4)}
+.wcf-role-badge.co-owner{color:#f5d97a;border:1px solid rgba(245,217,122,.45)}
 .wcf-role-badge.owner{color:var(--red-hi);border:1px solid rgba(230,57,70,.4)}
 .wcf-role-badge.small{margin-left:4px;padding:2px 7px;font-size:9px}
 .wcf-inbox-msg{border-radius:16px;padding:13px;margin-bottom:9px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line)}
@@ -11891,11 +11917,11 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-account-field{display:flex;flex-direction:column;gap:8px;font-family:var(--sans);font-weight:800;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
 .wcf-account-rename{display:flex;gap:8px}
 .wcf-account-rename input{flex:1;min-width:0;min-height:46px;box-sizing:border-box;background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:13px;border-radius:12px;font-size:13px;font-weight:600;font-family:var(--sans);text-transform:none;letter-spacing:normal}
-.wcf-account-rename button{flex:none;min-height:46px;padding:0 15px;border-radius:12px;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.36);color:#7fb0ec;font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-account-rename button{flex:none;min-height:46px;padding:0 15px;border-radius:12px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);color:#f5d97a;font-weight:700;font-size:11.5px;cursor:pointer}
 .wcf-account-rename button:disabled{opacity:.5;cursor:not-allowed}
 .wcf-account-emergency{display:flex;flex-direction:column;gap:8px}
 .wcf-account-emergency input{min-width:0;min-height:46px;box-sizing:border-box;background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:13px;border-radius:12px;font-size:13px;font-weight:600;font-family:var(--sans);text-transform:none;letter-spacing:normal}
-.wcf-account-emergency button{min-height:46px;padding:0 15px;border-radius:12px;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.36);color:#7fb0ec;font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-account-emergency button{min-height:46px;padding:0 15px;border-radius:12px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);color:#f5d97a;font-weight:700;font-size:11.5px;cursor:pointer}
 .wcf-account-emergency button:disabled{opacity:.5;cursor:not-allowed}
 .wcf-signout{width:100%;margin-top:14px;min-height:46px;padding:13px;border-radius:12px;background:rgba(240,82,94,.1);border:1px solid rgba(240,82,94,.3);color:var(--red-hi);font-weight:700;font-size:12px;cursor:pointer}
 .wcf-signout:hover{background:rgba(240,82,94,.16)}
@@ -11945,14 +11971,14 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-modal-overlay{position:fixed;inset:0;background:rgba(3,7,15,.7);z-index:110;display:flex;align-items:center;justify-content:center;padding:20px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
 .wcf-modal{width:100%;max-width:300px;background:linear-gradient(180deg,rgba(30,41,59,.97),rgba(19,22,38,.99));border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 30px 70px -20px rgba(0,0,0,.75);animation:wcfPcardIn .2s ease-out}
 .wcf-modal-icon{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:19px;margin-bottom:14px}
-.wcf-modal-icon.danger{background:rgba(230,57,70,.15);border:1px solid rgba(230,57,70,.35)}
-.wcf-modal-icon.safe{background:rgba(46,116,204,.15);border:1px solid rgba(46,116,204,.35)}
+.wcf-modal-icon.danger{background:rgba(230,57,70,.15);border:1px solid rgba(230,57,70,.35);color:var(--red-hi)}
+.wcf-modal-icon.safe{background:rgba(245,217,122,.14);border:1px solid rgba(245,217,122,.35);color:#f5d97a}
 .wcf-modal-title{font-family:var(--display);font-size:16px;font-weight:800;margin-bottom:7px;color:var(--white)}
 .wcf-modal-msg{font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:20px}
 .wcf-modal-actions{display:flex;gap:9px}
 .wcf-modal-cancel{flex:1;background:rgba(148,163,184,.08);border:1px solid var(--line);color:var(--dim);padding:12px;border-radius:11px;font-weight:700;font-size:12.5px;cursor:pointer}
 .wcf-modal-confirm{flex:1;background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5));color:#fff;border:1px solid rgba(230,57,70,.5);padding:12px;border-radius:11px;font-weight:800;font-size:12.5px;cursor:pointer;box-shadow:0 10px 24px -14px rgba(230,57,70,.8)}
-.wcf-modal-confirm.safe{background:linear-gradient(135deg,var(--blue),rgba(46,116,204,.5));border-color:rgba(46,116,204,.5);box-shadow:0 10px 24px -14px rgba(46,116,204,.8)}
+.wcf-modal-confirm.safe{background:var(--red);border-color:var(--red);box-shadow:0 10px 24px -14px rgba(230,57,70,.8)}
 @keyframes wcfPcardIn{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
 .wcf-pcard{width:100%;max-width:300px;margin:auto;border-radius:20px;overflow:hidden;border:1px solid var(--line);box-shadow:0 26px 50px -30px rgba(0,0,0,.95);animation:wcfPcardIn .22s ease-out}
 .wcf-pcard-head{position:relative;padding:26px 20px 20px;text-align:center;background:radial-gradient(120% 90% at 50% 0%,rgba(230,57,70,.22),rgba(30,41,59,.9) 58%,rgba(21,25,42,.98));overflow:hidden}
@@ -12025,7 +12051,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-award-value{flex:none;font-family:var(--display);font-weight:800;font-size:14px;font-variant-numeric:tabular-nums;color:#f5d97a}
 .wcf-award-note{margin-top:7px;font-size:11px;line-height:1.45;color:#cbd5e1}
 .wcf-award-bottom{display:flex;align-items:center;gap:6px;margin-top:10px}
-.wcf-award-tag{font-weight:800;font-size:9px;letter-spacing:.08em;color:#7fb0ec;background:rgba(46,116,204,.14);border:1px solid rgba(46,116,204,.32);padding:5px 8px;border-radius:20px}
+.wcf-award-tag{font-weight:800;font-size:9px;letter-spacing:.08em;color:#cbd5e1;background:rgba(148,163,184,.1);border:1px solid var(--line);padding:5px 8px;border-radius:20px}
 .wcf-team-settings{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
 .wcf-team-field{display:flex;flex-direction:column;gap:6px;font-family:var(--sans);font-weight:800;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);min-width:0}
 .wcf-team-field.wide{grid-column:1/-1}
@@ -12039,7 +12065,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-club-settings .wcf-save:disabled,.wcf-add-player .wcf-save:disabled{background:var(--panel2);color:var(--dim);cursor:not-allowed;border-color:var(--line)}
 .wcf-upload-row{display:flex;gap:8px;margin-top:8px}
 .wcf-upload-box{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-height:70px;border-radius:14px;background:rgba(13,13,26,.6);border:1px dashed rgba(148,163,184,.3);cursor:pointer;padding:10px;text-align:center}
-.wcf-upload-glyph{font-family:var(--display);font-weight:700;font-size:15px;color:#7fb0ec}
+.wcf-upload-glyph{display:grid;place-items:center;color:#f5d97a}
 .wcf-upload-label{font-weight:700;font-size:9.5px;letter-spacing:.06em;color:var(--dim)}
 .wcf-upload-state{font-size:9px;color:#64748b}
 .wcf-login-code{margin-top:12px;background:var(--panel2);border:1px solid rgba(51,169,87,.4);border-radius:10px;padding:14px;text-align:center}
@@ -12063,9 +12089,9 @@ button.wcf-glance-card:disabled{cursor:default}
 .gaffai-fab-wrap.scrolling{opacity:.15; transform:scale(.8); pointer-events:none}
 .gaffai-fab-ring{position:absolute; inset:-6px; border-radius:50%; border:2px solid rgba(234,179,8,.55); animation:gaffaiPulse 2.2s ease-out infinite}
 @keyframes gaffaiPulse{0%{transform:scale(.85); opacity:.9}70%{transform:scale(1.35); opacity:0}100%{opacity:0}}
-.gaffai-fab{position:relative; width:52px; height:52px; border-radius:50%; border:none; cursor:pointer;
-  background:linear-gradient(145deg,var(--blue),#1a4d94); color:#fff; font-size:21px;
-  display:flex; align-items:center; justify-content:center; box-shadow:0 10px 24px -6px rgba(46,116,204,.6)}
+.gaffai-fab{position:relative; width:52px; height:52px; border-radius:50%; border:1px solid rgba(245,217,122,.55); cursor:pointer;
+  background:linear-gradient(145deg,#1d2438,#0d0d1a); color:#f5d97a; font-size:21px;
+  display:flex; align-items:center; justify-content:center; box-shadow:0 10px 24px -8px rgba(234,179,8,.45)}
 .gaffai-fab-badge{position:absolute; top:-4px; right:-4px; min-width:19px; height:19px; padding:0 5px; border-radius:10px;
   background:var(--red); color:#fff; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center;
   border:2px solid var(--bg); font-variant-numeric:tabular-nums}
@@ -12842,6 +12868,35 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-callout-b{margin-top:2px;font-size:12.5px;line-height:1.45;color:#cbd5e1;font-variant-numeric:tabular-nums}
 .wcf-callout-b b{color:#fff}
 .gaffai-done{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:800;color:#86efac;background:rgba(134,239,172,.1);border:1px solid rgba(134,239,172,.35)}
+.wcf-roles-stats .wcf-roles-stat{background:var(--panel);border:1px solid var(--line)}
+.wcf-roles-tools{display:flex;gap:8px;margin-top:10px}
+.wcf-roles-tool{flex:1;min-height:42px;padding:9px 10px;border-radius:12px;background:var(--panel);border:1px solid var(--line);color:#e2e8f0;font-weight:700;font-size:12.5px;cursor:pointer}
+.wcf-roles-tool.on{border-color:rgba(245,217,122,.55);color:#f5d97a}
+.wcf-roles-search-wrap{display:flex;align-items:center;gap:8px;margin:12px 0 0;padding:0 12px;border-radius:12px;background:#0b0d1a;border:1px solid var(--line);color:#64748b}
+.wcf-roles-search-wrap .wcf-roles-search{margin:0;border:0;background:none;padding:12px 0;min-height:44px;font-size:13px}
+.wcf-roles-search-wrap .wcf-roles-search:focus{outline:none}
+.wcf-roles-list{margin-top:10px;border-radius:16px;overflow:hidden;background:var(--panel);border:1px solid var(--line)}
+.wcf-roles-list .wcf-roles-row{margin:0;border:0;border-radius:0;background:none;padding:9px 12px}
+.wcf-roles-list .wcf-roles-row+.wcf-roles-row{border-top:1px solid var(--line)}
+.wcf-roles-list .wcf-roles-row.open{background:rgba(245,217,122,.04)}
+.wcf-roles-list .wcf-roles-avatar{background:linear-gradient(135deg,#7fb0ec,#8b6be8);width:32px;height:32px}
+.wcf-roles-who{flex:1;min-width:0}
+.wcf-roles-name{font-size:13px;font-weight:700;color:#f1f5f9;overflow-wrap:anywhere}
+.wcf-roles-name .wcf-role-badge.small{margin-left:6px;vertical-align:1px}
+.wcf-roles-sub{margin-top:1px;font-size:11px;color:var(--dim)}
+.wcf-roles-more{flex:none;width:34px;height:34px;border-radius:10px;border:0;background:rgba(148,163,184,.08);color:var(--dim);font-weight:800;font-size:15px;letter-spacing:1px;cursor:pointer}
+.wcf-roles-menu{display:flex;flex-direction:column;margin-top:8px;border-radius:12px;background:#131624;border:1px solid var(--line);overflow:hidden}
+.wcf-roles-menu button{display:block;width:100%;padding:11px 12px;background:none;border:0;text-align:left;color:#e2e8f0;font-weight:600;font-size:13px;cursor:pointer}
+.wcf-roles-menu button+button{border-top:1px solid var(--line)}
+.wcf-roles-menu button small{display:block;margin-top:2px;font-weight:500;font-size:11.5px;color:var(--dim)}
+.wcf-roles-menu button.danger{color:var(--red-hi)}
+.wcf-lineup-count{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0 8px;padding:12px 14px;border-radius:16px;background:var(--panel);border:1px solid var(--line);font-size:12.5px;color:var(--dim)}
+.wcf-lineup-count b{font-family:var(--display);font-size:18px;color:#fff;font-variant-numeric:tabular-nums}
+.wcf-lineup-count .todo{color:#f5d97a;font-weight:800}
+.wcf-lineup-count .done{color:var(--green);font-weight:800}
+.wcf-lineup-gen{display:block;width:100%;margin-bottom:12px;min-height:42px;padding:10px;border-radius:12px;background:var(--panel);border:1px solid var(--line);color:#e2e8f0;font-weight:700;font-size:12.5px;cursor:pointer}
+.wcf-lineup-group.todo .wcf-lineup-row{background:rgba(245,217,122,.06);border-color:rgba(245,217,122,.3)}
+.wcf-lineup-av{flex:none;width:28px;height:28px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-size:10.5px;font-weight:800;color:#fff}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
