@@ -6789,8 +6789,8 @@ interface GaffAINudge {
 // a fixed 5 would never hint at most of them. A random 5 each time the
 // chat resets means repeat use gradually surfaces the full range instead
 // of anchoring on the same five forever.
-// Grouped so the three rows read as Players / Money / Games, each
-// scrolling sideways instead of stacking five questions over the chat.
+// Grouped so they read as Players / Money / Games, two each, wrapping
+// inside the panel so nothing runs off the edge of the screen.
 const GAFFAI_SUGGESTION_POOL: Record<string, string[]> = {
   Players: [
     "Who hasn't been rated yet?",
@@ -6822,7 +6822,7 @@ function pickGaffAISuggestions(): { group: string; items: string[] }[] {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
-    return { group, items: shuffled.slice(0, 3) };
+    return { group, items: shuffled.slice(0, 2) };
   });
 }
 
@@ -7740,6 +7740,10 @@ function GaffAIChat({
   const [loading, setLoading] = useState(false);
   const [nudges, setNudges] = useState<GaffAINudge[]>([]);
   const [flaggedIndexes, setFlaggedIndexes] = useState<Set<number>>(new Set());
+  // Long alerts (a list of 14 names) show three lines until tapped.
+  const [openNudges, setOpenNudges] = useState<Set<string>>(new Set());
+  // Suggested questions stay tucked away until asked for.
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState(pickGaffAISuggestions);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -7920,7 +7924,7 @@ function GaffAIChat({
               </div>
               <div className="gaffai-sheet-titles">
                 <div className="gaffai-sheet-title">GaffAI</div>
-                <div className="gaffai-sheet-sub">Admins only · asks before changing anything</div>
+                <div className="gaffai-sheet-sub">Admins only · asks before acting</div>
               </div>
               <button className="gaffai-sheet-reset" onClick={resetChat} aria-label="Reset conversation" title="Reset">
                 ↺
@@ -7942,7 +7946,22 @@ function GaffAIChat({
                 return (
                   <div key={n.key} className="gaffai-needs">
                     <div className="gaffai-needs-k">Needs you</div>
-                    <div className="gaffai-needs-t">{n.text}</div>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      className={"gaffai-needs-t" + (openNudges.has(n.key) ? " open" : "")}
+                      onClick={() =>
+                        setOpenNudges((cur) => {
+                          const next = new Set(cur);
+                          if (next.has(n.key)) next.delete(n.key);
+                          else next.add(n.key);
+                          return next;
+                        })
+                      }
+                    >
+                      {n.text}
+                    </div>
+                    {n.text.length > 150 && !openNudges.has(n.key) && <div className="gaffai-needs-more">Show all</div>}
                     <div className="gaffai-needs-acts">
                       <button
                         className="gaffai-needs-go"
@@ -7963,6 +7982,26 @@ function GaffAIChat({
                   <div className="gaffai-hello">
                     <div className="gaffai-hello-t">{h < 12 ? "Morning" : h < 18 ? "Afternoon" : "Evening"}{first ? `, ${first}` : ""}.</div>
                     <div className="gaffai-hello-s">Ask about players, payments, games or stats.</div>
+                    <button className={"gaffai-sugg-toggle" + (showSuggestions ? " open" : "")} onClick={() => setShowSuggestions((v) => !v)} aria-expanded={showSuggestions}>
+                      Suggested questions
+                      <span aria-hidden="true">›</span>
+                    </button>
+                    {showSuggestions && (
+                    <div className="gaffai-chip-groups">
+                      {suggestions.map((grp) => (
+                        <div key={grp.group}>
+                          <div className="gaffai-chip-label">{grp.group}</div>
+                          <div className="gaffai-chips">
+                            {grp.items.map((q) => (
+                              <button key={q} className="gaffai-chip" onClick={() => send(q)}>
+                                {q}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    )}
                   </div>
                 );
               })()}
@@ -8004,22 +8043,6 @@ function GaffAIChat({
               )}
             </div>
 
-            {messages.length === 0 && (
-              <div className="gaffai-chip-groups">
-                {suggestions.map((grp) => (
-                  <div key={grp.group}>
-                    <div className="gaffai-chip-label">{grp.group}</div>
-                    <div className="gaffai-chips">
-                      {grp.items.map((q) => (
-                        <button key={q} className="gaffai-chip" onClick={() => send(q)}>
-                          {q}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
 
             <div className="gaffai-composer">
               <input
@@ -11915,7 +11938,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .gaffai-sheet-caption{padding:10px 16px 2px; font-size:11.5px; color:var(--dim); line-height:1.5}
 
 .gaffai-messages{flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px}
-.gaffai-msg{max-width:88%; font-size:13px; line-height:1.5; padding:10px 13px; border-radius:14px; white-space:pre-wrap}
+.gaffai-msg{max-width:88%; min-width:0; font-size:13px; line-height:1.5; padding:10px 13px; border-radius:14px; white-space:pre-wrap; overflow-wrap:anywhere}
 .gaffai-msg.bot{white-space:normal}
 .gaffai-msg.bot p{margin:0}
 .gaffai-msg.bot p+p,.gaffai-msg.bot p+ul,.gaffai-msg.bot p+ol,.gaffai-msg.bot ul+p,.gaffai-msg.bot ol+p{margin-top:8px}
@@ -11945,20 +11968,21 @@ button.wcf-glance-card:disabled{cursor:default}
 .gaffai-typing span:nth-child(3){animation-delay:.3s}
 @keyframes gaffaiBounce{0%,80%,100%{transform:translateY(0); opacity:.5}40%{transform:translateY(-4px); opacity:1}}
 
-.gaffai-chip-groups{display:flex; flex-direction:column; gap:8px; padding:4px 0 12px}
-.gaffai-chip-label{padding:0 16px 5px; font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; color:#64748b}
-.gaffai-chips{display:flex; gap:7px; padding:0 16px 2px; overflow-x:auto; scrollbar-width:none}
-.gaffai-chips::-webkit-scrollbar{display:none}
+.gaffai-chip-groups{display:flex; flex-direction:column; gap:10px; margin-top:14px}
+.gaffai-chip-label{padding:0 0 5px; font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; color:#64748b}
+.gaffai-chips{display:flex; flex-wrap:wrap; gap:7px}
 .gaffai-hello{margin-top:2px}
 .gaffai-hello-t{font-family:var(--display); font-weight:800; font-size:19px; color:#fff}
 .gaffai-hello-s{margin-top:2px; font-size:12px; color:var(--dim)}
 .gaffai-needs{border-radius:16px; padding:12px; background:rgba(245,217,122,.07); border:1px solid rgba(245,217,122,.4)}
 .gaffai-needs-k{font-size:10px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; color:#f5d97a}
-.gaffai-needs-t{margin-top:4px; font-size:13px; line-height:1.45; color:#f1f5f9}
+.gaffai-needs-t{display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; width:100%; margin-top:4px; padding:0; background:none; border:0; text-align:left; cursor:pointer; font:inherit; font-size:13px; line-height:1.45; color:#f1f5f9; overflow-wrap:anywhere}
+.gaffai-needs-t.open{display:block; -webkit-line-clamp:unset}
+.gaffai-needs-more{margin-top:2px; font-size:11.5px; font-weight:700; color:#f5d97a}
 .gaffai-needs-acts{display:flex; gap:6px; margin-top:9px}
 .gaffai-needs-go{border:none; border-radius:9px; padding:7px 11px; background:#f5d97a; color:#0d0d1a; font-weight:800; font-size:12px; cursor:pointer}
 .gaffai-needs-x{border:1px solid var(--line); border-radius:9px; padding:7px 11px; background:none; color:var(--dim); font-weight:700; font-size:12px; cursor:pointer}
-.gaffai-chip{flex:none; white-space:nowrap; font-size:12px; font-weight:600; padding:8px 11px; border-radius:12px; background:var(--panel); border:1px solid var(--line); color:#e2e8f0; cursor:pointer; text-align:left}
+.gaffai-chip{max-width:100%; white-space:normal; font-size:12px; font-weight:600; padding:8px 11px; border-radius:12px; background:var(--panel); border:1px solid var(--line); color:#e2e8f0; cursor:pointer; text-align:left}
 .gaffai-chip:hover{background:rgba(148,163,184,.15)}
 
 .gaffai-composer{display:flex; gap:8px; padding:10px 14px calc(14px + env(safe-area-inset-bottom,0px)); border-top:1px solid var(--line)}
@@ -12613,6 +12637,9 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pot-led>span{flex:none;font-family:var(--display);font-weight:800;color:#22c55e;font-variant-numeric:tabular-nums}
 .wcf-pot-led>span.out{color:var(--red-hi)}
 .wcf-pot-empty{margin:0;font-size:12.5px;line-height:1.5;color:var(--dim)}
+.gaffai-sugg-toggle{display:inline-flex; align-items:center; gap:8px; margin-top:12px; padding:8px 12px; border-radius:12px; border:1px solid var(--line); background:var(--panel); color:#e2e8f0; font-weight:700; font-size:12.5px; cursor:pointer}
+.gaffai-sugg-toggle span{font-size:16px; line-height:1; color:#f5d97a; transition:transform .15s}
+.gaffai-sugg-toggle.open span{transform:rotate(90deg)}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
