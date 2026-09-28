@@ -1861,6 +1861,19 @@ async function computeJourneyNudges(admin: SupabaseClient): Promise<Nudge[]> {
   return out;
 }
 
+// From 20 Nov each year until the end of December: time to get the
+// end-of-season Wrapped ready. Everything it needs is already being saved
+// (weather, rating history, monthly snapshots); this is the admins' cue.
+function computeSeasonWrappedPrepNudge(): Nudge | null {
+  const today = nowInLondon().slice(0, 10);
+  const year = today.slice(0, 4);
+  if (today < `${year}-11-20`) return null;
+  return {
+    key: `season-wrapped-prep-${year}`,
+    text: `Time to start prepping the end-of-season Wrapped for ${year}. Ask Claude Code to build it: the all-time Records view first, then the season story, tested as "${year} so far" by admins before it opens to everyone after the last December game. Weather, rating history and monthly snapshots have been saving since September, so the data's ready.`,
+  };
+}
+
 // The whole journey on request: where every member is, with names.
 async function getMemberJourney(admin: SupabaseClient) {
   const j = await computeJourney(admin);
@@ -1908,6 +1921,7 @@ export async function computeNudges(admin: SupabaseClient, forAdminId?: string):
     matchdayNotFull,
     birthdays,
     ...journey,
+    computeSeasonWrappedPrepNudge(),
   ].filter((n): n is Nudge => n !== null);
   if (candidates.length === 0) return [];
 
