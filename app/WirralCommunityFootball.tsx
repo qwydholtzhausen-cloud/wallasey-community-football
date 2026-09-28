@@ -4481,26 +4481,75 @@ function App({ session }: { session: Session }) {
                   const bestKeeper = (ids: string[]) => ids.filter((id) => rating(id)?.position !== "keeper").sort((a, b) => keeperScore(b) - keeperScore(a))[0];
                   const keepersW = whiteIds.filter((id) => rating(id)?.position === "keeper");
                   const keepersR = redIds.filter((id) => rating(id)?.position === "keeper");
-                  let keeperNote: string | null = null;
+                  const nameOf = (id: string) => nextConfirmed.find((b) => b.player_id === id)?.player.display_name ?? "?";
+                  let keeperNote: React.ReactNode = null;
                   if (showing && keepersW.length + keepersR.length === 1) {
                     const onWhite = keepersW.length === 1;
                     const k = (onWhite ? keepersW : keepersR)[0];
                     const other = bestKeeper(onWhite ? redIds : whiteIds);
-                    keeperNote = `Only one keeper is booked (${nextConfirmed.find((b) => b.player_id === k)?.player.display_name}, on ${onWhite ? cs.team_white_name : cs.team_red_name}).${
-                      other && keeperScore(other) >= 0
-                        ? ` ${onWhite ? cs.team_red_name : cs.team_white_name} will need someone in goal: ${rating(other)!.name} rates highest there (${keeperLabel(other)}).`
-                        : ""
-                    }`;
+                    keeperNote = (
+                      <>
+                        Only <b>{nameOf(k)}</b> is booked in goal ({onWhite ? cs.team_white_name : cs.team_red_name}).
+                        {other && keeperScore(other) >= 0 && (
+                          <> <b>{rating(other)!.name}</b> is {onWhite ? cs.team_red_name : cs.team_white_name}&apos; best option ({keeperLabel(other)}).</>
+                        )}
+                      </>
+                    );
                   } else if (showing && keepersW.length + keepersR.length === 0) {
                     const bw = bestKeeper(whiteIds);
                     const br = bestKeeper(redIds);
                     if (bw && br && keeperScore(bw) >= 0 && keeperScore(br) >= 0) {
-                      keeperNote = `No keeper booked. Best in goal: ${rating(bw)!.name} (${cs.team_white_name}, ${keeperLabel(bw)}) and ${rating(br)!.name} (${cs.team_red_name}, ${keeperLabel(br)}).`;
+                      keeperNote = (
+                        <>
+                          No keeper booked. Best in goal: <b>{rating(bw)!.name}</b> ({cs.team_white_name}, {keeperLabel(bw)}) and <b>{rating(br)!.name}</b> ({cs.team_red_name}, {keeperLabel(br)}).
+                        </>
+                      );
+                    }
+                  } else if (showing && Math.abs(keepersW.length - keepersR.length) >= 2) {
+                    const heavy = keepersW.length > keepersR.length;
+                    keeperNote = (
+                      <>
+                        {heavy ? cs.team_white_name : cs.team_red_name} have <b>{Math.max(keepersW.length, keepersR.length)}</b> keepers and {heavy ? cs.team_red_name : cs.team_white_name} have <b>{Math.min(keepersW.length, keepersR.length)}</b>. Move one across.
+                      </>
+                    );
+                  }
+                  // Real imbalances only, each saying which way and by how much.
+                  const gaps: { key: string; icon: "scale" | "split"; title: string; body: React.ReactNode }[] = [];
+                  if (showing && white.rated > 0 && red.rated > 0) {
+                    for (const m of ["fitness", "attack", "defence"] as const) {
+                      if (Math.abs(white[m] - red[m]) >= 1) {
+                        gaps.push({
+                          key: m,
+                          icon: "scale",
+                          title: `${m[0].toUpperCase() + m.slice(1)} gap`,
+                          body: (
+                            <>
+                              {cs.team_white_name} <b>{white[m].toFixed(1)}</b> v {cs.team_red_name} <b>{red[m].toFixed(1)}</b>.
+                              {suggestedTeams ? " Tap Shuffle again for a closer split." : ""}
+                            </>
+                          ),
+                        });
+                      }
                     }
                   }
-                  const flags = showing
-                    ? fairnessFlags(white, red).filter((f) => !(keeperNote && f.startsWith("Keepers")))
-                    : [];
+                  if (showing) {
+                    for (const p of ["defence", "midfield", "attack"] as PlayerPosition[]) {
+                      if (Math.abs(white.positions[p] - red.positions[p]) >= 2) {
+                        const word = p === "defence" ? "defender" : p === "midfield" ? "midfielder" : "attacker";
+                        const label = (n: number) => (n === 1 ? word : `${word}s`);
+                        gaps.push({
+                          key: p,
+                          icon: "split",
+                          title: `${POSITION_LABEL[p]} split`,
+                          body: (
+                            <>
+                              {cs.team_white_name} have <b>{white.positions[p]}</b> {label(white.positions[p])}, {cs.team_red_name} <b>{red.positions[p]}</b>.
+                            </>
+                          ),
+                        });
+                      }
+                    }
+                  }
 
                   return (
                     <>
@@ -4595,10 +4644,21 @@ function App({ session }: { session: Session }) {
                             </div>
                           )}
 
-                          {keeperNote && <div className="wcf-teams-note">🧤 {keeperNote}</div>}
-                          {flags.map((f) => (
-                            <div key={f} className="wcf-teams-note">⚠️ {f}</div>
+                          {keeperNote && (
+                            <TeamCallout tone="gold" icon="glove" title="Keeper cover">
+                              {keeperNote}
+                            </TeamCallout>
+                          )}
+                          {gaps.map((g) => (
+                            <TeamCallout key={g.key} tone="red" icon={g.icon} title={g.title}>
+                              {g.body}
+                            </TeamCallout>
                           ))}
+                          {gaps.length === 0 && white.rated > 0 && red.rated > 0 && (
+                            <TeamCallout tone="green" icon="check" title="No big gaps">
+                              Ratings and positions are evenly spread.
+                            </TeamCallout>
+                          )}
                         </>
                       )}
                     </>
@@ -8091,7 +8151,14 @@ function GaffAIChat({
                     </div>
                   )}
                   {m.action && m.actionState === "cancelled" && <div className="gaffai-action-result cancel">Cancelled — no changes made.</div>}
-                  {m.action && m.actionState === "confirmed" && <div className="gaffai-action-result success">✅ Done</div>}
+                  {m.action && m.actionState === "confirmed" && (
+                    <div className="gaffai-action-result success">
+                      <span className="gaffai-done">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7" /></svg>
+                        Done
+                      </span>
+                    </div>
+                  )}
                   {m.action && m.actionState === "failed" && <div className="gaffai-action-result cancel">Couldn't complete that.</div>}
                 </div>
               ))}
@@ -8127,6 +8194,28 @@ function GaffAIChat({
 // a small generic wrapper since Account groups several of these back to
 // back (settings, rating, guides, and - for admins - roles/log/settings/
 // awards) rather than each hand-rolling its own toggle button.
+// A note on the Teams tab: line icon, short title, one specific line.
+// Gold = a tip, red = a real imbalance, green = all good.
+function TeamCallout({ tone, icon, title, children }: { tone: "gold" | "red" | "green"; icon: "glove" | "scale" | "split" | "check"; title: string; children: React.ReactNode }) {
+  const paths: Record<typeof icon, React.ReactNode> = {
+    glove: <path d="M7 21h9a3 3 0 0 0 3-3v-6.5a1.5 1.5 0 0 0-3 0V11V5.5a1.5 1.5 0 0 0-3 0V10V4.5a1.5 1.5 0 0 0-3 0V10V6.5a1.5 1.5 0 0 0-3 0V14l-1.6-1.6a1.6 1.6 0 0 0-2.3 2.2L7 19" />,
+    scale: <path d="M12 3v18M5 7h14M5 7l-3 7a3.5 3.5 0 0 0 6 0zM19 7l-3 7a3.5 3.5 0 0 0 6 0z" />,
+    split: <path d="M4 8h14l-3.5-3.5M20 16H6l3.5 3.5" />,
+    check: <path d="M5 12l5 5L20 7" />,
+  };
+  return (
+    <div className={"wcf-callout " + tone}>
+      <span className="wcf-callout-ic">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[icon]}</svg>
+      </span>
+      <div>
+        <div className="wcf-callout-t">{title}</div>
+        <div className="wcf-callout-b">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 // Line icons for the Account settings rows, in place of the old ◆ ★ ◎
 // symbol tiles.
 function SetIcon({ name }: { name: "bell" | "user" | "phone" | "cake" | "star" | "mobile" | "mail" | "users" | "list" | "gear" | "trophy" }) {
@@ -12733,7 +12822,6 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-teams-bar .w{background:var(--wc)}
 .wcf-teams-bar .r{background:var(--rc)}
 .wcf-teams-rated{font-size:11px;color:var(--dim)}
-.wcf-teams-note{margin-bottom:8px;padding:10px 12px;border-radius:12px;background:rgba(245,217,122,.07);border:1px solid rgba(245,217,122,.3);font-size:12px;line-height:1.45;color:#e2e8f0}
 .wcf-teams-row{display:flex;justify-content:space-between;align-items:center;width:100%;margin:4px 0 10px;min-height:46px;padding:10px 14px;border-radius:14px;background:var(--panel);border:1px solid var(--line);color:#f1f5f9;font-weight:700;font-size:13px;cursor:pointer;text-align:left}
 .wcf-teams-row span{font-weight:600;font-size:12px;color:var(--dim)}
 .wcf-teams-row b{display:inline-block;margin-left:4px;color:#64748b;font-size:16px;transition:transform .15s}
@@ -12744,6 +12832,16 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-teams-hist i.ok{background:rgba(134,239,172,.12);color:var(--green)}
 .wcf-teams-hist i.big{background:rgba(230,57,70,.16);color:var(--red-hi)}
 .wcf-teams-hist i.gen{box-shadow:inset 0 0 0 1px rgba(245,217,122,.6)}
+.wcf-callout{position:relative;overflow:hidden;display:grid;grid-template-columns:34px minmax(0,1fr);gap:11px;align-items:start;margin-bottom:8px;padding:11px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line)}
+.wcf-callout::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--tone)}
+.wcf-callout.gold{--tone:#f5d97a}
+.wcf-callout.red{--tone:#f0525e}
+.wcf-callout.green{--tone:#86efac}
+.wcf-callout-ic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;color:var(--tone);background:color-mix(in srgb,var(--tone) 15%,transparent)}
+.wcf-callout-t{font-weight:800;font-size:13px;color:#fff}
+.wcf-callout-b{margin-top:2px;font-size:12.5px;line-height:1.45;color:#cbd5e1;font-variant-numeric:tabular-nums}
+.wcf-callout-b b{color:#fff}
+.gaffai-done{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:800;color:#86efac;background:rgba(134,239,172,.1);border:1px solid rgba(134,239,172,.35)}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
