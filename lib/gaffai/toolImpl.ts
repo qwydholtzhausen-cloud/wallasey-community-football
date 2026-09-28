@@ -1875,7 +1875,7 @@ async function getMemberJourney(admin: SupabaseClient) {
 // Pure deterministic queries, same as suggest_balanced_teams - no
 // Anthropic API call anywhere in here, so computing this on every app
 // load costs nothing beyond a handful of fast Supabase round trips.
-export async function computeNudges(admin: SupabaseClient): Promise<Nudge[]> {
+export async function computeNudges(admin: SupabaseClient, forAdminId?: string): Promise<Nudge[]> {
   const [unpaid, overdue, pushIssues, unpublishedDrafts, motmTrend, attendanceTrend, predictionTrend, leadTimeTrend, matchdayNotFull, birthdays] = await Promise.all([
     computeUnpaidNextGameNudge(admin),
     computeOverdueNudge(admin),
@@ -1904,7 +1904,12 @@ export async function computeNudges(admin: SupabaseClient): Promise<Nudge[]> {
   ].filter((n): n is Nudge => n !== null);
   if (candidates.length === 0) return [];
 
-  const { data: dismissed } = await admin.from("gaffai_dismissed_nudges").select("nudge_key");
+  // Dismissing is personal: an alert only disappears for the admin who
+  // dismissed it, so every admin sees everything until they've dealt with
+  // it themselves. With no admin given (the weekly digest, which goes to
+  // all of them) nothing is filtered out.
+  if (!forAdminId) return candidates;
+  const { data: dismissed } = await admin.from("gaffai_dismissed_nudges").select("nudge_key").eq("dismissed_by", forAdminId);
   const dismissedSet = new Set((dismissed ?? []).map((d) => d.nudge_key));
   return candidates.filter((n) => !dismissedSet.has(n.key));
 }

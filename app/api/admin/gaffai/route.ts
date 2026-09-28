@@ -85,11 +85,12 @@ export async function POST(req: Request) {
     // removed because an ambient signal with no content and no per-item
     // dismissal was judged "more likely to confuse than help"). These are
     // live, content-ful facts recomputed every time, filtered against
-    // gaffai_dismissed_nudges by content-addressed key - a nudge only
+    // this admin's own gaffai_dismissed_nudges by content-addressed key
+    // (dismissing is per admin, not club-wide) - a nudge only
     // reappears because the underlying facts genuinely changed, never
     // because of clock drift.
     if (body.type === "nudges") {
-      const nudges = await computeNudges(admin);
+      const nudges = await computeNudges(admin, callerId);
       return NextResponse.json({ type: "nudges", nudges });
     }
 

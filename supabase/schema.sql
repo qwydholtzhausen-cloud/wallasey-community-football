@@ -1794,3 +1794,13 @@ create policy "notification_sends_select_admin" on public.notification_sends for
 
 -- When each person last opened the app (updated at most every 30 min).
 alter table public.profiles add column if not exists last_active_at timestamptz;
+
+-- GaffAI alert dismissals are per admin (2026-09-28): dismissing hides an
+-- alert only for the admin who dismissed it. One row per alert per admin.
+alter table public.gaffai_dismissed_nudges drop constraint if exists gaffai_dismissed_nudges_pkey;
+delete from public.gaffai_dismissed_nudges where dismissed_by is null;
+alter table public.gaffai_dismissed_nudges alter column dismissed_by set not null;
+alter table public.gaffai_dismissed_nudges drop constraint if exists gaffai_dismissed_nudges_dismissed_by_fkey;
+alter table public.gaffai_dismissed_nudges add constraint gaffai_dismissed_nudges_dismissed_by_fkey
+  foreign key (dismissed_by) references public.profiles (id) on delete cascade;
+alter table public.gaffai_dismissed_nudges add primary key (nudge_key, dismissed_by);
