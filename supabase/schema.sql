@@ -1868,3 +1868,37 @@ begin
   return old;
 end;
 $$;
+
+-- ─────────────────────────────────────────────────────────────────
+-- 2026-09-28: votes and predictions secret until they're meant to be.
+-- Other people's MOTM votes are only readable once that game's voting has
+-- closed (5 hours after kickoff), and other people's predictions once the
+-- game has kicked off. Your own are always readable. The "8 of 16 voted"
+-- count comes from motm_ballot_count(), which returns a number only.
+-- ─────────────────────────────────────────────────────────────────
+drop policy if exists "motm_votes_select" on public.motm_votes;
+create policy "motm_votes_select" on public.motm_votes for select using (
+  voter_id = auth.uid()
+  or exists (
+    select 1 from public.games g
+    where g.id = motm_votes.game_id
+      and ((g.date + g.kickoff::time) at time zone 'Europe/London') + interval '300 minutes' <= now()
+  )
+);
+
+drop policy if exists "score_predictions_select" on public.score_predictions;
+create policy "score_predictions_select" on public.score_predictions for select using (
+  player_id = auth.uid()
+  or exists (
+    select 1 from public.games g
+    where g.id = score_predictions.game_id
+      and ((g.date + g.kickoff::time) at time zone 'Europe/London') <= now()
+  )
+);
+
+create or replace function public.motm_ballot_count(p_game_id uuid) returns int
+language sql stable security definer set search_path = public as $$
+  select count(*)::int from public.motm_votes where game_id = p_game_id;
+$$;
+revoke all on function public.motm_ballot_count(uuid) from public;
+grant execute on function public.motm_ballot_count(uuid) to authenticated;

@@ -1657,9 +1657,17 @@ function App({ session }: { session: Session }) {
     if (data) setPotEntries(data as PotEntry[]);
   }, []);
 
+  // While a game's vote is open the database only returns your own vote
+  // (other people's appear once voting closes), so "8 of 16 voted" comes
+  // from a counter that gives the number and nothing else.
+  const [motmBallotCounts, setMotmBallotCounts] = useState<Record<string, number>>({});
   const loadMotmVotes = useCallback(async () => {
     const { data } = await supabase.from("motm_votes").select("id, game_id, voter_id, candidate_id");
     if (data) setMotmVotes(data as MotmVote[]);
+  }, []);
+  const loadBallotCount = useCallback(async (gameId: string) => {
+    const { data, error } = await supabase.rpc("motm_ballot_count", { p_game_id: gameId });
+    if (!error && typeof data === "number") setMotmBallotCounts((cur) => ({ ...cur, [gameId]: data }));
   }, []);
 
   const loadScorePredictions = useCallback(async () => {
@@ -2324,7 +2332,7 @@ function App({ session }: { session: Session }) {
       .from("motm_votes")
       .upsert({ game_id: gameId, voter_id: myId, candidate_id: candidateId }, { onConflict: "game_id,voter_id" });
     if (error) return notifyError(error.message);
-    await loadMotmVotes();
+    await Promise.all([loadMotmVotes(), loadBallotCount(gameId)]);
     notifySuccess(`Voted for ${candidateName} — tap another name to change your pick`);
   }
 
@@ -3814,6 +3822,9 @@ function App({ session }: { session: Session }) {
   );
   // The game this player can vote Man of the Match on right now, if any:
   // scored, still inside the voting window, and they played in it.
+  useEffect(() => {
+    for (const g of scoredPastGames) if (kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) > nowUk) loadBallotCount(g.id);
+  }, [scoredPastGames, nowUk, loadBallotCount]);
   const motmVoteGame = useMemo(
     () =>
       scoredPastGames.find(
@@ -4281,6 +4292,7 @@ function App({ session }: { session: Session }) {
               const g = games.find((x) => x.id === id);
               if (g) shareResult(g);
             }}
+            emergencyContacts={emergencyContacts}
             askConfirm={askConfirm}
           />
         )}
@@ -5925,7 +5937,7 @@ function App({ session }: { session: Session }) {
                                 <div className="wcf-vote-head">
                                   <div className="wcf-vote-k">Vote Man of the Match</div>
                                   <div className="wcf-vote-meta">
-                                    Closes <b>{closes}</b> · {motmTimeLeft(g)} left · <b>{totalVotes}</b> of {candidates.length} voted
+                                    Closes <b>{closes}</b> · {motmTimeLeft(g)} left · <b>{motmBallotCounts[g.id] ?? totalVotes}</b> of {candidates.length} voted
                                   </div>
                                 </div>
                                 <div className="wcf-vote-teams">
@@ -9433,6 +9445,7 @@ function AdminConsole({
   messages,
   onSendMessage,
   onShareResult,
+  emergencyContacts,
   askConfirm,
 }: {
   upcoming: GameRow[];
@@ -9453,9 +9466,11 @@ function AdminConsole({
   messages: AdminMessage[];
   onSendMessage: (recipientId: string, message: string) => Promise<void>;
   onShareResult: (gameId: string) => void;
+  emergencyContacts: EmergencyContact[];
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
 }) {
   const shared = {
+    emergencyContacts,
     goalRows,
     cs,
     profiles,
@@ -9920,10 +9935,12 @@ function AdminGameRow({
   onDeleteGame,
   onAddBooking,
   onSetPotExempt,
+  emergencyContacts,
   askConfirm,
 }: {
   game: GameRow;
   past: boolean;
+  emergencyContacts: EmergencyContact[];
   mainVenue: string;
   onEnterResult: (gameId: string) => void;
   goalRows: GoalRow[];
@@ -9943,6 +9960,7 @@ function AdminGameRow({
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const waitingList = game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const [addPlayerSearch, setAddPlayerSearch] = useState("");
+  const [showContacts, setShowContacts] = useState(false);
   // The booking whose actions sheet is open (tap ⋯ on a row).
   const [actionFor, setActionFor] = useState<BookingRow | null>(null);
 
@@ -10069,6 +10087,44 @@ function AdminGameRow({
               ))}
             </>
           )}
+
+          {!past && confirmed.length > 0 && (() => {
+            // Everyone playing, with a tap-to-call number where they've set
+            // one - in one place for the pitch, instead of card by card.
+            const withContact = confirmed.map((b) => ({ b, c: emergencyContacts.find((x) => x.player_id === b.player_id) }));
+            const have = withContact.filter((x) => x.c).length;
+            return (
+              <div className="wcf-ec">
+                <button className="wcf-ec-head" onClick={() => setShowContacts((v) => !v)} aria-expanded={showContacts}>
+                  <span>Emergency contacts</span>
+                  <span className="wcf-ec-count">
+                    {have} of {confirmed.length} set <b className={showContacts ? "open" : ""}>›</b>
+                  </span>
+                </button>
+                {showContacts && (
+                  <div className="wcf-ec-list">
+                    {withContact
+                      .sort((x, y) => Number(!!y.c) - Number(!!x.c) || x.b.player.display_name.localeCompare(y.b.player.display_name))
+                      .map(({ b, c }) => (
+                        <div key={b.id} className="wcf-ec-row">
+                          <div className="wcf-ec-who">
+                            <div className="wcf-ec-name">{b.player.display_name}</div>
+                            <div className="wcf-ec-sub">{c ? c.contact_name : "No emergency contact set"}</div>
+                          </div>
+                          {c ? (
+                            <a className="wcf-ec-call" href={`tel:${c.contact_phone.replace(/[^+\d]/g, "")}`}>
+                              {c.contact_phone}
+                            </a>
+                          ) : (
+                            <span className="wcf-ec-none">None</span>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {eligiblePlayers.length > 0 && (() => {
             // Type to find someone instead of scrolling a 60-name dropdown.
@@ -12897,6 +12953,19 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-lineup-gen{display:block;width:100%;margin-bottom:12px;min-height:42px;padding:10px;border-radius:12px;background:var(--panel);border:1px solid var(--line);color:#e2e8f0;font-weight:700;font-size:12.5px;cursor:pointer}
 .wcf-lineup-group.todo .wcf-lineup-row{background:rgba(245,217,122,.06);border-color:rgba(245,217,122,.3)}
 .wcf-lineup-av{flex:none;width:28px;height:28px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-size:10.5px;font-weight:800;color:#fff}
+.wcf-ec{margin-top:12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);overflow:hidden}
+.wcf-ec-head{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:46px;padding:10px 13px;background:none;border:0;color:#f1f5f9;font-weight:700;font-size:13px;cursor:pointer;text-align:left}
+.wcf-ec-count{font-weight:600;font-size:12px;color:var(--dim)}
+.wcf-ec-count b{display:inline-block;margin-left:4px;color:#64748b;font-size:16px;transition:transform .15s}
+.wcf-ec-count b.open{transform:rotate(90deg)}
+.wcf-ec-list{border-top:1px solid var(--line)}
+.wcf-ec-row{display:flex;align-items:center;gap:10px;padding:9px 13px}
+.wcf-ec-row+.wcf-ec-row{border-top:1px solid var(--line)}
+.wcf-ec-who{flex:1;min-width:0}
+.wcf-ec-name{font-size:13px;font-weight:700;color:#f1f5f9}
+.wcf-ec-sub{margin-top:1px;font-size:11.5px;color:var(--dim)}
+.wcf-ec-call{flex:none;padding:7px 10px;border-radius:10px;background:rgba(134,239,172,.1);border:1px solid rgba(134,239,172,.35);color:var(--green);font-weight:800;font-size:12px;text-decoration:none;font-variant-numeric:tabular-nums}
+.wcf-ec-none{flex:none;font-size:11.5px;font-weight:700;color:#64748b}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
