@@ -59,6 +59,7 @@ export interface WrappedData {
   nemesis: { playerId: string; name: string; met: number; beatYou: number; youBeat: number } | null;
   favourite: { playerId: string; name: string; met: number; beatYou: number; youBeat: number } | null;
   best: { date: string; team: Team; us: number; them: number } | null;
+  worst: { date: string; team: Team; us: number; them: number } | null; // heaviest defeat
   unbeaten: number;
   winStreak: number;
   form: { date: string; result: Result }[]; // your games, oldest first
@@ -199,6 +200,15 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
       return { date: m.game.date, team: m.team, us, them };
     })
     .sort((a, b) => b.us - b.them - (a.us - a.them) || b.us - a.us);
+  // Heaviest defeat = biggest losing margin, most conceded as the tiebreak.
+  const losses = mine
+    .filter((m) => resultFor(m.game, m.team) === "L")
+    .map((m) => {
+      const us = m.team === "white" ? m.game.team_white_score! : m.game.team_red_score!;
+      const them = m.team === "white" ? m.game.team_red_score! : m.game.team_white_score!;
+      return { date: m.game.date, team: m.team, us, them };
+    })
+    .sort((a, b) => b.them - b.us - (a.them - a.us) || b.them - a.them);
 
   // MOTM: the club's rule (lib/motm.ts) - most votes, a tie goes to more
   // goals that game, still level is joint.
@@ -262,6 +272,7 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
     favourite: favourite ?? null,
     mostWith: byTogether[0] ? { playerId: byTogether[0].playerId, name: byTogether[0].name, together: byTogether[0].together } : null,
     best: wins[0] ?? null,
+    worst: losses[0] ?? null,
     unbeaten,
     winStreak,
     form: mine.map((m) => ({ date: m.game.date, result: resultFor(m.game, m.team) })),

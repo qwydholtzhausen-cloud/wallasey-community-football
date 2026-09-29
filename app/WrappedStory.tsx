@@ -198,6 +198,16 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
   const ex = p.extras;
   const topTag = ex?.tags[0] ?? null;
   const theme = wrappedThemeFor(p.periodKey);
+  // A card's label, in the month's theme when it has one, with its pun under it.
+  const L = (k: string, dflt: string): ReactNode => {
+    const quip = theme?.copy?.quips?.[k];
+    return (
+      <>
+        {theme?.copy?.labels?.[k] ?? dflt}
+        {quip && <span className="wr-quip">{quip}</span>}
+      </>
+    );
+  };
 
   cards.push({
     key: "intro",
@@ -216,7 +226,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
           {theme.line({ firstName: d.firstName, apps: d.apps, ofGames: d.ofGames, goals: d.goals, goalsRank: d.goalsRank, motmWins: d.motmWins, topTag: topTag?.tag ?? null })}
         </div>
         <div className="wr-grow" />
-        <div className="wr-tap wr-rise"><i />Tap to relive your month</div>
+        <div className="wr-tap wr-rise"><i />{theme?.copy?.tap ?? "Tap to relive your month"}</div>
       </>
     ) : (
       <>
@@ -241,7 +251,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     accent: "#7fb0ec",
     body: (
       <>
-        <div className="wr-lab wr-rise">At a glance</div>
+        <div className="wr-lab wr-rise">{L("glance", "At a glance")}</div>
         <div className="wr-stack">
           <div className="wr-stat wr-rise">
             <b><Count to={d.apps} /><small>of {d.ofGames}</small></b>
@@ -283,7 +293,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     accent: "#86efac",
     body: (
       <>
-        <div className="wr-lab wr-rise">Your record</div>
+        <div className="wr-lab wr-rise">{L("record", "Your record")}</div>
         <div className="wr-h wr-rise">{recordLine.split(". ")[0]}.</div>
         <div className="wr-ringrow wr-rise">
           <div className="wr-ringwrap">
@@ -321,7 +331,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     accent: "#f5d97a",
     body: (
       <>
-        <div className="wr-lab wr-rise">Your {p.periodShort}</div>
+        <div className="wr-lab wr-rise">{L("month", `Your ${p.periodShort}`)}</div>
         <div className="wr-h wr-rise">{d.apps} nights out of the house.</div>
         <div className="wr-cal wr-rise">
           {["M", "T", "W", "T", "F", "S", "S"].map((l, i) => <span key={"h" + i} className="hd">{l}</span>)}
@@ -352,7 +362,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     body:
       d.goals > 0 ? (
         <>
-          <div className="wr-lab wr-rise">In front of goal</div>
+          <div className="wr-lab wr-rise">{L("goals", "In front of goal")}</div>
           <div className="wr-big wr-rise" style={{ marginTop: 14 }}>
             <Count to={d.goals} />
             <small>{d.goals === 1 ? "goal" : "goals"}</small>
@@ -371,7 +381,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
         </>
       ) : (
         <>
-          <div className="wr-lab wr-rise">In front of goal</div>
+          <div className="wr-lab wr-rise">{L("goals", "In front of goal")}</div>
           <div className="wr-h wr-rise">The goals will come.</div>
           <div className="wr-p wr-rise">None on the scoresheet this time, but you were in the thick of it for {d.minutes} minutes.</div>
           <div className="wr-grow" />
@@ -390,7 +400,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       body:
         d.motmWins > 0 ? (
           <>
-            <div className="wr-lab wr-rise">Man of the Match</div>
+            <div className="wr-lab wr-rise">{L("motm", "Man of the Match")}</div>
             <div className="wr-big wr-rise" style={{ marginTop: 14 }}>
               <Count to={d.motmWins} />
               <small>{d.motmWins === 1 ? "time" : "times"}</small>
@@ -401,7 +411,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
           </>
         ) : (
           <>
-            <div className="wr-lab wr-rise">Man of the Match</div>
+            <div className="wr-lab wr-rise">{L("motm", "Man of the Match")}</div>
             <div className="wr-h wr-rise">Your teammates noticed.</div>
             <div className="wr-big wr-rise" style={{ marginTop: 14 }}>
               <Count to={d.motmVotes} />
@@ -424,7 +434,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       accent: "#f5d97a",
       body: (
         <>
-          <div className="wr-lab wr-rise">Why they voted for you</div>
+          <div className="wr-lab wr-rise">{L("why", "Why they voted for you")}</div>
           <div className="wr-tagbig wr-rise">
             <span className="ic">
               <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{def?.icon}</svg>
@@ -462,7 +472,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       accent: "#86efac",
       body: (
         <>
-          <div className="wr-lab wr-rise">Who you win with</div>
+          <div className="wr-lab wr-rise">{L("partner", "Who you win with")}</div>
           <div className="wr-duo wr-rise">
             <Face name={d.firstName} url={p.avatarFor(p.myId)} className="wr-av me" />
             <Face name={pt.name} url={p.avatarFor(pt.playerId)} className="wr-av them" />
@@ -497,7 +507,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       accent: "#b9a6f5",
       body: (
         <>
-          <div className="wr-lab wr-rise">Your football circle</div>
+          <div className="wr-lab wr-rise">{L("circle", "Your football circle")}</div>
           <div className="wr-h wr-rise">
             You shared a side with {d.circle.count} {d.circle.count === 1 ? "player" : "different players"}.
           </div>
@@ -547,7 +557,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       accent: "#f8b3b8",
       body: n ? (
         <>
-          <div className="wr-lab wr-rise">Your nemesis</div>
+          <div className="wr-lab wr-rise">{L("nemesis", "Your nemesis")}</div>
           <div className="wr-h wr-rise">{n.name} has your number.</div>
           <div className="wr-duo wr-rise">
             <Face name={n.name} url={p.avatarFor(n.playerId)} className="wr-av nem" />
@@ -569,7 +579,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
         </>
       ) : (
         <>
-          <div className="wr-lab wr-rise">Your nemesis</div>
+          <div className="wr-lab wr-rise">{L("nemesis", "Your nemesis")}</div>
           <div className="wr-h wr-rise">Nobody&apos;s got your number.</div>
           <div className="wr-p wr-rise">
             {d.L === 0 ? `Unbeaten in ${d.apps} games. No one on the other side has had the better of you.` : "No one beat you often enough to earn the title."}
@@ -583,7 +593,43 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     });
   }
 
-  if (d.best) {
+  // October's own card: your best win (the treat) and heaviest defeat (the trick).
+  if (theme?.special === "trickOrTreat" && (d.best || d.worst)) {
+    const row = (g: NonNullable<typeof d.best>, kind: "treat" | "trick") => {
+      const usName = g.team === "red" ? p.redName : p.whiteName;
+      const themName = g.team === "red" ? p.whiteName : p.redName;
+      return (
+        <div className={"wr-tt " + kind}>
+          <span className="lbl">{kind === "treat" ? "Treat" : "Trick"}</span>
+          <b>{usName} {g.us}–{g.them} {themName}</b>
+          <small>{shortDate(g.date)}</small>
+        </div>
+      );
+    };
+    cards.push({
+      key: "treat",
+      photo: "/wrapped/bank/motm-walk-off.jpg",
+      accent: theme.accent,
+      body: (
+        <>
+          <div className="wr-lab wr-rise">Trick or treat</div>
+          <div className="wr-h wr-rise">
+            {d.best && d.worst ? "The treat, and the trick." : d.best ? "All treats, no tricks." : "All tricks, no treats."}
+          </div>
+          <div className="wr-tts wr-rise">
+            {d.best && row(d.best, "treat")}
+            {d.worst && row(d.worst, "trick")}
+          </div>
+          <div className="wr-grow" />
+          <div className="wr-p wr-rise">
+            {!d.worst ? <>You didn&apos;t lose once in {p.periodShort}. <b>Spooky.</b></> : !d.best ? <>No wins this time. November owes you one.</> : <>Some nights you get the sweets. Some nights you get egged.</>}
+          </div>
+        </>
+      ),
+    });
+  }
+
+  if (d.best && theme?.special !== "trickOrTreat") {
     const b = d.best;
     const usName = b.team === "red" ? p.redName : p.whiteName;
     const themName = b.team === "red" ? p.whiteName : p.redName;
@@ -594,7 +640,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       accent: "#f5d97a",
       body: (
         <>
-          <div className="wr-lab wr-rise">Your best night</div>
+          <div className="wr-lab wr-rise">{L("best", "Your best night")}</div>
           <div className="wr-h wr-rise">{shortDate(b.date)}</div>
           <div className="wr-score wr-rise">
             <div><div className="tm" style={{ color: b.team === "red" ? "#f8b3b8" : "#fff" }}>{usName.toUpperCase()}</div><div className="n"><Count to={b.us} /></div></div>
@@ -619,7 +665,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       accent: "#f5d97a",
       body: (
         <>
-          <div className="wr-lab wr-rise">Best night you played in</div>
+          <div className="wr-lab wr-rise">{L("rated", "Best night you played in")}</div>
           <div className="wr-h wr-rise">{shortDate(r.date)}, as rated by the squad</div>
           <div className="wr-score wr-rise">
             <div><div className="tm" style={{ color: r.team === "red" ? "#f8b3b8" : "#fff" }}>{usName.toUpperCase()}</div><div className="n"><Count to={r.us} /></div></div>
@@ -658,7 +704,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       accent: "#7fb0ec",
       body: (
         <>
-          <div className="wr-lab wr-rise">Your weather report</div>
+          <div className="wr-lab wr-rise">{L("weather", "Your weather report")}</div>
           <div className="wr-h wr-rise">{headline}</div>
           <div className="wr-wx wr-rise">
             {wx.slice(0, 5).map((w) => (
@@ -712,7 +758,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
         accent: "#f5d97a",
         body: (
           <>
-            <div className="wr-lab wr-rise">The record book</div>
+            <div className="wr-lab wr-rise">{L("records", "The record book")}</div>
             <div className="wr-h wr-rise">{held > 0 ? "You're in it." : `${p.periodShort}'s best bits.`}</div>
             <div className="wr-rb">
               {rows.slice(0, 5).map((x) => (
@@ -743,7 +789,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       accent: "#b9a6f5",
       body: (
         <>
-          <div className="wr-lab wr-rise">Crystal ball</div>
+          <div className="wr-lab wr-rise">{L("pred", "Crystal ball")}</div>
           <div className="wr-h wr-rise">{head}</div>
           <div className="wr-big wr-rise" style={{ marginTop: 16 }}>
             <Count to={pr.points} />
@@ -765,7 +811,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     accent: "#7fb0ec",
     body: (
       <>
-        <div className="wr-lab wr-rise">The club&apos;s {p.periodShort}</div>
+        <div className="wr-lab wr-rise">{L("club", `The club's ${p.periodShort}`)}</div>
         <div className="wr-h wr-rise">{clubHead}</div>
         <div className="wr-split wr-rise">
           {c.whiteWins > 0 && <div style={{ flex: c.whiteWins, background: p.whiteColor, color: "#111" }}>{p.whiteName.toUpperCase()} {c.whiteWins}</div>}
@@ -796,7 +842,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     accent: "#f8b3b8",
     body: (
       <>
-        <div className="wr-lab wr-rise">Your final score</div>
+        <div className="wr-lab wr-rise">{L("summary", "Your final score")}</div>
         <div className="wr-grow" />
         <div className="wr-poster wr-rise">
           <div className="top">
@@ -844,8 +890,8 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
           </>
         ) : (
           <>
-            <div className="wr-h wr-rise" style={{ fontSize: 34 }}>New month.<br />New games.</div>
-            <div className="wr-p wr-rise">Your next chapter starts on the next booking.</div>
+            <div className="wr-h wr-rise" style={{ fontSize: 34 }}>{theme?.copy?.endTitle?.[0] ?? "New month."}<br />{theme?.copy?.endTitle?.[1] ?? "New games."}</div>
+            <div className="wr-p wr-rise">{theme?.copy?.endLine ?? "Your next chapter starts on the next booking."}</div>
           </>
         )}
         <div className="wr-next wr-rise">
@@ -861,6 +907,44 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     if (cards.length <= MAX_CARDS) break;
     const i = cards.findIndex((c) => c.key === k);
     if (i >= 0) cards.splice(i, 1);
+  }
+
+  // From October 2026 the order changes every month: the player's biggest
+  // story leads straight after the intro, the rest shuffle (seeded by month
+  // and player, so a replay keeps the same order), and the final score and
+  // "next game" always close it. September and earlier keep their order.
+  if (p.periodKey >= "2026-10") {
+    const wxAll = ex?.weather ?? [];
+    const wetGames = wxAll.filter((w) => isWet(w.code));
+    const lead: Record<string, number> = {
+      goals: d.goalsRank === 1 && d.goals >= 3 ? 95 : d.goals >= 5 ? 80 : 0,
+      why: tagTotal >= 3 ? 88 : 0,
+      motm: d.motmWins > 0 ? 85 + d.motmWins : 0,
+      pred: d.predictions?.rank === 1 ? 78 : 0,
+      weather: wetGames.length >= 2 && wetGames.every((w) => w.result !== "L") ? 75 : 0,
+      rated: ex?.rated && ex.rated.average >= 4.5 ? 72 : 0,
+      treat: d.best && d.best.us - d.best.them >= 5 ? 70 : 0,
+      best: d.best && d.best.us - d.best.them >= 5 ? 70 : 0,
+      partner: d.partner && d.partner.rate >= 75 ? 65 : 0,
+    };
+    const first = cards[0];
+    const tail = cards.filter((c) => c.key === "summary" || c.key === "next");
+    const middle = cards.slice(1).filter((c) => !tail.includes(c));
+    const top = middle.reduce<Card | null>((a, c) => ((lead[c.key] ?? 0) >= 60 && (!a || (lead[c.key] ?? 0) > (lead[a.key] ?? 0)) ? c : a), null);
+    let seed = 0;
+    for (const ch of p.periodKey + p.myId) seed = (Math.imul(seed, 31) + ch.charCodeAt(0)) | 0;
+    const rand = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const rest = middle.filter((c) => c !== top);
+    for (let i = rest.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [rest[i], rest[j]] = [rest[j], rest[i]];
+    }
+    cards.splice(0, cards.length, first, ...(top ? [top] : []), ...rest, ...tail);
   }
   return cards;
 }
@@ -1374,6 +1458,14 @@ const wrappedCss = `
 .wr-wx svg{color:var(--acc)}
 .wr-wx b{display:block;font-family:var(--display);font-size:18px;margin-top:4px}
 .wr-wx span{display:block;font-size:10.5px;color:rgba(255,255,255,.65)}
+.wr-tts{display:flex;flex-direction:column;gap:10px;margin-top:22px}
+.wr-tt{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:14px;align-items:center;padding:14px;border-radius:16px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12)}
+.wr-tt .lbl{grid-row:1/3;font-family:var(--display);font-weight:800;font-size:13px;letter-spacing:.12em;text-transform:uppercase;padding:8px 10px;border-radius:10px;color:#0d0d1a}
+.wr-tt.treat .lbl{background:#86efac}
+.wr-tt.trick .lbl{background:var(--acc)}
+.wr-tt b{font-family:var(--display);font-weight:800;font-size:20px;line-height:1.1}
+.wr-tt small{font-size:12.5px;color:rgba(255,255,255,.7);margin-top:2px}
+.wr-quip{display:block;margin-top:5px;font-size:13px;font-weight:600;font-style:italic;letter-spacing:0;text-transform:none;color:rgba(255,255,255,.72)}
 .wr-kicker{font-family:var(--display);font-weight:700;font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.8);margin-top:18px}
 .wr-period{margin-top:2px}
 .wr-stack{display:flex;flex-direction:column;gap:22px;margin-top:22px}

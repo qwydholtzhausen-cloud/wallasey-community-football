@@ -21,6 +21,10 @@ export interface WrappedTheme {
   introPhoto: string;
   line: (who: WrappedThemeWho) => string; // the sentence under it, after "{first}, "
   push: { title: string; body: string }; // the release-day notification
+  special?: "trickOrTreat"; // a card only this month has
+  // Themed copy: card labels by card key, the intro's tap line, and the
+  // closing card's headline and line.
+  copy?: { labels?: Partial<Record<string, string>>; quips?: Partial<Record<string, string>>; tap?: string; endTitle?: [string, string]; endLine?: string };
 }
 
 const THEMES: Record<string, WrappedTheme> = {
@@ -30,6 +34,47 @@ const THEMES: Record<string, WrappedTheme> = {
     edition: "Halloween edition",
     accent: "#f59e4b",
     introPhoto: "/wrapped/bank/october-leaves.jpg",
+    special: "trickOrTreat",
+    copy: {
+      labels: {
+        glance: "At a glance, if you dare",
+        record: "The body count",
+        month: "Nights under the lights",
+        goals: "Ghoals",
+        motm: "Monster of the Match",
+        why: "What the ghouls saw",
+        partner: "Partner in crime",
+        circle: "Your coven",
+        nemesis: "Your nightmare",
+        best: "Your best night",
+        rated: "Most spooktacular night",
+        weather: "Dark and stormy nights",
+        records: "The book of spells",
+        pred: "The crystal ball",
+        club: "The haunted house",
+        summary: "Your final scare",
+      },
+      quips: {
+        glance: "Your month, back from the dead.",
+        record: "Wins, draws, and the ones that haunt you.",
+        month: "Every game night, lit up like a jack-o'-lantern.",
+        goals: "Frightening finishing.",
+        motm: "It's alive! The squad picked you.",
+        why: "Spirits don't lie.",
+        partner: "Two peas in a pumpkin.",
+        circle: "Everyone who haunted the pitch with you.",
+        nemesis: "The stuff of nightmares.",
+        rated: "Frighteningly good.",
+        weather: "Perfect weather for a haunting.",
+        records: "Written in blood. Well, biro.",
+        pred: "Double, double, toil and trouble.",
+        club: "The whole squad, raised from the grave.",
+        summary: "Boo-tiful.",
+      },
+      tap: "Tap if you dare",
+      endTitle: ["Don't ghost us.", "Book your next game."],
+      endLine: "November's Bonfire edition is already brewing.",
+    },
     push: { title: "Fright Lights: your October Wrapped", body: "A month under the floodlights: your goals, your votes, the weather and who you win with. Tap to watch." },
     line: (w) =>
       w.goals >= 3 && w.goalsRank === 1 ? "scary in front of goal."
