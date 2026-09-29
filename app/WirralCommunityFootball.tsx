@@ -26,6 +26,9 @@ import { BOOT_CATEGORIES, BOOT_CATEGORY, normaliseUkPhone, displayUkPhone, type 
 const PAYMENT_LINK = process.env.NEXT_PUBLIC_PAYMENT_LINK || "";
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "";
 const MAX_SPOTS = 16;
+// Special fixtures (e.g. a Sunday 11-a-side) can take a full squad.
+const SPECIAL_MAX_SPOTS = 30;
+const SPECIAL_DEFAULTS = { venue: "Solar Campus", pitch: "11-a-side", kickoff: "12:00", max_players: 22 };
 // Free-tier Supabase storage is 1GB total / 50MB per file - images get
 // compressed client-side so dozens of them barely register, video doesn't
 // compress the same way so it gets a hard cap instead, well under the
@@ -172,6 +175,9 @@ interface GameRow {
   team_method: "generated" | "manual" | null;
   team_balance_score: number | null;
   lineup_positions: Record<string, { x: number; y: number }> | null;
+  // A one-off special (e.g. Sunday 11-a-side): shown in gold, without the
+  // usual red/green booking colours. Undefined until the column exists.
+  special?: boolean;
   bookings: BookingRow[];
 }
 
@@ -1622,7 +1628,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "id, date, kickoff, venue, pitch, price, max_players, pitch_cost, team_white_score, team_red_score, published, team_method, team_balance_score, lineup_positions, bookings(id, player_id, status, waiting, team, created_at, promoted_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        "*, bookings(id, player_id, status, waiting, team, created_at, promoted_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -10810,9 +10816,10 @@ function GameCard({
   );
 
   return (
-    <article className={featured ? "wcf-card featured " + bookedClass : ""} style={featured ? undefined : { marginBottom: 18 }}>
+    <article className={featured ? "wcf-card featured " + (game.special ? "special" : bookedClass) : ""} style={featured ? undefined : { marginBottom: 18 }}>
       {featured ? (
         <>
+          {game.special && <span className="wcf-special-ribbon">★ {fmtDate(game.date).split(",")[0]} {game.pitch}</span>}
           <div className="wcf-hero-top">
             <span className="wcf-hero-date mono">{fmtDate(game.date).replace(",", "").toUpperCase()}</span>
             <span className="wcf-hero-top-right">
@@ -10872,7 +10879,8 @@ function GameCard({
           </button>
         </>
       ) : (
-        <div className={"wcf-fx-row " + bookedClass}>
+        <div className={"wcf-fx-row " + (game.special ? "special" : bookedClass)}>
+          {game.special && <span className="wcf-special-ribbon">★ {fmtDate(game.date).split(",")[0]} {game.pitch}</span>}
           <div className="wcf-fx-row-top" onClick={openSheet}>
             <div className="wcf-fx-date">
               <div className="wcf-fx-day">{fmtDate(game.date).split(",")[0]?.toUpperCase()}</div>
@@ -10907,7 +10915,9 @@ function GameCard({
                     {editIcon}
                   </button>
                 )}
-                <span className={"wcf-fx-pill " + (full ? "full" : "open")}>{full ? "FULL" : `${spotsLeft} LEFT`}</span>
+                <span className={"wcf-fx-pill " + (game.special ? "gold" : full ? "full" : "open")}>
+                  {game.special && myBooking && !myBooking.waiting ? "YOU'RE IN" : full ? "FULL" : `${spotsLeft} LEFT`}
+                </span>
               </span>
             </div>
           </div>
@@ -11001,7 +11011,25 @@ function GameCard({
           </label>
           <label>
             Date
-            <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+            <input
+              type="date"
+              value={form.date}
+              onChange={(e) => {
+                const date = e.target.value;
+                // A Sunday game is switched to special (with the 11-a-side
+                // defaults) automatically; it can still be switched off.
+                const sunday = !!date && new Date(date + "T12:00:00Z").getUTCDay() === 0;
+                setForm(sunday && !form.special ? { ...form, date, ...SPECIAL_DEFAULTS, special: true } : { ...form, date });
+              }}
+            />
+          </label>
+          <label className="wcf-special-switch">
+            <input
+              type="checkbox"
+              checked={!!form.special}
+              onChange={(e) => setForm(e.target.checked ? { ...form, ...SPECIAL_DEFAULTS, special: true } : { ...form, special: false })}
+            />
+            <span>★ Special fixture (gold). Fills in Solar Campus, 11-a-side, 12:00, 22 players.</span>
           </label>
           <label>
             Venue
@@ -11023,9 +11051,9 @@ function GameCard({
             Max players
             <input
               type="number"
-              max={MAX_SPOTS}
+              max={form.special ? SPECIAL_MAX_SPOTS : MAX_SPOTS}
               value={form.max_players}
-              onChange={(e) => setForm({ ...form, max_players: Math.min(MAX_SPOTS, Number(e.target.value) || 0) })}
+              onChange={(e) => setForm({ ...form, max_players: Math.min(form.special ? SPECIAL_MAX_SPOTS : MAX_SPOTS, Number(e.target.value) || 0) })}
             />
           </label>
           <div className="wcf-edit-actions">
@@ -13079,6 +13107,24 @@ a.wcf-set-link{text-decoration:none}
 .wcf-toast.has-undo{display:flex;align-items:center;gap:12px}
 .wcf-toast-undo{flex:none;margin-left:auto;padding:6px 14px;border-radius:9px;border:0;background:#04140a;color:#86efac;font-weight:800;font-size:12.5px;cursor:pointer}
 .wcf-confirm-all{margin-left:auto;padding:6px 11px;border-radius:9px;border:0;background:#f5d97a;color:#0d0d1a;font-weight:800;font-size:12px;cursor:pointer}
+@keyframes wcfSpecialGlow{0%,100%{box-shadow:0 0 0 1px rgba(245,217,122,.55),0 0 22px 2px rgba(234,179,8,.35),0 0 60px 6px rgba(234,179,8,.18)}50%{box-shadow:0 0 0 1px rgba(245,217,122,.9),0 0 30px 5px rgba(234,179,8,.55),0 0 80px 12px rgba(234,179,8,.25)}}
+@keyframes wcfSpecialSheen{0%{transform:translateX(-120%) skewX(-18deg)}60%,100%{transform:translateX(260%) skewX(-18deg)}}
+.wcf-fx-row.special,.wcf-card.featured.special{position:relative;overflow:hidden;border-color:transparent!important;background:radial-gradient(120% 90% at 100% 0%,rgba(245,217,122,.22),transparent 55%),radial-gradient(90% 90% at 0% 100%,rgba(184,134,11,.25),transparent 60%),linear-gradient(160deg,#221b08,#120f07 60%,#0e0c08)!important;animation:wcfSpecialGlow 3.2s ease-in-out infinite}
+.wcf-fx-row.special{margin-top:6px;margin-bottom:14px}
+.wcf-fx-row.special::after,.wcf-card.featured.special::after{content:"";position:absolute;top:0;bottom:0;left:0;width:38%;background:linear-gradient(90deg,transparent,rgba(255,240,190,.16),transparent);animation:wcfSpecialSheen 4.5s ease-in-out infinite;pointer-events:none}
+.wcf-special-ribbon{position:relative;z-index:1;display:inline-flex;align-items:center;gap:6px;margin:0 0 8px;padding:4px 9px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#1a1405;background:linear-gradient(90deg,#f5d97a,#eab308)}
+.wcf-card.featured.special .wcf-special-ribbon{margin:0 0 10px}
+.special .wcf-fx-title,.special .wcf-hero-time{color:#fff3c4}
+.special .wcf-fx-meta,.special .wcf-fx-day{color:#d6c38a}
+.special .wcf-fx-num{color:#fff3c4}
+.special .wcf-fx-bar-track{background:rgba(245,217,122,.15)}
+.special .wcf-fx-bar-fill{background:linear-gradient(90deg,#eab308,#f5d97a)!important}
+.wcf-fx-pill.gold{color:#1a1405;background:#f5d97a;border:0}
+.special .wcf-status-pill{color:#1a1405!important;background:#f5d97a!important;border-color:#f5d97a!important}
+.special .wcf-card-actions button:not(.wcf-ghost),.special .wcf-book-btn{background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308)!important;color:#1a1405!important;border-color:transparent!important}
+.wcf-special-switch{display:flex!important;flex-direction:row!important;align-items:center;gap:9px;padding:10px 12px;border-radius:12px;background:rgba(245,217,122,.08);border:1px solid rgba(245,217,122,.35);color:#f5d97a;font-weight:700;font-size:12px;line-height:1.4}
+.wcf-special-switch input{width:18px;height:18px;accent-color:#eab308;flex:none}
+@media (prefers-reduced-motion:reduce){.wcf-fx-row.special,.wcf-card.featured.special,.wcf-fx-row.special::after,.wcf-card.featured.special::after{animation:none}}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted

@@ -1902,3 +1902,8 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.motm_ballot_count(uuid) from public;
 grant execute on function public.motm_ballot_count(uuid) to authenticated;
+
+-- Special fixtures (2026-09-29): a one-off like a Sunday 11-a-side, shown
+-- in gold without the usual booking colours. Set by the switch on the
+-- fixture form (on automatically for Sundays).
+alter table public.games add column if not exists special boolean not null default false;
