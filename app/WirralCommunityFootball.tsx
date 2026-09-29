@@ -6748,8 +6748,13 @@ function BatchGenerateModal({
     return result;
   }, [start, end, days]);
 
-  const newDates = allDates.filter((d) => !existingDates.has(d));
+  // A range skips days that already have a fixture; a single day (From and
+  // To the same) is a deliberate one-off, so it's added even if that day
+  // already has a game (e.g. a Sunday special alongside the usual one).
+  const singleDay = start === end;
+  const newDates = singleDay ? allDates : allDates.filter((d) => !existingDates.has(d));
   const skippedCount = allDates.length - newDates.length;
+  const addsSecond = singleDay && allDates.length === 1 && existingDates.has(allDates[0]);
 
   function toggleDay(v: number) {
     setDays((prev) => {
@@ -6792,9 +6797,11 @@ function BatchGenerateModal({
         <div className="wcf-batchgen-preview">
           {newDates.length === 0
             ? "No fixtures to add for this range."
-            : `${newDates.length} fixture${newDates.length === 1 ? "" : "s"} will be added${
-                skippedCount > 0 ? ` (${skippedCount} already exist${skippedCount === 1 ? "" : "s"} and will be skipped)` : ""
-              }.`}
+            : addsSecond
+              ? "1 fixture will be added. There's already a game that day, so this adds a second one."
+              : `${newDates.length} fixture${newDates.length === 1 ? "" : "s"} will be added${
+                  skippedCount > 0 ? ` (${skippedCount} already exist${skippedCount === 1 ? "" : "s"} and will be skipped)` : ""
+                }.`}
         </div>
 
         <div className="wcf-batchgen-actions">
