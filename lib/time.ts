@@ -74,3 +74,12 @@ export function monthReleaseAt(lastGameDate: string, lastGameKickoff: string) {
   if (closes.slice(11, 16) <= release) return `${closes.slice(0, 10)}T${release}`;
   return kickoffCutoff(closes.slice(0, 10), release, 24 * 60);
 }
+
+// First day of the month after "YYYY-MM", for "date < next month" queries -
+// never "<= YYYY-MM-31", which Postgres rejects for 30-day months (and
+// February), silently returning nothing.
+export function nextMonthStart(monthKey: string) {
+  const [y, m] = monthKey.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+}

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendPushBroadcast } from "./push";
-import { kickoffCutoff, previousMonthKey, monthReleaseAt, MOTM_VOTE_WINDOW_MINUTES } from "./time";
+import { kickoffCutoff, previousMonthKey, monthReleaseAt, nextMonthStart, MOTM_VOTE_WINDOW_MINUTES } from "./time";
 import { motmWinners, goalsLookup } from "./motm";
 
 // Player of the Month announcement (push to everyone), once per month.
@@ -19,7 +19,7 @@ export async function announcePlayerOfMonth(
     .from("games")
     .select("id, date, kickoff, published, team_white_score, team_red_score")
     .gte("date", `${previousMonthKey(nowUk)}-01`)
-    .lte("date", `${nowUk.slice(0, 7)}-31`);
+    .lt("date", nextMonthStart(nowUk.slice(0, 7)));
   const all = (games ?? []) as { id: string; date: string; kickoff: string; published: boolean; team_white_score: number | null; team_red_score: number | null }[];
   const typedGames = all.filter((g) => g.team_white_score != null && g.team_red_score != null);
   const { data: votes } = await admin.from("motm_votes").select("game_id, candidate_id").in("game_id", typedGames.map((g) => g.id));

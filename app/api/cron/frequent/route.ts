@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
-import { kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, MONTH_RELEASE_HOUR, MATCH_DURATION_MINUTES, MOTM_VOTE_WINDOW_MINUTES } from "../../../../lib/time";
+import { kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, nextMonthStart, MONTH_RELEASE_HOUR, MATCH_DURATION_MINUTES, MOTM_VOTE_WINDOW_MINUTES } from "../../../../lib/time";
 import { ensureFreshMonzoToken, registerMonzoWebhook } from "../../../../lib/monzo";
 import { AUTO_REMOVE_UNPAID_BOOKINGS, WRAPPED_OPEN_TO_ALL_FROM, WRAPPED_FIRST_MONTH_FOR_ALL } from "../../../../lib/clubPolicy";
 import { nextOpenGame, fmtJourneyDate, type JourneyGame } from "../../../../lib/memberJourney";
@@ -582,7 +582,7 @@ export async function GET(req: Request) {
       .from("games")
       .select("date, kickoff, published, team_white_score, team_red_score, bookings(player_id, waiting, team)")
       .gte("date", `${previousMonthKey(nowUkStr)}-01`)
-      .lte("date", `${thisMonth}-31`);
+      .lt("date", nextMonthStart(thisMonth));
     const inMonth = (key: string) => (monthRows ?? []).filter((g) => g.published && g.date.startsWith(key));
     const thisMonthGames = inMonth(thisMonth);
     const lastGame = [...thisMonthGames].sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)).at(-1);

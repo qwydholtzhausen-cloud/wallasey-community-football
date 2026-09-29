@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { kickoffCutoff, nowInLondon, previousMonthKey, pseudoUtcFromRealInstant, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../time";
+import { kickoffCutoff, nowInLondon, previousMonthKey, nextMonthStart, pseudoUtcFromRealInstant, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../time";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer, type GameForPerformance } from "../teamBalance";
 import { buildLeaderboard, topScorers, type ScoredPrediction } from "../predictions";
 import { sendPushToUsers } from "../push";
@@ -1272,7 +1272,7 @@ async function getWrappedEngagement(admin: SupabaseClient, args: { month?: strin
       .from("games")
       .select("id, date, kickoff, published, team_white_score, bookings(player_id, waiting, team)")
       .gte("date", `${monthKey}-01`)
-      .lte("date", `${monthKey}-31`),
+      .lt("date", nextMonthStart(monthKey)),
   ]);
   if (error) throw new Error(error.message);
 
