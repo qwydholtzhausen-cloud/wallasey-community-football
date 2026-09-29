@@ -1907,3 +1907,27 @@ grant execute on function public.motm_ballot_count(uuid) to authenticated;
 -- in gold without the usual booking colours. Set by the switch on the
 -- fixture form (on automatically for Sundays).
 alter table public.games add column if not exists special boolean not null default false;
+
+-- Days each person opened the app (2026-09-29), for the end-of-season
+-- Wrapped: days opened, streaks, what time they check it. One row per
+-- person per UK day; admins only; cleared after 12 months (daily cron).
+create table if not exists public.app_days (
+  player_id uuid not null references public.profiles (id) on delete cascade,
+  day date not null,
+  first_at timestamptz not null default now(),
+  last_at timestamptz not null default now(),
+  opens int not null default 1,
+  primary key (player_id, day)
+);
+alter table public.app_days enable row level security;
+drop policy if exists "app_days_select_admin" on public.app_days;
+create policy "app_days_select_admin" on public.app_days for select using (public.is_admin());
+
+create or replace function public.log_app_open() returns void
+language sql security definer set search_path = public as $$
+  insert into public.app_days (player_id, day)
+  values (auth.uid(), (now() at time zone 'Europe/London')::date)
+  on conflict (player_id, day) do update set last_at = now(), opens = app_days.opens + 1;
+$$;
+revoke all on function public.log_app_open() from public;
+grant execute on function public.log_app_open() to authenticated;

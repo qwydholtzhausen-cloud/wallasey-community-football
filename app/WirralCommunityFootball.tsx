@@ -1766,6 +1766,10 @@ function App({ session }: { session: Session }) {
         .update({ last_active_at: new Date().toISOString() })
         .eq("id", myId)
         .then(() => {});
+      // One row per person per day the app's opened, for the end-of-season
+      // Wrapped (days opened, streaks, when you check it). Admins only via
+      // GaffAI; cleared after 12 months.
+      supabase.rpc("log_app_open").then(() => {});
     };
     touch();
     document.addEventListener("visibilitychange", touch);

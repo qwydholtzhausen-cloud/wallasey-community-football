@@ -50,7 +50,7 @@ const ROWS: [string, string, string][] = [
   ["Feed reactions and Boot Room listings (your business name and, if you add it, a WhatsApp number)", "The club feed and members' directory", "All members"],
   ["Messages from admins", "To get in touch about games and payments", "You and admins"],
   [
-    "How you use the app: when you last opened it, which notifications you tapped, games you pulled out of or didn't turn up to, and whether you opened your Wrapped",
+    "How you use the app: which days you opened it and when, which notifications you tapped, games you pulled out of or didn't turn up to, and whether you opened your Wrapped",
     "To see what's working, spot people we haven't seen in a while, and keep games reliable",
     "Admins only, and never shown in the app",
   ],

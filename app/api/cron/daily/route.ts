@@ -276,6 +276,7 @@ async function applyRetention(admin: SupabaseClient) {
   await admin.from("notification_sends").delete().lt("sent_at", yearAgo);
   await admin.from("wrapped_events").delete().lt("created_at", yearAgo);
   await admin.from("booking_cancellations").delete().lt("cancelled_at", yearAgo);
+  await admin.from("app_days").delete().lt("day", yearAgo.slice(0, 10));
   await admin.from("profiles").update({ last_active_at: null }).lt("last_active_at", yearAgo);
 
   const twoYearsAgo = new Date(Date.now() - 2 * 365 * 86400000);
