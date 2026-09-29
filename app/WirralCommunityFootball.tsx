@@ -3511,7 +3511,11 @@ function App({ session }: { session: Session }) {
   }
   // The admin "so far" preview has its own key, so hiding the preview
   // doesn't also hide the finished month when it's released.
-  const wrappedDismissKey = `wcf-wrapped-dismissed-${myId}-${wrappedMonthKey}${wrappedSoFar ? "-sofar" : ""}`;
+  // Named differently from the admin "so far" preview's key, so hiding the
+  // preview (stored under the old name) never hides the released month.
+  const wrappedDismissKey = wrappedSoFar
+    ? `wcf-wrapped-dismissed-${myId}-${wrappedMonthKey}`
+    : `wcf-wrapped-hidden-${myId}-${wrappedMonthKey}`;
   const [wrappedDismissed, setWrappedDismissed] = useState(true);
   useEffect(() => {
     try {
