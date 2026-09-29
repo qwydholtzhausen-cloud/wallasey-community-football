@@ -1,0 +1,311 @@
+<meta charset="utf-8">
+<title>Wrapped Editions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  /* Deliberately dark only: a mock-up of the app's own Wrapped, in its palette and type. */
+  :root { color-scheme: dark; --bg:#0d0d1a; --panel:#161a2b; --line:rgba(148,163,184,.16); --white:#f5f6f8; --dim:#94a3b8; --faint:#64748b; --gold:#f5d97a;
+    --display:'Sora',-apple-system,'Segoe UI',sans-serif; --sans:'Inter',-apple-system,'Segoe UI',Roboto,sans-serif; }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--white); font-family: var(--sans); margin: 0; padding-inline: 16px; padding-block: 28px 64px; }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  .kicker { font-size: 11px; font-weight: 800; letter-spacing: .18em; color: var(--gold); text-transform: uppercase; }
+  h1 { font-family: var(--display); font-weight: 800; font-size: clamp(26px, 5vw, 40px); line-height: 1.08; margin: 8px 0 0; text-wrap: balance; }
+  .lede { color: var(--dim); font-size: 15px; line-height: 1.6; max-width: 70ch; margin: 12px 0 0; }
+  .lede b { color: var(--white); font-weight: 600; }
+
+  .ed { margin-top: 44px; }
+  .ed-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .ed-head .nm { font-family: var(--display); font-weight: 800; font-size: 22px; }
+  .ed-head .sw { width: 12px; height: 12px; border-radius: 50%; background: var(--acc); box-shadow: 0 0 14px var(--acc); align-self: center; }
+  .ed-head .who { font-size: 13.5px; color: var(--dim); }
+  .ed-head .who b { color: var(--white); font-weight: 600; }
+  .rail { display: flex; gap: 14px; overflow-x: auto; padding: 16px 2px 14px; scroll-snap-type: x mandatory; }
+  .rail::-webkit-scrollbar { height: 6px } .rail::-webkit-scrollbar-thumb { background: rgba(148,163,184,.25); border-radius: 3px }
+
+  /* One Wrapped card, phone-shaped, at about 60% of real size. */
+  .c { position: relative; flex: none; width: 228px; aspect-ratio: 9/16; border-radius: 22px; overflow: hidden; background: #0d0d1a; scroll-snap-align: start;
+    display: flex; flex-direction: column; padding: 46px 16px 18px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+  .c .ph { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .62; }
+  .c .ph::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(8,8,18,.55) 0%, rgba(8,8,18,.15) 32%, rgba(8,8,18,.93) 74%); }
+  .c .gl { position: absolute; left: -110px; bottom: -130px; width: 270px; height: 270px; border-radius: 50%; filter: blur(46px); opacity: .42; background: var(--acc); }
+  .c .segs { position: absolute; z-index: 2; left: 10px; right: 10px; top: 10px; display: flex; gap: 3px; }
+  .c .segs i { flex: 1; height: 2px; border-radius: 1px; background: rgba(255,255,255,.28); }
+  .c .segs i.on { background: #fff; }
+  .c .bar { position: absolute; z-index: 2; left: 12px; top: 19px; display: flex; align-items: center; gap: 6px; font-size: 9.5px; font-weight: 700; color: rgba(255,255,255,.85); }
+  .c .bar img { width: 16px; height: 16px; object-fit: contain; }
+  .c .in { position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .c .gr { flex: 1; min-height: 6px; }
+  .lab { font-size: 8.5px; font-weight: 800; letter-spacing: .2em; text-transform: uppercase; color: var(--acc); }
+  .h { font-family: var(--display); font-weight: 800; font-size: 19px; line-height: 1.1; letter-spacing: -.01em; margin-top: 7px; text-wrap: balance; }
+  .big { font-family: var(--display); font-weight: 800; font-size: 66px; line-height: .9; letter-spacing: -.04em; font-variant-numeric: tabular-nums; margin-top: 10px; }
+  .big small { font-size: 15px; letter-spacing: 0; margin-left: 5px; color: rgba(255,255,255,.75); }
+  .p { font-size: 11px; line-height: 1.45; color: rgba(255,255,255,.84); margin-top: 7px; }
+  .p b { color: #fff; }
+  .chip { display: flex; align-items: center; gap: 9px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); border-radius: 10px; padding: 7px 9px; font-size: 10px; line-height: 1.3; margin-top: 6px; }
+  .chip .k { font-family: var(--display); font-weight: 800; font-size: 14px; min-width: 28px; color: var(--acc); font-variant-numeric: tabular-nums; }
+
+  /* Intro */
+  .c.intro .crest { width: 52px; height: 52px; object-fit: contain; filter: drop-shadow(0 4px 16px rgba(0,0,0,.6)); }
+  .c.intro .ed-tag { display: inline-block; margin-top: 14px; font-size: 8.5px; font-weight: 800; letter-spacing: .2em; color: #0d0d1a; background: var(--acc); border-radius: 4px; padding: 3px 6px; }
+  .c.intro .word { font-family: var(--display); font-weight: 800; font-size: 40px; line-height: .95; letter-spacing: -.035em; margin-top: 8px;
+    background: linear-gradient(180deg, #fff 25%, var(--acc)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .c.intro .sub { font-family: var(--display); font-weight: 800; font-size: 11px; letter-spacing: .3em; color: var(--acc); margin-top: 4px; }
+  .tap { display: flex; align-items: center; gap: 6px; font-size: 9.5px; color: rgba(255,255,255,.62); }
+  .tap i { width: 14px; height: 14px; border-radius: 50%; border: 1.2px solid rgba(255,255,255,.5); }
+
+  /* Duo */
+  .duo { display: flex; align-items: center; margin-top: 14px; }
+  .av { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; font-family: var(--display); font-weight: 800; font-size: 16px; box-shadow: 0 0 0 2px #0d0d1a; flex: none; }
+  .av.me { background: linear-gradient(135deg, #e63946, #8b6be8); }
+  .av.them { background: linear-gradient(135deg, #7fb0ec, #86efac); color: #0d1a14; margin-left: -10px; }
+  .av.nem { background: linear-gradient(135deg, #e63946, #f8b3b8); box-shadow: 0 0 0 2px #e63946, 0 0 18px rgba(230,57,70,.5); }
+  .vsb { margin: 0 8px; font-family: var(--display); font-weight: 800; font-size: 10px; letter-spacing: .12em; color: rgba(255,255,255,.7); }
+  .dn { margin-left: 10px; font-family: var(--display); font-weight: 800; font-size: 14px; line-height: 1.1; }
+  .dn small { display: block; font-family: var(--sans); font-size: 9px; font-weight: 600; color: rgba(255,255,255,.68); margin-top: 2px; }
+
+  /* Why tag */
+  .tagbig { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .tagbig .ic { width: 58px; height: 58px; border-radius: 16px; display: grid; place-items: center; color: var(--acc);
+    background: radial-gradient(90% 90% at 50% 20%, rgba(245,217,122,.22), transparent 70%), rgba(255,255,255,.06); box-shadow: inset 0 0 0 1px var(--acc), 0 0 22px -4px var(--acc); }
+  .tagbig .ic svg { width: 30px; height: 30px; }
+  .tagbig b { font-family: var(--display); font-weight: 800; font-size: 22px; line-height: 1; }
+  .tagbig span { display: block; font-size: 10px; color: rgba(255,255,255,.7); margin-top: 3px; }
+  .tb { display: grid; grid-template-columns: 70px 1fr 18px; align-items: center; gap: 6px; font-size: 9.5px; margin-top: 5px; color: rgba(255,255,255,.8); }
+  .tb .tr { height: 5px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+  .tb .tr i { display: block; height: 100%; border-radius: 3px; background: var(--acc); }
+  .tb b { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Heat meter (rated game) */
+  .meter { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin-top: 10px; }
+  .meter i { height: 22px; border-radius: 6px; background: rgba(255,255,255,.1); }
+  .meter i.on { background: linear-gradient(180deg, #f5d97a, #eab308); box-shadow: 0 0 10px rgba(234,179,8,.35); }
+  .meter i.part { background: linear-gradient(90deg, #eab308 60%, rgba(255,255,255,.1) 60%); }
+  .ends { display: flex; justify-content: space-between; font-size: 8.5px; font-weight: 700; color: rgba(255,255,255,.6); margin-top: 4px; }
+  .score { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-family: var(--display); font-weight: 800; }
+  .score .n { font-size: 40px; line-height: .9; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+  .score .n.dim { color: rgba(255,255,255,.55); }
+  .score .tm { font-size: 9px; letter-spacing: .1em; }
+
+  /* Month-on-month */
+  .mom { display: flex; align-items: flex-end; gap: 7px; height: 92px; margin-top: 12px; }
+  .mom div { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .mom i { width: 100%; border-radius: 6px 6px 3px 3px; background: rgba(255,255,255,.16); }
+  .mom div.now i { background: linear-gradient(180deg, var(--acc), rgba(255,255,255,.2)); box-shadow: 0 0 14px -2px var(--acc); }
+  .mom span { font-size: 8.5px; font-weight: 700; letter-spacing: .1em; color: rgba(255,255,255,.65); }
+  .mom b { font-family: var(--display); font-size: 12px; }
+
+  /* Weather strip */
+  .wx { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 12px; }
+  .wx div { border-radius: 10px; padding: 7px 2px 6px; text-align: center; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.1); }
+  .wx svg { width: 18px; height: 18px; color: var(--acc); }
+  .wx b { display: block; font-family: var(--display); font-size: 12px; margin-top: 3px; }
+  .wx span { display: block; font-size: 8px; color: rgba(255,255,255,.6); }
+
+  /* Summary poster */
+  .poster .top { display: flex; align-items: center; gap: 8px; }
+  .poster .top img { width: 28px; object-fit: contain; }
+  .poster .top div { font-family: var(--display); font-weight: 800; font-size: 9px; letter-spacing: .1em; line-height: 1.3; }
+  .poster .top div span { display: block; color: var(--acc); font-size: 7.5px; letter-spacing: .2em; }
+  .poster .nm { font-family: var(--display); font-weight: 800; font-size: 32px; line-height: 1; letter-spacing: -.03em; margin-top: 10px; }
+  .poster .g { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.18); }
+  .poster .g span { display: block; font-size: 7.5px; letter-spacing: .16em; font-weight: 700; color: rgba(255,255,255,.66); text-transform: uppercase; }
+  .poster .g b { display: block; font-family: var(--display); font-weight: 800; font-size: 18px; margin-top: 2px; line-height: 1.1; }
+  .poster .g .wide { grid-column: 1/-1; } .poster .g .wide b { font-size: 13px; }
+
+  /* The freshness explainer */
+  .how { margin-top: 56px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; }
+  .how h2 { font-family: var(--display); font-weight: 800; font-size: 18px; margin: 0; }
+  .how p { font-size: 13.5px; line-height: 1.6; color: var(--dim); margin: 8px 0 0; max-width: 60ch; }
+  .how p b { color: var(--white); font-weight: 600; }
+  .thumbs { display: flex; gap: 8px; margin-top: 12px; }
+  .thumbs div { width: 64px; aspect-ratio: 9/16; border-radius: 10px; background-size: cover; background-position: center; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); position: relative; }
+  .thumbs div span { position: absolute; left: 0; right: 0; bottom: 4px; text-align: center; font-size: 8.5px; font-weight: 800; letter-spacing: .1em; text-shadow: 0 1px 6px #000; }
+  .pick { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+  .pick div { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 7px 10px; border-radius: 9px; background: var(--panel); border: 1px solid var(--line); }
+  .pick div span { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .pick div.in { border-color: rgba(245,217,122,.45); }
+  .pick div.in span { color: var(--gold); font-weight: 700; }
+  .note { margin-top: 40px; font-size: 12px; color: var(--faint); }
+</style>
+<style>
+  /* v2 additions: the old/new caption under each card, the existing cards' pieces, and the Season One teaser. */
+  .slot { flex: none; display: flex; flex-direction: column; gap: 8px; scroll-snap-align: start; }
+  .slot .c { scroll-snap-align: none; }
+  .cap { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--dim); padding-left: 4px; }
+  .cap i { font-style: normal; font-size: 9px; font-weight: 800; letter-spacing: .14em; padding: 2px 6px; border-radius: 4px; }
+  .cap i.old { color: var(--dim); box-shadow: inset 0 0 0 1px rgba(148,163,184,.4); }
+  .cap i.new { color: #0d0d1a; background: var(--gold); }
+  .stack { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+  .st b { display: block; font-family: var(--display); font-weight: 800; font-size: 38px; line-height: .95; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+  .st b small { font-size: 13px; letter-spacing: 0; margin-left: 5px; color: rgba(255,255,255,.7); }
+  .st span { display: block; font-size: 8px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: rgba(255,255,255,.7); margin-top: 2px; }
+  .st em { display: inline-block; font-style: normal; margin-top: 4px; font-size: 8.5px; font-weight: 700; padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); color: #86efac; }
+  .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-top: 12px; }
+  .cal span { aspect-ratio: 1; display: grid; place-items: center; border-radius: 5px; font-size: 7.5px; color: rgba(255,255,255,.35); background: rgba(255,255,255,.05); }
+  .cal .hd { aspect-ratio: auto; background: none; font-weight: 700; color: rgba(255,255,255,.6); }
+  .cal .e { background: none; }
+  .cal .W, .cal .L, .cal .D { font-family: var(--display); font-weight: 800; font-size: 8.5px; color: #0d0d1a; }
+  .cal .W { background: #86efac; box-shadow: 0 0 9px rgba(134,239,172,.45); } .cal .L { background: #f8b3b8; } .cal .D { background: #cbd5e1; }
+  .season { margin-top: 56px; position: relative; overflow: hidden; border-radius: 24px; padding: 28px 22px; min-height: 240px;
+    background: linear-gradient(90deg, rgba(10,9,6,.96) 0%, rgba(10,9,6,.75) 55%, rgba(10,9,6,.25) 100%), url(../../public/wrapped/bank/run-floodlights.jpg) right 40%/cover;
+    box-shadow: inset 0 0 0 1px rgba(245,217,122,.5), 0 30px 60px -30px rgba(234,179,8,.5); }
+  .season .k { font-size: 11px; font-weight: 800; letter-spacing: .22em; color: var(--gold); }
+  .season .t { font-family: var(--display); font-weight: 800; font-size: clamp(38px, 8vw, 64px); line-height: .95; letter-spacing: -.035em; margin-top: 10px;
+    background: linear-gradient(180deg, #fff6d6 20%, #eab308); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .season p { font-size: 14px; line-height: 1.6; color: rgba(255,255,255,.8); max-width: 52ch; margin: 12px 0 0; }
+  .season p b { color: #fff; }
+</style>
+
+<div class="wrap">
+  <div class="kicker">Mock-up · Dummy data · Branch only</div>
+  <h1>Fright Lights and Bangers</h1>
+  <p class="lede">The two monthly Wrappeds before Season One. Each has its own <b>theme</b>, rotating <b>photos</b>, and each player's <b>best 8 cards</b> picked from the full pool, <b>old and new</b>. The line under the name changes per player. Scroll each row sideways.</p>
+
+  <div id="eds"></div>
+
+  <div class="season">
+    <div class="k">OPENS THE MORNING AFTER THE LAST DECEMBER GAME</div>
+    <div class="t">SEASON ONE</div>
+    <p>No December monthly. December goes into the <b>Season One Wrapped</b> instead: 15–20 cards, its own black-and-gold look, awards night, the club's year, every Player of the Month. It gets its own mock-up and build, starting early November.</p>
+  </div>
+
+  <div class="how">
+    <div>
+      <h2>A name that fits the player</h2>
+      <p>The theme word stays the same for everyone. The line under it changes: a scorer's <b>Fright Lights</b> says "Scary in front of goal", a defender's says "The brick wall of Halloween". <b>Bangers</b> is "Your November, lit up" or "Quiet on the pitch, loud in the group".</p>
+    </div>
+    <div>
+      <h2>Photos rotate</h2>
+      <p>Every card has 2–3 photos and takes the next one each month.</p>
+      <div class="thumbs">
+        <div style="background-image:url(../../public/wrapped/bank/goals-net-rain.jpg)"><span>OCT</span></div>
+        <div style="background-image:url(../../public/wrapped/bank/goals-daylight.jpg)"><span>JAN</span></div>
+        <div style="background-image:url(../../public/wrapped/bank/playstyle-strike.jpg)"><span>FEB</span></div>
+      </div>
+    </div>
+    <div>
+      <h2>Best 8 of about 20</h2>
+      <p>Each card scores how interesting it is <b>for that player</b>. Intro and summary always come first and last. Here's Chris's quiet November:</p>
+      <div class="pick">
+        <div class="in">Most-opened app in the squad <span>top 1 · in</span></div>
+        <div class="in">"Brick wall" votes <span>new tag · in</span></div>
+        <div class="in">Predictions 4 of 5 <span>best in squad · in</span></div>
+        <div>Goals <span>0 · skipped</span></div>
+        <div>Winning run <span>none · skipped</span></div>
+      </div>
+    </div>
+  </div>
+  <p class="note">All names and numbers are made up. "Existing" cards are today's Wrapped cards; "New" ones are built on the wrapped-extras branch.</p>
+</div>
+
+<script>
+const IC = {
+  wall: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M3 9.7h18M3 14.3h18M9 5v4.7M15 5v4.7M6 9.7v4.6M12 9.7v4.6M18 9.7v4.6M9 14.3V19M15 14.3V19"/></svg>',
+  target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>',
+  rain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 15a4 4 0 0 1 .5-8 5 5 0 0 1 9.6 1.5A3.5 3.5 0 0 1 17 15z"/><path d="M8 19l-1 2M12 19l-1 2M16 19l-1 2"/></svg>',
+  dry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 17a4 4 0 0 1 .5-8 5 5 0 0 1 9.6 1.5A3.5 3.5 0 0 1 17 17z"/></svg>',
+};
+
+// [kind, caption, photo, body]
+const C = (kind, cap, photo, body, cls = "") => ({ kind, cap, photo, body, cls });
+const intro = (e) => C("theme", "Intro, themed", e.introPhoto, `
+  <img class="crest" src="../../public/crest.png" alt="">
+  <div><span class="ed-tag">${e.edTag}</span></div>
+  <div class="word" style="font-size:${e.word.length > 8 ? 30 : 40}px">${e.word}</div>
+  <div class="sub">${e.month.toUpperCase()} WRAPPED</div>
+  <div class="h" style="margin-top:12px">${e.line}</div>
+  <div class="gr"></div><div class="tap"><i></i>Tap to relive your month</div>`, "intro");
+const summary = (e, photo, rows) => C("old", "Summary poster", photo, `
+  <div class="poster"><div class="top"><img src="../../public/crest.png" alt=""><div><span>${e.month.toUpperCase()} · ${e.word}</span>WIRRAL COMMUNITY FOOTBALL</div></div>
+  <div class="nm">${e.first}</div>
+  <div class="g">${rows.map(([k, v, w]) => `<div class="${w ? "wide" : ""}"><span>${k}</span><b>${v}</b></div>`).join("")}</div></div>
+  <div class="gr"></div><div class="tap"><i></i>Share your card</div>`);
+function cal(firstDow, days, res) {
+  let h = ["M","T","W","T","F","S","S"].map(l => `<span class="hd">${l}</span>`).join("");
+  h += Array.from({ length: firstDow }, () => `<span class="e"></span>`).join("");
+  for (let d = 1; d <= days; d++) h += res[d] ? `<span class="${res[d]}">${res[d]}</span>` : `<span>${d}</span>`;
+  return `<div class="cal">${h}</div>`;
+}
+
+const EDS = [
+  {
+    acc: "#f59e4b", month: "October", word: "FRIGHT LIGHTS", edTag: "HALLOWEEN EDITION", first: "Sam",
+    introPhoto: "october-leaves.jpg", line: "Sam, scary in front of goal.",
+    who: "<b>Sam, a big goalscorer.</b> Clocks go back, every game under the lights.",
+    cards: (e) => [
+      intro(e),
+      C("old", "At a glance", "old-glance.jpg", `<div class="lab">At a glance</div><div class="stack">
+        <div class="st"><b>4<small>of 4</small></b><span>games played</span></div>
+        <div class="st"><b>9</b><span>goals</span><em>▲ 5 on September</em></div>
+        <div class="st"><b>75%</b><span>win rate</span></div></div>
+        <div class="gr"></div><div class="p">That's <b>240 minutes</b> of football, more than anyone.</div>`),
+      C("old", "Goals · photo rotated", "goals-net-rain.jpg", `<div class="lab">Goals</div><div class="big">9<small>goals</small></div>
+        <div class="h">Top of the pile in October.</div><div class="gr"></div>
+        <div class="chip"><span class="k">3</span><span>a hat-trick on Mon 19th. Scary.</span></div>`),
+      C("old", "Your month", null, `<div class="lab">Your October</div><div class="h">4 nights under the lights.</div>
+        ${cal(3, 31, { 5: "W", 12: "W", 19: "W", 26: "L" })}
+        <div class="gr"></div><div class="chip"><span class="k">3</span><span>wins on the bounce</span></div>`),
+      C("new", "Why? tag", "playstyle-strike.jpg", `<div class="lab">Why they voted for you</div>
+        <div class="tagbig"><div class="ic">${IC.target}</div><div><b>Clinical</b><span>7 of your 11 votes</span></div></div>
+        <div class="gr"></div>
+        <div class="tb"><span>Clinical</span><span class="tr"><i style="width:64%"></i></span><b>7</b></div>
+        <div class="tb"><span>Engine</span><span class="tr"><i style="width:27%"></i></span><b>3</b></div>
+        <div class="tb"><span>Leader</span><span class="tr"><i style="width:9%"></i></span><b>1</b></div>`),
+      C("new", "Best-rated night", "rated-thermometer.jpg", `<div class="lab">Best night you played in</div>
+        <div class="score"><span class="n">6</span><span class="tm">WHITES · REDS</span><span class="n dim">5</span></div>
+        <div class="h">Mon 19 Oct, rated by the squad</div>
+        <div class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="part"></i></div>
+        <div class="ends"><span>Scrappy</span><span>4.6 · Classic</span></div>`),
+      C("new", "Weather report", "weather-boots-rain.jpg", `<div class="lab">Your weather report</div><div class="h">Four games. Three of them wet.</div>
+        <div class="wx"><div>${IC.rain}<b>11°</b><span>5 Oct</span></div><div>${IC.rain}<b>9°</b><span>12 Oct</span></div><div>${IC.dry}<b>12°</b><span>19 Oct</span></div><div>${IC.rain}<b>8°</b><span>26 Oct</span></div></div>
+        <div class="gr"></div><div class="p">You scored in <b>all three</b> rainy ones.</div>`),
+      summary(e, "summary-aerial.jpg", [["Goals", "9"], ["MOTM", "2"], ["Record", "3W 1L"], ["Tag", "Clinical"], ["Best night", "6–5 · Mon 19 Oct", 1]]),
+    ],
+  },
+  {
+    acc: "#ff7a45", month: "November", word: "BANGERS", edTag: "BONFIRE NIGHT EDITION", first: "Chris",
+    introPhoto: "november-bonfire.jpg", line: "Chris, quiet on the pitch, loud in the group.",
+    who: "<b>Chris, a quiet month:</b> 2 games, no goals. Goals and run cards skipped.",
+    cards: (e) => [
+      intro(e),
+      C("old", "At a glance", "old-glance.jpg", `<div class="lab">At a glance</div><div class="stack">
+        <div class="st"><b>2<small>of 4</small></b><span>games played</span></div>
+        <div class="st"><b>120</b><span>minutes played</span></div>
+        <div class="st"><b>1</b><span>MOTM award</span></div></div>`),
+      C("new", "App opens", "app-opens-bench.jpg", `<div class="lab">Always checking</div><div class="big">41<small>opens</small></div>
+        <div class="h">Nobody opened the app more.</div><div class="p">Most often on a <b>Sunday night</b>, checking the team for Monday.</div>`),
+      C("new", "Why? tag", "partner-boots.jpg", `<div class="lab">Why they voted for you</div>
+        <div class="tagbig"><div class="ic">${IC.wall}</div><div><b>Brick wall</b><span>new for you this month</span></div></div>
+        <div class="gr"></div><div class="p">Three MOTM votes, <b>all for defending</b>. Not bad for 2 games.</div>`),
+      C("old", "Predictions · photo rotated", "predictions-spot.jpg", `<div class="lab">Predictions</div><div class="big">4<small>of 5</small></div>
+        <div class="h">Best in the squad.</div><div class="p">You called <b>Whites 7–5</b> on the 16th. Exact score.</div>`),
+      C("old", "Nemesis · photo rotated", "nemesis-dusk.jpg", `<div class="lab">Your nemesis</div>
+        <div class="duo"><div class="av me">CR</div><span class="vsb">VS</span><div class="av nem">JM</div></div>
+        <div class="h" style="margin-top:14px">Jay M beat you both times.</div><div class="p">Season One is watching.</div>`),
+      C("new", "Month on month", "month-floodlights.jpg", `<div class="lab">Month on month</div><div class="h">Fewer games, more influence.</div>
+        <div class="mom"><div><b>5</b><i style="height:62%"></i><span>AUG</span></div><div><b>4</b><i style="height:50%"></i><span>SEP</span></div><div><b>4</b><i style="height:50%"></i><span>OCT</span></div><div class="now"><b>2</b><i style="height:26%"></i><span>NOV</span></div></div>
+        <div class="p">Games per month.</div>`),
+      summary(e, "old-summary.jpg", [["Games", "2"], ["Predictions", "4/5"], ["App opens", "41"], ["Tag", "Brick wall"], ["Next up", "Season One Wrapped", 1]]),
+    ],
+  },
+];
+
+const root = document.getElementById("eds");
+for (const e of EDS) {
+  const cards = e.cards(e);
+  const el = document.createElement("section");
+  el.className = "ed";
+  el.style.setProperty("--acc", e.acc);
+  const pill = { theme: '<i class="new">THEMED</i>', old: '<i class="old">EXISTING</i>', new: '<i class="new">NEW</i>' };
+  el.innerHTML = `<div class="ed-head"><span class="sw"></span><span class="nm">${e.month} · ${e.word}</span><span class="who">${e.who}</span></div>
+    <div class="rail">${cards.map((c, i) => `<div class="slot"><div class="c ${c.cls}">
+      ${c.photo ? `<div class="ph" style="background-image:url(${c.photo.startsWith("old-") ? "../../public/wrapped/" + c.photo.slice(4) : "../../public/wrapped/bank/" + c.photo})"></div>` : ""}<div class="gl"></div>
+      <div class="segs">${cards.map((_, j) => `<i class="${j <= i ? "on" : ""}"></i>`).join("")}</div>
+      <div class="bar"><img src="../../public/crest.png" alt="">${e.month} Wrapped</div>
+      <div class="in">${c.body}</div></div>
+      <div class="cap">${pill[c.kind]}${c.cap}</div></div>`).join("")}</div>`;
+  root.appendChild(el);
+}
+</script>

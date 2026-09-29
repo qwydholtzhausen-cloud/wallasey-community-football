@@ -1,0 +1,516 @@
+<meta charset="utf-8">
+<title>Season One Wrapped</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  /* Deliberately dark only: Season One's own black-and-gold identity, in the app's type. */
+  :root { color-scheme: dark; --bg:#07060a; --ink:#0c0a07; --panel:#15120b; --line:rgba(245,217,122,.18); --white:#fbf8ef; --dim:#b3a98f; --faint:#7d7563;
+    --gold:#f5d97a; --gold2:#eab308; --gold3:#a8760a;
+    --foil: linear-gradient(180deg, #fff6d6 0%, #f5d97a 40%, #eab308 70%, #a8760a 100%);
+    --display:'Sora',-apple-system,'Segoe UI',sans-serif; --sans:'Inter',-apple-system,'Segoe UI',Roboto,sans-serif; }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--white); font-family: var(--sans); margin: 0; padding-inline: 16px; padding-block: 0 64px; }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  /* Page hero */
+  .hero { position: relative; margin-inline: -16px; padding: 56px 16px 40px; overflow: hidden; text-align: center;
+    background: radial-gradient(60% 80% at 50% 0%, rgba(245,217,122,.22), transparent 70%), linear-gradient(180deg, rgba(7,6,10,.2), var(--bg)), url(../../public/wrapped/bank/run-floodlights.jpg) center 30%/cover; }
+  .hero .k { font-size: 11px; font-weight: 800; letter-spacing: .3em; color: var(--gold); }
+  .hero h1 { font-family: var(--display); font-weight: 800; font-size: clamp(56px, 14vw, 132px); line-height: .88; letter-spacing: -.045em; margin: 14px 0 0;
+    background: var(--foil); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 10px 40px rgba(234,179,8,.35)); }
+  .hero .sub { font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .4em; color: var(--white); margin-top: 12px; }
+  .hero p { max-width: 62ch; margin: 18px auto 0; color: #d9d0b8; font-size: 15px; line-height: 1.6; }
+  .hero p b { color: #fff; }
+
+  .sec { margin-top: 52px; }
+  .sec-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .sec-h .n { font-family: var(--display); font-weight: 800; font-size: 13px; letter-spacing: .2em; color: var(--gold); }
+  .sec-h h2 { font-family: var(--display); font-weight: 800; font-size: 24px; margin: 0; }
+  .sec-h span { font-size: 13.5px; color: var(--dim); }
+  .rail { display: flex; gap: 14px; overflow-x: auto; padding: 16px 2px 14px; scroll-snap-type: x mandatory; }
+  .rail::-webkit-scrollbar { height: 6px } .rail::-webkit-scrollbar-thumb { background: rgba(245,217,122,.25); border-radius: 3px }
+  .slot { flex: none; display: flex; flex-direction: column; gap: 8px; scroll-snap-align: start; }
+  .cap { font-size: 11.5px; color: var(--dim); padding-left: 4px; max-width: 228px; line-height: 1.4; }
+  .cap b { color: var(--gold); font-weight: 800; font-size: 10px; letter-spacing: .12em; margin-right: 4px; }
+
+  /* A Season One card */
+  .c { position: relative; width: 228px; aspect-ratio: 9/16; border-radius: 22px; overflow: hidden; background: var(--ink);
+    display: flex; flex-direction: column; padding: 46px 16px 18px; box-shadow: inset 0 0 0 1px rgba(245,217,122,.28); }
+  .c .ph { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .55; }
+  .c .ph::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(8,6,3,.6) 0%, rgba(8,6,3,.15) 32%, rgba(8,6,3,.94) 74%); }
+  .c .gl { position: absolute; left: 50%; top: -120px; width: 300px; height: 240px; margin-left: -150px; border-radius: 50%; filter: blur(50px); opacity: .28; background: var(--gold2); }
+  .c .segs { position: absolute; z-index: 2; left: 10px; right: 10px; top: 10px; display: flex; gap: 2px; }
+  .c .segs i { flex: 1; height: 2px; border-radius: 1px; background: rgba(255,255,255,.22); }
+  .c .segs i.on { background: var(--gold); }
+  .c .bar { position: absolute; z-index: 2; left: 12px; top: 19px; display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 800; letter-spacing: .14em; color: var(--gold); }
+  .c .bar img { width: 16px; height: 16px; object-fit: contain; }
+  .c .in { position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .gr { flex: 1; min-height: 6px; }
+  .foil { background: var(--foil); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lab { font-size: 8.5px; font-weight: 800; letter-spacing: .22em; text-transform: uppercase; color: var(--gold); }
+  .h { font-family: var(--display); font-weight: 800; font-size: 19px; line-height: 1.1; letter-spacing: -.01em; margin-top: 7px; text-wrap: balance; }
+  .p { font-size: 11px; line-height: 1.45; color: rgba(255,255,255,.84); margin-top: 7px; }
+  .p b { color: #fff; }
+  .big { font-family: var(--display); font-weight: 800; font-size: 70px; line-height: .88; letter-spacing: -.045em; font-variant-numeric: tabular-nums; margin-top: 10px; }
+  .big small { font-size: 15px; letter-spacing: 0; margin-left: 5px; -webkit-text-fill-color: rgba(255,255,255,.75); }
+  .tap { display: flex; align-items: center; gap: 6px; font-size: 9.5px; color: rgba(255,255,255,.62); }
+  .tap i { width: 14px; height: 14px; border-radius: 50%; border: 1.2px solid var(--gold); }
+  .gold-btn { height: 34px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; font-size: 11.5px; color: #1a1405; background: linear-gradient(90deg, #eab308, #f5d97a 60%, #eab308); }
+  .ghost-btn { height: 34px; border-radius: 10px; display: grid; place-items: center; font-weight: 700; font-size: 11.5px; box-shadow: inset 0 0 0 1px rgba(245,217,122,.4); margin-top: 7px; }
+
+  /* Intro */
+  .intro .crest { width: 58px; height: 58px; object-fit: contain; margin: 10px auto 0; display: block; filter: drop-shadow(0 6px 24px rgba(234,179,8,.45)); }
+  .intro .ttl { text-align: center; font-family: var(--display); font-weight: 800; font-size: 42px; line-height: .86; letter-spacing: -.04em; margin-top: 18px; }
+  .intro .yr { text-align: center; font-family: var(--display); font-weight: 700; font-size: 10px; letter-spacing: .5em; margin-top: 8px; }
+  .intro .h { text-align: center; margin-top: 18px; }
+
+  /* Numbers wall */
+  .wall { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 10px; margin-top: 14px; }
+  .wall b { display: block; font-family: var(--display); font-weight: 800; font-size: 36px; line-height: .9; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+  .wall span { display: block; font-size: 8px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: rgba(255,255,255,.68); margin-top: 3px; }
+  .wall .wide { grid-column: 1/-1; padding-top: 10px; border-top: 1px solid var(--line); }
+
+  /* Percent ring */
+  .pct { position: relative; width: 150px; height: 150px; margin: 16px auto 0; }
+  .pct svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .pct .mid { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; text-align: center; }
+  .pct .mid b { font-family: var(--display); font-weight: 800; font-size: 44px; line-height: .9; letter-spacing: -.03em; }
+  .pct .mid span { font-size: 8px; font-weight: 800; letter-spacing: .18em; color: rgba(255,255,255,.7); margin-top: 4px; }
+
+  /* Player type badge */
+  .badge { width: 124px; height: 138px; margin: 14px auto 0; position: relative; display: grid; place-items: center; }
+  .badge svg.hex { position: absolute; inset: 0; width: 100%; height: 100%; filter: drop-shadow(0 0 22px rgba(234,179,8,.45)); }
+  .badge svg.ic { position: relative; width: 48px; height: 48px; color: var(--gold); }
+  .type { text-align: center; font-family: var(--display); font-weight: 800; font-size: 28px; letter-spacing: -.02em; margin-top: 10px; line-height: 1; }
+  .rar { text-align: center; font-size: 9.5px; font-weight: 700; letter-spacing: .14em; color: var(--gold); margin-top: 6px; }
+
+  /* Season strip: one row per month, played nights in gold */
+  .yr-grid { display: flex; flex-direction: column; gap: 7px; margin-top: 14px; }
+  .yr-row { display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 6px; }
+  .yr-row > span { font-size: 8px; font-weight: 800; letter-spacing: .12em; color: rgba(255,255,255,.65); }
+  .yr-row div { display: grid; grid-template-columns: repeat(31, 1fr); gap: 1.5px; }
+  .yr-row i { aspect-ratio: 1/2.2; border-radius: 1.5px; background: rgba(255,255,255,.06); }
+  .yr-row i.o { background: rgba(245,217,122,.22); }
+  .yr-row i.p { background: var(--gold); box-shadow: 0 0 6px rgba(245,217,122,.7); }
+  .yr-row i.x { background: none; }
+  .legend { display: flex; gap: 10px; font-size: 8.5px; color: rgba(255,255,255,.7); margin-top: 10px; }
+  .legend i { display: inline-block; width: 7px; height: 12px; border-radius: 2px; vertical-align: -2px; margin-right: 4px; }
+
+  /* Rankings */
+  .rk { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .rk div { display: grid; grid-template-columns: 16px 30px 1fr auto; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); }
+  .rk div:first-child { background: rgba(245,217,122,.12); border-color: rgba(245,217,122,.5); }
+  .rk em { font-style: normal; font-family: var(--display); font-weight: 800; font-size: 12px; color: var(--gold); }
+  .rk .av { width: 30px; height: 30px; font-size: 10.5px; }
+  .rk b { font-size: 11px; } .rk small { display: block; font-size: 8.5px; color: rgba(255,255,255,.62); font-weight: 500; }
+  .rk span { font-family: var(--display); font-weight: 800; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .av { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; font-family: var(--display); font-weight: 800; font-size: 15px; flex: none; color: #fff;
+    background: linear-gradient(135deg, #3a2f14, #6b5114); box-shadow: 0 0 0 1.5px rgba(245,217,122,.6); }
+  .av.me { background: linear-gradient(135deg, #e63946, #8b6be8); }
+
+  /* Timeline of firsts */
+  .tl { position: relative; margin-top: 12px; padding-left: 16px; display: flex; flex-direction: column; gap: 9px; }
+  .tl::before { content: ""; position: absolute; left: 4px; top: 4px; bottom: 4px; width: 1.5px; background: linear-gradient(180deg, var(--gold), rgba(245,217,122,.15)); }
+  .tl div { position: relative; font-size: 10.5px; line-height: 1.3; }
+  .tl div::before { content: ""; position: absolute; left: -15.5px; top: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); box-shadow: inset 0 0 0 1.5px var(--gold); }
+  .tl div.hot::before { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+  .tl span { display: block; font-size: 8px; font-weight: 800; letter-spacing: .14em; color: var(--gold); }
+
+  /* Your circle */
+  .orbit { position: relative; width: 196px; height: 196px; margin: 12px auto 0; }
+  .orbit .o { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%; display: grid; place-items: center; font-family: var(--display); font-weight: 800; font-size: 7.5px;
+    background: linear-gradient(135deg, #2a2412, #4a3b14); box-shadow: 0 0 0 1px rgba(245,217,122,.45); }
+  .orbit .o.t { width: 32px; height: 32px; margin: -16px 0 0 -16px; font-size: 9px; box-shadow: 0 0 0 1.5px var(--gold), 0 0 12px rgba(245,217,122,.5); }
+  .orbit .me { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; font-size: 13px; box-shadow: 0 0 0 2px var(--gold), 0 0 26px rgba(234,179,8,.55); }
+
+  /* Match story */
+  .score { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 10px; font-family: var(--display); font-weight: 800; }
+  .score .n { font-size: 54px; line-height: .9; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+  .score .n.dim { -webkit-text-fill-color: rgba(255,255,255,.5); }
+  .score .tm { font-size: 8.5px; letter-spacing: .12em; text-align: center; line-height: 1.5; color: rgba(255,255,255,.8); }
+  .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
+  .facts div { padding: 7px 8px; border-radius: 10px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); }
+  .facts b { display: block; font-family: var(--display); font-weight: 800; font-size: 15px; }
+  .facts span { display: block; font-size: 8px; color: rgba(255,255,255,.65); margin-top: 1px; }
+
+  /* Award cards */
+  .award-k { text-align: center; margin-top: 4px; }
+  .trophy { width: 64px; height: 64px; margin: 8px auto 0; display: block; color: var(--gold); filter: drop-shadow(0 0 16px rgba(234,179,8,.6)); }
+  .winner { text-align: center; font-family: var(--display); font-weight: 800; font-size: 32px; line-height: 1; letter-spacing: -.025em; margin-top: 10px; }
+  .why { text-align: center; font-size: 11px; line-height: 1.45; color: rgba(255,255,255,.85); margin-top: 8px; }
+  .why q { font-style: italic; }
+  .runners { display: flex; flex-direction: column; gap: 5px; margin-top: 12px; }
+  .runners div { display: grid; grid-template-columns: 1fr 70px 26px; align-items: center; gap: 6px; font-size: 9.5px; }
+  .runners .tr { height: 5px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+  .runners .tr i { display: block; height: 100%; border-radius: 3px; background: var(--gold); }
+  .runners b { text-align: right; font-variant-numeric: tabular-nums; }
+  .runners div:first-child { color: var(--gold); font-weight: 800; }
+  .drum { text-align: center; margin: auto 0; }
+  .drum .dots { display: flex; justify-content: center; gap: 8px; margin-top: 16px; }
+  .drum .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); animation: blink 1.2s infinite; }
+  .drum .dots i:nth-child(2) { animation-delay: .2s } .drum .dots i:nth-child(3) { animation-delay: .4s }
+  @keyframes blink { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
+  .spot { position: absolute; left: 50%; top: -40px; width: 260px; height: 520px; margin-left: -130px; background: radial-gradient(40% 70% at 50% 0%, rgba(255,240,200,.45), transparent 70%); pointer-events: none; }
+  .potm-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; margin-top: 14px; }
+  .potm-row div { text-align: center; }
+  .potm-row .av { width: 36px; height: 36px; font-size: 11px; margin: 0 auto; }
+  .potm-row span.av { display: grid; }
+  .potm-row span:not(.av) { display: block; font-size: 7.5px; font-weight: 800; letter-spacing: .12em; color: var(--gold); margin-top: 5px; }
+  .potm-row em { display: block; font-style: normal; font-size: 8.5px; color: rgba(255,255,255,.8); margin-top: 1px; }
+  .confetti { position: absolute; inset: 0; pointer-events: none; background-image:
+    radial-gradient(circle, #f5d97a 1.2px, transparent 1.6px), radial-gradient(circle, #fff6d6 1px, transparent 1.4px), radial-gradient(circle, #eab308 1.4px, transparent 1.8px);
+    background-size: 37px 41px, 53px 47px, 61px 67px; background-position: 3px 7px, 19px 23px, 31px 11px; opacity: .55; mask-image: linear-gradient(180deg, #000 0%, transparent 60%); -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 60%); }
+
+  /* Share poster */
+  .poster .top { display: flex; align-items: center; gap: 8px; }
+  .poster .top img { width: 28px; object-fit: contain; }
+  .poster .top div { font-family: var(--display); font-weight: 800; font-size: 8.5px; letter-spacing: .12em; line-height: 1.35; }
+  .poster .top div span { display: block; color: var(--gold); font-size: 7.5px; letter-spacing: .22em; }
+  .poster .nm { font-family: var(--display); font-weight: 800; font-size: 34px; line-height: 1; letter-spacing: -.03em; margin-top: 12px; }
+  .poster .ty { font-size: 9px; font-weight: 800; letter-spacing: .2em; color: var(--gold); margin-top: 4px; }
+  .poster .g { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 9px 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .poster .g span { display: block; font-size: 7px; letter-spacing: .14em; font-weight: 700; color: rgba(255,255,255,.66); text-transform: uppercase; }
+  .poster .g b { display: block; font-family: var(--display); font-weight: 800; font-size: 18px; margin-top: 2px; }
+
+  /* Launch */
+  .launch { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 22px; margin-top: 18px; align-items: start; }
+  .launch .lab2 { font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); margin-bottom: 8px; }
+  .launch .lab2 span { display: block; letter-spacing: 0; text-transform: none; font-weight: 500; color: var(--dim); font-size: 12.5px; margin-top: 4px; line-height: 1.45; }
+  .lock { border-radius: 26px; padding: 18px 14px 20px; background: linear-gradient(180deg, rgba(7,6,10,.3), rgba(7,6,10,.8)), url(../../public/wrapped/bank/december-frost.jpg) center/cover; min-height: 230px; }
+  .lock .time { text-align: center; font-family: var(--display); font-weight: 600; font-size: 46px; letter-spacing: -.02em; }
+  .lock .date { text-align: center; font-size: 12px; color: rgba(255,255,255,.85); }
+  .notif { margin-top: 16px; border-radius: 18px; padding: 11px 12px; display: flex; gap: 10px; background: rgba(30,26,18,.72); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+  .notif img { width: 34px; height: 34px; border-radius: 8px; background: #0d0d1a; object-fit: contain; padding: 3px; flex: none; }
+  .notif b { font-size: 13px; } .notif p { margin: 2px 0 0; font-size: 12.5px; line-height: 1.35; color: rgba(255,255,255,.88); }
+  .notif small { float: right; font-size: 11px; color: rgba(255,255,255,.6); }
+  .bnr { position: relative; border-radius: 20px; padding: 16px; overflow: hidden; background: linear-gradient(90deg, rgba(10,8,4,.95) 0%, rgba(10,8,4,.7) 60%, rgba(10,8,4,.2)), url(../../public/wrapped/bank/run-floodlights.jpg) right 35%/cover;
+    box-shadow: inset 0 0 0 1px rgba(245,217,122,.55), 0 20px 40px -24px rgba(234,179,8,.8); }
+  .bnr .k { font-size: 10px; font-weight: 800; letter-spacing: .18em; color: var(--gold); }
+  .bnr .t { font-family: var(--display); font-weight: 800; font-size: 26px; line-height: 1; margin-top: 6px; }
+  .bnr .cd { display: flex; gap: 6px; margin-top: 12px; }
+  .bnr .cd div { min-width: 50px; padding: 6px 4px; border-radius: 10px; text-align: center; background: rgba(245,217,122,.1); box-shadow: inset 0 0 0 1px rgba(245,217,122,.35); }
+  .bnr .cd b { display: block; font-family: var(--display); font-weight: 800; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .bnr .cd span { font-size: 8.5px; font-weight: 700; letter-spacing: .14em; color: var(--dim); }
+  .bnr .s { font-size: 12px; color: #d9d0b8; margin-top: 10px; }
+  .plan { font-size: 13.5px; line-height: 1.6; color: var(--dim); }
+  .plan ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; }
+  .plan b { color: var(--white); font-weight: 600; }
+
+  .notes { margin-top: 52px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 26px; }
+  .notes h3 { font-family: var(--display); font-weight: 800; font-size: 17px; margin: 0; }
+  .notes p, .notes li { font-size: 13.5px; line-height: 1.6; color: var(--dim); }
+  .notes p { margin: 8px 0 0; } .notes ul { margin: 8px 0 0; padding-left: 18px; }
+  .notes b { color: var(--white); font-weight: 600; }
+  .foot { margin-top: 40px; font-size: 12px; color: var(--faint); }
+  @media (prefers-reduced-motion: reduce) { .drum .dots i { animation: none; opacity: .8 } }
+</style>
+
+<header class="hero">
+  <div class="k">WIRRAL COMMUNITY FOOTBALL · MOCK-UP · DUMMY DATA</div>
+  <h1>SEASON ONE</h1>
+  <div class="sub">AUG — DEC 2026</div>
+  <p>The first ever season, unwrapped. It opens <b>the morning after the last December game</b>, in two acts: <b>Your Season</b>, 12 cards all about you, then <b>Awards Night</b>, the squad's vote, ending on the <b>Player of the Season</b> reveal. It has its own black-and-gold look, apart from the monthlies.</p>
+</header>
+
+<div class="wrap">
+  <section class="sec">
+    <div class="sec-h"><span class="n">THE BUILD-UP</span><h2>Make it an event</h2><span>It shouldn't just appear. People should know it's coming.</span></div>
+    <div class="launch">
+      <div>
+        <div class="lab2">The night before<span>A gold countdown banner replaces the usual Wrapped banner on Fixtures after the final whistle of the last game.</span></div>
+        <div class="bnr">
+          <div class="k">SEASON ONE · WRAPPED</div>
+          <div class="t">Your year, unwrapped</div>
+          <div class="cd"><div><b>13</b><span>HRS</span></div><div><b>42</b><span>MIN</span></div><div><b>08</b><span>SEC</span></div></div>
+          <div class="s">Opens 8am tomorrow. Awards Night results included.</div>
+        </div>
+      </div>
+      <div>
+        <div class="lab2">8am, the push<span>One push to everyone who played at least once this season.</span></div>
+        <div class="lock">
+          <div class="time">8:00</div><div class="date">Tuesday 22 December</div>
+          <div class="notif"><img src="../../public/crest.png" alt=""><div><small>now</small><b>Season One is here</b><p>Your year at Wirral Community Football, unwrapped. Plus: who won Player of the Season?</p></div></div>
+        </div>
+      </div>
+      <div class="plan">
+        <div class="lab2">The run-in<span>What has to happen before the launch.</span></div>
+        <ol>
+          <li><b>Early Nov:</b> build Season One on its own branch.</li>
+          <li><b>~1 Dec:</b> Awards vote opens in the app (Player of the Season, Goal of the Season, Best Newcomer, Moment of the Season).</li>
+          <li><b>Mid-Dec:</b> vote closes. Results stay secret, even from admins' screens.</li>
+          <li><b>Last game night:</b> countdown banner goes up.</li>
+          <li><b>8am next day:</b> the push, then the unwrap video in gold.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-h"><span class="n">ACT ONE</span><h2>Your Season</h2><span>Sam, a regular. 12 cards, all about you.</span></div>
+    <div class="rail" id="act1"></div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-h"><span class="n">ACT TWO</span><h2>Awards Night</h2><span>Voted by the squad in December. It saves the biggest one for last.</span></div>
+    <div class="rail" id="act2"></div>
+  </section>
+
+  <div class="notes">
+    <div>
+      <h3>How the awards are decided</h3>
+      <ul>
+        <li><b>Player of the Season:</b> a shortlist of 5 comes from the stats (Player of the Month winners and most MOTM votes), then the squad votes.</li>
+        <li><b>Goal of the Season:</b> admins shortlist 4–6 goals with a one-line description each, then the squad votes.</li>
+        <li><b>Best Newcomer:</b> anyone whose first game was this season, squad vote.</li>
+        <li><b>Moment of the Season:</b> free-text nominations, admins pick the shortlist, the squad votes. The winner's quote goes on the card.</li>
+        <li><b>Game of the Season</b> needs no vote. It's the highest average "How was tonight?" rating.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>What makes it hit</h3>
+      <ul>
+        <li>Every card is <b>about them</b>, or about people they know.</li>
+        <li>Cards only show when they flatter: "Top 5%" picks the stat where the player ranks best.</li>
+        <li>The <b>player type</b> is the one people will screenshot, and it's rare on purpose.</li>
+        <li>The finale reveal is <b>shared</b>: everyone sees the same winner at the same moment.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Photos</h3>
+      <p>These mock-ups reuse the bank. Season One deserves its own set: gold confetti under floodlights, a trophy on the centre spot, a squad silhouette at full time. Prompts will come with the build.</p>
+    </div>
+  </div>
+  <p class="foot">All names and numbers are made up. Nothing is built yet.</p>
+</div>
+
+<script>
+const ICON = {
+  target: '<path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm0 4a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/>',
+  trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8.5 20h7M10 17h4v3h-4z"/>',
+  ball: '<circle cx="12" cy="12" r="9"/><path d="m12 7 4 3-1.5 4.5h-5L8 10z"/><path d="M12 3v4M20.5 9.5 16 10M17.5 19l-3-4.5M6.5 19l3-4.5M3.5 9.5 8 10"/>',
+  star: '<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.8z"/>',
+  spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/>',
+  rain: '<path d="M7 15a4 4 0 0 1 .5-8 5 5 0 0 1 9.6 1.5A3.5 3.5 0 0 1 17 15z"/><path d="M8 19l-1 2M12 19l-1 2M16 19l-1 2"/>',
+};
+const svg = (k, cls = "ic", sw = 1.6) => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
+
+// Season strip: Aug–Dec 2026. p = played (Mondays), o = opened the app.
+function strip() {
+  const months = [["AUG", 2026, 7], ["SEP", 2026, 8], ["OCT", 2026, 9], ["NOV", 2026, 10], ["DEC", 2026, 11]];
+  const missed = new Set(["2026-8-14", "2026-10-9"]);
+  let rnd = 7;
+  const r = () => (rnd = (rnd * 9301 + 49297) % 233280) / 233280;
+  return months.map(([l, y, m]) => {
+    const days = new Date(y, m + 1, 0).getDate();
+    let cells = "";
+    for (let d = 1; d <= 31; d++) {
+      if (d > days) { cells += '<i class="x"></i>'; continue; }
+      const dow = new Date(y, m, d).getDay();
+      const played = dow === 1 && !(m === 7 && d < 3) && !(m === 11 && d > 21) && !missed.has(`${y}-${m}-${d}`);
+      cells += `<i class="${played ? "p" : r() < 0.55 ? "o" : ""}"></i>`;
+    }
+    return `<div class="yr-row"><span>${l}</span><div>${cells}</div></div>`;
+  }).join("");
+}
+
+function orbit() {
+  const top = ["DK", "TO", "LB", "JM", "CR"];
+  let h = "";
+  const n = 26;
+  for (let i = 0; i < n; i++) {
+    const ring = i < 10 ? 60 : 90, idx = i < 10 ? i : i - 10, cnt = i < 10 ? 10 : 16;
+    const a = (idx / cnt) * Math.PI * 2 + (i < 10 ? 0.3 : 0);
+    const x = 98 + Math.cos(a) * ring, y = 98 + Math.sin(a) * ring;
+    const isTop = i < 5;
+    const lbl = isTop ? top[i] : "ABCDEFGHJKLMNPRSTW"[i % 18] + "ABCDEFGHJKLMNPRSTW"[(i * 7) % 18];
+    h += `<div class="o${isTop ? " t" : ""}" style="left:${x}px;top:${y}px">${lbl}</div>`;
+  }
+  return `<div class="orbit">${h}<div class="av me">SW</div></div>`;
+}
+
+const S = (cap, photo, body, cls = "") => ({ cap, photo, body, cls });
+const ACT1 = [
+  S("<b>INTRO</b> Gold crest, the season title, your name.", "december-frost.jpg", `
+    <img class="crest" src="../../public/crest.png" alt="">
+    <div class="ttl foil">SEASON<br>ONE</div>
+    <div class="yr">AUG — DEC 2026</div>
+    <div class="h">Sam, this was your year.</div>
+    <div class="gr"></div><div class="tap" style="justify-content:center"><i></i>Tap to begin</div>`, "intro"),
+  S("<b>BY THE NUMBERS</b> The whole season on one card, counting up.", "spare-sprint.jpg", `
+    <div class="lab">Your season in numbers</div>
+    <div class="wall">
+      <div><b class="foil">19</b><span>games</span></div><div><b class="foil">23</b><span>goals</span></div>
+      <div><b class="foil">12</b><span>wins</span></div><div><b class="foil">3</b><span>MOTM awards</span></div>
+      <div class="wide"><b>1,140</b><span>minutes on the pitch · 19 hours</span></div>
+    </div>
+    <div class="gr"></div><div class="p">You played <b>19 of 21</b> games. Only 2 people played more.</div>`),
+  S("<b>TOP X%</b> Picks the stat you rank best at, so everyone gets a flattering one.", null, `
+    <div class="lab">Where you rank</div>
+    <div class="h">You were in the top</div>
+    <div class="pct"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="7"/><circle cx="50" cy="50" r="44" fill="none" stroke="url(#g)" stroke-width="7" stroke-linecap="round" stroke-dasharray="13.8 276.5"/><defs><linearGradient id="g"><stop offset="0" stop-color="#fff6d6"/><stop offset="1" stop-color="#eab308"/></linearGradient></defs></svg>
+      <div class="mid"><b class="foil">5%</b><span>FOR GOALS</span></div></div>
+    <div class="gr"></div><div class="p">Out of <b>38 players</b> this season, only one scored more.</div>`),
+  S("<b>PLAYER TYPE</b> A rare badge. This is the one people screenshot.", "playstyle-strike.jpg", `
+    <div class="lab" style="text-align:center">Your player type</div>
+    <div class="badge"><svg class="hex" viewBox="0 0 124 138"><defs><linearGradient id="hx" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d6"/><stop offset=".5" stop-color="#eab308"/><stop offset="1" stop-color="#a8760a"/></linearGradient></defs><path d="M62 4 118 36v66L62 134 6 102V36z" fill="rgba(20,16,6,.85)" stroke="url(#hx)" stroke-width="3"/></svg>${svg("target")}</div>
+    <div class="type foil">THE FINISHER</div>
+    <div class="rar">ONLY 2 OF 38 PLAYERS</div>
+    <div class="gr"></div><div class="p" style="text-align:center">1.2 goals a game. When it fell to you, it went in.</div>`),
+  S("<b>YOUR YEAR</b> Every night you played in gold, every day you opened the app dimmer.", null, `
+    <div class="lab">Your year</div>
+    <div class="h">19 Mondays. 87 days in the app.</div>
+    <div class="yr-grid">${strip()}</div>
+    <div class="legend"><span><i style="background:#f5d97a"></i>Played</span><span><i style="background:rgba(245,217,122,.22)"></i>Opened the app</span></div>
+    <div class="gr"></div><div class="p">Your longest run: <b>9 games in a row</b>, September to October.</div>`),
+  S("<b>TOP 5 TEAMMATES</b> Who you shared a team with most, and how it went.", "teammates-high-five.jpg", `
+    <div class="lab">Your top 5 teammates</div>
+    <div class="h">Your people.</div>
+    <div class="rk">
+      <div><em>1</em><span class="av">DK</span><b>Dan K<small>11 games · won 8</small></b><span>73%</span></div>
+      <div><em>2</em><span class="av">TO</span><b>Tom O<small>9 games · won 5</small></b><span>56%</span></div>
+      <div><em>3</em><span class="av">LB</span><b>Luke B<small>8 games · won 5</small></b><span>63%</span></div>
+      <div><em>4</em><span class="av">JM</span><b>Jay M<small>7 games · won 3</small></b><span>43%</span></div>
+      <div><em>5</em><span class="av">CR</span><b>Chris R<small>7 games · won 4</small></b><span>57%</span></div>
+    </div>`),
+  S("<b>HIDDEN STAT</b> The strangest true fact about you. Different for every player.", "weather-boots-rain.jpg", `
+    <div class="lab">A stat nobody knew</div>
+    <div class="gr" style="flex:.6"></div>
+    ${svg("rain", "ic", 1.6).replace('class="ic"', 'class="ic" style="width:40px;height:40px;color:#f5d97a"')}
+    <div class="h" style="font-size:24px">You never lost in the rain.</div>
+    <div class="p"><b>6 wet games. 5 wins, 1 draw.</b> Dry nights? Just 50%. Wirral weather is your weather.</div>`),
+  S("<b>BIGGEST NIGHT</b> Your best game, told in full: score, goals, votes, weather, rating.", "goals-net-rain.jpg", `
+    <div class="lab">Your biggest night</div>
+    <div class="h">Mon 19 October</div>
+    <div class="score"><span class="n foil">6</span><span class="tm">WHITES<br>—<br>REDS</span><span class="n dim">5</span></div>
+    <div class="facts"><div><b>Hat-trick</b><span>your first</span></div><div><b>MOTM</b><span>7 of 12 votes</span></div><div><b>9°, rain</b><span>of course</span></div><div><b>4.6</b><span>squad rating</span></div></div>
+    <div class="gr"></div><div class="p">The winner came <b>in the last five minutes</b>.</div>`),
+  S("<b>FIRSTS</b> Milestones with real dates, so it reads like a story.", "intro-laces.jpg", `
+    <div class="lab">Your firsts</div>
+    <div class="h">How it started.</div>
+    <div class="tl">
+      <div><span>MON 3 AUG</span>Your first game. Reds, lost 4–6.</div>
+      <div><span>MON 10 AUG</span>First goal. A tap-in, still counts.</div>
+      <div class="hot"><span>MON 7 SEP</span>First Man of the Match.</div>
+      <div><span>MON 28 SEP</span>10th game.</div>
+      <div class="hot"><span>MON 19 OCT</span>First hat-trick.</div>
+      <div><span>MON 21 DEC</span>Last game of Season One.</div>
+    </div>`),
+  S("<b>YOUR CIRCLE</b> Every player you shared a pitch with. Top 5 in gold.", null, `
+    <div class="lab" style="text-align:center">Your circle</div>
+    <div class="h" style="text-align:center">You played with 26 people.</div>
+    ${orbit()}
+    <div class="gr"></div><div class="p" style="text-align:center">That's <b>68%</b> of the whole club.</div>`),
+  S("<b>WHAT THEY CALL YOU</b> A season of Why? tags, added up.", "motm-gold-ball.jpg", `
+    <div class="lab">The squad calls you</div>
+    <div class="big foil" style="font-size:44px;margin-top:14px">Clinical</div>
+    <div class="h" style="font-size:15px">×14 across the season</div>
+    <div class="gr"></div>
+    <div class="runners">
+      <div><span>Clinical</span><span class="tr"><i style="width:100%"></i></span><b>14</b></div>
+      <div><span>Engine</span><span class="tr"><i style="width:43%"></i></span><b>6</b></div>
+      <div><span>Leader</span><span class="tr"><i style="width:21%"></i></span><b>3</b></div>
+    </div>`),
+  S("<b>SHARE CARD</b> The Season One poster, made to post in the group.", "run-floodlights.jpg", `
+    <div class="poster">
+      <div class="top"><img src="../../public/crest.png" alt=""><div><span>SEASON ONE · 2026</span>WIRRAL COMMUNITY FOOTBALL</div></div>
+      <div class="nm foil">Sam W</div><div class="ty">THE FINISHER</div>
+      <div class="g"><div><span>Games</span><b>19</b></div><div><span>Goals</span><b>23</b></div><div><span>MOTM</span><b>3</b></div><div><span>Wins</span><b>12</b></div><div><span>Top</span><b>5%</b></div><div><span>Tag</span><b style="font-size:12px;margin-top:6px">Clinical</b></div></div>
+    </div>
+    <div class="gr"></div><div class="gold-btn">Share to WhatsApp</div><div class="ghost-btn">On to Awards Night</div>`),
+];
+
+const trophy = `<svg class="trophy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${ICON.trophy}</svg>`;
+const ACT2 = [
+  S("<b>AWARDS NIGHT</b> A curtain card between the two acts.", "squad-aerial.jpg", `
+    <div class="confetti"></div>
+    <div class="gr"></div>
+    <div class="lab" style="text-align:center">Season One</div>
+    <div class="ttl foil" style="text-align:center;font-family:var(--display);font-weight:800;font-size:44px;line-height:.9;letter-spacing:-.04em;margin-top:10px">AWARDS<br>NIGHT</div>
+    <div class="p" style="text-align:center">Voted for by <b>31 of you</b>. Five awards. One Player of the Season.</div>
+    <div class="gr"></div><div class="tap" style="justify-content:center"><i></i>Tap to open the envelopes</div>`),
+  S("<b>GOAL OF THE SEASON</b> Admin-written description, squad vote, top 3 shown.", "goals-daylight.jpg", `
+    <div class="lab" style="text-align:center">Goal of the Season</div>
+    ${trophy}
+    <div class="winner foil">Jay M</div>
+    <div class="why"><q>Scissor kick from the edge of the box.</q><br>Mon 14 September, Whites 5–5 Reds</div>
+    <div class="gr"></div>
+    <div class="runners">
+      <div><span>Jay M · scissor kick</span><span class="tr"><i style="width:100%"></i></span><b>42%</b></div>
+      <div><span>Sam W · last-minute winner</span><span class="tr"><i style="width:62%"></i></span><b>26%</b></div>
+      <div><span>Ben T · solo run</span><span class="tr"><i style="width:43%"></i></span><b>18%</b></div>
+    </div>`),
+  S("<b>BEST NEWCOMER</b> Anyone whose first game was this season.", "august-new-ball.jpg", `
+    <div class="lab" style="text-align:center">Best Newcomer</div>
+    ${trophy}
+    <div class="winner foil">Rob H</div>
+    <div class="why">First game on <b>Mon 7 September</b>. 14 games since, and a hat-trick in his third.</div>
+    <div class="gr"></div><div class="p" style="text-align:center">38% of the vote</div>`),
+  S("<b>MOMENT OF THE SEASON</b> Nominated in words, voted by the squad.", "teammates-high-five.jpg", `
+    <div class="lab" style="text-align:center">Moment of the Season</div>
+    ${trophy}
+    <div class="winner" style="font-size:21px;margin-top:12px">The 10–10 game</div>
+    <div class="why"><q>Nobody knew the score by the end and nobody cared.</q><br>Mon 16 November</div>
+    <div class="gr"></div><div class="p" style="text-align:center">Nominated by 6 people · 35% of the vote</div>`),
+  S("<b>GAME OF THE SEASON</b> No vote needed: the highest squad rating from the heat meter.", "rated-thermometer.jpg", `
+    <div class="lab" style="text-align:center">Game of the Season</div>
+    <div class="score" style="margin-top:18px"><span class="n foil">8</span><span class="tm">REDS<br>—<br>WHITES</span><span class="n foil">8</span></div>
+    <div class="h" style="text-align:center">Mon 21 December</div>
+    <div class="p" style="text-align:center">Rated <b>4.8 out of 5</b> by 17 players. The last game of Season One was the best one.</div>
+    <div class="gr"></div><div class="p" style="text-align:center;color:#f5d97a;font-weight:700">You played in it.</div>`),
+  S("<b>ROLL OF HONOUR</b> Every Player of the Month, one row.", "old-best.jpg", `
+    <div class="lab">Roll of honour</div>
+    <div class="h">Players of the Month</div>
+    <div class="potm-row">
+      <div><span class="av">LB</span><span>AUG</span><em>Luke B</em></div>
+      <div><span class="av">JM</span><span>SEP</span><em>Jay M</em></div>
+      <div><span class="av me">SW</span><span>OCT</span><em>Sam W</em></div>
+      <div><span class="av">DK</span><span>NOV</span><em>Dan K</em></div>
+      <div><span class="av">?</span><span>DEC</span><em>Tonight</em></div>
+    </div>
+    <div class="gr"></div><div class="p">December's winner is announced <b>right now</b>, with the big one.</div>`),
+  S("<b>THE DRUMROLL</b> One pause before the reveal. It auto-advances after 3 seconds.", null, `
+    <div class="spot"></div>
+    <div class="drum">
+      <div class="lab">The big one</div>
+      <div class="h" style="font-size:24px;margin-top:14px">And the Player of the Season is…</div>
+      <div class="dots"><i></i><i></i><i></i></div>
+    </div>`),
+  S("<b>PLAYER OF THE SEASON</b> The finale. Gold confetti, a spotlight, their photo.", "motm-walk-off.jpg", `
+    <div class="confetti"></div><div class="spot"></div>
+    <div class="lab" style="text-align:center">Player of the Season 2026</div>
+    <span class="av" style="width:84px;height:84px;margin:18px auto 0;font-size:26px;box-shadow:0 0 0 3px #f5d97a,0 0 40px rgba(234,179,8,.7)">DK</span>
+    <div class="winner foil" style="font-size:38px">Dan K</div>
+    <div class="why">2× Player of the Month. 21 games. The squad's pick with <b>34% of the vote</b>.</div>
+    <div class="gr"></div>
+    <div class="facts"><div><b>21</b><span>games</span></div><div><b>17</b><span>goals</span></div><div><b>4</b><span>MOTM</span></div><div><b>71%</b><span>win rate</span></div></div>`),
+  S("<b>THE CLUB'S YEAR</b> The whole club's season, for everyone.", "summary-aerial.jpg", `
+    <div class="lab">The club's year</div>
+    <div class="h">Season One, together.</div>
+    <div class="wall">
+      <div><b class="foil">21</b><span>games</span></div><div><b class="foil">412</b><span>goals</span></div>
+      <div><b class="foil">38</b><span>players</span></div><div><b class="foil">17</b><span>new faces</span></div>
+      <div class="wide"><b>£1,680</b><span>into the pot · paid the pitches all season</span></div>
+    </div>
+    <div class="gr"></div><div class="p">Biggest win: <b>11–3</b>, Mon 12 October.</div>`),
+  S("<b>SEASON TWO</b> Ends with the first 2027 fixture and a Book button.", "january-frost.jpg", `
+    <div class="gr"></div>
+    <div class="lab">See you in</div>
+    <div class="ttl foil" style="font-family:var(--display);font-weight:800;font-size:46px;line-height:.9;letter-spacing:-.04em;margin-top:8px">SEASON<br>TWO</div>
+    <div class="p">First game: <b>Mon 4 January</b>, 7pm. 16 places.</div>
+    <div class="gr" style="flex:.4"></div>
+    <div class="gold-btn">Book your place</div><div class="ghost-btn">Watch it again</div>`),
+];
+
+function render(id, list) {
+  const el = document.getElementById(id);
+  el.innerHTML = list.map((c, i) => `<div class="slot"><div class="c ${c.cls}">
+    ${c.photo ? `<div class="ph" style="background-image:url(${c.photo.startsWith("old-") ? "../../public/wrapped/" + c.photo.slice(4) : "../../public/wrapped/bank/" + c.photo})"></div>` : ""}<div class="gl"></div>
+    <div class="segs">${list.map((_, j) => `<i class="${j <= i ? "on" : ""}"></i>`).join("")}</div>
+    <div class="bar"><img src="../../public/crest.png" alt="">SEASON ONE</div>
+    <div class="in">${c.body}</div></div>
+    <div class="cap">${c.cap}</div></div>`).join("");
+}
+render("act1", ACT1);
+render("act2", ACT2);
+</script>
