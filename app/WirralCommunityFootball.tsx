@@ -17,7 +17,9 @@ import {
 } from "../lib/clubPolicy";
 import { computeWrapped } from "../lib/wrapped";
 import { computeRecords, computePersonalBests, type Holder } from "../lib/records";
-import WrappedStory, { drawWrappedCard, wrappedBannerCss } from "./WrappedStory";
+import WrappedStory, { drawWrappedCard, wrappedBannerCss, type WrappedExtras } from "./WrappedStory";
+import { wrappedThemeFor } from "../lib/wrappedThemes";
+import { MOTM_TAGS } from "./motmTags";
 import { googleCalendarUrl } from "../lib/calendar";
 import { BOOT_CATEGORIES, BOOT_CATEGORY, normaliseUkPhone, displayUkPhone, type BootCategory } from "../lib/bootRoom";
 
@@ -228,17 +230,6 @@ interface MotmVote {
   // Optional "Why?" tag on the vote (MOTM_TAGS); feeds the season Wrapped.
   tag?: string | null;
 }
-
-// The "Why?" tags on a Man of the Match vote - one optional tap, anonymous,
-// becoming each player's nickname in the end-of-season Wrapped.
-const MOTM_TAGS: { key: string; label: string; icon: React.ReactNode }[] = [
-  { key: "clinical", label: "Clinical", icon: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.2" fill="currentColor" /></> },
-  { key: "brick_wall", label: "Brick wall", icon: <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" /> },
-  { key: "engine", label: "Engine", icon: <path d="M13 2L4 14h7l-1 8 9-12h-7z" /> },
-  { key: "magician", label: "Magician", icon: <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z" /> },
-  { key: "leader", label: "Leader", icon: <path d="M4 21V4M4 4h13l-2 4 2 4H4" /> },
-  { key: "workhorse", label: "Workhorse", icon: <><path d="M20 12a8 8 0 1 1-8-8" /><path d="M20 4v6h-6" /></> },
-];
 
 interface FeedReaction {
   id: string;
@@ -3544,6 +3535,71 @@ function App({ session }: { session: Session }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastGames, goalRows, motmTallyByGame, motmWinnerIdsByGame, scorePredictions, profiles, myId, wrappedMonthKey, wrappedSoFar]);
+  // The Wrapped cards that need more than the rows already loaded: the
+  // "Why?" tags on your MOTM votes (from motmVotes), and the squad's ratings
+  // and kickoff weather for your games (fetched once the month is known).
+  const wrappedMyGames = useMemo(() => {
+    if (!wrapped) return [];
+    return pastGames
+      .filter((g) => g.date.startsWith(wrapped.periodKey) && g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g))
+      .flatMap((g) => {
+        const b = g.bookings.find((x) => x.player_id === myId && !x.waiting && x.team);
+        if (!b) return [];
+        const team = b.team as "white" | "red";
+        const us = (team === "white" ? g.team_white_score : g.team_red_score) ?? 0;
+        const them = (team === "white" ? g.team_red_score : g.team_white_score) ?? 0;
+        return [{ id: g.id, date: g.date, team, us, them, result: (us === them ? "D" : us > them ? "W" : "L") as "W" | "D" | "L" }];
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wrapped?.periodKey, pastGames, myId]);
+  const wrappedTags = useMemo(() => {
+    const ids = new Set(wrappedMyGames.map((g) => g.id));
+    const count: Record<string, number> = {};
+    for (const v of motmVotes) if (v.candidate_id === myId && v.tag && ids.has(v.game_id)) count[v.tag] = (count[v.tag] ?? 0) + 1;
+    return Object.entries(count).map(([tag, n]) => ({ tag, count: n })).sort((a, b) => b.count - a.count);
+  }, [wrappedMyGames, motmVotes, myId]);
+  const [wrappedFetched, setWrappedFetched] = useState<{ key: string; rated: WrappedExtras["rated"]; weather: WrappedExtras["weather"] } | null>(null);
+  const wrappedGamesKey = wrappedMyGames.map((g) => g.id).join(",");
+  useEffect(() => {
+    if (!wrapped || !wrappedMyGames.length) return;
+    let cancelled = false;
+    (async () => {
+      const ids = wrappedMyGames.map((g) => g.id);
+      const [{ data: wx }, sums] = await Promise.all([
+        supabase.from("game_weather").select("game_id, temp_c, weather_code").in("game_id", ids),
+        Promise.all(ids.map((id) => supabase.rpc("game_rating_summary", { p_game_id: id }).then((r) => ({ id, row: (r.data as { ratings: number; average: number | null }[] | null)?.[0] })))),
+      ]);
+      if (cancelled) return;
+      // Best-rated: at least 3 ratings, highest average, more ratings breaks a tie.
+      let rated: WrappedExtras["rated"] = null;
+      let bestN = 0;
+      for (const s of sums) {
+        const n = s.row?.ratings ?? 0;
+        const avg = Number(s.row?.average ?? 0);
+        if (n < 3) continue;
+        if (!rated || avg > rated.average || (avg === rated.average && n > bestN)) {
+          const g = wrappedMyGames.find((x) => x.id === s.id)!;
+          rated = { date: g.date, team: g.team, us: g.us, them: g.them, average: avg, ratings: n };
+          bestN = n;
+        }
+      }
+      const byId = new Map((wx ?? []).map((w: { game_id: string; temp_c: number; weather_code: number }) => [w.game_id, w]));
+      const weather = wrappedMyGames.flatMap((g) => {
+        const w = byId.get(g.id);
+        return w ? [{ date: g.date, tempC: Number(w.temp_c), code: w.weather_code, result: g.result }] : [];
+      });
+      setWrappedFetched({ key: wrappedGamesKey, rated, weather });
+    })().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wrappedGamesKey]);
+  const wrappedExtras: WrappedExtras = {
+    tags: wrappedTags,
+    rated: wrappedFetched?.key === wrappedGamesKey ? wrappedFetched.rated : null,
+    weather: wrappedFetched?.key === wrappedGamesKey ? wrappedFetched.weather : [],
+  };
   const [wrappedOpen, setWrappedOpen] = useState(false);
   // The unwrap clip plays the first time each month's Wrapped is opened on
   // this phone; worked out when the story opens, so reopening skips it.
@@ -4286,20 +4342,29 @@ function App({ session }: { session: Session }) {
             {showWrappedBanner && wrapped && (
               <div className="wr-banner-wrap">
                 <style>{wrappedBannerCss}</style>
-                <button className="wr-banner" onClick={openWrapped} aria-label={`Open your ${wrapped.periodLabel} Wrapped`}>
+                <button
+                  className="wr-banner"
+                  onClick={openWrapped}
+                  aria-label={`Open your ${wrapped.periodLabel} Wrapped`}
+                  style={(() => {
+                    const t = wrappedThemeFor(wrapped.periodKey);
+                    return (t ? { "--acc": t.accent, "--bimg": `url(${t.introPhoto})` } : {}) as React.CSSProperties;
+                  })()}
+                >
                   <span className="row">
-                    <span className="ball">
-                      <img src="/wrapped/ball.jpg" alt="" />
-                      <span className="go" aria-hidden="true">
-                        <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5v9l7-4.5z" /></svg>
-                      </span>
+                    <span className="play" aria-hidden="true">
+                      <svg width="18" height="18" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5v9l7-4.5z" /></svg>
                     </span>
                     <span className="copy">
                       <span className="k">
-                        Wrapped
+                        {wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar ? `${wrapped.periodShort} Wrapped` : "Wrapped"}
                         {!wrappedOpenToAll && <span className="tag">ADMINS</span>}
                       </span>
-                      <span className="h">Your {wrapped.periodShort}{wrapped.soFar ? " so far" : ""}</span>
+                      <span className="h">
+                        {wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar
+                          ? wrappedThemeFor(wrapped.periodKey)!.word.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
+                          : `Your ${wrapped.periodShort}${wrapped.soFar ? " so far" : ""}`}
+                      </span>
                       <span className="s">
                         {wrapped.data.apps} games · {wrapped.data.goals} {wrapped.data.goals === 1 ? "goal" : "goals"}
                         {" · tap to watch"}
@@ -6674,6 +6739,7 @@ function App({ session }: { session: Session }) {
       {wrappedOpen && wrapped && (
         <WrappedStory
           {...wrapped}
+          extras={wrappedExtras}
           whiteName={cs.team_white_name}
           redName={cs.team_red_name}
           whiteColor={cs.team_white_color}

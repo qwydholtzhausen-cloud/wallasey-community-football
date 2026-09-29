@@ -7,6 +7,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { WrappedData } from "../lib/wrapped";
 import type { ClubRecords, Holder } from "../lib/records";
+import { wrappedPhoto, wrappedThemeFor, type WrappedPhotoKey } from "../lib/wrappedThemes";
+import { MOTM_TAGS } from "./motmTags";
 
 const CARD_MS = 6000;
 const HOLD_MS = 220;
@@ -35,7 +37,25 @@ export interface WrappedStoryProps {
   playIntro?: boolean;
   onFinished?: () => void; // reached the final score card
   onIntroSeen?: () => void;
+  extras?: WrappedExtras;
 }
+
+// Extra data loaded alongside the story (not in lib/wrapped.ts because it
+// comes from tables fetched on demand): the "Why?" tags on your MOTM votes,
+// the squad's ratings of your games, and the weather at your kickoffs.
+export interface WrappedExtras {
+  tags: { tag: string; count: number }[]; // most first
+  rated: { date: string; team: "white" | "red"; us: number; them: number; average: number; ratings: number } | null;
+  weather: { date: string; tempC: number; code: number; result: "W" | "D" | "L" }[];
+}
+
+// The story's length cap, and which cards go first when there's more to say.
+const MAX_CARDS = 13;
+const DROP_ORDER = ["club", "circle", "records", "best", "month", "record", "weather", "nemesis", "pred", "partner"];
+
+// WMO weather codes: drizzle, rain, showers, thunder.
+const isWet = (code: number) => (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95;
+const RATING_WORD = ["Scrappy", "Average", "Decent", "Great game", "Classic"];
 
 interface Card {
   key: string;
@@ -60,23 +80,7 @@ const STRONG_PHOTOS = new Set([
   "/wrapped/next.jpg",
 ]);
 
-// Card photos live in public/wrapped/, so a new generated image is a file
-// swap with no code change.
-const PHOTO = {
-  intro: "/wrapped/intro.jpg",
-  glance: "/wrapped/glance.jpg",
-  record: "/wrapped/record.jpg",
-  goals: "/wrapped/goals.jpg",
-  motm: "/wrapped/motm.jpg",
-  partner: "/wrapped/partner.jpg",
-  best: "/wrapped/best.jpg",
-  pred: "/wrapped/predictions.jpg",
-  club: "/wrapped/club.jpg",
-  end: "/wrapped/next.jpg",
-  summary: "/wrapped/summary.jpg",
-  nemesis: "/wrapped/nemesis.jpg",
-  records: "/wrapped/records.jpg",
-};
+// Card photos rotate month by month through lib/wrappedThemes.ts.
 
 function ordinal(n: number) {
   const s = ["th", "st", "nd", "rd"];
@@ -190,12 +194,31 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
   const mainName = mainColour === "red" ? p.redName : p.whiteName;
   const oneColour = Math.max(d.red, d.white) / d.apps >= 0.8;
   const prev = p.prev ?? undefined;
+  const ph = (k: WrappedPhotoKey) => wrappedPhoto(k, p.periodKey);
+  const ex = p.extras;
+  const topTag = ex?.tags[0] ?? null;
+  const theme = wrappedThemeFor(p.periodKey);
 
   cards.push({
     key: "intro",
-    photo: PHOTO.intro,
-    accent: "#f8b3b8",
-    body: (
+    photo: theme ? theme.introPhoto : ph("intro"),
+    accent: theme ? theme.accent : "#f8b3b8",
+    body: theme ? (
+      <>
+        <img className="wr-logo wr-rise" src="/crest.png" alt="" />
+        <div className="wr-rise">
+          <div className="wr-edition">{theme.edition}</div>
+          <div className={"wr-period themed" + (theme.word.length > 9 ? " long" : "")}>{theme.word}</div>
+          <div className="wr-wrapped themed">{p.periodShort.toUpperCase()} WRAPPED{p.soFar ? " · SO FAR" : ""}</div>
+        </div>
+        <div className="wr-h wr-rise" style={{ marginTop: 20 }}>
+          {d.firstName},{" "}
+          {theme.line({ firstName: d.firstName, apps: d.apps, ofGames: d.ofGames, goals: d.goals, goalsRank: d.goalsRank, motmWins: d.motmWins, topTag: topTag?.tag ?? null })}
+        </div>
+        <div className="wr-grow" />
+        <div className="wr-tap wr-rise"><i />Tap to relive your month</div>
+      </>
+    ) : (
       <>
         <img className="wr-logo wr-rise" src="/crest.png" alt="" />
         <div className="wr-rise">
@@ -214,7 +237,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
 
   cards.push({
     key: "glance",
-    photo: PHOTO.glance,
+    photo: ph("glance"),
     accent: "#7fb0ec",
     body: (
       <>
@@ -256,7 +279,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     d.W > d.L ? "More wins than losses. Keep it going." : d.W === d.L ? "Dead even. Nobody can say you didn't give them a game." : "The results will turn. You kept turning up.";
   cards.push({
     key: "record",
-    photo: PHOTO.record,
+    photo: ph("record"),
     accent: "#86efac",
     body: (
       <>
@@ -324,7 +347,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
 
   cards.push({
     key: "goals",
-    photo: PHOTO.goals,
+    photo: ph("goals"),
     accent: "#86efac",
     body:
       d.goals > 0 ? (
@@ -362,7 +385,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
   if (d.motmWins > 0 || d.motmVotes >= 2) {
     cards.push({
       key: "motm",
-      photo: PHOTO.motm,
+      photo: ph("motm"),
       accent: "#f5d97a",
       body:
         d.motmWins > 0 ? (
@@ -390,11 +413,52 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     });
   }
 
+  // What the squad said when they voted for you: the "Why?" tags.
+  const tagTotal = ex?.tags.reduce((n, t) => n + t.count, 0) ?? 0;
+  if (topTag && tagTotal >= 2) {
+    const def = MOTM_TAGS.find((t) => t.key === topTag.tag);
+    const top3 = ex!.tags.slice(0, 3);
+    cards.push({
+      key: "why",
+      photo: ph("why"),
+      accent: "#f5d97a",
+      body: (
+        <>
+          <div className="wr-lab wr-rise">Why they voted for you</div>
+          <div className="wr-tagbig wr-rise">
+            <span className="ic">
+              <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{def?.icon}</svg>
+            </span>
+            <span>
+              <b>{def?.label ?? topTag.tag}</b>
+              <small>{topTag.count} of your {tagTotal} {tagTotal === 1 ? "vote" : "votes"}</small>
+            </span>
+          </div>
+          <div className="wr-p wr-rise">
+            {topTag.count === tagTotal ? "Every single one said the same thing." : "That's what the squad sees in you."}
+          </div>
+          <div className="wr-grow" />
+          {top3.length > 1 && (
+            <div className="wr-tagbars wr-rise">
+              {top3.map((t) => (
+                <div key={t.tag}>
+                  <span>{MOTM_TAGS.find((x) => x.key === t.tag)?.label ?? t.tag}</span>
+                  <i><b style={{ width: `${Math.round((t.count / top3[0].count) * 100)}%` }} /></i>
+                  <em>{t.count}</em>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ),
+    });
+  }
+
   if (d.partner) {
     const pt = d.partner;
     cards.push({
       key: "partner",
-      photo: PHOTO.partner,
+      photo: ph("partner"),
       accent: "#86efac",
       body: (
         <>
@@ -479,7 +543,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     const first = (name: string) => name.split(" ")[0];
     cards.push({
       key: "nemesis",
-      photo: PHOTO.nemesis,
+      photo: ph("nemesis"),
       accent: "#f8b3b8",
       body: n ? (
         <>
@@ -526,7 +590,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     const margin = b.us - b.them;
     cards.push({
       key: "best",
-      photo: PHOTO.best,
+      photo: ph("best"),
       accent: "#f5d97a",
       body: (
         <>
@@ -538,6 +602,78 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
             <div><div className="tm">{themName.toUpperCase()}</div><div className="n dim"><Count to={b.them} /></div></div>
           </div>
           <div className="wr-p wr-rise">{margin >= 5 ? "A proper hiding, and you were there for all of it." : margin >= 2 ? "Comfortable. The way you like them." : "Tight, but a win's a win."}</div>
+        </>
+      ),
+    });
+  }
+
+  // The best-rated game you played in, from the "How was tonight?" meter.
+  if (ex?.rated) {
+    const r = ex.rated;
+    const usName = r.team === "red" ? p.redName : p.whiteName;
+    const themName = r.team === "red" ? p.whiteName : p.redName;
+    const filled = Math.round(r.average);
+    cards.push({
+      key: "rated",
+      photo: ph("rated"),
+      accent: "#f5d97a",
+      body: (
+        <>
+          <div className="wr-lab wr-rise">Best night you played in</div>
+          <div className="wr-h wr-rise">{shortDate(r.date)}, as rated by the squad</div>
+          <div className="wr-score wr-rise">
+            <div><div className="tm" style={{ color: r.team === "red" ? "#f8b3b8" : "#fff" }}>{usName.toUpperCase()}</div><div className="n"><Count to={r.us} /></div></div>
+            <div className="dash">–</div>
+            <div><div className="tm">{themName.toUpperCase()}</div><div className="n dim"><Count to={r.them} /></div></div>
+          </div>
+          <div className="wr-grow" />
+          <div className="wr-heat wr-rise">
+            {[1, 2, 3, 4, 5].map((n) => <i key={n} className={n <= filled ? "on" : ""} />)}
+          </div>
+          <div className="wr-heat-ends wr-rise"><span>Scrappy</span><span>{r.average.toFixed(1)} · {RATING_WORD[Math.max(0, filled - 1)]}</span></div>
+          <div className="wr-p wr-rise">Rated by {r.ratings} of the players who were there.</div>
+        </>
+      ),
+    });
+  }
+
+  // The weather at your kickoffs.
+  const wx = ex?.weather ?? [];
+  if (wx.length >= 2) {
+    const wet = wx.filter((w) => isWet(w.code));
+    const coldest = wx.reduce((a, b) => (b.tempC < a.tempC ? b : a));
+    const wetRec = { W: 0, D: 0, L: 0 };
+    for (const w of wet) wetRec[w.result]++;
+    const headline =
+      wet.length === wx.length ? `${wx.length} games. Every one of them wet.`
+      : wet.length > 0 ? `${wx.length} games. ${wet.length} of them wet.`
+      : `${wx.length} games, and not a drop of rain.`;
+    const line =
+      wet.length >= 2 && wetRec.L === 0 ? <>Unbeaten in the rain: <b>{wetRec.W}W {wetRec.D}D</b>.</>
+      : wet.length >= 2 ? <>In the wet you went <b>{wetRec.W}W {wetRec.D}D {wetRec.L}L</b>.</>
+      : <>Coldest night: <b>{Math.round(coldest.tempC)}°</b> on {shortDate(coldest.date)}. You still turned up.</>;
+    cards.push({
+      key: "weather",
+      photo: ph("weather"),
+      accent: "#7fb0ec",
+      body: (
+        <>
+          <div className="wr-lab wr-rise">Your weather report</div>
+          <div className="wr-h wr-rise">{headline}</div>
+          <div className="wr-wx wr-rise">
+            {wx.slice(0, 5).map((w) => (
+              <div key={w.date}>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M7 15a4 4 0 0 1 .5-8 5 5 0 0 1 9.6 1.5A3.5 3.5 0 0 1 17 15z" />
+                  {isWet(w.code) && <path d="M8 19l-1 2M12 19l-1 2M16 19l-1 2" />}
+                </svg>
+                <b>{Math.round(w.tempC)}°</b>
+                <span>{Number(w.date.slice(8, 10))} {new Date(w.date + "T12:00:00Z").toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" })}</span>
+              </div>
+            ))}
+          </div>
+          <div className="wr-grow" />
+          <div className="wr-p wr-rise">{line}</div>
         </>
       ),
     });
@@ -572,7 +708,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     if (rows.length >= 2) {
       cards.push({
         key: "records",
-        photo: PHOTO.records,
+        photo: ph("records"),
         accent: "#f5d97a",
         body: (
           <>
@@ -603,7 +739,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       pr.rank === 1 ? (pr.joint ? "Joint top of the predictions table." : "Top of the predictions table.") : pr.rank <= 3 ? `${ordinal(pr.rank)} in the predictions table.` : "Crystal ball needs a polish.";
     cards.push({
       key: "pred",
-      photo: PHOTO.pred,
+      photo: ph("pred"),
       accent: "#b9a6f5",
       body: (
         <>
@@ -625,7 +761,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
   const clubHead = c.whiteWins === c.redWins ? `${p.whiteName} and ${p.redName} couldn't be split.` : `${c.whiteWins > c.redWins ? p.whiteName : p.redName} had the edge.`;
   cards.push({
     key: "club",
-    photo: PHOTO.club,
+    photo: ph("club"),
     accent: "#7fb0ec",
     body: (
       <>
@@ -656,7 +792,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
 
   cards.push({
     key: "summary",
-    photo: PHOTO.summary,
+    photo: ph("summary"),
     accent: "#f8b3b8",
     body: (
       <>
@@ -696,7 +832,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
 
   cards.push({
     key: "next",
-    photo: PHOTO.end,
+    photo: ph("end"),
     accent: "#e63946",
     body: (
       <>
@@ -720,6 +856,12 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     ),
   });
 
+  // Too many cards drags; drop the least personal ones first.
+  for (const k of DROP_ORDER) {
+    if (cards.length <= MAX_CARDS) break;
+    const i = cards.findIndex((c) => c.key === k);
+    if (i >= 0) cards.splice(i, 1);
+  }
   return cards;
 }
 
@@ -738,7 +880,7 @@ export default function WrappedStory(props: WrappedStoryProps) {
   const cards = useMemo(
     () => buildWrappedCards(props, () => setIdx(0)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [props.data, props.prev, props.periodKey, props.soFar]
+    [props.data, props.prev, props.periodKey, props.soFar, props.extras]
   );
   const last = cards.length - 1;
 
@@ -913,7 +1055,7 @@ export default function WrappedStory(props: WrappedStoryProps) {
       )}
       {intro === "flash" && <div className="wr-flash" />}
       <div key={card.key + (intro === "playing" ? "-wait" : "")} data-card={card.key} className="wr-card" style={{ "--acc": card.accent } as CSSProperties}>
-        {card.photo && <div className={"wr-photo" + (STRONG_PHOTOS.has(card.photo) ? " strong" : "")} style={{ backgroundImage: `url(${card.photo})` }} />}
+        {card.photo && <div className={"wr-photo" + (STRONG_PHOTOS.has(card.photo) || card.photo.includes("/bank/") ? " strong" : "")} style={{ backgroundImage: `url(${card.photo})` }} />}
         <div className="wr-glow" />
         <div className="wr-in">{card.body}</div>
       </div>
@@ -1210,6 +1352,28 @@ const wrappedCss = `
 @keyframes wr-rise{from{opacity:0;transform:translateY(18px)}}
 @media (prefers-reduced-motion:reduce){.wr-card .wr-rise,.wr-story,.wr-vs i,.wr-orb,.wr-ring circle[style]{animation:none}}
 
+.wr-edition{display:inline-block;margin-top:18px;font-size:11px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:#0d0d1a;background:var(--acc);border-radius:5px;padding:4px 8px}
+.wr-period.themed{margin-top:10px;background:linear-gradient(180deg,#fff 25%,var(--acc));-webkit-background-clip:text;background-clip:text;color:transparent}
+.wr-period.themed.long{font-size:clamp(44px,14vw,70px);line-height:.92}
+.wr-wrapped.themed{color:var(--acc);font-size:15px;letter-spacing:.34em;margin-top:10px}
+.wr-tagbig{display:flex;align-items:center;gap:16px;margin-top:20px}
+.wr-tagbig .ic{width:84px;height:84px;flex:none;border-radius:22px;display:grid;place-items:center;color:var(--acc);background:radial-gradient(90% 90% at 50% 20%,rgba(245,217,122,.22),transparent 70%),rgba(255,255,255,.06);box-shadow:inset 0 0 0 1.5px var(--acc),0 0 30px -6px var(--acc)}
+.wr-tagbig b{display:block;font-family:var(--display);font-weight:800;font-size:34px;line-height:1;letter-spacing:-.02em}
+.wr-tagbig small{display:block;font-size:13px;color:rgba(255,255,255,.72);margin-top:6px}
+.wr-tagbars{display:flex;flex-direction:column;gap:8px}
+.wr-tagbars div{display:grid;grid-template-columns:96px 1fr 24px;align-items:center;gap:10px;font-size:13px}
+.wr-tagbars i{height:7px;border-radius:4px;background:rgba(255,255,255,.14);overflow:hidden}
+.wr-tagbars i b{display:block;height:100%;border-radius:4px;background:var(--acc);animation:wr-grow 1s cubic-bezier(.2,.8,.2,1) both}
+.wr-tagbars em{font-style:normal;font-weight:800;text-align:right;font-variant-numeric:tabular-nums}
+.wr-heat{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+.wr-heat i{height:34px;border-radius:9px;background:rgba(255,255,255,.1)}
+.wr-heat i.on{background:linear-gradient(180deg,#f5d97a,#eab308);box-shadow:0 0 14px rgba(234,179,8,.4)}
+.wr-heat-ends{display:flex;justify-content:space-between;font-size:12px;font-weight:700;color:rgba(255,255,255,.7);margin-top:7px}
+.wr-wx{display:grid;grid-template-columns:repeat(auto-fit,minmax(56px,1fr));gap:8px;margin-top:20px}
+.wr-wx div{border-radius:14px;padding:10px 4px 9px;text-align:center;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12)}
+.wr-wx svg{color:var(--acc)}
+.wr-wx b{display:block;font-family:var(--display);font-size:18px;margin-top:4px}
+.wr-wx span{display:block;font-size:10.5px;color:rgba(255,255,255,.65)}
 .wr-kicker{font-family:var(--display);font-weight:700;font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.8);margin-top:18px}
 .wr-period{margin-top:2px}
 .wr-stack{display:flex;flex-direction:column;gap:22px;margin-top:22px}
@@ -1275,24 +1439,22 @@ const wrappedCss = `
 @media (prefers-reduced-motion:reduce){.wr-flash{animation-duration:.01s}}
 
 /* The Fixtures banner that opens it: a photo card like Player of the
-   Month, with the ribboned ball as its mark. */
+   Month, in the month's theme (photo and accent) when it has one. */
 .wr-banner-wrap{position:relative;margin-bottom:14px}
 .wr-banner{position:relative;display:block;width:100%;text-align:left;border:0;cursor:pointer;padding:16px 16px 16px 14px;border-radius:20px;color:#fff;font:inherit;overflow:hidden;
-  background:#0d0d1a url(/wrapped/banner.jpg) right center/cover no-repeat;box-shadow:inset 0 0 0 1px rgba(139,107,232,.45),0 18px 40px -24px rgba(139,107,232,.8)}
+  background:#0d0d1a var(--bimg,url(/wrapped/bank/run-floodlights.jpg)) right 40%/cover no-repeat;box-shadow:inset 0 0 0 1px var(--acc,#f5d97a),0 18px 40px -24px var(--acc,#f5d97a)}
 .wr-banner::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(13,13,26,.9) 0%,rgba(13,13,26,.6) 55%,rgba(13,13,26,.05) 100%);pointer-events:none}
 .wr-banner::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,.12) 45%,transparent 60%);transform:translateX(-100%);animation:wr-sheen 4s ease-in-out infinite;pointer-events:none}
 @keyframes wr-sheen{0%,55%{transform:translateX(-100%)}85%,100%{transform:translateX(100%)}}
 @media (prefers-reduced-motion:reduce){.wr-banner::after{animation:none}}
 .wr-banner .row{display:flex;align-items:center;gap:14px;position:relative;z-index:1}
-.wr-banner .ball{position:relative;flex:none;width:64px;height:64px}
-.wr-banner .ball img{display:block;width:100%;height:100%;border-radius:16px;object-fit:cover;box-shadow:0 0 0 1px rgba(139,107,232,.5),0 0 24px -4px rgba(139,107,232,.7)}
+.wr-banner .play{flex:none;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;color:#0d0d1a;background:var(--acc,#f5d97a);box-shadow:0 0 0 4px rgba(13,13,26,.45),0 0 28px -4px var(--acc,#f5d97a)}
+.wr-banner .play svg{margin-left:3px}
 .wr-banner .copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding-right:18px}
-.wr-banner .k{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#f8b3b8}
+.wr-banner .k{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--acc,#f5d97a)}
 .wr-banner .h{font-family:var(--display);font-weight:800;font-size:18.5px;line-height:1.15;letter-spacing:-.01em}
 .wr-banner .s{font-size:12.5px;color:#d8d4ec;line-height:1.35}
 .wr-banner .tag{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.12em;color:#0d0d1a;background:#f5d97a;border-radius:4px;padding:1px 5px;margin-left:8px;vertical-align:1px}
-.wr-banner .go{position:absolute;right:-6px;bottom:-6px;width:24px;height:24px;border-radius:50%;background:#fff;color:#0d0d1a;display:grid;place-items:center;box-shadow:0 0 0 2px #0d0d1a,0 4px 12px -4px rgba(0,0,0,.6)}
-.wr-banner .go svg{margin-left:1px}
 .wr-banner-x{position:absolute;top:4px;right:4px;z-index:2;width:36px;height:36px;border:0;background:transparent;color:rgba(255,255,255,.7);font-size:18px;cursor:pointer;line-height:1;padding:0;display:grid;place-items:center}
 `;
 
