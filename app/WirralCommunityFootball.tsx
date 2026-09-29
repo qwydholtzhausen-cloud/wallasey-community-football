@@ -1581,6 +1581,8 @@ function App({ session }: { session: Session }) {
   const [playerCardTeam, setPlayerCardTeam] = useState<{ name: string; color: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showBatchGen, setShowBatchGen] = useState(false);
+  // The Add/Edit fixture sheet (admins).
+  const [fixtureSheet, setFixtureSheet] = useState<{ mode: "add" } | { mode: "edit"; id: string } | null>(null);
   const [multiBookMode, setMultiBookMode] = useState(false);
   const [multiBookSelected, setMultiBookSelected] = useState<Set<string>>(new Set());
   const [multiBooking, setMultiBooking] = useState(false);
@@ -2273,6 +2275,33 @@ function App({ session }: { session: Session }) {
     if (!wasPublished) {
       logAction("Posted fixture", `${rest.venue} — ${fmtDate(rest.date)}`);
     }
+  }
+  // From the fixture sheet: one or more new fixtures, as drafts or posted.
+  // Posting sets published_at, which the frequent cron uses to announce
+  // them (one digest push for a batch), same as confirming a draft.
+  async function createFixtures(rows: { date: string; kickoff: string; venue: string; pitch: string; price: number; max_players: number; pitch_cost: number; special?: boolean }[], post: boolean) {
+    if (rows.length === 0) return;
+    const now = new Date().toISOString();
+    const { error } = await supabase.from("games").insert(
+      rows.map((r) => ({ ...r, venue: r.venue.trim(), special: !!r.special, published: post, ...(post ? { published_at: now } : {}) }))
+    );
+    if (error) return notifyError(error.message);
+    await loadGames();
+    setFixtureSheet(null);
+    if (post) for (const r of rows) logAction("Posted fixture", `${r.venue} — ${fmtDate(r.date)}`);
+    notifySuccess(`${rows.length} fixture${rows.length === 1 ? "" : "s"} ${post ? "posted" : "saved as draft" + (rows.length === 1 ? "" : "s")}`);
+  }
+  async function saveFixture(id: string, patch: { date: string; kickoff: string; venue: string; pitch: string; price: number; max_players: number; pitch_cost: number; special?: boolean }, post: boolean) {
+    const clean = { ...patch, venue: patch.venue.trim(), special: !!patch.special };
+    if (post) {
+      await saveGame(id, clean as Partial<GameRow>);
+    } else {
+      const { error } = await supabase.from("games").update(clean).eq("id", id);
+      if (error) return notifyError(error.message);
+      await loadGames();
+      notifySuccess("Draft saved");
+    }
+    setFixtureSheet(null);
   }
   async function deleteGame(id: string) {
     const game = games.find((g) => g.id === id);
@@ -4131,7 +4160,7 @@ function App({ session }: { session: Session }) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/></svg>
                 Update
               </button>
-              <button className="wcf-addbtn" onClick={() => setShowBatchGen(true)} title="Add one or more fixtures">
+              <button className="wcf-addbtn" onClick={() => setFixtureSheet({ mode: "add" })} title="Add one or more fixtures">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
                 Fixtures
               </button>
@@ -4282,11 +4311,11 @@ function App({ session }: { session: Session }) {
                       myId={myId}
                       isAdmin={isAdmin}
                       overdue={iAmOverdue}
-                      editing={editingId === nextFixtureForCountdown.id}
+                      editing={false}
                       onBook={() => book(nextFixtureForCountdown.id)}
                       onCancel={(bookingId) => cancel(bookingId)}
                       onMarkPaid={(bookingId) => markPaid(bookingId)}
-                      onEdit={() => setEditingId(editingId === nextFixtureForCountdown.id ? null : nextFixtureForCountdown.id)}
+                      onEdit={() => setFixtureSheet({ mode: "edit", id: nextFixtureForCountdown.id })}
                       onSave={(patch) => saveGame(nextFixtureForCountdown.id, patch)}
                       onDelete={() => deleteGame(nextFixtureForCountdown.id)}
                       onOpenPlayerCard={openPlayerCard}
@@ -4323,11 +4352,11 @@ function App({ session }: { session: Session }) {
                           myId={myId}
                           isAdmin={isAdmin}
                           overdue={iAmOverdue}
-                          editing={editingId === g.id}
+                          editing={false}
                           onBook={() => book(g.id)}
                           onCancel={(bookingId) => cancel(bookingId)}
                           onMarkPaid={(bookingId) => markPaid(bookingId)}
-                          onEdit={() => setEditingId(editingId === g.id ? null : g.id)}
+                          onEdit={() => setFixtureSheet({ mode: "edit", id: g.id })}
                           onSave={(patch) => saveGame(g.id, patch)}
                           onDelete={() => deleteGame(g.id)}
                           onOpenPlayerCard={openPlayerCard}
@@ -6617,6 +6646,20 @@ function App({ session }: { session: Session }) {
         );
       })()}
 
+      {fixtureSheet && (fixtureSheet.mode === "add" || games.some((g) => g.id === fixtureSheet.id)) && (
+        <FixtureSheet
+          mode={fixtureSheet.mode}
+          game={fixtureSheet.mode === "edit" ? games.find((g) => g.id === fixtureSheet.id) : undefined}
+          cs={cs}
+          games={games}
+          onCreate={createFixtures}
+          onSave={saveFixture}
+          onDelete={deleteGame}
+          onClose={() => setFixtureSheet(null)}
+          askConfirm={askConfirm}
+        />
+      )}
+
       {showBatchGen && (
         <BatchGenerateModal
           existingDates={new Set(games.map((g) => g.date))}
@@ -6708,6 +6751,350 @@ function oneMonthAfter(dateStr: string) {
 // draft fixtures in one go, instead of an admin adding each one by hand -
 // club plays a fixed weekly pattern and books about a month out, so this
 // is a recurring batch job, not a one-off.
+// The one sheet for adding and editing fixtures (admins): one game or a
+// weekly run, with tap-to-pick kickoff/venue/format, +/- for price and
+// places, the Special switch, and a live preview. Replaced the old
+// "Generate fixtures" dialog plus the inline edit form.
+type FixtureDraft = {
+  date: string;
+  kickoff: string;
+  venue: string;
+  pitch: string;
+  price: number;
+  max_players: number;
+  pitch_cost: number;
+  special?: boolean;
+};
+const FORMAT_PLACES: Record<string, number> = { "5-a-side": 10, "6-a-side": 12, "7-a-side": 14, "8-a-side": 16, "11-a-side": 22 };
+const FIXTURE_MAX_PLACES = 30;
+
+function FixtureSheet({
+  mode,
+  game,
+  cs,
+  games,
+  onCreate,
+  onSave,
+  onDelete,
+  onClose,
+  askConfirm,
+}: {
+  mode: "add" | "edit";
+  game?: GameRow;
+  cs: ClubSettings;
+  games: GameRow[];
+  onCreate: (rows: FixtureDraft[], post: boolean) => Promise<void>;
+  onSave: (id: string, patch: FixtureDraft, post: boolean) => Promise<void>;
+  onDelete: (id: string) => void;
+  onClose: () => void;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+}) {
+  const todayStr = nowInLondon().slice(0, 10);
+  const addDays = (d: string, n: number) => {
+    const x = new Date(d + "T12:00:00Z");
+    x.setUTCDate(x.getUTCDate() + n);
+    return x.toISOString().slice(0, 10);
+  };
+  const isSunday = (d: string) => new Date(d + "T12:00:00Z").getUTCDay() === 0;
+  const [tab, setTab] = useState<"one" | "weekly">("one");
+  const [busy, setBusy] = useState(false);
+  const [f, setF] = useState<FixtureDraft>(() =>
+    game
+      ? { date: game.date, kickoff: game.kickoff, venue: game.venue, pitch: game.pitch, price: game.price, max_players: game.max_players, pitch_cost: game.pitch_cost, special: !!game.special }
+      : {
+          date: addDays(todayStr, 1),
+          kickoff: cs.default_kickoff,
+          venue: cs.default_venue,
+          pitch: cs.default_pitch,
+          price: cs.default_price,
+          max_players: cs.default_max_players,
+          pitch_cost: defaultPitchCost(addDays(todayStr, 1)),
+          special: false,
+        }
+  );
+  const [pitchCostTouched, setPitchCostTouched] = useState(!!game);
+  const [showPitchCost, setShowPitchCost] = useState(false);
+  const [otherTime, setOtherTime] = useState(false);
+  const [otherVenue, setOtherVenue] = useState(false);
+  const [pickDate, setPickDate] = useState(false);
+  // Weekly
+  const [weekDays, setWeekDays] = useState<Set<number>>(new Set([1, 4]));
+  const [weeks, setWeeks] = useState<number | "until">(4);
+  const [until, setUntil] = useState(addDays(todayStr, 28));
+
+  const gameDates = new Set(games.filter((g) => g.id !== game?.id).map((g) => g.date));
+  const kickoffs = [...new Set([cs.default_kickoff, "12:00", "19:00", "20:00", "21:00", ...games.map((g) => g.kickoff)])].filter(Boolean).sort().slice(0, 6);
+  // Your most-used venues (spacing/case duplicates merged), default first.
+  const venues = (() => {
+    const count = new Map<string, { name: string; n: number }>();
+    for (const v of [cs.default_venue, ...games.map((g) => g.venue)]) {
+      const name = (v ?? "").trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      const cur = count.get(key);
+      count.set(key, { name: cur?.name ?? name, n: (cur?.n ?? 0) + 1 });
+    }
+    const def = (cs.default_venue ?? "").trim().toLowerCase();
+    return [...count.entries()].sort((x, y) => Number(y[0] === def) - Number(x[0] === def) || y[1].n - x[1].n).slice(0, 3).map(([, v]) => v.name);
+  })();
+  const formats = ["5-a-side", "7-a-side", "8-a-side", "11-a-side"];
+  const set = (patch: Partial<FixtureDraft>) => setF((cur) => ({ ...cur, ...patch }));
+
+  function pickOneDate(date: string) {
+    const patch: Partial<FixtureDraft> = { date };
+    if (!pitchCostTouched) patch.pitch_cost = defaultPitchCost(date);
+    // Sundays are specials by default, with the 11-a-side defaults.
+    if (isSunday(date) && !f.special && mode === "add") Object.assign(patch, SPECIAL_DEFAULTS, { special: true });
+    set(patch);
+  }
+
+  const strip = Array.from({ length: 21 }, (_, i) => addDays(todayStr, i));
+  const weeklyDates = (() => {
+    if (tab !== "weekly") return [] as string[];
+    const end = weeks === "until" ? until : addDays(todayStr, weeks * 7 - 1);
+    const out: string[] = [];
+    for (let d = addDays(todayStr, 1); d <= end; d = addDays(d, 1)) if (weekDays.has(new Date(d + "T12:00:00Z").getUTCDay())) out.push(d);
+    return out;
+  })();
+  const weeklyNew = weeklyDates.filter((d) => !gameDates.has(d));
+  const weeklySkipped = weeklyDates.length - weeklyNew.length;
+  const shortDate = (d: string) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+
+  async function submit(post: boolean) {
+    setBusy(true);
+    if (mode === "edit" && game) await onSave(game.id, f, post);
+    else if (tab === "one") await onCreate([f], post);
+    else await onCreate(weeklyNew.map((date) => ({ ...f, date, pitch_cost: pitchCostTouched ? f.pitch_cost : defaultPitchCost(date) })), post);
+    setBusy(false);
+  }
+
+  const d = new Date(f.date + "T12:00:00Z");
+  const canSubmit = !busy && f.venue.trim() && f.pitch.trim() && /^\d{2}:\d{2}$/.test(f.kickoff) && (tab === "one" || mode === "edit" ? !!f.date : weeklyNew.length > 0);
+  const title = mode === "edit" ? "Edit fixture" : tab === "one" ? "Add fixture" : "Add fixtures";
+  const sub = mode === "edit" ? `${fmtDate(game!.date)} · ${game!.venue}` : tab === "one" ? "Set it all up once, then post when you're ready" : "A run of games in one go";
+
+  return (
+    <div className="wcf-fxs-overlay" onClick={() => !busy && onClose()}>
+      <div className="wcf-fxs" onClick={(e) => e.stopPropagation()}>
+        <div className={"wcf-fxs-photo" + (f.special ? " gold" : "")}>
+          <div className="wcf-fxs-handle" />
+          <button className="wcf-fxs-x" onClick={onClose} aria-label="Close">✕</button>
+          <div className="wcf-fxs-title">
+            <b>{title}</b>
+            <span>{sub}</span>
+          </div>
+        </div>
+        <div className="wcf-fxs-body">
+          {mode === "add" && (
+            <div className="wcf-fxs-seg">
+              <button className={tab === "one" ? "on" : ""} onClick={() => setTab("one")}>One game</button>
+              <button className={tab === "weekly" ? "on" : ""} onClick={() => setTab("weekly")}>Every week</button>
+            </div>
+          )}
+
+          {(tab === "one" || mode === "edit") && (
+            <div>
+              <div className="wcf-fxs-lab">
+                <span>Date</span>
+                <button onClick={() => setPickDate((v) => !v)}>{pickDate ? "Hide" : "Pick another date ›"}</button>
+              </div>
+              {pickDate ? (
+                <input className="wcf-fxs-input" type="date" value={f.date} min={todayStr} onChange={(e) => e.target.value && pickOneDate(e.target.value)} />
+              ) : (
+                <div className="wcf-fxs-days">
+                  {strip.map((day) => {
+                    const dd = new Date(day + "T12:00:00Z");
+                    return (
+                      <button key={day} className={"wcf-fxs-day" + (day === f.date ? " on" : "") + (gameDates.has(day) ? " has" : "")} onClick={() => pickOneDate(day)}>
+                        <small>{dd.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }).toUpperCase()}</small>
+                        <b>{dd.getUTCDate()}</b>
+                        <i />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {gameDates.has(f.date) && <div className="wcf-fxs-hint">There&apos;s already a game on {fmtDate(f.date)}; this adds another.</div>}
+            </div>
+          )}
+
+          {tab === "weekly" && mode === "add" && (
+            <>
+              <div>
+                <div className="wcf-fxs-lab"><span>On</span></div>
+                <div className="wcf-fxs-wd">
+                  {BATCH_WEEKDAYS.map((w) => (
+                    <button
+                      key={w.value}
+                      className={weekDays.has(w.value) ? "on" : ""}
+                      onClick={() =>
+                        setWeekDays((cur) => {
+                          const next = new Set(cur);
+                          if (next.has(w.value)) next.delete(w.value);
+                          else next.add(w.value);
+                          return next;
+                        })
+                      }
+                    >
+                      {w.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="wcf-fxs-lab"><span>For</span></div>
+                <div className="wcf-fxs-chips">
+                  {[2, 4, 8].map((n) => (
+                    <button key={n} className={weeks === n ? "on" : ""} onClick={() => setWeeks(n)}>{n} weeks</button>
+                  ))}
+                  <button className={weeks === "until" ? "on" : "add"} onClick={() => setWeeks("until")}>Until…</button>
+                </div>
+                {weeks === "until" && <input className="wcf-fxs-input" type="date" value={until} min={todayStr} onChange={(e) => setUntil(e.target.value)} />}
+              </div>
+            </>
+          )}
+
+          <div>
+            <div className="wcf-fxs-lab"><span>Kickoff</span></div>
+            <div className="wcf-fxs-chips">
+              {kickoffs.map((k) => (
+                <button key={k} className={!otherTime && f.kickoff === k ? "on" : ""} onClick={() => { setOtherTime(false); set({ kickoff: k }); }}>{k}</button>
+              ))}
+              <button className={otherTime || !kickoffs.includes(f.kickoff) ? "on" : "add"} onClick={() => setOtherTime(true)}>Other</button>
+            </div>
+            {(otherTime || !kickoffs.includes(f.kickoff)) && <input className="wcf-fxs-input" type="time" value={f.kickoff} onChange={(e) => set({ kickoff: e.target.value })} />}
+          </div>
+
+          <div>
+            <div className="wcf-fxs-lab"><span>Venue</span></div>
+            <div className="wcf-fxs-chips">
+              {venues.map((v) => (
+                <button key={v} className={!otherVenue && f.venue === v ? "on" : ""} onClick={() => { setOtherVenue(false); set({ venue: v }); }}>{v}</button>
+              ))}
+              <button className={otherVenue || !venues.includes(f.venue) ? "on" : "add"} onClick={() => { setOtherVenue(true); if (venues.includes(f.venue)) set({ venue: "" }); }}>+ New venue</button>
+            </div>
+            {(otherVenue || !venues.includes(f.venue)) && (
+              <input className="wcf-fxs-input" placeholder="Venue name" value={f.venue} onChange={(e) => set({ venue: e.target.value })} />
+            )}
+          </div>
+
+          <div>
+            <div className="wcf-fxs-lab"><span>Format</span></div>
+            <div className="wcf-fxs-chips">
+              {formats.map((p) => (
+                <button key={p} className={f.pitch === p ? "on" : ""} onClick={() => set({ pitch: p, max_players: FORMAT_PLACES[p] ?? f.max_players })}>{p}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="wcf-fxs-two">
+            <div>
+              <div className="wcf-fxs-lab"><span>Price</span></div>
+              <div className="wcf-fxs-step">
+                <button onClick={() => set({ price: Math.max(0, f.price - 1) })} aria-label="Less">−</button>
+                <b>£{f.price}</b>
+                <button onClick={() => set({ price: f.price + 1 })} aria-label="More">+</button>
+              </div>
+            </div>
+            <div>
+              <div className="wcf-fxs-lab"><span>Places</span></div>
+              <div className="wcf-fxs-step">
+                <button onClick={() => set({ max_players: Math.max(2, f.max_players - 1) })} aria-label="Fewer">−</button>
+                <b>{f.max_players}</b>
+                <button onClick={() => set({ max_players: Math.min(FIXTURE_MAX_PLACES, f.max_players + 1) })} aria-label="More">+</button>
+              </div>
+            </div>
+          </div>
+
+          <button className={"wcf-fxs-special" + (f.special ? " on" : "")} onClick={() => set(f.special ? { special: false } : { ...SPECIAL_DEFAULTS, special: true })}>
+            <span>
+              <b>★ Special fixture</b>
+              <small>Shows in gold. On automatically for Sundays.</small>
+            </span>
+            <i />
+          </button>
+
+          <button className="wcf-fxs-more" onClick={() => setShowPitchCost((v) => !v)}>
+            <span>Pitch cost £{f.pitch_cost} · per game</span>
+            <span>{showPitchCost ? "▾" : "›"}</span>
+          </button>
+          {showPitchCost && (
+            <div className="wcf-fxs-step">
+              <button onClick={() => { setPitchCostTouched(true); set({ pitch_cost: Math.max(0, f.pitch_cost - 5) }); }} aria-label="Less">−</button>
+              <b>£{f.pitch_cost}</b>
+              <button onClick={() => { setPitchCostTouched(true); set({ pitch_cost: f.pitch_cost + 5 }); }} aria-label="More">+</button>
+            </div>
+          )}
+
+          {tab === "weekly" && mode === "add" ? (
+            <div className={"wcf-fxs-sum" + (weeklyNew.length === 0 ? " none" : "")}>
+              {weeklyNew.length === 0 ? (
+                weeklyDates.length > 0
+                  ? `All ${weeklyDates.length} of those days already have a game. Pick other days or a longer range.`
+                  : "Pick at least one day."
+              ) : (
+                <>
+                  <b>{weeklyNew.length} game{weeklyNew.length === 1 ? "" : "s"}</b>, {shortDate(weeklyNew[0])} to {shortDate(weeklyNew[weeklyNew.length - 1])}, {f.kickoff} at {f.venue || "…"}, £{f.price}, {f.max_players} places.
+                  {weeklySkipped > 0 && ` ${weeklySkipped} day${weeklySkipped === 1 ? " already has" : "s already have"} a game and ${weeklySkipped === 1 ? "is" : "are"} skipped.`}
+                </>
+              )}
+            </div>
+          ) : (
+            <div>
+              <div className="wcf-fxs-lab"><span>How it&apos;ll look</span></div>
+              <div className={"wcf-fxs-preview" + (f.special ? " special" : "")}>
+                <div className="wcf-fxs-pdate">
+                  <small>{d.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }).toUpperCase()}</small>
+                  <b>{d.getUTCDate()}</b>
+                </div>
+                <div className="wcf-fxs-pdiv" />
+                <div className="wcf-fxs-pinfo">
+                  <div>{f.kickoff} · {f.venue || "Venue"}</div>
+                  <small>{f.pitch} · £{f.price} · 0/{f.max_players}</small>
+                </div>
+                {!(mode === "edit" && game?.published) && <span className="wcf-fxs-draft">DRAFT</span>}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="wcf-fxs-foot">
+          {mode === "edit" && game?.published ? (
+            <button className="wcf-fxs-btn p" disabled={!canSubmit} onClick={() => submit(true)}>Save changes</button>
+          ) : (
+            <>
+              <button className="wcf-fxs-btn g" disabled={!canSubmit} onClick={() => submit(false)}>{tab === "weekly" && mode === "add" ? "Save as drafts" : "Save as draft"}</button>
+              <button className="wcf-fxs-btn p" disabled={!canSubmit} onClick={() => submit(true)}>
+                {tab === "weekly" && mode === "add" ? `Post all ${weeklyNew.length || ""}`.trim() : "Post now"}
+              </button>
+            </>
+          )}
+        </div>
+        {mode === "edit" && game && (
+          <button
+            className="wcf-fxs-del"
+            onClick={async () => {
+              const hasBookings = game.bookings.length > 0;
+              if (
+                await askConfirm(
+                  "Delete this fixture?",
+                  `${game.venue} on ${fmtDate(game.date)}${hasBookings ? ` - this removes it and all ${game.bookings.length} bookings.` : "."}`,
+                  "Delete"
+                )
+              ) {
+                onDelete(game.id);
+                onClose();
+              }
+            }}
+          >
+            Delete fixture
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BatchGenerateModal({
   existingDates,
   onGenerate,
@@ -13132,6 +13519,71 @@ a.wcf-set-link{text-decoration:none}
 .wcf-special-switch{display:flex!important;flex-direction:row!important;align-items:center;gap:9px;padding:10px 12px;border-radius:12px;background:rgba(245,217,122,.08);border:1px solid rgba(245,217,122,.35);color:#f5d97a;font-weight:700;font-size:12px;line-height:1.4}
 .wcf-special-switch input{width:18px;height:18px;accent-color:#eab308;flex:none}
 @media (prefers-reduced-motion:reduce){.wcf-fx-row.special,.wcf-card.featured.special,.wcf-fx-row.special::after,.wcf-card.featured.special::after{animation:none}}
+.wcf-fxs-overlay{position:fixed;inset:0;z-index:120;background:rgba(3,4,8,.62);display:flex;align-items:flex-end;justify-content:center;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.wcf-fxs{width:100%;max-width:520px;max-height:94vh;overflow-y:auto;background:#131624;border-radius:24px 24px 0 0;border:1px solid var(--line);border-bottom:0;padding-bottom:env(safe-area-inset-bottom,0px);animation:wcfPcardIn .2s ease-out}
+.wcf-fxs-photo{position:relative;height:150px;margin-bottom:-42px;background:linear-gradient(180deg,rgba(19,22,36,.1) 0%,rgba(19,22,36,.55) 55%,#131624 100%),url('/pitch-floodlit.jpg') center 60%/cover}
+.wcf-fxs-photo.gold{background:linear-gradient(180deg,rgba(60,45,5,.25) 0%,rgba(40,30,5,.6) 55%,#131624 100%),url('/pitch-floodlit.jpg') center 60%/cover}
+.wcf-fxs-handle{position:absolute;top:10px;left:50%;width:38px;height:4px;margin-left:-19px;border-radius:4px;background:rgba(255,255,255,.45)}
+.wcf-fxs-x{position:absolute;top:16px;right:14px;width:34px;height:34px;border-radius:50%;border:0;background:rgba(13,13,26,.55);color:#fff;font-size:14px;cursor:pointer}
+.wcf-fxs-title{position:absolute;left:16px;right:60px;bottom:52px}
+.wcf-fxs-title b{display:block;font-family:var(--display);font-size:22px;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.6)}
+.wcf-fxs-photo.gold .wcf-fxs-title b{color:#fff3c4}
+.wcf-fxs-title span{display:block;margin-top:2px;font-size:12px;color:#d7dde8;text-shadow:0 1px 6px rgba(0,0,0,.7)}
+.wcf-fxs-body{position:relative;display:flex;flex-direction:column;gap:14px;padding:0 16px 14px}
+.wcf-fxs-seg{display:grid;grid-template-columns:1fr 1fr;padding:3px;border-radius:12px;background:#0b0d1a;border:1px solid var(--line)}
+.wcf-fxs-seg button{padding:9px;border:0;border-radius:9px;background:none;color:var(--dim);font-weight:700;font-size:13px;cursor:pointer}
+.wcf-fxs-seg button.on{background:#1b2136;color:#fff}
+.wcf-fxs-lab{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;font-size:11px;font-weight:700;color:var(--dim)}
+.wcf-fxs-lab button{background:none;border:0;padding:0;color:#f5d97a;font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-fxs-days{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.wcf-fxs-days::-webkit-scrollbar{display:none}
+.wcf-fxs-day{flex:none;width:50px;padding:7px 0 8px;border-radius:12px;background:var(--panel);border:1px solid var(--line);color:#f1f5f9;text-align:center;cursor:pointer}
+.wcf-fxs-day small{display:block;font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--dim)}
+.wcf-fxs-day b{display:block;margin-top:2px;font-family:var(--display);font-size:18px}
+.wcf-fxs-day i{display:block;width:5px;height:5px;margin:4px auto 0;border-radius:50%}
+.wcf-fxs-day.has i{background:var(--dim)}
+.wcf-fxs-day.on{border-color:#f5d97a;background:rgba(245,217,122,.1)}
+.wcf-fxs-day.on b{color:#f5d97a}
+.wcf-fxs-hint{margin-top:7px;font-size:11.5px;color:var(--dim)}
+.wcf-fxs-chips{display:flex;flex-wrap:wrap;gap:7px}
+.wcf-fxs-chips button,.wcf-fxs-wd button{padding:8px 12px;border-radius:11px;background:var(--panel);border:1px solid var(--line);color:#e2e8f0;font-weight:700;font-size:13px;cursor:pointer}
+.wcf-fxs-chips button.on,.wcf-fxs-wd button.on{background:rgba(245,217,122,.12);border-color:rgba(245,217,122,.6);color:#f5d97a}
+.wcf-fxs-chips button.add{color:var(--dim);border-style:dashed}
+.wcf-fxs-wd{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.wcf-fxs-wd button{padding:8px 0;font-size:12px}
+.wcf-fxs-input{width:100%;box-sizing:border-box;margin-top:8px;min-height:44px;padding:10px 12px;border-radius:12px;background:#0b0d1a;border:1px solid rgba(148,163,184,.2);color:#fff;font-size:14px}
+.wcf-fxs-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.wcf-fxs-step{display:flex;align-items:center;justify-content:space-between;padding:5px;border-radius:12px;background:var(--panel);border:1px solid var(--line)}
+.wcf-fxs-step button{width:36px;height:36px;border:0;border-radius:9px;background:rgba(148,163,184,.1);color:#e2e8f0;font-weight:800;font-size:17px;cursor:pointer}
+.wcf-fxs-step b{font-family:var(--display);font-size:17px;color:#fff;font-variant-numeric:tabular-nums}
+.wcf-fxs-special{display:flex;align-items:center;gap:12px;width:100%;padding:11px 12px;border-radius:14px;background:linear-gradient(90deg,rgba(245,217,122,.1),rgba(245,217,122,.02));border:1px solid rgba(245,217,122,.35);text-align:left;cursor:pointer}
+.wcf-fxs-special b{display:block;font-size:13.5px;color:#f5d97a}
+.wcf-fxs-special small{display:block;margin-top:2px;font-size:11.5px;color:var(--dim)}
+.wcf-fxs-special i{margin-left:auto;flex:none;position:relative;width:46px;height:28px;border-radius:999px;background:rgba(148,163,184,.25);transition:background .15s}
+.wcf-fxs-special i::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .15s}
+.wcf-fxs-special.on i{background:#eab308}
+.wcf-fxs-special.on i::after{transform:translateX(18px)}
+.wcf-fxs-more{display:flex;justify-content:space-between;width:100%;padding:10px 12px;border-radius:12px;border:1px dashed var(--line);background:none;color:var(--dim);font-weight:700;font-size:12.5px;cursor:pointer}
+.wcf-fxs-preview{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:15px;background:linear-gradient(180deg,rgba(30,41,59,.9),rgba(19,22,38,.98));border:1px solid var(--line)}
+.wcf-fxs-preview.special{background:linear-gradient(160deg,#221b08,#120f07);border-color:rgba(245,217,122,.6);box-shadow:0 0 20px rgba(234,179,8,.3)}
+.wcf-fxs-pdate{width:38px;flex:none;text-align:center;line-height:1}
+.wcf-fxs-pdate small{display:block;font-family:var(--mono);font-size:9.5px;color:var(--dim)}
+.wcf-fxs-pdate b{display:block;margin-top:3px;font-family:var(--display);font-size:20px;color:#fff}
+.wcf-fxs-pdiv{width:1px;align-self:stretch;background:var(--line)}
+.wcf-fxs-pinfo{min-width:0}
+.wcf-fxs-pinfo div{font-weight:700;font-size:13.5px;color:#f1f5f9}
+.wcf-fxs-preview.special .wcf-fxs-pinfo div{color:#fff3c4}
+.wcf-fxs-pinfo small{display:block;margin-top:2px;font-size:11.5px;color:var(--dim)}
+.wcf-fxs-draft{margin-left:auto;flex:none;padding:3px 7px;border-radius:6px;border:1px solid var(--line);font-size:9.5px;font-weight:800;letter-spacing:.1em;color:var(--dim)}
+.wcf-fxs-sum{padding:10px 12px;border-radius:12px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);font-size:12.5px;line-height:1.45;color:#e2e8f0}
+.wcf-fxs-sum.none{background:var(--panel);border-color:var(--line);color:var(--dim)}
+.wcf-fxs-sum b{color:#fff}
+.wcf-fxs-foot{position:sticky;bottom:0;display:flex;gap:8px;padding:12px 16px 14px;background:#131624;border-top:1px solid var(--line)}
+.wcf-fxs-btn{flex:1;min-height:46px;padding:12px;border-radius:12px;font-weight:800;font-size:13.5px;cursor:pointer}
+.wcf-fxs-btn.g{background:var(--panel);border:1px solid var(--line);color:#e2e8f0}
+.wcf-fxs-btn.p{background:var(--red);border:0;color:#fff}
+.wcf-fxs-btn:disabled{opacity:.45;cursor:not-allowed}
+.wcf-fxs-del{display:block;width:100%;padding:4px 0 16px;background:#131624;border:0;color:var(--red-hi);font-weight:700;font-size:12.5px;cursor:pointer}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
