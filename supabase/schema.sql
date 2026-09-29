@@ -1963,3 +1963,8 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.game_rating_summary(uuid) from public;
 grant execute on function public.game_rating_summary(uuid) to authenticated;
+
+-- "Why?" tags on MOTM votes (2026-09-29, branch wrapped-extras): one
+-- optional tag per vote, same secrecy as the vote itself (motm_votes RLS).
+alter table public.motm_votes add column if not exists tag text
+  check (tag is null or tag in ('clinical', 'brick_wall', 'engine', 'magician', 'leader', 'workhorse'));

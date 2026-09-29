@@ -225,7 +225,20 @@ interface MotmVote {
   game_id: string;
   voter_id: string;
   candidate_id: string;
+  // Optional "Why?" tag on the vote (MOTM_TAGS); feeds the season Wrapped.
+  tag?: string | null;
 }
+
+// The "Why?" tags on a Man of the Match vote - one optional tap, anonymous,
+// becoming each player's nickname in the end-of-season Wrapped.
+const MOTM_TAGS: { key: string; label: string; icon: React.ReactNode }[] = [
+  { key: "clinical", label: "Clinical", icon: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.2" fill="currentColor" /></> },
+  { key: "brick_wall", label: "Brick wall", icon: <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" /> },
+  { key: "engine", label: "Engine", icon: <path d="M13 2L4 14h7l-1 8 9-12h-7z" /> },
+  { key: "magician", label: "Magician", icon: <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z" /> },
+  { key: "leader", label: "Leader", icon: <path d="M4 21V4M4 4h13l-2 4 2 4H4" /> },
+  { key: "workhorse", label: "Workhorse", icon: <><path d="M20 12a8 8 0 1 1-8-8" /><path d="M20 4v6h-6" /></> },
+];
 
 interface FeedReaction {
   id: string;
@@ -1672,7 +1685,7 @@ function App({ session }: { session: Session }) {
   // from a counter that gives the number and nothing else.
   const [motmBallotCounts, setMotmBallotCounts] = useState<Record<string, number>>({});
   const loadMotmVotes = useCallback(async () => {
-    const { data } = await supabase.from("motm_votes").select("id, game_id, voter_id, candidate_id");
+    const { data } = await supabase.from("motm_votes").select("*");
     if (data) setMotmVotes(data as MotmVote[]);
   }, []);
   const loadBallotCount = useCallback(async (gameId: string) => {
@@ -2412,10 +2425,16 @@ function App({ session }: { session: Session }) {
   async function castMotmVote(gameId: string, candidateId: string, candidateName: string) {
     const { error } = await supabase
       .from("motm_votes")
-      .upsert({ game_id: gameId, voter_id: myId, candidate_id: candidateId }, { onConflict: "game_id,voter_id" });
+      // A new pick clears the "Why?" tag, which was about the old one.
+      .upsert({ game_id: gameId, voter_id: myId, candidate_id: candidateId, tag: null }, { onConflict: "game_id,voter_id" });
     if (error) return notifyError(error.message);
     await Promise.all([loadMotmVotes(), loadBallotCount(gameId)]);
     notifySuccess(`Voted for ${candidateName} — tap another name to change your pick`);
+  }
+  async function setMotmVoteTag(gameId: string, tag: string | null) {
+    setMotmVotes((cur) => cur.map((v) => (v.game_id === gameId && v.voter_id === myId ? { ...v, tag } : v)));
+    const { error } = await supabase.from("motm_votes").update({ tag }).eq("game_id", gameId).eq("voter_id", myId);
+    if (error) notifyError(error.message);
   }
 
   // RLS enforces the real rules (booked on this game, before kickoff) -
@@ -6155,9 +6174,33 @@ function App({ session }: { session: Session }) {
                                     </div>
                                   ))}
                                 </div>
+                                {pickName && (() => {
+                                  const myTag = motmVotes.find((v) => v.game_id === g.id && v.voter_id === myId)?.tag ?? null;
+                                  return (
+                                    <div className="wcf-why">
+                                      <div className="wcf-why-q">Why {pickName.split(" ")[0]}?</div>
+                                      <div className="wcf-why-s">Optional · anonymous · pick one</div>
+                                      <div className="wcf-why-tags">
+                                        {MOTM_TAGS.map((t) => (
+                                          <button key={t.key} className={"wcf-why-tag" + (myTag === t.key ? " on" : "")} onClick={() => setMotmVoteTag(g.id, myTag === t.key ? null : t.key)} aria-pressed={myTag === t.key}>
+                                            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{t.icon}</svg>
+                                            <b>{t.label}</b>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                                 <div className="wcf-vote-foot">
                                   {pickName ? (
-                                    <>You voted for <b>{pickName}</b>. Tap someone else to change it. The result&apos;s out at {closes}.</>
+                                    <>
+                                      You voted for <b>{pickName}</b>
+                                      {(() => {
+                                        const t = MOTM_TAGS.find((x) => x.key === motmVotes.find((v) => v.game_id === g.id && v.voter_id === myId)?.tag);
+                                        return t ? <> · {t.label}</> : null;
+                                      })()}
+                                      . Tap someone else to change it. The result&apos;s out at {closes}.
+                                    </>
                                   ) : (
                                     <>Tap a player to vote. You can&apos;t vote for yourself. The result&apos;s out at {closes}.</>
                                   )}
@@ -13762,6 +13805,14 @@ a.wcf-set-link{text-decoration:none}
 .wcf-rate-card-t{font-family:var(--display);font-weight:800;font-size:15px;color:#fff}
 .wcf-rate-card-s{margin-top:2px;font-size:11.5px;color:var(--dim)}
 @media (prefers-reduced-motion:reduce){.wcf-rate{animation:none}}
+.wcf-why{padding:12px 14px 14px;border-top:1px solid var(--line);background:linear-gradient(180deg,rgba(245,217,122,.06),transparent)}
+.wcf-why-q{font-family:var(--display);font-weight:800;font-size:15px;color:#fff}
+.wcf-why-s{margin-top:2px;font-size:11.5px;color:var(--dim)}
+.wcf-why-tags{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:10px}
+.wcf-why-tag{padding:10px 4px 9px;border-radius:12px;background:var(--panel);border:1px solid var(--line);color:var(--dim);text-align:center;cursor:pointer}
+.wcf-why-tag b{display:block;margin-top:5px;font-size:11.5px;color:#e2e8f0}
+.wcf-why-tag.on{border-color:#f5d97a;background:radial-gradient(90% 90% at 50% 20%,rgba(245,217,122,.2),transparent 70%),var(--panel);box-shadow:0 0 18px rgba(234,179,8,.3);color:#f5d97a}
+.wcf-why-tag.on b{color:#f5d97a}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted
