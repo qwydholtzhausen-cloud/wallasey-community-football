@@ -3937,6 +3937,60 @@ function App({ session }: { session: Session }) {
   useEffect(() => {
     for (const g of scoredPastGames) if (kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) > nowUk) loadBallotCount(g.id);
   }, [scoredPastGames, nowUk, loadBallotCount]);
+  // Game ratings: your own, the game to ask about (scored, you played, until
+  // the end of the day after), and whether you've closed the pop-up for it.
+  const [myRatings, setMyRatings] = useState<Record<string, number>>({});
+  const [ratingsLoaded, setRatingsLoaded] = useState(false);
+  const [rateSummary, setRateSummary] = useState<{ ratings: number; average: number | null } | null>(null);
+  const [rateDismissed, setRateDismissed] = useState<Record<string, boolean>>({});
+  const [rateSheetFor, setRateSheetFor] = useState<string | null>(null);
+  useEffect(() => {
+    supabase
+      .from("game_ratings")
+      .select("game_id, rating")
+      .eq("player_id", myId)
+      .then(({ data }) => {
+        if (data) {
+          setMyRatings(Object.fromEntries(data.map((r) => [r.game_id, r.rating])));
+          setRatingsLoaded(true);
+        }
+      });
+  }, [myId]);
+  const rateGame = useMemo(() => {
+    const endOfNextDay = (d: string) => kickoffCutoff(d, "00:00", 2 * 24 * 60);
+    return (
+      scoredPastGames.find((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting) && nowUk < endOfNextDay(g.date)) ?? null
+    );
+  }, [scoredPastGames, myId, nowUk]);
+  const rateDismissKey = rateGame ? `wcf-rate-dismissed-${myId}-${rateGame.id}` : "";
+  useEffect(() => {
+    if (!rateGame || !ratingsLoaded) return;
+    let dismissed = false;
+    try {
+      dismissed = localStorage.getItem(rateDismissKey) === "true";
+    } catch {}
+    setRateDismissed((cur) => ({ ...cur, [rateGame.id]: dismissed }));
+    // Pops up once, the first time you're in the app with it to rate.
+    if (!dismissed && !myRatings[rateGame.id]) setRateSheetFor(rateGame.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rateGame?.id, ratingsLoaded]);
+  function closeRateSheet() {
+    if (rateGame) {
+      try {
+        localStorage.setItem(rateDismissKey, "true");
+      } catch {}
+      setRateDismissed((cur) => ({ ...cur, [rateGame.id]: true }));
+    }
+    setRateSheetFor(null);
+  }
+  async function submitRating(gameId: string, n: number) {
+    setMyRatings((cur) => ({ ...cur, [gameId]: n }));
+    const { error } = await supabase.from("game_ratings").upsert({ game_id: gameId, player_id: myId, rating: n }, { onConflict: "game_id,player_id" });
+    if (error) return notifyError(error.message);
+    const { data } = await supabase.rpc("game_rating_summary", { p_game_id: gameId });
+    const row = Array.isArray(data) ? data[0] : data;
+    if (row) setRateSummary({ ratings: row.ratings, average: row.average == null ? null : Number(row.average) });
+  }
   const motmVoteGame = useMemo(
     () =>
       scoredPastGames.find(
@@ -4174,6 +4228,15 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
+            {rateGame && !myRatings[rateGame.id] && rateDismissed[rateGame.id] && (
+              <div className="wcf-rate-card">
+                <div>
+                  <div className="wcf-rate-card-t">Rate {new Date(rateGame.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" })}&apos;s game</div>
+                  <div className="wcf-rate-card-s">{cs.team_white_name} {rateGame.team_white_score}–{rateGame.team_red_score} {cs.team_red_name}</div>
+                </div>
+                <RateGameMeter small value={0} onRate={(n) => { submitRating(rateGame.id, n); setRateSheetFor(rateGame.id); }} />
+              </div>
+            )}
             {motmVoteGame && (() => {
               const g = motmVoteGame;
               const myPick = myMotmVoteByGame[g.id];
@@ -6650,6 +6713,19 @@ function App({ session }: { session: Session }) {
         );
       })()}
 
+      {rateSheetFor && rateGame && rateSheetFor === rateGame.id && (
+        <RateGameSheet
+          game={rateGame}
+          cs={cs}
+          rating={myRatings[rateGame.id] ?? 0}
+          votingOpen={motmVotingOpen(rateGame)}
+          summary={rateSummary}
+          onRate={(n) => submitRating(rateGame.id, n)}
+          onVote={() => { closeRateSheet(); goToResult(rateGame.id); }}
+          onClose={closeRateSheet}
+        />
+      )}
+
       {fixtureSheet && (fixtureSheet.mode === "add" || games.some((g) => g.id === fixtureSheet.id)) && (
         <FixtureSheet
           mode={fixtureSheet.mode}
@@ -8735,6 +8811,73 @@ function TeamCallout({ tone, icon, title, children }: { tone: "gold" | "red" | "
       <div>
         <div className="wcf-callout-t">{title}</div>
         <div className="wcf-callout-b">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// "How was tonight?" - the one-tap heat meter, 1 (Scrappy) to 5 (Classic).
+// Slides up the first time a player who played opens the app after the
+// score's in; then straight on to the MOTM vote if it's open, or the
+// squad's verdict if not. Anonymous; feeds the end-of-season Wrapped.
+const RATING_WORDS = ["Scrappy", "Average", "Decent", "Great game", "Classic"];
+function RateGameMeter({ value, onRate, small }: { value: number; onRate: (n: number) => void; small?: boolean }) {
+  return (
+    <div className={"wcf-rate-meter" + (small ? " small" : "")} role="radiogroup" aria-label="Rate the game">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} role="radio" aria-checked={value === n} aria-label={`${n} of 5, ${RATING_WORDS[n - 1]}`} className={n <= value ? "on" : ""} onClick={() => onRate(n)} />
+      ))}
+    </div>
+  );
+}
+function RateGameSheet({
+  game,
+  cs,
+  rating,
+  votingOpen,
+  summary,
+  onRate,
+  onVote,
+  onClose,
+}: {
+  game: GameRow;
+  cs: ClubSettings;
+  rating: number;
+  votingOpen: boolean;
+  summary: { ratings: number; average: number | null } | null;
+  onRate: (n: number) => void;
+  onVote: () => void;
+  onClose: () => void;
+}) {
+  const day = new Date(game.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase();
+  return (
+    <div className="wcf-rate-overlay" onClick={onClose}>
+      <div className="wcf-rate" onClick={(e) => e.stopPropagation()}>
+        <div className="wcf-rate-photo">
+          <span className="wcf-rate-k">{day} · FULL TIME</span>
+          <button className="wcf-rate-x" onClick={onClose} aria-label="Close">✕</button>
+          <div className="wcf-rate-score">
+            {game.team_white_score}
+            <small>{cs.team_white_name.toUpperCase()} · {cs.team_red_name.toUpperCase()}</small>
+            {game.team_red_score}
+          </div>
+        </div>
+        <div className="wcf-rate-body">
+          <div className="wcf-rate-q">{rating ? "Thanks, noted." : "How was tonight?"}</div>
+          <RateGameMeter value={rating} onRate={onRate} />
+          <div className="wcf-rate-ends"><span>Scrappy</span><span>Classic</span></div>
+          <div className="wcf-rate-verdict">{rating ? RATING_WORDS[rating - 1] : " "}</div>
+          {rating > 0 && votingOpen && (
+            <button className="wcf-rate-next" onClick={onVote}>Vote Man of the Match →</button>
+          )}
+          {rating > 0 && !votingOpen && summary && summary.ratings > 0 && (
+            <div className="wcf-rate-squad">
+              The squad rates it <b>{summary.average?.toFixed(1)}</b> out of 5, from {summary.ratings} {summary.ratings === 1 ? "rating" : "ratings"}.
+            </div>
+          )}
+          {!rating && <div className="wcf-rate-foot">One tap · anonymous · feeds the end-of-season awards</div>}
+          {rating > 0 && <button className="wcf-rate-done" onClick={onClose}>Done</button>}
+        </div>
       </div>
     </div>
   );
@@ -13588,6 +13731,37 @@ a.wcf-set-link{text-decoration:none}
 .wcf-fxs-btn.p{background:var(--red);border:0;color:#fff}
 .wcf-fxs-btn:disabled{opacity:.45;cursor:not-allowed}
 .wcf-fxs-del{display:block;width:100%;padding:4px 0 16px;background:#131624;border:0;color:var(--red-hi);font-weight:700;font-size:12.5px;cursor:pointer}
+@keyframes wcfRateUp{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+.wcf-rate-overlay{position:fixed;inset:0;z-index:130;background:rgba(3,4,8,.6);display:flex;align-items:flex-end;justify-content:center;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.wcf-rate{width:100%;max-width:480px;border-radius:26px 26px 0 0;overflow:hidden;background:#111427;border-top:1px solid rgba(245,217,122,.4);padding-bottom:env(safe-area-inset-bottom,0px);animation:wcfRateUp .45s cubic-bezier(.2,.8,.2,1)}
+.wcf-rate-photo{position:relative;height:150px;background:linear-gradient(180deg,rgba(17,20,39,.05) 20%,#111427 100%),url('/pitch-floodlit.jpg') center 55%/cover}
+.wcf-rate-k{position:absolute;left:18px;top:16px;font-size:10.5px;font-weight:800;letter-spacing:.18em;color:#f5d97a;text-shadow:0 1px 6px rgba(0,0,0,.7)}
+.wcf-rate-x{position:absolute;right:14px;top:12px;width:32px;height:32px;border-radius:50%;border:0;background:rgba(13,13,26,.55);color:#fff;cursor:pointer}
+.wcf-rate-score{position:absolute;left:0;right:0;bottom:12px;text-align:center;font-family:var(--display);font-weight:800;font-size:44px;color:#fff;font-variant-numeric:tabular-nums;text-shadow:0 2px 12px rgba(0,0,0,.6)}
+.wcf-rate-score small{margin:0 10px;font-family:var(--sans);font-size:10.5px;font-weight:800;letter-spacing:.14em;color:#cbd5e1;vertical-align:middle}
+.wcf-rate-body{padding:6px 18px 18px}
+.wcf-rate-q{margin-bottom:14px;text-align:center;font-family:var(--display);font-weight:800;font-size:21px;color:#fff}
+.wcf-rate-meter{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.wcf-rate-meter button{height:48px;border-radius:11px;border:1px solid var(--line);background:var(--panel);cursor:pointer;transition:transform .15s,background .15s}
+.wcf-rate-meter button:active{transform:scale(.94)}
+.wcf-rate-meter button.on{border-color:transparent;background:linear-gradient(180deg,#f5d97a,#eab308);box-shadow:0 0 16px rgba(234,179,8,.35)}
+.wcf-rate-meter button.on:nth-child(1){opacity:.55}
+.wcf-rate-meter button.on:nth-child(2){opacity:.7}
+.wcf-rate-meter button.on:nth-child(3){opacity:.85}
+.wcf-rate-meter.small{flex:none;grid-template-columns:repeat(5,22px);gap:4px}
+.wcf-rate-meter.small button{height:32px;border-radius:7px}
+.wcf-rate-ends{display:flex;justify-content:space-between;margin-top:7px;font-size:11.5px;font-weight:700;color:var(--dim)}
+.wcf-rate-verdict{min-height:24px;margin-top:10px;text-align:center;font-family:var(--display);font-weight:800;font-size:18px;color:#f5d97a}
+.wcf-rate-next{display:block;width:100%;margin-top:12px;padding:13px;border:0;border-radius:14px;background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308);color:#1a1405;font-weight:800;font-size:14px;cursor:pointer}
+.wcf-rate-squad{margin-top:12px;padding:11px 12px;border-radius:12px;background:rgba(245,217,122,.08);border:1px solid rgba(245,217,122,.3);font-size:13px;color:#e2e8f0;text-align:center}
+.wcf-rate-squad b{color:#f5d97a;font-family:var(--display);font-size:16px}
+.wcf-rate-foot{margin-top:12px;text-align:center;font-size:12px;color:#64748b}
+.wcf-rate-done{display:block;margin:12px auto 0;background:none;border:0;color:var(--dim);font-weight:700;font-size:13px;cursor:pointer}
+.wcf-rate-card{display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:12px 14px;border-radius:18px;border:1px solid rgba(245,217,122,.5);background:radial-gradient(100% 90% at 100% 0%,rgba(245,217,122,.14),transparent 60%),#111427}
+.wcf-rate-card>div:first-child{flex:1;min-width:0}
+.wcf-rate-card-t{font-family:var(--display);font-weight:800;font-size:15px;color:#fff}
+.wcf-rate-card-s{margin-top:2px;font-size:11.5px;color:var(--dim)}
+@media (prefers-reduced-motion:reduce){.wcf-rate{animation:none}}
 :where(.wcf-root) :where(button, input, select, textarea){font-family:inherit}
 /* iOS Safari zooms the whole page when a field under 16px is focused,
    which feels like something broke. Thirteen separate rules had drifted

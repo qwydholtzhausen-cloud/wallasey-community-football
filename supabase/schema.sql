@@ -1931,3 +1931,35 @@ language sql security definer set search_path = public as $$
 $$;
 revoke all on function public.log_app_open() from public;
 grant execute on function public.log_app_open() to authenticated;
+
+-- Game ratings (2026-09-29): the one-tap "How was tonight?" heat meter,
+-- 1 (Scrappy) to 5 (Classic), from the players who played, until the end
+-- of the day after the game. Anonymous: you can read your own; everyone
+-- else only gets totals from game_rating_summary(). Feeds the end-of-season
+-- Wrapped (Game of the Season).
+create table if not exists public.game_ratings (
+  game_id uuid not null references public.games (id) on delete cascade,
+  player_id uuid not null references public.profiles (id) on delete cascade,
+  rating int not null check (rating between 1 and 5),
+  created_at timestamptz not null default now(),
+  primary key (game_id, player_id)
+);
+alter table public.game_ratings enable row level security;
+drop policy if exists "game_ratings_select_own" on public.game_ratings;
+create policy "game_ratings_select_own" on public.game_ratings for select using (player_id = auth.uid() or public.is_admin());
+drop policy if exists "game_ratings_insert_own" on public.game_ratings;
+create policy "game_ratings_insert_own" on public.game_ratings for insert with check (
+  player_id = auth.uid()
+  and exists (select 1 from public.bookings b where b.game_id = game_ratings.game_id and b.player_id = auth.uid() and b.waiting = false)
+  and exists (select 1 from public.games g where g.id = game_ratings.game_id and g.team_white_score is not null
+              and now() < ((g.date + 2) at time zone 'Europe/London'))
+);
+drop policy if exists "game_ratings_update_own" on public.game_ratings;
+create policy "game_ratings_update_own" on public.game_ratings for update using (player_id = auth.uid()) with check (player_id = auth.uid());
+
+create or replace function public.game_rating_summary(p_game_id uuid) returns table (ratings int, average numeric)
+language sql stable security definer set search_path = public as $$
+  select count(*)::int, round(avg(rating)::numeric, 1) from public.game_ratings where game_id = p_game_id;
+$$;
+revoke all on function public.game_rating_summary(uuid) from public;
+grant execute on function public.game_rating_summary(uuid) to authenticated;

@@ -47,6 +47,7 @@ const ROWS: [string, string, string][] = [
     "Stats, awards, Records and Wrapped",
     "All members. Votes stay secret until voting closes, then who voted for whom is shown. Predictions stay hidden until kickoff",
   ],
+  ["How you rated each game you played (1 to 5)", "Game of the Season and the end-of-season Wrapped", "You and admins. Everyone else only sees the totals"],
   ["Feed reactions and Boot Room listings (your business name and, if you add it, a WhatsApp number)", "The club feed and members' directory", "All members"],
   ["Messages from admins", "To get in touch about games and payments", "You and admins"],
   [
