@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { wrappedThemeFor } from "../wrappedThemes";
 import { kickoffCutoff, nowInLondon, previousMonthKey, nextMonthStart, pseudoUtcFromRealInstant, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../time";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer, type GameForPerformance } from "../teamBalance";
 import { buildLeaderboard, topScorers, type ScoredPrediction } from "../predictions";
@@ -1876,6 +1877,22 @@ function computeSeasonWrappedPrepNudge(): Nudge | null {
   };
 }
 
+// Halfway through a themed month (lib/wrappedThemes.ts, e.g. October's
+// Fright Lights): the admins' cue to check that month's Wrapped before it
+// goes out at 8am after the month's last game. Shows from the 15th until
+// the end of the month, or until an admin dismisses it.
+function computeMonthlyWrappedCheckNudge(): Nudge | null {
+  const today = nowInLondon().slice(0, 10);
+  const monthKey = today.slice(0, 7);
+  const theme = wrappedThemeFor(monthKey);
+  if (!theme || Number(today.slice(8, 10)) < 15) return null;
+  const month = new Date(monthKey + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+  return {
+    key: `monthly-wrapped-check-${monthKey}`,
+    text: `Halfway through ${month}: time to sort the ${month} Wrapped ("${theme.word}"). It goes out at 8am the morning after ${month}'s last game. Ask Claude Code to review it with you: the themed copy and puns, which cards show and in what order, the photos, and whether the "Why?" tags and game ratings are coming through. Anything to change needs to be live before that last game.`,
+  };
+}
+
 // The whole journey on request: where every member is, with names.
 async function getMemberJourney(admin: SupabaseClient) {
   const j = await computeJourney(admin);
@@ -1924,6 +1941,7 @@ export async function computeNudges(admin: SupabaseClient, forAdminId?: string):
     birthdays,
     ...journey,
     computeSeasonWrappedPrepNudge(),
+    computeMonthlyWrappedCheckNudge(),
   ].filter((n): n is Nudge => n !== null);
   if (candidates.length === 0) return [];
 
