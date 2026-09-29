@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { wrappedThemeFor } from "../../../../lib/wrappedThemes";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
 import { kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, nextMonthStart, MONTH_RELEASE_HOUR, MATCH_DURATION_MINUTES, MOTM_VOTE_WINDOW_MINUTES } from "../../../../lib/time";
@@ -604,8 +605,8 @@ export async function GET(req: Request) {
       if (recipients.length > 0) {
         const monthName = new Date(monthKey + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
         await sendPushToUsers(recipients, {
-          title: `Your ${monthName}, wrapped 🎁`,
-          body: "Your games, goals, who you win with and your nemesis. Tap to watch.",
+          title: wrappedThemeFor(monthKey)?.push.title ?? `Your ${monthName}, wrapped 🎁`,
+          body: wrappedThemeFor(monthKey)?.push.body ?? "Your games, goals, who you win with and your nemesis. Tap to watch.",
           url: "/",
         });
       }

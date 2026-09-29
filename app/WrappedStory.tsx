@@ -1451,6 +1451,8 @@ const wrappedCss = `
 .wr-banner .play{flex:none;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;color:#0d0d1a;background:var(--acc,#f5d97a);box-shadow:0 0 0 4px rgba(13,13,26,.45),0 0 28px -4px var(--acc,#f5d97a)}
 .wr-banner .play svg{margin-left:3px}
 .wr-banner .copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding-right:18px}
+.wr-banner.themed .h{font-size:24px;line-height:1;letter-spacing:-.02em;margin:2px 0 3px;background:linear-gradient(180deg,#fff 20%,var(--acc));-webkit-background-clip:text;background-clip:text;color:transparent}
+.wr-banner.themed::before{background:linear-gradient(90deg,rgba(13,10,6,.92) 0%,rgba(13,10,6,.6) 55%,rgba(13,10,6,.1) 100%)}
 .wr-banner .k{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--acc,#f5d97a)}
 .wr-banner .h{font-family:var(--display);font-weight:800;font-size:18.5px;line-height:1.15;letter-spacing:-.01em}
 .wr-banner .s{font-size:12.5px;color:#d8d4ec;line-height:1.35}

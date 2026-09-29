@@ -4343,7 +4343,7 @@ function App({ session }: { session: Session }) {
               <div className="wr-banner-wrap">
                 <style>{wrappedBannerCss}</style>
                 <button
-                  className="wr-banner"
+                  className={"wr-banner" + (wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar ? " themed" : "")}
                   onClick={openWrapped}
                   aria-label={`Open your ${wrapped.periodLabel} Wrapped`}
                   style={(() => {
@@ -4357,12 +4357,12 @@ function App({ session }: { session: Session }) {
                     </span>
                     <span className="copy">
                       <span className="k">
-                        {wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar ? `${wrapped.periodShort} Wrapped` : "Wrapped"}
+                        {wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar ? `${wrapped.periodShort} · ${wrappedThemeFor(wrapped.periodKey)!.edition}` : "Wrapped"}
                         {!wrappedOpenToAll && <span className="tag">ADMINS</span>}
                       </span>
                       <span className="h">
                         {wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar
-                          ? wrappedThemeFor(wrapped.periodKey)!.word.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
+                          ? wrappedThemeFor(wrapped.periodKey)!.word
                           : `Your ${wrapped.periodShort}${wrapped.soFar ? " so far" : ""}`}
                       </span>
                       <span className="s">

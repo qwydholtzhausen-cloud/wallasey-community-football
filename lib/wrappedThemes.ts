@@ -20,6 +20,7 @@ export interface WrappedTheme {
   accent: string;
   introPhoto: string;
   line: (who: WrappedThemeWho) => string; // the sentence under it, after "{first}, "
+  push: { title: string; body: string }; // the release-day notification
 }
 
 const THEMES: Record<string, WrappedTheme> = {
@@ -29,6 +30,7 @@ const THEMES: Record<string, WrappedTheme> = {
     edition: "Halloween edition",
     accent: "#f59e4b",
     introPhoto: "/wrapped/bank/october-leaves.jpg",
+    push: { title: "Fright Lights: your October Wrapped", body: "A month under the floodlights: your goals, your votes, the weather and who you win with. Tap to watch." },
     line: (w) =>
       w.goals >= 3 && w.goalsRank === 1 ? "scary in front of goal."
       : w.topTag === "brick_wall" ? "the brick wall of Halloween."
@@ -42,6 +44,7 @@ const THEMES: Record<string, WrappedTheme> = {
     edition: "Bonfire Night edition",
     accent: "#ff7a45",
     introPhoto: "/wrapped/bank/november-bonfire.jpg",
+    push: { title: "Bangers: your November Wrapped", body: "Your November, lit up: goals, votes, best nights and who you win with. Tap to watch." },
     line: (w) =>
       w.goals >= 3 ? "your November, lit up."
       : w.motmWins > 0 ? "the squad saw the fireworks."
