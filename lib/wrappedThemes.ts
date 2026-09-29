@@ -68,13 +68,13 @@ export const PHOTO_BANK = {
   partner: ["/wrapped/partner.jpg", "/wrapped/bank/teammates-high-five.jpg", "/wrapped/bank/partner-boots.jpg"],
   best: ["/wrapped/best.jpg"],
   pred: ["/wrapped/predictions.jpg", "/wrapped/bank/predictions-spot.jpg"],
-  club: ["/wrapped/club.jpg", "/wrapped/bank/squad-aerial.jpg"],
+  club: ["/wrapped/club.jpg"],
   end: ["/wrapped/next.jpg", "/wrapped/bank/month-floodlights.jpg"],
   summary: ["/wrapped/summary.jpg", "/wrapped/bank/summary-aerial.jpg"],
   nemesis: ["/wrapped/nemesis.jpg", "/wrapped/bank/nemesis-dusk.jpg"],
   records: ["/wrapped/records.jpg"],
   why: ["/wrapped/bank/partner-boots.jpg", "/wrapped/bank/playstyle-strike.jpg"],
-  rated: ["/wrapped/bank/rated-thermometer.jpg"],
+  rated: ["/wrapped/bank/squad-aerial.jpg"],
   weather: ["/wrapped/bank/january-frost.jpg", "/wrapped/bank/weather-boots-rain.jpg"],
 } as const;
 
