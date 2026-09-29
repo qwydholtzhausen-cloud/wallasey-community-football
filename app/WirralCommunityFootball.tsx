@@ -3509,7 +3509,9 @@ function App({ session }: { session: Session }) {
     setWrappedIntroDue(!seen && !reduce);
     setWrappedOpen(true);
   }
-  const wrappedDismissKey = `wcf-wrapped-dismissed-${myId}-${wrappedMonthKey}`;
+  // The admin "so far" preview has its own key, so hiding the preview
+  // doesn't also hide the finished month when it's released.
+  const wrappedDismissKey = `wcf-wrapped-dismissed-${myId}-${wrappedMonthKey}${wrappedSoFar ? "-sofar" : ""}`;
   const [wrappedDismissed, setWrappedDismissed] = useState(true);
   useEffect(() => {
     try {
