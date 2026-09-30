@@ -9321,6 +9321,7 @@ function whatsAppNumber(mobile: string) {
 
 function agoLabel(iso: string) {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return "just now";
   if (mins < 60) return `${mins} min ago`;
   const hrs = Math.round(mins / 60);
   if (hrs < 48) return `${hrs} ${hrs === 1 ? "hour" : "hours"} ago`;

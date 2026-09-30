@@ -35,7 +35,7 @@ export async function POST(req: Request) {
       .upsert({ player_id: me, referral_note: referral || null, mobile: mobile || null }, { onConflict: "player_id" });
     if (reqErr) throw reqErr;
 
-    if (firstRequest && false) { // TEMP-TEST: no admin pings while testing
+    if (firstRequest) {
       const { data: admins } = await admin.from("profiles").select("id").in("role", ["admin", "co-owner", "owner"]);
       await sendPushToUsers((admins ?? []).map((a) => a.id), {
         title: "New member request",
