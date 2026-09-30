@@ -9,6 +9,7 @@ import { BOOT_CATEGORY, type BootCategory } from "../bootRoom";
 import { WRAPPED_OPEN_TO_ALL_FROM } from "../clubPolicy";
 import { computeJourney, fmtJourneyDate } from "../memberJourney";
 import { motmWinners, goalsLookup } from "../motm";
+import { checkAppHealth, checkWrapped, computeHealthNudges, computeWrappedGapsNudge } from "./health";
 
 // Same "pretend UTC" trick as everywhere else this pattern's used
 // (app/api/cron/frequent/route.ts, app/WirralCommunityFootball.tsx) -
@@ -1748,6 +1749,12 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   find_inactive_players: findInactivePlayers,
   get_member_journey: getMemberJourney,
   find_flagged_feedback: findFlaggedFeedback,
+  get_app_health: async (admin) => {
+    const { _problems, ...report } = await checkAppHealth(admin);
+    void _problems;
+    return report;
+  },
+  review_wrapped: (admin, args: { period?: string }) => checkWrapped(admin, args.period),
 };
 
 export interface Nudge {
@@ -2175,6 +2182,8 @@ export async function computeNudges(admin: SupabaseClient, forAdminId?: string):
   ]);
   const journey = await computeJourneyNudges(admin).catch(() => [] as Nudge[]);
   const membersWaiting = await computeMembersWaitingNudge(admin).catch(() => null);
+  const health = await computeHealthNudges(admin).catch(() => [] as Nudge[]);
+  const wrappedGaps = await computeWrappedGapsNudge(admin).catch(() => null);
   const candidates = [
     unpaid,
     overdue,
@@ -2190,6 +2199,8 @@ export async function computeNudges(admin: SupabaseClient, forAdminId?: string):
     computeSeasonWrappedPrepNudge(),
     computeMonthlyWrappedCheckNudge(),
     membersWaiting,
+    ...health,
+    wrappedGaps,
   ].filter((n): n is Nudge => n !== null);
   if (candidates.length === 0) return [];
 

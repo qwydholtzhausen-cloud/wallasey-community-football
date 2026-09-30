@@ -338,6 +338,21 @@ Booking history is complete from the club's first game (Aug 2026). Filter ops: e
     },
   },
   {
+    name: "review_wrapped",
+    description:
+      "Checks a Wrapped before it goes out: when it releases, which games are still to play, data gaps that will break or thin out cards (missing scores, weather, MOTM votes, too few ratings or Why? tags), and every player's story facts - their themed intro line, record, goals, MOTM, Why? tags, partner, nemesis, best win and heaviest defeat. Use for 'check this month's Wrapped', 'is the Wrapped ready', 'what will X's Wrapped say', 'anything awkward in the Wrapped'. When reviewing, flag bugs (numbers that don't add up), thin stories, and cards that could read as a dig, by name.",
+    input_schema: {
+      type: "object",
+      properties: { period: { type: "string", description: "YYYY-MM for a month, YYYY for the season Wrapped. Omit for the current month." } },
+    },
+  },
+  {
+    name: "get_app_health",
+    description:
+      "The app's back-end health: whether the 5-minute and daily background jobs are running, any tables or columns missing from the live database, played games with no score or no saved weather, last month's snapshot, and the Monzo connection. Returns problems (with what to do) and what's fine. Use for 'is everything working', 'app health', 'any problems with the app', 'did the crons run'. It can't see Vercel's error logs.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "find_dropouts",
     description:
       "Bookings that were removed before a game: who, which game, how long before kickoff, whether they were on the waiting list, and why (self = they gave up their spot, admin = an admin removed them before the game, no_show = removed after kickoff because they didn't turn up, system = auto-removed for not paying). Recorded from 28 Sep 2026 onwards; earlier drop-outs weren't kept. Use for 'who drops out most', 'late drop-outs this month', 'any no-shows', 'has X pulled out of games', 'how reliable is X'. A cancelled/deleted fixture never counts. Not shown in the app.",

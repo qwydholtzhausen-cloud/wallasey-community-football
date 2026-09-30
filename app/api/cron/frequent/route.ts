@@ -7,6 +7,7 @@ import { ensureFreshMonzoToken, registerMonzoWebhook } from "../../../../lib/mon
 import { AUTO_REMOVE_UNPAID_BOOKINGS, WRAPPED_OPEN_TO_ALL_FROM, WRAPPED_FIRST_MONTH_FOR_ALL } from "../../../../lib/clubPolicy";
 import { nextOpenGame, fmtJourneyDate, type JourneyGame } from "../../../../lib/memberJourney";
 import { announcePlayerOfMonth } from "../../../../lib/potmAnnounce";
+import { recordHeartbeat } from "../../../../lib/gaffai/health";
 
 // Both sides of this comparison come from the same "pretend UTC" trick in
 // lib/time.ts (real UK wall-clock digits, formatted as if they were UTC) -
@@ -628,5 +629,7 @@ export async function GET(req: Request) {
     await registerMonzoWebhook(admin, monzoToken.access_token, monzoToken.account_id);
   }
 
+  // Last, so a run that dies part-way doesn't count as a healthy one.
+  await recordHeartbeat(admin, "frequent").catch(() => undefined);
   return NextResponse.json({ ok: true });
 }

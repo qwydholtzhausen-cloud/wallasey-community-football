@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
-import { kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../../../../lib/time";
-import { generateWeeklyDigest } from "../../../../lib/gaffai/digest";
+import { kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, nextMonthStart, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../../../../lib/time";
+import { generateWeeklyDigest, generateWrappedReview } from "../../../../lib/gaffai/digest";
+import { recordHeartbeat } from "../../../../lib/gaffai/health";
 import { motmWinners, goalsLookup } from "../../../../lib/motm";
 
 interface CronBooking {
@@ -19,6 +20,9 @@ interface CronGame {
   team_red_score: number | null;
   bookings: CronBooking[];
 }
+
+// The monthly Wrapped review (a Claude call of about 25s) runs in here.
+export const maxDuration = 60;
 
 function fmtDate(date: string) {
   return new Date(date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
@@ -139,6 +143,31 @@ export async function GET(req: Request) {
     }
   }
 
+  // --- GaffAI's Wrapped check, the morning of a month's last game ---
+  // Every player's story read over while there's still the day to fix
+  // things; the Wrapped itself goes out at 8am after that game's vote.
+  const monthKey = todayStr.slice(0, 7);
+  const reviewKey = `gaffai-wrapped-review-${monthKey}`;
+  // typedGames only has scored games, and today's isn't scored yet.
+  const { data: monthFixtures } = await admin.from("games").select("date").eq("published", true).gte("date", `${monthKey}-01`).lt("date", nextMonthStart(monthKey)).order("date");
+  const lastOfMonth = (monthFixtures ?? []).at(-1);
+  if (!monthKey.endsWith("-12") && lastOfMonth?.date === todayStr && !notifiedKeys.has(reviewKey)) {
+    try {
+      const review = await generateWrappedReview(admin, monthKey);
+      if (review) {
+        const { data: adminProfiles } = await admin.from("profiles").select("id").in("role", ["admin", "co-owner", "owner"]);
+        const adminIds = (adminProfiles ?? []).map((p) => p.id);
+        if (adminIds.length > 0) {
+          await admin.from("gaffai_conversations").insert(adminIds.map((id) => ({ admin_id: id, role: "assistant" as const, text: review })));
+          await sendPushToUsers(adminIds, { title: "GaffAI checked this month's Wrapped", body: review.length > 100 ? `${review.slice(0, 97)}...` : review, url: "/" });
+        }
+      }
+      await markNotified(reviewKey);
+    } catch (err) {
+      console.error("GaffAI Wrapped review failed", err);
+    }
+  }
+
   // --- Season history for the end-of-season Wrapped ---
   // Each part is wrapped on its own so a failure (or the tables not
   // existing yet) never touches the notifications above.
@@ -158,6 +187,7 @@ export async function GET(req: Request) {
     console.error("Data retention clean-up failed", err);
   }
 
+  await recordHeartbeat(admin, "daily").catch(() => undefined);
   return NextResponse.json({ ok: true });
 }
 
