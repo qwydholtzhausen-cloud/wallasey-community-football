@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { callClaude, type AnthropicMessage, type AnthropicContentBlock } from "../../../../lib/gaffai/anthropic";
+import { callClaude, MODEL, PRICES, type AnthropicMessage, type AnthropicContentBlock } from "../../../../lib/gaffai/anthropic";
 import { GAFFAI_TOOLS } from "../../../../lib/gaffai/tools";
 import { GAFFAI_SYSTEM_PROMPT } from "../../../../lib/gaffai/prompt";
 import {
@@ -272,12 +272,12 @@ export async function POST(req: Request) {
         response = await callClaude(messages, GAFFAI_TOOLS, systemPrompt);
         tally(response);
       }
-      // One line per question in the Vercel logs: rounds, time, tokens and
-      // an approximate cost (Opus 5.5: $4/M input, $20/M output, cache
-      // reads $0.20/M, cache writes ~$5/M).
-      const cost = (used.input * 4 + used.output * 20 + used.cacheRead * 0.2 + used.cacheWrite * 5) / 1e6;
+      // One line per question in the Vercel logs: model, rounds, time,
+      // tokens and an approximate cost (prices in lib/gaffai/anthropic.ts).
+      const [pIn, pOut, pRead, pWrite] = PRICES[MODEL] ?? PRICES["claude-opus-5-5"];
+      const cost = (used.input * pIn + used.output * pOut + used.cacheRead * pRead + used.cacheWrite * pWrite) / 1e6;
       console.log(
-        `gaffai usage rounds=${rounds + 1} secs=${((Date.now() - startedAt) / 1000).toFixed(1)} in=${used.input} out=${used.output} cache_read=${used.cacheRead} cache_write=${used.cacheWrite} approx_usd=${cost.toFixed(3)}`
+        `gaffai usage model=${MODEL} rounds=${rounds + 1} secs=${((Date.now() - startedAt) / 1000).toFixed(1)} in=${used.input} out=${used.output} cache_read=${used.cacheRead} cache_write=${used.cacheWrite} approx_usd=${cost.toFixed(3)}`
       );
 
       if (response.stop_reason === "refusal") {

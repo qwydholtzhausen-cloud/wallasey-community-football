@@ -49,12 +49,22 @@ export interface AnthropicResponse {
   usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
 }
 
-// Opus 5.5 (2026-09-30), up from Haiku 4.5, which kept missing bookings and
-// giving up on "who should we message" questions. Medium effort keeps each
-// round quick; thinking is always on for this model.
-const MODEL = "claude-opus-5-5";
+// Sonnet 5.5 (2026-09-30): tested against Opus 5.5 and Haiku 4.5 on the
+// same real admin questions - Opus-level answers at about a third of the
+// cost (~7p a question); Haiku was cheaper but went back to small mistakes
+// and half-finished jobs. Medium effort keeps each round quick.
+// GAFFAI_MODEL / GAFFAI_EFFORT (env) switch model without a code change.
+export const MODEL = process.env.GAFFAI_MODEL || "claude-sonnet-5-5";
 const MAX_TOKENS = 16000;
-const EFFORT = "medium";
+const EFFORT = process.env.GAFFAI_EFFORT || "medium";
+const IS_HAIKU = MODEL.startsWith("claude-haiku");
+
+// $ per million tokens: input, output, cache read, cache write (5 min).
+export const PRICES: Record<string, [number, number, number, number]> = {
+  "claude-opus-5-5": [4, 20, 0.2, 5],
+  "claude-sonnet-5-5": [2, 10, 0.2, 2.5],
+  "claude-haiku-4-5": [1, 5, 0.1, 1.25],
+};
 const REQUEST_TIMEOUT_MS = 55000;
 
 export async function callClaude(messages: AnthropicMessage[], tools: AnthropicToolDef[], system: string): Promise<AnthropicResponse> {
@@ -71,13 +81,12 @@ export async function callClaude(messages: AnthropicMessage[], tools: AnthropicT
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
         // If the model declines, the API reruns the request on a fallback model.
-        "anthropic-beta": "server-side-fallback-2026-07-01",
+        ...(IS_HAIKU ? {} : { "anthropic-beta": "server-side-fallback-2026-07-01" }),
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: MAX_TOKENS,
-        output_config: { effort: EFFORT },
-        fallbacks: "default",
+        max_tokens: IS_HAIKU ? 4096 : MAX_TOKENS,
+        ...(IS_HAIKU ? {} : { output_config: { effort: EFFORT }, fallbacks: "default" }),
         // Caches tools + system + history, so each extra tool round of the
         // same question costs a fraction of the first.
         cache_control: { type: "ephemeral" },
