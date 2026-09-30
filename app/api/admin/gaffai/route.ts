@@ -12,7 +12,9 @@ import {
   executeMatchdayPush,
   executeSetPotExempt,
   executeRemoveDuplicate,
+  executeBookingInvite,
   computeNudges,
+  type BookingInviteAction,
   type MarkPaidAction,
   type CreateFixtureAction,
   type SendReminderAction,
@@ -27,9 +29,9 @@ import { nowInLondon } from "../../../../lib/time";
 // comment on why the 15-min poller runs via GitHub Actions instead of
 // native Vercel Cron) - Hobby allows up to 60s per function, and a
 // multi-round tool-calling loop at Haiku speeds needs the headroom.
-export const maxDuration = 60;
+export const maxDuration = 300;
 
-const MAX_TOOL_ROUNDS = 6;
+const MAX_TOOL_ROUNDS = 8;
 
 async function authenticate(req: Request): Promise<{ admin: SupabaseClient; callerId: string } | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -59,6 +61,27 @@ type TextBlock = Extract<AnthropicContentBlock, { type: "text" }>;
 // turns. Deliberately just role+text, nothing about any action that was
 // proposed - see the client's GaffAIAction handling for why a reloaded
 // history row never resurrects a stale, possibly-now-invalid proposal.
+function describeAction(a: MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | BookingInviteAction): string {
+  switch (a.kind) {
+    case "booking_invite":
+      return `**Ready to send to ${a.players.length} player${a.players.length === 1 ? "" : "s"}** (inbox + push) about ${a.gameLabel}, ${a.spacesLeft} space${a.spacesLeft === 1 ? "" : "s"} left:\n${a.players.map((p) => p.name).join(", ")}\n\n> ${a.message}`;
+    case "send_reminder":
+      return `**Ready to send to ${a.playerName}** (inbox + push):\n\n> ${a.message}`;
+    case "mark_paid":
+      return `**Ready to mark paid:** ${a.playerName}, ${a.gameLabel} (£${a.amount}).`;
+    case "create_fixture":
+      return `**Ready to create a draft fixture:** ${a.venue}, ${a.date} ${a.kickoff}, ${a.pitch}, £${a.price}, ${a.maxPlayers} places.`;
+    case "publish_fixture":
+      return `**Ready to publish:** ${a.venue}, ${a.date}.`;
+    case "matchday_push":
+      return `**Ready to push** ${a.targetCount} players about ${a.venue} today (${a.spotsLeft} spots left).`;
+    case "set_pot_exempt":
+      return `**Ready to make free:** ${a.playerName}, ${a.gameLabel} (${a.reason}).`;
+    case "remove_duplicate":
+      return `**Ready to remove** the unused ${a.removeName} account (keeping ${a.keepName}).`;
+  }
+}
+
 async function persistTurn(admin: SupabaseClient, callerId: string, userText: string, replyText: string) {
   try {
     await admin.from("gaffai_conversations").insert([
@@ -101,7 +124,7 @@ export async function POST(req: Request) {
     // model output alone can trigger a mutation. Every field is
     // re-validated fresh against the DB before anything happens.
     if (body.type === "confirm_action") {
-      const action = body.action as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction;
+      const action = body.action as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | BookingInviteAction;
       try {
         if (action.kind === "mark_paid") {
           await executeMarkPaid(admin, callerId, action);
@@ -126,6 +149,14 @@ export async function POST(req: Request) {
         if (action.kind === "set_pot_exempt") {
           await executeSetPotExempt(admin, callerId, action);
           return NextResponse.json({ type: "action_result", ok: true, text: `Done — ${action.playerName}'s booking for ${action.gameLabel} is now free (${action.reason}).` });
+        }
+        if (action.kind === "booking_invite") {
+          const r = await executeBookingInvite(admin, callerId, action);
+          return NextResponse.json({
+            type: "action_result",
+            ok: true,
+            text: `Sent to ${r.sent} player${r.sent === 1 ? "" : "s"} (inbox + push)${r.skipped ? `; ${r.skipped} skipped as they've booked since` : ""}.`,
+          });
         }
         if (action.kind === "remove_duplicate") {
           await executeRemoveDuplicate(admin, callerId, action);
@@ -180,11 +211,10 @@ export async function POST(req: Request) {
       // Reset every round - only reflects whichever tools were called in
       // the round immediately before the model's final answer, not
       // anything called earlier in the conversation.
-      let proposalFromLastRound: MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | null = null;
+      let proposalFromLastRound: MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | BookingInviteAction | null = null;
 
       while (response.stop_reason === "tool_use" && rounds < MAX_TOOL_ROUNDS) {
         rounds++;
-        proposalFromLastRound = null;
         const toolUseBlocks = response.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
 
         const toolResults = await Promise.all(
@@ -202,9 +232,10 @@ export async function POST(req: Request) {
                 block.name === "propose_publish_fixture" ||
                 block.name === "propose_matchday_push" ||
                 block.name === "propose_set_pot_exempt" ||
-                block.name === "propose_remove_duplicate_account"
+                block.name === "propose_remove_duplicate_account" ||
+                block.name === "propose_booking_invite"
               ) {
-                proposalFromLastRound = result as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction;
+                proposalFromLastRound = result as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | BookingInviteAction;
               }
               return { type: "tool_result" as const, tool_use_id: block.id, content: JSON.stringify(result) };
             } catch (err) {
@@ -216,6 +247,12 @@ export async function POST(req: Request) {
         messages.push({ role: "assistant", content: response.content });
         messages.push({ role: "user", content: toolResults });
         response = await callClaude(messages, GAFFAI_TOOLS, systemPrompt);
+      }
+
+      if (response.stop_reason === "refusal") {
+        const refused = "That one's outside what I can help with, gaffer - try asking it a different way.";
+        await persistTurn(admin, callerId, text, refused);
+        return NextResponse.json({ type: "answer", text: refused });
       }
 
       if (response.stop_reason === "tool_use") {
@@ -230,7 +267,9 @@ export async function POST(req: Request) {
         .join("\n");
 
       if (proposalFromLastRound) {
-        const replyText = finalText || "Here's what I'll do:";
+        // Always spell out exactly what Confirm will do, whatever the model
+        // wrote, so the admin never has to ask "what am I confirming?".
+        const replyText = `${finalText ? finalText + "\n\n" : ""}${describeAction(proposalFromLastRound)}`;
         await persistTurn(admin, callerId, text, replyText);
         return NextResponse.json({ type: "action_proposal", text: replyText, action: proposalFromLastRound });
       }
@@ -242,6 +281,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ type: "error", error: "Unknown request type" }, { status: 400 });
   } catch (err) {
     console.error("gaffai route error", err);
+    const msg = err instanceof Error ? err.message : "";
+    // Say plainly when it's the AI account, not the question - otherwise
+    // an empty credit balance just looks like GaffAI being broken.
+    if (/credit balance is too low/i.test(msg)) {
+      return NextResponse.json({ type: "answer", text: "I'm out of AI credit, gaffer - the club's Anthropic account needs topping up (console.anthropic.com → Plans & Billing) before I can answer anything." });
+    }
+    if (/Anthropic API error (429|529)|overloaded/i.test(msg)) {
+      return NextResponse.json({ type: "answer", text: "The AI service is busy right now - give it a minute and ask again." });
+    }
+    if (/abort/i.test(msg)) {
+      return NextResponse.json({ type: "answer", text: "That one took too long to work out - try asking something a bit narrower." });
+    }
     return NextResponse.json({ type: "error", error: "Something went wrong" }, { status: 500 });
   }
 }

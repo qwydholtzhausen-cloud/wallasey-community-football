@@ -4,9 +4,51 @@ import type { AnthropicToolDef } from "./anthropic";
 // question, so the model can compose them for whatever's actually asked.
 export const GAFFAI_TOOLS: AnthropicToolDef[] = [
   {
+    name: "query_data",
+    description: `Read-only access to the club's database for anything the other tools don't cover - use it instead of saying you can't. SELECT only (it can never change data). Supports PostgREST embedding in select, e.g. "id, created_at, games(date, venue), profiles(display_name)". Returns total count plus rows (max 1000; use count_only for pure counts).
+Tables and key columns:
+- games: id, date (YYYY-MM-DD), kickoff (HH:MM), venue, pitch, price, pitch_cost, max_players, published, published_at, special, team_white_score, team_red_score, created_at
+- bookings: id, game_id, player_id, status (unpaid|pending|confirmed), waiting (true = waiting list), team (white|red|null), created_at (when booked), promoted_at (moved off waiting list), confirmed_at, pot_exempt_reason; embed games(...) / profiles(display_name)
+- profiles: id, display_name, role, created_at (joined), push_opt_in, last_active_at (from 28 Sep 2026), status (active|pending|declined), avatar_url
+- game_stats: game_id, player_id, goals, own_goals
+- booking_cancellations (drop-outs, from 28 Sep 2026): player_id, game_id, was_waiting, booked_at, cancelled_at, minutes_before_kickoff, reason, removed_by
+- admin_messages: recipient_id, sender_id, message, created_at, read_at
+- notification_sends: player_id, kind, title, sent_at, opened_at (tapped)
+- app_days: player_id, day, opens, first_at, last_at (daily app use, from 29 Sep 2026)
+- game_ratings: game_id, player_id, rating 1-5 (the "How was tonight?" meter)
+- game_weather: game_id, temp_c, weather_code (WMO)
+- audit_log: actor_id, action, details, created_at
+- pot_entries, awards, player_birthdays (player_id, date_of_birth), player_self_ratings / player_admin_ratings, emergency_contacts, boot_room_listings, boot_room_endorsements, wrapped_events (player_id, month_key, event), monthly_snapshots, rating_history, monzo_transactions, join_requests, club_settings, gaffai_facts
+Booking history is complete from the club's first game (Aug 2026). Filter ops: eq, neq, gt, gte, lt, lte, like, ilike, in (array), is (null/true/false).`,
+    input_schema: {
+      type: "object",
+      properties: {
+        table: { type: "string" },
+        select: { type: "string", description: 'Columns, default "*"' },
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column: { type: "string", description: 'Column, or "games.date" style for an embedded table' },
+              op: { type: "string", enum: ["eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "in", "is"] },
+              value: { description: "Value to compare; an array for in; null/true/false for is" },
+            },
+            required: ["column", "op", "value"],
+          },
+        },
+        order_by: { type: "string" },
+        ascending: { type: "boolean" },
+        limit: { type: "number", description: "Default 200, max 1000" },
+        count_only: { type: "boolean" },
+      },
+      required: ["table"],
+    },
+  },
+  {
     name: "find_games",
     description:
-      "Look up fixtures by date range, venue, or published status. Returns each game's id, date, kickoff, venue, price, and booking counts (confirmed, unpaid, pending, waiting). Use this to find a game_id before calling get_game_detail or get_payment_status. For 'the last game,' 'most recent,' or 'who won MOTM last time' - set sort:\"desc\" and date_to to today (see the current date/time given to you) rather than leaving dates unbounded, otherwise you'll get the oldest fixtures on record, not the newest.",
+      "Look up fixtures by date range, venue, or published status. Returns each game's id, date, kickoff, venue, pitch, price, max_players, confirmed_count, spaces_left, is_full, and payment/waiting counts. For 'is it full' or 'how many spaces' use spaces_left / is_full only - never work capacity out yourself. Two games can share a date and time on different pitches (e.g. Solar Campus #1 and #2), so check every game on a date, not just the first. Use this to find a game_id before calling get_game_detail or get_payment_status. For 'the last game,' 'most recent,' or 'who won MOTM last time' - set sort:\"desc\" and date_to to today (see the current date/time given to you) rather than leaving dates unbounded, otherwise you'll get the oldest fixtures on record, not the newest.",
     input_schema: {
       type: "object",
       properties: {
@@ -46,7 +88,8 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
   },
   {
     name: "find_players",
-    description: "Look up players by (partial) name or role. Returns id, display_name, role, push_opt_in.",
+    description:
+      "Look up members by (partial) name or role. Returns id, display_name, role, push_opt_in. If nothing contains the name, it returns the closest spellings instead (each with a note) - so a misspelt name like 'Andi Cotti' still finds 'Andy Cotti'. Say which name you matched.",
     input_schema: {
       type: "object",
       properties: {
@@ -59,7 +102,7 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
   {
     name: "get_player_detail",
     description:
-      "Full detail for one player: role, self and admin ratings (admin rating already normalized to the same /5 scale as self), emergency contact, whether they're currently blocked from booking due to an overdue payment, and this season's apps/goals/MOTM recognitions.",
+      "Full detail for one player: role, ratings (admin rating already on the /5 scale), emergency contact, overdue-payment block, this season's apps/goals/MOTM, when they last opened the app, and their COMPLETE booking history: upcoming_bookings (every future game they're booked on or waiting for, with payment status - dates can be weeks or months ahead) and past_games (most recent first). Use this for 'what's X booked on', 'has X played', 'what did X pay for' - read upcoming_bookings in full before saying someone isn't booked.",
     input_schema: { type: "object", properties: { player_id: { type: "string" } }, required: ["player_id"] },
   },
   {
@@ -222,6 +265,30 @@ export const GAFFAI_TOOLS: AnthropicToolDef[] = [
         message: { type: "string", description: "The exact text to send to the player." },
       },
       required: ["player_id", "message"],
+    },
+  },
+  {
+    name: "find_players_to_invite",
+    description:
+      "Who to message to fill spaces on a game: every member not already on it, ranked by how likely they are to play, each with the reasons (waiting for another game at the same time, recent games played, when they last opened the app, notifications on/off). People already playing elsewhere that day or blocked by an overdue payment are left out and listed separately. Use this for 'who should we message', 'who might want this game', 'give me 10 players to contact' - then offer propose_booking_invite with the ones the admin wants. Don't ask the admin to pick names themselves; this is the recommendation.",
+    input_schema: {
+      type: "object",
+      properties: { game_id: { type: "string" }, limit: { type: "number", description: "How many to recommend, default 15" } },
+      required: ["game_id"],
+    },
+  },
+  {
+    name: "propose_booking_invite",
+    description:
+      "Prepare (but do NOT send) one message to several players about a game with spaces - it goes to each player's inbox AND as a push notification to anyone with notifications on. Works for any published upcoming game (not just today). Returns a proposal the admin confirms with a button; nothing is sent until they tap it. Write a short, friendly message yourself (the game, the spaces, 'book in the app') unless the admin gave wording. Players already booked by the time it's confirmed are skipped automatically.",
+    input_schema: {
+      type: "object",
+      properties: {
+        game_id: { type: "string" },
+        player_ids: { type: "array", items: { type: "string" }, description: "Up to 40 player ids, e.g. from find_players_to_invite" },
+        message: { type: "string" },
+      },
+      required: ["game_id", "player_ids", "message"],
     },
   },
   {

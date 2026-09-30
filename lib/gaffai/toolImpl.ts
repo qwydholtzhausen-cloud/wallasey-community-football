@@ -105,6 +105,15 @@ export interface CreateFixtureAction {
   price: number;
   maxPlayers: number;
 }
+export interface BookingInviteAction {
+  kind: "booking_invite";
+  gameId: string;
+  gameLabel: string;
+  spacesLeft: number;
+  players: { id: string; name: string }[];
+  message: string;
+}
+
 export interface SendReminderAction {
   kind: "send_reminder";
   playerId: string;
@@ -161,7 +170,7 @@ async function findGames(
 ) {
   let query = admin
     .from("games")
-    .select("id, date, kickoff, venue, price, published, team_white_score, team_red_score, bookings(status, waiting)");
+    .select("id, date, kickoff, venue, pitch, price, max_players, published, team_white_score, team_red_score, bookings(status, waiting)");
   if (args.date_from) query = query.gte("date", args.date_from);
   if (args.date_to) query = query.lte("date", args.date_to);
   if (args.venue_contains) query = query.ilike("venue", `%${args.venue_contains}%`);
@@ -183,7 +192,13 @@ async function findGames(
       published: g.published,
       team_white_score: g.team_white_score,
       team_red_score: g.team_red_score,
+      pitch: g.pitch,
+      max_players: g.max_players,
       confirmed_count: confirmed.length,
+      // The only numbers to use for "is it full" / "how many spaces" -
+      // never infer capacity from the booking count.
+      spaces_left: Math.max(0, g.max_players - confirmed.length),
+      is_full: confirmed.length >= g.max_players,
       unpaid_count: confirmed.filter((b) => b.status === "unpaid").length,
       pending_count: confirmed.filter((b) => b.status === "pending").length,
       waiting_count: bookings.filter((b) => b.waiting).length,
@@ -296,13 +311,31 @@ async function getGameDetail(admin: SupabaseClient, args: { game_id: string }) {
 }
 
 async function findPlayers(admin: SupabaseClient, args: { name_contains?: string; role?: string; limit?: number }) {
-  let query = admin.from("profiles").select("id, display_name, role, push_opt_in");
-  if (args.name_contains) query = query.ilike("display_name", `%${args.name_contains}%`);
+  let query = admin.from("profiles").select("*");
   if (args.role) query = query.eq("role", args.role);
-  query = query.order("display_name").limit(args.limit ?? 100);
-  const { data, error } = await query;
+  const { data, error } = await query.order("display_name");
   if (error) throw new Error(error.message);
-  return data ?? [];
+  type P = { id: string; display_name: string; role: string; push_opt_in: boolean; status?: string };
+  const members = ((data ?? []) as P[]).filter((p) => (p.status ?? "active") === "active");
+  const slim = (p: P) => ({ id: p.id, display_name: p.display_name, role: p.role, push_opt_in: p.push_opt_in });
+  if (!args.name_contains) return members.slice(0, args.limit ?? 100).map(slim);
+  const q = args.name_contains.trim().toLowerCase();
+  const exact = members.filter((p) => p.display_name.toLowerCase().includes(q));
+  if (exact.length) return exact.slice(0, args.limit ?? 100).map(slim);
+  // Nothing contains it: misspellings ("Andi Cotti") and first-name-only
+  // typos. Closest names by edit distance, per word and whole name.
+  const scored = members
+    .map((p) => {
+      const name = p.display_name.toLowerCase();
+      const words = name.split(/\s+/);
+      const qWords = q.split(/\s+/);
+      const perWord = qWords.reduce((sum, w) => sum + Math.min(...words.map((x) => editDistance(w, x))), 0);
+      return { p, d: Math.min(editDistance(q, name), perWord) };
+    })
+    .filter((x) => x.d <= Math.max(2, Math.floor(q.length / 3)))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 5);
+  return scored.map((x) => ({ ...slim(x.p), note: `No exact match for "${args.name_contains}" - closest name` }));
 }
 
 async function getPlayerDetail(admin: SupabaseClient, args: { player_id: string }) {
@@ -318,8 +351,12 @@ async function getPlayerDetail(admin: SupabaseClient, args: { player_id: string 
     admin.from("player_admin_ratings").select("fitness, attack, defence, goalkeeping, position").eq("player_id", args.player_id).maybeSingle(),
     admin.from("emergency_contacts").select("contact_name, contact_phone").eq("player_id", args.player_id).maybeSingle(),
     admin.rpc("has_overdue_payment", { check_player_id: args.player_id }),
-    admin.from("bookings").select("game_id, waiting, games(date, kickoff)").eq("player_id", args.player_id),
+    admin
+      .from("bookings")
+      .select("id, game_id, waiting, status, team, created_at, games(date, kickoff, venue, team_white_score, team_red_score)")
+      .eq("player_id", args.player_id),
   ]);
+  const { data: fullProfile } = await admin.from("profiles").select("*").eq("id", args.player_id).single();
 
   const adminRating = adminRatingRes.data;
   // Admin ratings are entered out of 10 for finer precision - normalize
@@ -339,7 +376,15 @@ async function getPlayerDetail(admin: SupabaseClient, args: { player_id: string 
       }
     : null;
 
-  type BookingWithGame = { game_id: string; waiting: boolean; games: { date: string; kickoff: string } | { date: string; kickoff: string }[] | null };
+  type BookingWithGame = {
+    id: string;
+    game_id: string;
+    waiting: boolean;
+    status: string;
+    team: string | null;
+    created_at: string;
+    games: { date: string; kickoff: string; venue: string; team_white_score: number | null; team_red_score: number | null } | { date: string; kickoff: string; venue: string; team_white_score: number | null; team_red_score: number | null }[] | null;
+  };
   const bookings = (bookingsRes.data ?? []) as BookingWithGame[];
   const pastSeasonGameIds: string[] = [];
   for (const b of bookings) {
@@ -350,6 +395,27 @@ async function getPlayerDetail(admin: SupabaseClient, args: { player_id: string 
     pastSeasonGameIds.push(b.game_id);
   }
   const apps = pastSeasonGameIds.length;
+
+  type GameOf = { date: string; kickoff: string; venue: string };
+  const rowsWithGame = bookings
+    .map((b) => ({ b, g: (Array.isArray(b.games) ? b.games[0] : b.games) as GameOf | null }))
+    .filter((x): x is { b: BookingWithGame; g: GameOf } => !!x.g)
+    .sort((x, y) => (y.g.date + y.g.kickoff).localeCompare(x.g.date + x.g.kickoff)); // newest first
+  const isFuture = (g: { date: string; kickoff: string }) => toMs(kickoffCutoff(g.date, g.kickoff, 0)) > nowMs;
+  const upcoming = rowsWithGame
+    .filter((x) => isFuture(x.g))
+    .reverse()
+    .map((x) => ({ booking_id: x.b.id, game_id: x.b.game_id, date: x.g.date, kickoff: x.g.kickoff, venue: x.g.venue, payment_status: x.b.status, on_waiting_list: x.b.waiting, booked_at: x.b.created_at }));
+  const pastList = rowsWithGame
+    .filter((x) => !isFuture(x.g))
+    .map((x) => ({
+      date: x.g.date,
+      venue: x.g.venue,
+      played: !x.b.waiting,
+      payment_status: x.b.status,
+      on_waiting_list_only: x.b.waiting,
+      team: x.b.team,
+    }));
 
   let goals = 0;
   let motmRecognitions = 0;
@@ -382,6 +448,13 @@ async function getPlayerDetail(admin: SupabaseClient, args: { player_id: string 
     season_apps: apps,
     season_goals: goals,
     season_motm_recognitions: motmRecognitions,
+    last_opened_app: fullProfile?.last_active_at ?? null,
+    // Every booking they have or had, so "what's X booked on", "has X
+    // played before" and "did X drop out" never come back empty by mistake.
+    upcoming_bookings: upcoming,
+    past_games: pastList.slice(0, 12),
+    all_time_games_played: pastList.filter((b) => b.played).length,
+    last_played: pastList.find((b) => b.played)?.date ?? null,
   };
 }
 
@@ -1477,7 +1550,157 @@ async function findUpcomingBirthdays(admin: SupabaseClient, args: { days?: numbe
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ToolImplFn = (admin: SupabaseClient, args: any, callerId?: string) => Promise<unknown>;
 
+// "Who should we message to fill this game?" - every member not already on
+// it, ranked by how likely they are to say yes, with the reasons. People
+// waiting for another game at the same time come first (they already want
+// to play that night); then recent regulars; people already booked on
+// another game that day, or blocked by an overdue payment, are left out.
+async function findPlayersToInvite(admin: SupabaseClient, args: { game_id: string; limit?: number }) {
+  const { data: game, error } = await admin
+    .from("games")
+    .select("id, date, kickoff, venue, max_players, published, bookings(player_id, waiting)")
+    .eq("id", args.game_id)
+    .single();
+  if (error || !game) throw new Error("Game not found");
+  const onThisGame = new Set((game.bookings ?? []).map((b) => b.player_id));
+  const spacesLeft = Math.max(0, game.max_players - (game.bookings ?? []).filter((b) => !b.waiting).length);
+
+  const [{ data: profiles }, { data: allBookings }, overdue] = await Promise.all([
+    admin.from("profiles").select("*"),
+    admin.from("bookings").select("player_id, waiting, game_id, games(date, kickoff, venue)"),
+    findOverduePlayers(admin),
+  ]);
+  const overdueIds = new Set(overdue.players.map((p) => p.player_id));
+  const nowMs = toMs(nowInLondon());
+  const eightWeeksAgo = new Date(Date.now() - 56 * 86400000).toISOString().slice(0, 10);
+
+  type B = { player_id: string; waiting: boolean; game_id: string; games: { date: string; kickoff: string; venue: string } | { date: string; kickoff: string; venue: string }[] | null };
+  const stats: Record<string, { recent: number; total: number; last: string | null; sameDayBooked: string | null; sameDayWaiting: string | null }> = {};
+  for (const b of (allBookings ?? []) as B[]) {
+    const g = Array.isArray(b.games) ? b.games[0] : b.games;
+    if (!g) continue;
+    const st = (stats[b.player_id] ??= { recent: 0, total: 0, last: null, sameDayBooked: null, sameDayWaiting: null });
+    if (g.date === game.date && b.game_id !== game.id) {
+      if (b.waiting) st.sameDayWaiting = `${g.venue} ${g.kickoff}`;
+      else st.sameDayBooked = `${g.venue} ${g.kickoff}`;
+    }
+    const over = toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs;
+    if (!over || b.waiting) continue;
+    st.total++;
+    if (g.date >= eightWeeksAgo) st.recent++;
+    if (!st.last || g.date > st.last) st.last = g.date;
+  }
+
+  type P = { id: string; display_name: string; push_opt_in: boolean; last_active_at?: string | null; status?: string };
+  const candidates = ((profiles ?? []) as P[])
+    .filter((p) => (p.status ?? "active") === "active" && !onThisGame.has(p.id))
+    .map((p) => {
+      const st = stats[p.id] ?? { recent: 0, total: 0, last: null, sameDayBooked: null, sameDayWaiting: null };
+      const daysSinceOpened = p.last_active_at ? Math.floor((Date.now() - new Date(p.last_active_at).getTime()) / 86400000) : null;
+      const reasons: string[] = [];
+      if (st.sameDayWaiting) reasons.push(`on the waiting list for ${st.sameDayWaiting} the same day`);
+      if (st.recent) reasons.push(`played ${st.recent} game${st.recent === 1 ? "" : "s"} in the last 8 weeks`);
+      else if (st.total) reasons.push(`has played ${st.total} before, last on ${st.last}`);
+      else reasons.push("never played yet");
+      if (daysSinceOpened !== null && daysSinceOpened <= 7) reasons.push(`opened the app ${daysSinceOpened === 0 ? "today" : `${daysSinceOpened} day${daysSinceOpened === 1 ? "" : "s"} ago`}`);
+      reasons.push(p.push_opt_in ? "notifications on" : "notifications off (inbox only)");
+      const score =
+        (st.sameDayWaiting ? 100 : 0) + st.recent * 10 + Math.min(st.total, 20) + (daysSinceOpened !== null && daysSinceOpened <= 7 ? 8 : 0) + (p.push_opt_in ? 3 : 0);
+      return { player_id: p.id, name: p.display_name, score, reasons, excluded: st.sameDayBooked ? `already playing ${st.sameDayBooked} that day` : overdueIds.has(p.id) ? "has an overdue payment, so can't book" : null };
+    });
+  const ranked = candidates.filter((c) => !c.excluded).sort((a, b) => b.score - a.score);
+  return {
+    game: { id: game.id, date: game.date, kickoff: game.kickoff, venue: game.venue, spaces_left: spacesLeft, published: game.published },
+    recommended: ranked.slice(0, args.limit ?? 15).map(({ player_id, name, reasons }) => ({ player_id, name, why: reasons.join("; ") })),
+    other_members_not_booked: ranked.length - Math.min(ranked.length, args.limit ?? 15),
+    left_out: candidates.filter((c) => c.excluded).map((c) => ({ name: c.name, why: c.excluded })),
+    note: "Booking history covers every game since the club started (Aug 2026). 'Opened the app' is only recorded from 28 Sep 2026.",
+  };
+}
+
+async function proposeBookingInvite(admin: SupabaseClient, args: { game_id: string; player_ids: string[]; message: string }): Promise<BookingInviteAction> {
+  const message = (args.message ?? "").trim();
+  if (!message) throw new Error("Message can't be empty.");
+  if (message.length > 500) throw new Error("Keep the message under 500 characters.");
+  const ids = [...new Set(args.player_ids ?? [])];
+  if (!ids.length) throw new Error("Pick at least one player.");
+  if (ids.length > 40) throw new Error("That's a lot of people - 40 at most per message.");
+  const { data: game } = await admin.from("games").select("id, date, kickoff, venue, max_players, published, bookings(player_id, waiting)").eq("id", args.game_id).single();
+  if (!game) throw new Error("Fixture not found.");
+  if (!game.published) throw new Error("That fixture isn't published yet - publish it first.");
+  if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= toMs(nowInLondon())) throw new Error("That fixture's already kicked off.");
+  const spacesLeft = game.max_players - (game.bookings ?? []).filter((b) => !b.waiting).length;
+  const nameOf = await namesById(admin, ids);
+  const players = ids.filter((id) => nameOf[id]).map((id) => ({ id, name: nameOf[id] }));
+  if (!players.length) throw new Error("None of those players were found.");
+  const gameLabel = `${game.venue}, ${new Date(game.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })} ${game.kickoff}`;
+  return { kind: "booking_invite", gameId: game.id, gameLabel, spacesLeft: Math.max(0, spacesLeft), players, message };
+}
+
+export async function executeBookingInvite(admin: SupabaseClient, callerId: string, action: BookingInviteAction) {
+  const { data: game } = await admin.from("games").select("id, date, kickoff, max_players, bookings(player_id, waiting)").eq("id", action.gameId).single();
+  if (!game) throw new Error("That fixture no longer exists.");
+  if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= toMs(nowInLondon())) throw new Error("That fixture's already kicked off.");
+  const booked = new Set((game.bookings ?? []).map((b) => b.player_id));
+  const targets = action.players.filter((p) => !booked.has(p.id));
+  if (!targets.length) return { sent: 0, skipped: action.players.length };
+  const { error } = await admin.from("admin_messages").insert(targets.map((p) => ({ recipient_id: p.id, sender_id: callerId, message: action.message })));
+  if (error) throw new Error(error.message);
+  await sendPushToUsers(
+    targets.map((p) => p.id),
+    { title: "Spaces available", body: action.message.length > 100 ? `${action.message.slice(0, 97)}...` : action.message, url: "/" }
+  );
+  await admin.from("audit_log").insert({
+    actor_id: callerId,
+    action: "GaffAI sent booking invite",
+    details: `${action.gameLabel} — ${targets.length} players: ${targets.map((p) => p.name).join(", ").slice(0, 300)}`,
+  });
+  return { sent: targets.length, skipped: action.players.length - targets.length };
+}
+
+// The general-purpose, read-only escape hatch: any question the named tools
+// don't cover ("how many people booked within an hour of posting", "who
+// paid by bank transfer last month") can be answered from the tables
+// directly instead of "I can't do that". SELECT only - PostgREST through
+// the service client, which has no write path here. Secrets and other
+// admins' chats are never readable; MOTM votes and predictions stay behind
+// their own tools so a live vote can't leak before voting closes.
+const QUERYABLE_TABLES = new Set([
+  "games", "bookings", "profiles", "game_stats", "feed_reactions", "admin_messages", "audit_log", "awards", "pot_entries",
+  "player_self_ratings", "player_admin_ratings", "emergency_contacts", "player_birthdays", "boot_room_listings",
+  "boot_room_endorsements", "wrapped_events", "game_weather", "rating_history", "monthly_snapshots", "booking_cancellations",
+  "notification_sends", "app_days", "game_ratings", "join_requests", "club_settings", "gaffai_facts", "monzo_transactions",
+  "feed_hidden_items", "posts", "post_likes",
+]);
+const BLOCKED_IN_SELECT = /monzo_tokens|push_subscriptions|gaffai_conversations|motm_votes|score_predictions|p256dh|auth_key|access_token|refresh_token/i;
+type QueryFilter = { column: string; op: "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "like" | "ilike" | "in" | "is"; value: unknown };
+
+async function queryData(
+  admin: SupabaseClient,
+  args: { table: string; select?: string; filters?: QueryFilter[]; order_by?: string; ascending?: boolean; limit?: number; count_only?: boolean }
+) {
+  if (!QUERYABLE_TABLES.has(args.table)) throw new Error(`Can't read "${args.table}". Readable tables: ${[...QUERYABLE_TABLES].join(", ")}.`);
+  const select = (args.select ?? "*").trim() || "*";
+  if (BLOCKED_IN_SELECT.test(select)) throw new Error("That select includes data that's off limits (credentials, private chats, or live votes/predictions - use get_motm_winner / get_prediction_leaderboard for those).");
+  const limit = Math.min(Math.max(1, args.limit ?? 200), 1000);
+  let q = admin.from(args.table).select(select, { count: "exact", head: !!args.count_only });
+  for (const f of args.filters ?? []) {
+    if (!/^[a-z_][a-z0-9_.]*$/i.test(f.column)) throw new Error(`Bad column name "${f.column}"`);
+    if (f.op === "in") q = q.in(f.column, Array.isArray(f.value) ? f.value : [f.value]);
+    else if (f.op === "is") q = q.is(f.column, f.value as null | boolean);
+    else q = q.filter(f.column, f.op, f.value as string);
+  }
+  if (args.order_by) q = q.order(args.order_by, { ascending: args.ascending ?? true });
+  if (!args.count_only) q = q.limit(limit);
+  const { data, error, count } = await q;
+  if (error) throw new Error(`${error.message}${error.hint ? ` (${error.hint})` : ""}`);
+  return args.count_only ? { count } : { count, returned: (data ?? []).length, rows: data ?? [], truncated: (count ?? 0) > (data ?? []).length };
+}
+
 export const TOOL_IMPL: Record<string, ToolImplFn> = {
+  query_data: queryData,
+  find_players_to_invite: findPlayersToInvite,
+  propose_booking_invite: proposeBookingInvite,
   find_games: findGames,
   get_fixture_counts: getFixtureCounts,
   find_recent_bookings: findRecentBookings,

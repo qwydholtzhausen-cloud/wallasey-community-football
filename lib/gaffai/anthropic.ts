@@ -18,7 +18,13 @@ export interface AnthropicToolResultBlock {
   content: string;
   is_error?: boolean;
 }
-export type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolUseBlock | AnthropicToolResultBlock;
+// Opus 5.5 always thinks; its thinking blocks come back in content and are
+// passed back untouched within the same question's tool loop.
+export interface AnthropicThinkingBlock {
+  type: "thinking" | "redacted_thinking" | "fallback";
+  [key: string]: unknown;
+}
+export type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolUseBlock | AnthropicToolResultBlock | AnthropicThinkingBlock;
 
 export interface AnthropicMessage {
   role: "user" | "assistant";
@@ -39,12 +45,16 @@ export interface AnthropicResponse {
   id: string;
   role: "assistant";
   content: AnthropicContentBlock[];
-  stop_reason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | null;
+  stop_reason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | "refusal" | "pause_turn" | null;
 }
 
-const MODEL = "claude-haiku-4-5-20251001";
-const MAX_TOKENS = 2048;
-const REQUEST_TIMEOUT_MS = 20000;
+// Opus 5.5 (2026-09-30), up from Haiku 4.5, which kept missing bookings and
+// giving up on "who should we message" questions. Medium effort keeps each
+// round quick; thinking is always on for this model.
+const MODEL = "claude-opus-5-5";
+const MAX_TOKENS = 16000;
+const EFFORT = "medium";
+const REQUEST_TIMEOUT_MS = 55000;
 
 export async function callClaude(messages: AnthropicMessage[], tools: AnthropicToolDef[], system: string): Promise<AnthropicResponse> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -59,8 +69,21 @@ export async function callClaude(messages: AnthropicMessage[], tools: AnthropicT
         "content-type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        // If the model declines, the API reruns the request on a fallback model.
+        "anthropic-beta": "server-side-fallback-2026-07-01",
       },
-      body: JSON.stringify({ model: MODEL, max_tokens: MAX_TOKENS, system, messages, tools }),
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        output_config: { effort: EFFORT },
+        fallbacks: "default",
+        // Caches tools + system + history, so each extra tool round of the
+        // same question costs a fraction of the first.
+        cache_control: { type: "ephemeral" },
+        system,
+        messages,
+        tools,
+      }),
       signal: controller.signal,
     });
     if (!res.ok) {
