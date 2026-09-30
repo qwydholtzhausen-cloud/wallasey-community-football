@@ -46,6 +46,7 @@ export interface AnthropicResponse {
   role: "assistant";
   content: AnthropicContentBlock[];
   stop_reason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | "refusal" | "pause_turn" | null;
+  usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
 }
 
 // Opus 5.5 (2026-09-30), up from Haiku 4.5, which kept missing bookings and

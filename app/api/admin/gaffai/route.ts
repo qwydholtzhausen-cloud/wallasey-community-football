@@ -32,6 +32,7 @@ import { nowInLondon } from "../../../../lib/time";
 export const maxDuration = 300;
 
 const MAX_TOOL_ROUNDS = 8;
+const MAX_TOOL_RESULT_CHARS = 40000;
 
 async function authenticate(req: Request): Promise<{ admin: SupabaseClient; callerId: string } | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -206,7 +207,16 @@ export async function POST(req: Request) {
 
       const systemPrompt = `${GAFFAI_SYSTEM_PROMPT}\n\nCurrent date/time: ${weekday} ${nowUk.slice(0, 10)}, ${nowUk.slice(11)} (Europe/London). Use this as "now" for anything relative - "last month," "this week," "the most recent game," etc.\n\nYou're talking to ${callerName}. Their id, for tool params that need it (like find_admin_messages' sender_id), is ${callerId}.${factsSection}`;
 
+      const startedAt = Date.now();
+      const used = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+      const tally = (r: typeof response) => {
+        used.input += r.usage?.input_tokens ?? 0;
+        used.output += r.usage?.output_tokens ?? 0;
+        used.cacheRead += r.usage?.cache_read_input_tokens ?? 0;
+        used.cacheWrite += r.usage?.cache_creation_input_tokens ?? 0;
+      };
       let response = await callClaude(messages, GAFFAI_TOOLS, systemPrompt);
+      tally(response);
       let rounds = 0;
       // Reset every round - only reflects whichever tools were called in
       // the round immediately before the model's final answer, not
@@ -237,7 +247,14 @@ export async function POST(req: Request) {
               ) {
                 proposalFromLastRound = result as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | BookingInviteAction;
               }
-              return { type: "tool_result" as const, tool_use_id: block.id, content: JSON.stringify(result) };
+              // A broad query can return thousands of rows; past this size
+              // it costs more than it helps, so cut it and say so.
+              const json = JSON.stringify(result);
+              const content =
+                json.length > MAX_TOOL_RESULT_CHARS
+                  ? `${json.slice(0, MAX_TOOL_RESULT_CHARS)}\n...[cut: result was ${json.length} characters. Narrow it with filters, a smaller select, count_only, or a lower limit.]`
+                  : json;
+              return { type: "tool_result" as const, tool_use_id: block.id, content };
             } catch (err) {
               return { type: "tool_result" as const, tool_use_id: block.id, content: err instanceof Error ? err.message : "Tool failed", is_error: true };
             }
@@ -247,7 +264,15 @@ export async function POST(req: Request) {
         messages.push({ role: "assistant", content: response.content });
         messages.push({ role: "user", content: toolResults });
         response = await callClaude(messages, GAFFAI_TOOLS, systemPrompt);
+        tally(response);
       }
+      // One line per question in the Vercel logs: rounds, time, tokens and
+      // an approximate cost (Opus 5.5: $4/M input, $20/M output, cache
+      // reads $0.20/M, cache writes ~$5/M).
+      const cost = (used.input * 4 + used.output * 20 + used.cacheRead * 0.2 + used.cacheWrite * 5) / 1e6;
+      console.log(
+        `gaffai usage rounds=${rounds + 1} secs=${((Date.now() - startedAt) / 1000).toFixed(1)} in=${used.input} out=${used.output} cache_read=${used.cacheRead} cache_write=${used.cacheWrite} approx_usd=${cost.toFixed(3)}`
+      );
 
       if (response.stop_reason === "refusal") {
         const refused = "That one's outside what I can help with, gaffer - try asking it a different way.";
@@ -286,6 +311,13 @@ export async function POST(req: Request) {
     // an empty credit balance just looks like GaffAI being broken.
     if (/credit balance is too low/i.test(msg)) {
       return NextResponse.json({ type: "answer", text: "I'm out of AI credit, gaffer - the club's Anthropic account needs topping up (console.anthropic.com → Plans & Billing) before I can answer anything." });
+    }
+    const limitReset = msg.match(/reached your specified API usage limits.*?regain access on (\S+) at (\d\d:\d\d) UTC/i);
+    if (limitReset) {
+      return NextResponse.json({
+        type: "answer",
+        text: `I've hit the club's monthly AI spend limit, gaffer - I'm back on ${limitReset[1]} at ${limitReset[2]} UTC, or sooner if an admin raises the limit (console.anthropic.com → Settings → Limits).`,
+      });
     }
     if (/Anthropic API error (429|529)|overloaded/i.test(msg)) {
       return NextResponse.json({ type: "answer", text: "The AI service is busy right now - give it a minute and ask again." });
