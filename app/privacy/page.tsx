@@ -40,6 +40,11 @@ const ROWS: [string, string, string][] = [
     "You and admins",
   ],
   ["Emergency contact (optional): a name and phone number", "To call someone if you're hurt at a game", "You and admins"],
+  [
+    "When you ask to join (if the club is approving new members): who you know at the club and your mobile (both optional), and which admin let you in",
+    "So admins can check new members are genuine, and WhatsApp you when you're in",
+    "You and admins",
+  ],
   ["Date of birth (optional)", "Birthday free games and squad planning", "You and admins"],
   ["Ability ratings: your own and the admins', and how they change over time", "To pick fair teams", "You and admins"],
   [
@@ -65,7 +70,7 @@ export default function PrivacyPage() {
       <div className="pv-wrap">
         <a className="pv-back" href="/">‹ Back to the app</a>
         <h1>Your privacy</h1>
-        <div className="pv-upd">Last updated 28 September 2026</div>
+        <div className="pv-upd">Last updated 30 September 2026</div>
         <p className="pv-intro">
           Wirral Community Football is run by volunteers for the people who play. We only use your information to organise games, take payments and keep the
           club running. We never sell it, and we don&apos;t use advertising or tracking.

@@ -1968,3 +1968,113 @@ grant execute on function public.game_rating_summary(uuid) to authenticated;
 -- optional tag per vote, same secrecy as the vote itself (motm_votes RLS).
 alter table public.motm_votes add column if not exists tag text
   check (tag is null or tag in ('clinical', 'brick_wall', 'engine', 'magician', 'leader', 'workhorse'));
+
+-- ─────────────────────────────────────────────────────────────────
+-- Member approval (2026-09-30). A switch in Admin settings: while it's on,
+-- new sign-ups start as 'pending' and see only a waiting room until an
+-- admin lets them in. Everyone who already exists is 'active' (the column
+-- default fills every existing row), and admin-added players always start
+-- active. With the switch off, nothing changes from before.
+-- ─────────────────────────────────────────────────────────────────
+alter table public.club_settings add column if not exists require_approval boolean not null default false;
+
+alter table public.profiles add column if not exists status text not null default 'active';
+alter table public.profiles drop constraint if exists profiles_status_check;
+alter table public.profiles add constraint profiles_status_check check (status in ('active', 'pending', 'declined'));
+alter table public.profiles add column if not exists approved_by uuid references public.profiles (id) on delete set null;
+alter table public.profiles add column if not exists approved_at timestamptz;
+
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (id, display_name, payment_code, status)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'display_name', split_part(new.email, '@', 1)),
+    public.generate_payment_code(),
+    case
+      when coalesce((new.raw_user_meta_data ->> 'added_by_admin')::boolean, false) then 'active'
+      when coalesce((select require_approval from public.club_settings where id), false) then 'pending'
+      else 'active'
+    end
+  );
+  return new;
+end;
+$$;
+
+-- What a new sign-up tells the admins: their "who do you know" note and an
+-- optional mobile (so an admin can WhatsApp them once they're in). Kept off
+-- profiles because every member can read profiles; this is admins-only
+-- (plus the person themselves). Written only by app/api/join (service role).
+create table if not exists public.join_requests (
+  player_id uuid primary key references public.profiles (id) on delete cascade,
+  referral_note text,
+  mobile text,
+  requested_at timestamptz not null default now()
+);
+alter table public.join_requests enable row level security;
+drop policy if exists "join_requests_select_own_or_admin" on public.join_requests;
+create policy "join_requests_select_own_or_admin" on public.join_requests for select using (player_id = auth.uid() or public.is_admin());
+
+create or replace function public.is_active_member()
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select coalesce((select status = 'active' from public.profiles where id = auth.uid()), false);
+$$;
+
+-- Only admins (or the service role) can change someone's status or who
+-- approved them - a waiting member can't let themselves in.
+create or replace function public.guard_member_status()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.status is distinct from old.status
+     or new.approved_by is distinct from old.approved_by
+     or new.approved_at is distinct from old.approved_at then
+    if auth.uid() is not null and not public.is_admin() then
+      raise exception 'Only admins can change membership status';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists guard_member_status on public.profiles;
+create trigger guard_member_status before update on public.profiles
+  for each row execute function public.guard_member_status();
+
+-- The lock itself: restrictive policies are ANDed with every existing
+-- policy, so nothing that works for members today changes. A waiting (or
+-- declined) member can read only their own profile (and members never see
+-- anyone who's still waiting - only admins do), sees nobody's
+-- bookings, and can't book, vote, predict, rate, react or post.
+drop policy if exists "members_only_profiles_select" on public.profiles;
+create policy "members_only_profiles_select" on public.profiles as restrictive for select using (
+  id = auth.uid() or public.is_admin() or (public.is_active_member() and status = 'active')
+);
+drop policy if exists "members_only_bookings_select" on public.bookings;
+create policy "members_only_bookings_select" on public.bookings as restrictive for select using (public.is_active_member());
+drop policy if exists "members_only_bookings_insert" on public.bookings;
+create policy "members_only_bookings_insert" on public.bookings as restrictive for insert with check (public.is_active_member());
+drop policy if exists "members_only_motm_votes_insert" on public.motm_votes;
+create policy "members_only_motm_votes_insert" on public.motm_votes as restrictive for insert with check (public.is_active_member());
+drop policy if exists "members_only_score_predictions_insert" on public.score_predictions;
+create policy "members_only_score_predictions_insert" on public.score_predictions as restrictive for insert with check (public.is_active_member());
+drop policy if exists "members_only_game_ratings_insert" on public.game_ratings;
+create policy "members_only_game_ratings_insert" on public.game_ratings as restrictive for insert with check (public.is_active_member());
+drop policy if exists "members_only_feed_reactions_insert" on public.feed_reactions;
+create policy "members_only_feed_reactions_insert" on public.feed_reactions as restrictive for insert with check (public.is_active_member());
+drop policy if exists "members_only_boot_room_listings_insert" on public.boot_room_listings;
+create policy "members_only_boot_room_listings_insert" on public.boot_room_listings as restrictive for insert with check (public.is_active_member());
+drop policy if exists "members_only_boot_room_endorsements_insert" on public.boot_room_endorsements;
+create policy "members_only_boot_room_endorsements_insert" on public.boot_room_endorsements as restrictive for insert with check (public.is_active_member());

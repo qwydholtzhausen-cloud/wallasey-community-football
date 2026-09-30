@@ -29,7 +29,8 @@ export async function POST(req: Request) {
   const { data: created, error: createErr } = await admin.auth.admin.createUser({
     email: email.trim(),
     email_confirm: true,
-    user_metadata: displayName?.trim() ? { display_name: displayName.trim() } : undefined,
+    // Players an admin adds are let in straight away, even with approval on.
+    user_metadata: { ...(displayName?.trim() ? { display_name: displayName.trim() } : {}), added_by_admin: true },
   });
   if (createErr) return NextResponse.json({ error: createErr.message }, { status: 400 });
 

@@ -533,8 +533,10 @@ export async function GET(req: Request) {
   // just a push) since this is exactly the audience the inbox was
   // built for: people who joined online with no other channel to reach
   // them, who'd otherwise get no orientation to the club at all.
-  const { data: allProfiles } = await admin.from("profiles").select("id, display_name");
-  for (const p of allProfiles ?? []) {
+  // Waiting-for-approval members get theirs once an admin lets them in.
+  const { data: allProfiles } = await admin.from("profiles").select("*");
+  for (const p of (allProfiles ?? []) as { id: string; display_name: string; status?: string }[]) {
+    if ((p.status ?? "active") !== "active") continue;
     const key = `welcome-${p.id}`;
     if (notifiedKeys.has(key)) continue;
 

@@ -1893,6 +1893,24 @@ function computeMonthlyWrappedCheckNudge(): Nudge | null {
   };
 }
 
+// Member approval: anyone who asked to join more than a day ago and is
+// still waiting for an admin. Keyed on who's waiting, so a new request
+// brings it back after a dismissal.
+async function computeMembersWaitingNudge(admin: SupabaseClient): Promise<Nudge | null> {
+  const { data: pending, error } = await admin.from("profiles").select("*").eq("status", "pending");
+  if (error || !pending?.length) return null;
+  const { data: reqs } = await admin.from("join_requests").select("*").in("player_id", pending.map((p) => p.id));
+  const dayAgo = Date.now() - 24 * 3600 * 1000;
+  const stale = (reqs ?? []).filter((r) => new Date(r.requested_at).getTime() < dayAgo);
+  if (!stale.length) return null;
+  const name = (id: string) => pending.find((p) => p.id === id)?.display_name ?? "Someone";
+  const who = stale.map((r) => `${name(r.player_id)}${r.referral_note ? ` (knows: "${r.referral_note}")` : ""}`);
+  return {
+    key: contentKey("members-waiting", stale.map((r) => r.player_id)),
+    text: `${stale.length === 1 ? "1 person has" : `${stale.length} people have`} been waiting over a day to join: ${who.join(", ")}. Let them in or decline in Account → New members.`,
+  };
+}
+
 // The whole journey on request: where every member is, with names.
 async function getMemberJourney(admin: SupabaseClient) {
   const j = await computeJourney(admin);
@@ -1928,6 +1946,7 @@ export async function computeNudges(admin: SupabaseClient, forAdminId?: string):
     computeBirthdayNudge(admin),
   ]);
   const journey = await computeJourneyNudges(admin).catch(() => [] as Nudge[]);
+  const membersWaiting = await computeMembersWaitingNudge(admin).catch(() => null);
   const candidates = [
     unpaid,
     overdue,
@@ -1942,6 +1961,7 @@ export async function computeNudges(admin: SupabaseClient, forAdminId?: string):
     ...journey,
     computeSeasonWrappedPrepNudge(),
     computeMonthlyWrappedCheckNudge(),
+    membersWaiting,
   ].filter((n): n is Nudge => n !== null);
   if (candidates.length === 0) return [];
 

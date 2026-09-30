@@ -279,6 +279,15 @@ async function applyRetention(admin: SupabaseClient) {
   await admin.from("app_days").delete().lt("day", yearAgo.slice(0, 10));
   await admin.from("profiles").update({ last_active_at: null }).lt("last_active_at", yearAgo);
 
+  // Declined join requests: the account goes 30 days after the decision.
+  // Only ever someone with no bookings (a waiting member can't book).
+  const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data: declined } = await admin.from("profiles").select("*").eq("status", "declined").lt("approved_at", monthAgo);
+  for (const p of declined ?? []) {
+    const { count } = await admin.from("bookings").select("id", { count: "exact", head: true }).eq("player_id", p.id);
+    if (!count) await admin.auth.admin.deleteUser(p.id);
+  }
+
   const twoYearsAgo = new Date(Date.now() - 2 * 365 * 86400000);
   const cutoffDate = twoYearsAgo.toISOString().slice(0, 10);
   const { data: profiles } = await admin.from("profiles").select("id, created_at, last_active_at, avatar_url, role");

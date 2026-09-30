@@ -45,11 +45,15 @@ export function nextOpenGame(games: JourneyGame[], nowUk: string) {
 export async function computeJourney(admin: SupabaseClient) {
   const nowUk = nowInLondon();
   const now = Date.now();
-  const [{ data: profiles }, { data: usersPage }, { data: games }] = await Promise.all([
-    admin.from("profiles").select("id, display_name, created_at"),
+  const [{ data: allProfiles }, { data: usersPage }, { data: games }] = await Promise.all([
+    admin.from("profiles").select("*"),
     admin.auth.admin.listUsers({ perPage: 1000 }),
     admin.from("games").select("id, date, kickoff, venue, pitch, price, max_players, published, team_white_score, bookings(player_id, waiting)"),
   ]);
+  // Members only: people waiting for approval have their own GaffAI nudge.
+  const profiles = ((allProfiles ?? []) as { id: string; display_name: string; created_at: string; status?: string }[]).filter(
+    (p) => (p.status ?? "active") === "active"
+  );
   const gameRows = (games ?? []) as JourneyGame[];
   const confirmedEmail = new Set((usersPage?.users ?? []).filter((u) => u.email_confirmed_at).map((u) => u.id));
 

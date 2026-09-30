@@ -107,7 +107,12 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
 
 export async function sendPushBroadcast(payload: PushPayload, excludeUserId?: string): Promise<PushResult> {
   const admin = createClient(supabaseUrl, serviceKey);
-  const { data: profiles } = await admin.from("profiles").select("id").eq("push_opt_in", true);
-  const ids = (profiles ?? []).map((p) => p.id).filter((id) => id !== excludeUserId);
+  // Members only: anyone waiting for approval (or declined) is left out.
+  // "*" rather than naming status, so this still works before that column exists.
+  const { data: profiles } = await admin.from("profiles").select("*").eq("push_opt_in", true);
+  const ids = (profiles ?? [])
+    .filter((p: { status?: string }) => (p.status ?? "active") === "active")
+    .map((p: { id: string }) => p.id)
+    .filter((id) => id !== excludeUserId);
   return sendPushToUsers(ids, payload);
 }

@@ -310,6 +310,19 @@ interface ClubSettings {
   default_pitch: string;
   default_max_players: number;
   last_fixture_update_at: string | null;
+  require_approval?: boolean; // member approval switch (undefined before its SQL is run)
+}
+
+// Someone who signed up while member approval was on, with what they told
+// the admins (join_requests is admins-only).
+interface PendingMember {
+  id: string;
+  display_name: string;
+  created_at: string;
+  status: "pending" | "declined";
+  referral_note: string | null;
+  mobile: string | null;
+  requested_at: string | null;
 }
 
 interface AwardRow {
@@ -1320,10 +1333,202 @@ export default function WirralCommunityFootball() {
       {session === undefined ? (
         <SplashScreen />
       ) : session ? (
-        <App session={session} />
+        <MemberGate session={session} />
       ) : (
         <SignIn />
       )}
+    </div>
+  );
+}
+
+// Member approval: everyone active goes straight to the app (remembered
+// on the phone, so there's no extra wait on open). Anyone waiting for an
+// admin sees only the join step or the waiting room; declined, a polite
+// screen. Any error reading the status - including before its database
+// column exists - counts as active, so this can never lock members out;
+// the database's own rules still keep a waiting member away from club data.
+function MemberGate({ session }: { session: Session }) {
+  const uid = session.user.id;
+  const cacheKey = `wcf-member-active-${uid}`;
+  const [status, setStatus] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(cacheKey) === "1" ? "active" : null;
+    } catch {
+      return null;
+    }
+  });
+  const [info, setInfo] = useState<{ name: string; requested: boolean } | null>(null);
+
+  const check = useCallback(async () => {
+    const { data, error } = await supabase.from("profiles").select("*").eq("id", uid).maybeSingle();
+    if (error || !data) {
+      setStatus((cur) => cur ?? "active");
+      return;
+    }
+    const st: string = data.status ?? "active";
+    if (st !== "active") {
+      const { data: req } = await supabase.from("join_requests").select("player_id").eq("player_id", uid).maybeSingle();
+      setInfo({ name: data.display_name ?? "", requested: !!req });
+    }
+    setStatus(st);
+    try {
+      if (st === "active") localStorage.setItem(cacheKey, "1");
+      else localStorage.removeItem(cacheKey);
+    } catch {}
+  }, [uid, cacheKey]);
+
+  useEffect(() => {
+    void check();
+    const onVis = () => document.visibilityState === "visible" && void check();
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [check]);
+  // While waiting, look again every 20 seconds so "You're in" appears on its own.
+  useEffect(() => {
+    if (status === "active" || status === null) return;
+    const t = window.setInterval(() => void check(), 20000);
+    return () => window.clearInterval(t);
+  }, [status, check]);
+
+  if (status === null) return <SplashScreen />;
+  if (status === "active") return <App session={session} />;
+  return <WaitingRoom session={session} status={status} info={info} onChanged={check} />;
+}
+
+function WaitingRoom({
+  session,
+  status,
+  info,
+  onChanged,
+}: {
+  session: Session;
+  status: string;
+  info: { name: string; requested: boolean } | null;
+  onChanged: () => Promise<void>;
+}) {
+  const emailPrefix = (session.user.email ?? "").split("@")[0];
+  const [name, setName] = useState(info && info.name !== emailPrefix ? info.name : "");
+  const [referral, setReferral] = useState("");
+  const [mobile, setMobile] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pushState, setPushState] = useState<"idle" | "on" | "blocked" | "unsupported">("idle");
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window) || !("serviceWorker" in navigator)) setPushState("unsupported");
+    else if (Notification.permission === "granted") setPushState("on");
+  }, []);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSending(true);
+    setError(null);
+    const { data } = await supabase.auth.getSession();
+    const res = await fetch("/api/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session?.access_token ?? ""}` },
+      body: JSON.stringify({ displayName: name, referral, mobile }),
+    });
+    const body = await res.json().catch(() => ({}));
+    setSending(false);
+    if (!res.ok) return setError(body.error ?? "Something went wrong, try again");
+    await onChanged();
+  }
+
+  // Same subscription as Account > Notifications, for someone not in the app yet.
+  async function turnOnPush() {
+    try {
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") return setPushState("blocked");
+      const sub =
+        (await reg.pushManager.getSubscription()) ??
+        (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) }));
+      const json = sub.toJSON();
+      await supabase
+        .from("push_subscriptions")
+        .upsert(
+          { user_id: session.user.id, endpoint: json.endpoint, p256dh: json.keys?.p256dh, auth_key: json.keys?.auth, origin: window.location.origin },
+          { onConflict: "endpoint" }
+        );
+      await supabase.from("profiles").update({ push_opt_in: true }).eq("id", session.user.id);
+      setPushState("on");
+    } catch {
+      setPushState("blocked");
+    }
+  }
+
+  const first = (info?.name ?? "").split(" ")[0];
+
+  if (status === "declined") {
+    return (
+      <div className="wcf-gate">
+        <div className="wcf-gate-mid">
+          <div className="wcf-gate-ring dim">
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="M8 12h8" /></svg>
+          </div>
+          <h1>Not this time</h1>
+          <p>This club is invite-only for now. If you think that&apos;s a mistake, have a word with someone who plays.</p>
+        </div>
+        <button className="wcf-gate-link" onClick={() => supabase.auth.signOut()}>Sign out</button>
+      </div>
+    );
+  }
+
+  if (!info?.requested) {
+    return (
+      <form className="wcf-gate" onSubmit={submit}>
+        <img className="wcf-gate-photo" src="/floodlit-signin.jpg" alt="" />
+        <div className="wcf-gate-scrim" />
+        <div className="wcf-gate-form">
+          <h1>Welcome to Wirral Community Football</h1>
+          <p className="wcf-gate-sub">Before you&apos;re in, tell us who you are. An admin will let you in shortly.</p>
+          <label className="wcf-gate-field">
+            <span>Your name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="First and last name" autoComplete="name" required minLength={2} maxLength={40} />
+            <small>So the squad knows who you are.</small>
+          </label>
+          <label className="wcf-gate-field">
+            <span>Who do you know at the club?</span>
+            <input value={referral} onChange={(e) => setReferral(e.target.value)} placeholder="e.g. Dan from work" maxLength={200} />
+            <small>Optional. Helps the admins know you&apos;re genuine.</small>
+          </label>
+          <label className="wcf-gate-field">
+            <span>Mobile</span>
+            <input value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="07…" inputMode="tel" autoComplete="tel" maxLength={20} />
+            <small>Optional. So an admin can WhatsApp you when you&apos;re in. Only admins see it.</small>
+          </label>
+          {error && <div className="wcf-gate-error">{error}</div>}
+          <button className="wcf-gate-btn" type="submit" disabled={sending || name.trim().length < 2}>
+            {sending ? "Sending…" : "Request to join"}
+          </button>
+          <button type="button" className="wcf-gate-link" onClick={() => supabase.auth.signOut()}>Sign out</button>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div className="wcf-gate">
+      <div className="wcf-gate-mid">
+        <div className="wcf-gate-ring">
+          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+        </div>
+        <h1>You&apos;re on the list{first ? `, ${first}` : ""}</h1>
+        <p>An admin will check your request soon. This screen changes the moment you&apos;re in.</p>
+        <div className="wcf-gate-steps">
+          <div className="done"><i>✓</i>Account created</div>
+          <div className="now"><i>2</i>Waiting for an admin</div>
+          <div className="next"><i>3</i>Book your first game</div>
+        </div>
+      </div>
+      {pushState === "idle" && (
+        <button className="wcf-gate-btn" onClick={turnOnPush}>Turn on notifications</button>
+      )}
+      {pushState === "on" && <div className="wcf-gate-note">Notifications are on. We&apos;ll tell you when you&apos;re in.</div>}
+      {pushState === "blocked" && <div className="wcf-gate-note">Notifications are blocked on this phone. Just open the app again later to check.</div>}
+      {pushState === "unsupported" && <div className="wcf-gate-note">On iPhone, add the app to your Home Screen to get notifications. Or just open it again later.</div>}
+      <button className="wcf-gate-link" onClick={() => supabase.auth.signOut()}>Sign out</button>
     </div>
   );
 }
@@ -1625,9 +1830,25 @@ function App({ session }: { session: Session }) {
     if (data) setMyProfile(data as Profile);
   }, [myId]);
 
+  const [pendingMembers, setPendingMembers] = useState<PendingMember[]>([]);
+  const [justLetIn, setJustLetIn] = useState<{ id: string; name: string; mobile: string | null }[]>([]);
   const loadProfiles = useCallback(async () => {
     const { data } = await supabase.from("profiles").select("id, display_name, role, created_at, avatar_url").order("display_name");
-    if (data) setProfiles(data as Profile[]);
+    // Anyone waiting for approval (or declined) stays out of every player
+    // list; only admins can see them at all (RLS), in New members. Errors
+    // (e.g. before the status column exists) just mean nobody's hidden.
+    const { data: notIn } = await supabase.from("profiles").select("id, display_name, created_at, status").neq("status", "active");
+    const hide = new Set((notIn ?? []).map((p: { id: string }) => p.id));
+    if (data) setProfiles((data as Profile[]).filter((p) => !hide.has(p.id)));
+    if (notIn && notIn.length) {
+      const { data: reqs } = await supabase.from("join_requests").select("*");
+      const byId = new Map((reqs ?? []).map((r: { player_id: string; referral_note: string | null; mobile: string | null; requested_at: string }) => [r.player_id, r]));
+      setPendingMembers(
+        (notIn as { id: string; display_name: string; created_at: string; status: "pending" | "declined" }[])
+          .map((p) => ({ ...p, referral_note: byId.get(p.id)?.referral_note ?? null, mobile: byId.get(p.id)?.mobile ?? null, requested_at: byId.get(p.id)?.requested_at ?? null }))
+          .sort((a, b) => (b.requested_at ?? b.created_at).localeCompare(a.requested_at ?? a.created_at))
+      );
+    } else setPendingMembers([]);
   }, []);
 
   const loadGames = useCallback(async () => {
@@ -1643,9 +1864,7 @@ function App({ session }: { session: Session }) {
   const loadClubSettings = useCallback(async () => {
     const { data } = await supabase
       .from("club_settings")
-      .select(
-        "team_white_name, team_white_color, team_red_name, team_red_color, default_venue, default_kickoff, default_price, default_pitch, default_max_players, last_fixture_update_at"
-      )
+      .select("*")
       .single();
     if (data) setClubSettings(data as ClubSettings);
   }, []);
@@ -2829,6 +3048,30 @@ function App({ session }: { session: Session }) {
     await Promise.all([loadProfiles(), loadGames()]);
     logAction("Deleted account", name);
   }
+  // Member approval: the switch, and letting a waiting member in or not.
+  async function setRequireApproval(on: boolean) {
+    if (on && !(await askConfirm("Approve new members?", "New sign-ups will wait in a waiting room until an admin lets them in. Everyone already in isn't affected.", "Turn on"))) return;
+    await saveClubSettings({ require_approval: on });
+    await logAction(on ? "Turned on member approval" : "Turned off member approval", "");
+  }
+
+  async function decideMember(m: PendingMember, action: "approve" | "decline") {
+    if (action === "decline" && !(await askConfirm(`Decline ${m.display_name}?`, "They'll see a \"Not this time\" screen. You can still let them in later from here.", "Decline", true))) return;
+    const token = await getFreshAccessToken();
+    const res = await fetch("/api/admin/member-approval", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ playerId: m.id, action }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return notifyError(body.error ?? "Couldn't update them");
+    if (action === "approve") {
+      setJustLetIn((cur) => [{ id: m.id, name: m.display_name, mobile: body.mobile ?? null }, ...cur.filter((j) => j.id !== m.id)]);
+      setToast({ kind: "success", text: `${m.display_name.split(" ")[0]} is in` });
+    } else setToast({ kind: "success", text: `${m.display_name.split(" ")[0]} declined` });
+    await loadProfiles();
+  }
+
   async function addPlayer(email: string, displayName: string) {
     const token = await getFreshAccessToken();
     if (!token) {
@@ -6690,6 +6933,19 @@ function App({ session }: { session: Session }) {
             onAdminRename={adminRenamePlayer}
             onDeleteProfile={deleteProfile}
             onAddPlayer={addPlayer}
+            newMembers={
+              isAdmin ? (
+                <NewMembersSection
+                  requireApproval={!!cs.require_approval}
+                  available={cs.require_approval !== undefined}
+                  onSetRequireApproval={setRequireApproval}
+                  members={pendingMembers}
+                  justLetIn={justLetIn}
+                  onDismissLetIn={(id) => setJustLetIn((cur) => cur.filter((j) => j.id !== id))}
+                  onDecide={decideMember}
+                />
+              ) : null
+            }
             onGenerateLoginCode={generateLoginCode}
             onSaveClubSettings={saveClubSettings}
             onAddAward={addAward}
@@ -9057,6 +9313,122 @@ function AccordionSection({
   );
 }
 
+// "07700 900123" -> "447700900123" for a wa.me link.
+function whatsAppNumber(mobile: string) {
+  const d = mobile.replace(/[^\d]/g, "");
+  return d.startsWith("0") ? "44" + d.slice(1) : d;
+}
+
+function agoLabel(iso: string) {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `${hrs} ${hrs === 1 ? "hour" : "hours"} ago`;
+  return `${Math.round(hrs / 24)} days ago`;
+}
+
+// Admin > New members: the approval switch and everyone waiting to join.
+function NewMembersSection({
+  requireApproval,
+  available,
+  onSetRequireApproval,
+  members,
+  justLetIn,
+  onDismissLetIn,
+  onDecide,
+}: {
+  requireApproval: boolean;
+  available: boolean;
+  onSetRequireApproval: (on: boolean) => void;
+  members: PendingMember[];
+  justLetIn: { id: string; name: string; mobile: string | null }[];
+  onDismissLetIn: (id: string) => void;
+  onDecide: (m: PendingMember, action: "approve" | "decline") => void;
+}) {
+  const waiting = members.filter((m) => m.status === "pending");
+  const declined = members.filter((m) => m.status === "declined");
+  const [open, setOpen] = useState(waiting.length > 0);
+  const [showDeclined, setShowDeclined] = useState(false);
+  useEffect(() => {
+    if (waiting.length > 0) setOpen(true);
+  }, [waiting.length]);
+  const card = (m: PendingMember) => (
+    <div key={m.id} className={"wcf-join-req" + (m.status === "declined" ? " declined" : "")}>
+      <div className="wcf-join-req-top">
+        <span className="wcf-join-req-av">{m.display_name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
+        <div>
+          <b>{m.display_name}</b>
+          <span>{m.requested_at ? `Asked ${agoLabel(m.requested_at)}` : `Signed up ${agoLabel(m.created_at)}, hasn't filled in the form yet`}</span>
+        </div>
+      </div>
+      {m.requested_at && (
+        <div className="wcf-join-req-knows">{m.referral_note ? <>Knows: <em>&ldquo;{m.referral_note}&rdquo;</em></> : "Didn't say who they know."}</div>
+      )}
+      <div className="wcf-join-req-acts">
+        {m.status === "pending" && <button className="ghost" onClick={() => onDecide(m, "decline")}>Decline</button>}
+        <button className="gold" onClick={() => onDecide(m, "approve")}>Let in</button>
+      </div>
+    </div>
+  );
+  return (
+    <AccordionSection
+      icon={<SetIcon name="shield" />}
+      tone={waiting.length ? "amber" : undefined}
+      title="New members"
+      meta={!available ? "Needs its database update" : waiting.length ? `${waiting.length} waiting to join` : requireApproval ? "Approval on" : "Approval off"}
+      value={waiting.length ? String(waiting.length) : undefined}
+      open={open}
+      onToggle={() => setOpen((v) => !v)}
+    >
+      <div className="wcf-approve-row">
+        <div>
+          <b>Approve new members</b>
+          <span>{requireApproval ? "New sign-ups wait until an admin lets them in." : "Off: new sign-ups go straight in, like before."}</span>
+        </div>
+        <button
+          role="switch"
+          aria-checked={requireApproval}
+          aria-label="Approve new members"
+          disabled={!available}
+          className={"wcf-switch" + (requireApproval ? " on" : "")}
+          onClick={() => onSetRequireApproval(!requireApproval)}
+        />
+      </div>
+      <p className="wcf-admin-hint">Everyone already in isn&apos;t affected, and players you add yourself are always let in.</p>
+      {justLetIn.map((j) => (
+        <div key={j.id} className="wcf-join-done">
+          <span>
+            <b>{j.name}</b> is in.
+            {j.mobile && (
+              <>
+                {" "}
+                <a
+                  href={`https://wa.me/${whatsAppNumber(j.mobile)}?text=${encodeURIComponent(`You're in! Welcome to Wirral Community Football, ${j.name.split(" ")[0]}. Open the app to book your first game.`)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Message on WhatsApp
+                </a>
+              </>
+            )}
+          </span>
+          <button aria-label="Dismiss" onClick={() => onDismissLetIn(j.id)}>×</button>
+        </div>
+      ))}
+      {waiting.length === 0 && justLetIn.length === 0 && <p className="wcf-admin-hint">Nobody waiting to join.</p>}
+      {waiting.map(card)}
+      {declined.length > 0 && (
+        <>
+          <button className="wcf-join-declined-toggle" onClick={() => setShowDeclined((v) => !v)}>
+            {showDeclined ? "Hide" : "Show"} declined ({declined.length})
+          </button>
+          {showDeclined && declined.map(card)}
+        </>
+      )}
+    </AccordionSection>
+  );
+}
+
 function AccountPanel({
   profile,
   email,
@@ -9106,7 +9478,9 @@ function AccountPanel({
   onMarkMessageRead,
   onMarkAllRead,
   askConfirm,
+  newMembers,
 }: {
+  newMembers?: React.ReactNode;
   profile: Profile;
   email: string;
   isAdmin: boolean;
@@ -9611,6 +9985,7 @@ function AccountPanel({
 
       {isAdmin && (
         <div className="wcf-set-group">
+        {newMembers}
         <AccordionSection icon={<SetIcon name="users" />} title="Manage roles" meta={`${profiles.length} players`} open={showRoles} onToggle={() => setShowRoles((v) => !v)}>
           {pushStats && (
             <div className="wcf-roles-stats">
@@ -11766,6 +12141,59 @@ const css = `
   .wcf-splash-dot{animation:none;opacity:.7}
 }
 
+.wcf-gate{position:relative;flex:1;min-height:100dvh;display:flex;flex-direction:column;gap:12px;padding:calc(env(safe-area-inset-top,0px) + 28px) 22px calc(env(safe-area-inset-bottom,0px) + 24px);background:var(--bg);color:#fff;overflow-y:auto}
+.wcf-gate-photo{position:absolute;left:0;right:0;top:0;width:100%;height:46%;object-fit:cover;object-position:50% 55%}
+.wcf-gate-scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(13,13,26,.55) 0%,rgba(13,13,26,.5) 22%,rgba(13,13,26,.9) 40%,var(--bg) 52%)}
+.wcf-gate-form{position:relative;margin-top:auto;display:flex;flex-direction:column;gap:14px;max-width:440px;width:100%;margin-inline:auto}
+.wcf-gate h1{font-family:var(--display);font-weight:800;font-size:26px;line-height:1.12;margin:0;text-wrap:balance}
+.wcf-gate-sub{font-size:14px;color:#cbd5e1;line-height:1.5;margin:-4px 0 4px}
+.wcf-gate-field{display:flex;flex-direction:column;gap:6px}
+.wcf-gate-field>span{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8}
+.wcf-gate-field input{height:48px;border-radius:14px;border:1px solid rgba(148,163,184,.25);background:#161a2b;color:#fff;font:inherit;font-size:16px;padding:0 14px}
+.wcf-gate-field input:focus{outline:none;border-color:#f5d97a}
+.wcf-gate-field small{font-size:12px;color:#64748b}
+.wcf-gate-error{font-size:13px;color:#fca5a5}
+.wcf-gate-btn{height:52px;border-radius:14px;border:0;font:inherit;font-weight:800;font-size:16px;color:#1a1405;background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308);cursor:pointer;width:100%;max-width:440px;margin-inline:auto}
+.wcf-gate-btn:disabled{opacity:.5}
+.wcf-gate-link{border:0;background:none;color:#94a3b8;font:inherit;font-size:13px;text-decoration:underline;cursor:pointer;padding:8px;align-self:center}
+.wcf-gate-mid{margin:auto 0;text-align:center;max-width:380px;margin-inline:auto;width:100%}
+.wcf-gate-mid p{font-size:14.5px;color:#94a3b8;line-height:1.55;margin:10px auto 0;max-width:32ch}
+.wcf-gate-ring{width:100px;height:100px;border-radius:50%;margin:0 auto 20px;display:grid;place-items:center;color:#f5d97a;background:radial-gradient(circle,rgba(245,217,122,.16),transparent 70%);box-shadow:inset 0 0 0 2px rgba(245,217,122,.55),0 0 40px -8px rgba(245,217,122,.6)}
+.wcf-gate-ring.dim{color:#94a3b8;box-shadow:inset 0 0 0 2px rgba(148,163,184,.4);background:none}
+.wcf-gate-steps{margin-top:22px;text-align:left;display:flex;flex-direction:column;gap:8px}
+.wcf-gate-steps div{display:flex;gap:10px;align-items:center;font-size:14px;padding:11px 13px;border-radius:13px;background:#161a2b;border:1px solid rgba(148,163,184,.16)}
+.wcf-gate-steps i{width:24px;height:24px;border-radius:50%;flex:none;display:grid;place-items:center;font-style:normal;font-size:11.5px;font-weight:800}
+.wcf-gate-steps .done i{background:#86efac;color:#0d1a14}
+.wcf-gate-steps .now i{box-shadow:inset 0 0 0 2px #f5d97a;color:#f5d97a}
+.wcf-gate-steps .next{color:#64748b}
+.wcf-gate-steps .next i{box-shadow:inset 0 0 0 1.5px #64748b}
+.wcf-gate-note{font-size:13px;color:#94a3b8;text-align:center;line-height:1.5;max-width:340px;margin-inline:auto}
+.wcf-approve-row{display:flex;align-items:center;gap:12px;padding:4px 0 2px}
+.wcf-approve-row>div{flex:1;min-width:0}
+.wcf-approve-row b{display:block;font-size:14.5px}
+.wcf-approve-row span{display:block;font-size:12.5px;color:var(--muted,#94a3b8);margin-top:3px;line-height:1.4}
+.wcf-switch{width:50px;height:30px;border-radius:15px;border:0;background:rgba(148,163,184,.35);position:relative;flex:none;cursor:pointer;padding:0;transition:background .15s}
+.wcf-switch::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:left .15s}
+.wcf-switch.on{background:#eab308}
+.wcf-switch.on::after{left:23px}
+.wcf-switch:disabled{opacity:.4;cursor:not-allowed}
+.wcf-join-req{margin-top:10px;border-radius:15px;padding:13px;border:1px solid rgba(245,217,122,.4);background:rgba(245,217,122,.05)}
+.wcf-join-req.declined{border-color:rgba(148,163,184,.2);background:none;opacity:.85}
+.wcf-join-req-top{display:flex;gap:11px;align-items:center}
+.wcf-join-req-av{width:40px;height:40px;border-radius:50%;flex:none;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:13.5px;color:#fff;background:linear-gradient(135deg,#2a2f4a,#3b3470);box-shadow:0 0 0 1.5px rgba(245,217,122,.5)}
+.wcf-join-req-top b{display:block;font-size:15px}
+.wcf-join-req-top div>span{display:block;font-size:12px;color:var(--muted,#94a3b8);margin-top:2px}
+.wcf-join-req-knows{margin-top:10px;font-size:13px;line-height:1.45;padding:9px 11px;border-radius:10px;background:rgba(148,163,184,.08)}
+.wcf-join-req-knows em{font-style:normal;color:#b8860b;font-weight:700}
+.wcf-join-req-acts{display:flex;gap:8px;margin-top:11px}
+.wcf-join-req-acts button{flex:1;height:40px;border-radius:11px;border:0;font:inherit;font-weight:800;font-size:13.5px;cursor:pointer}
+.wcf-join-req-acts .gold{flex:1.4;color:#1a1405;background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308)}
+.wcf-join-req-acts .ghost{background:none;box-shadow:inset 0 0 0 1px rgba(148,163,184,.4);color:inherit}
+.wcf-join-done{display:flex;align-items:center;gap:10px;margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(134,239,172,.12);border:1px solid rgba(134,239,172,.4);font-size:13.5px}
+.wcf-join-done span{flex:1}
+.wcf-join-done a{font-weight:800;color:#16a34a;white-space:nowrap}
+.wcf-join-done button{border:0;background:none;font-size:18px;color:inherit;cursor:pointer;padding:0 4px}
+.wcf-join-declined-toggle{margin-top:10px;border:0;background:none;font:inherit;font-size:12.5px;font-weight:700;color:var(--muted,#94a3b8);cursor:pointer;padding:4px 0}
 .wcf-signin{position:relative;flex:1;overflow-y:auto;display:flex;flex-direction:column;background:var(--bg)}
 .wcf-signin-photo{position:absolute;left:0;right:0;top:0;width:100%;height:72%;object-fit:cover;object-position:50% 55%}
 .wcf-signin-scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(13,13,26,.6) 0%,rgba(13,13,26,.34) 20%,rgba(13,13,26,.6) 52%,rgba(13,13,26,.86) 66%,var(--bg) 80%)}
