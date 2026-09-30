@@ -112,6 +112,7 @@ export interface BookingInviteAction {
   spacesLeft: number;
   players: { id: string; name: string }[];
   message: string;
+  removedAlreadyBooked?: string[];
 }
 
 export interface SendReminderAction {
@@ -1630,11 +1631,15 @@ async function proposeBookingInvite(admin: SupabaseClient, args: { game_id: stri
   if (!game.published) throw new Error("That fixture isn't published yet - publish it first.");
   if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= toMs(nowInLondon())) throw new Error("That fixture's already kicked off.");
   const spacesLeft = game.max_players - (game.bookings ?? []).filter((b) => !b.waiting).length;
+  const onGame = new Set((game.bookings ?? []).map((b) => b.player_id));
   const nameOf = await namesById(admin, ids);
-  const players = ids.filter((id) => nameOf[id]).map((id) => ({ id, name: nameOf[id] }));
-  if (!players.length) throw new Error("None of those players were found.");
+  const alreadyOn = ids.filter((id) => onGame.has(id)).map((id) => nameOf[id] ?? "Unknown");
+  const players = ids.filter((id) => nameOf[id] && !onGame.has(id)).map((id) => ({ id, name: nameOf[id] }));
+  if (!players.length) throw new Error(`Everyone on that list is already on this game${alreadyOn.length ? ` (${alreadyOn.join(", ")})` : ""} - use find_players_to_invite for people who aren't.`);
   const gameLabel = `${game.venue}, ${new Date(game.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })} ${game.kickoff}`;
-  return { kind: "booking_invite", gameId: game.id, gameLabel, spacesLeft: Math.max(0, spacesLeft), players, message };
+  // Anyone already on the game is dropped; the model is told so it doesn't
+  // describe them as invited.
+  return { kind: "booking_invite", gameId: game.id, gameLabel, spacesLeft: Math.max(0, spacesLeft), players, message, ...(alreadyOn.length ? { removedAlreadyBooked: alreadyOn } : {}) };
 }
 
 export async function executeBookingInvite(admin: SupabaseClient, callerId: string, action: BookingInviteAction) {

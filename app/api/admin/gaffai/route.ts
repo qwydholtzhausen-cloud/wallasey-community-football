@@ -205,7 +205,13 @@ export async function POST(req: Request) {
           ? `\n\nStanding facts admins have told you to remember - apply these unless this conversation directly contradicts one. The [id:...] tag is for forget_standing_fact only, never read it aloud:\n${facts.map((f) => `- [id:${f.id}] ${f.fact}`).join("\n")}`
           : "";
 
-      const systemPrompt = `${GAFFAI_SYSTEM_PROMPT}\n\nCurrent date/time: ${weekday} ${nowUk.slice(0, 10)}, ${nowUk.slice(11)} (Europe/London). Use this as "now" for anything relative - "last month," "this week," "the most recent game," etc.\n\nYou're talking to ${callerName}. Their id, for tool params that need it (like find_admin_messages' sender_id), is ${callerId}.${factsSection}`;
+      // The system prompt stays byte-identical between questions (only the
+      // standing facts can change it), so it and the tool list are read from
+      // cache instead of re-sent at full price. The time and who's asking
+      // change every question, so they ride along with the question itself.
+      const systemPrompt = `${GAFFAI_SYSTEM_PROMPT}${factsSection}`;
+      const context = `[Context for this question - current date/time: ${weekday} ${nowUk.slice(0, 10)}, ${nowUk.slice(11)} (Europe/London); use it as "now" for anything relative. You're talking to ${callerName}; their id, for tool params that need it (like find_admin_messages' sender_id), is ${callerId}.]`;
+      messages[messages.length - 1] = { role: "user", content: `${context}\n\n${text}` };
 
       const startedAt = Date.now();
       const used = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };

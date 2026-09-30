@@ -81,7 +81,8 @@ export async function callClaude(messages: AnthropicMessage[], tools: AnthropicT
         // Caches tools + system + history, so each extra tool round of the
         // same question costs a fraction of the first.
         cache_control: { type: "ephemeral" },
-        system,
+        // Its own cache breakpoint, so the next question reuses tools + system.
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
         messages,
         tools,
       }),
