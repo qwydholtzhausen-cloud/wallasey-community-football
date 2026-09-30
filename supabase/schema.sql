@@ -1991,11 +1991,12 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, display_name, payment_code, status)
+  -- No payment_code: that block (above) was never applied to the live
+  -- database, and calling generate_payment_code() broke every sign-up.
+  insert into public.profiles (id, display_name, status)
   values (
     new.id,
     coalesce(new.raw_user_meta_data ->> 'display_name', split_part(new.email, '@', 1)),
-    public.generate_payment_code(),
     case
       when coalesce((new.raw_user_meta_data ->> 'added_by_admin')::boolean, false) then 'active'
       when coalesce((select require_approval from public.club_settings where id), false) then 'pending'
