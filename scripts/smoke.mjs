@@ -106,6 +106,12 @@ await step("Feed", async () => {
   const testPost = await page.locator(".wcf-feed-item", { hasText: "Qwyd Test Account" }).count();
   if (testPost) throw new Error("The test account is showing on the Feed");
 });
+await step("Boot Room", async () => {
+  await page.locator(".wcf-feed-hero-tabs button", { hasText: "Boot Room" }).first().dispatchEvent("click");
+  await page.waitForSelector("[class^='wcf-br-'], [class*=' wcf-br-']", { timeout: 8000 });
+  await page.waitForTimeout(600);
+  await page.locator(".wcf-feed-hero-tabs button", { hasText: "Feed" }).first().dispatchEvent("click");
+});
 await step("Line-up", async () => tab("Line-up", "Next game line-up"));
 await step("Results", async () => tab("Results", "Results"));
 await step("Account", async () => {

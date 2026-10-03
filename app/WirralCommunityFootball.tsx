@@ -19,6 +19,9 @@ import {
 import { computeWrapped } from "../lib/wrapped";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
 import WrappedStory, { drawWrappedCard, wrappedBannerCss, type WrappedExtras } from "./WrappedStory";
+import { Avatar, TickNum, avatarFor, useChanged } from "./ui/shared";
+import { EmptyScene } from "./ui/EmptyScene";
+import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
 import { wrappedThemeFor } from "../lib/wrappedThemes";
 import { MOTM_TAGS } from "./motmTags";
 import { googleCalendarUrl } from "../lib/calendar";
@@ -257,50 +260,6 @@ interface AuditLogEntry {
   actor: { display_name: string } | null;
 }
 
-const FEED_REACTION_EMOJI = ["👍", "🔥"] as const;
-
-type FeedItem = {
-  key: string;
-  ts: number;
-  kind: "derived";
-  icon: React.ReactNode;
-  tone: "amber" | "green" | "blue";
-  text: React.ReactNode;
-  // Set on the kinds that arrive in bursts, so the feed can fold them into
-  // one card per week (see foldFeedRows).
-  group?: "join" | "apps";
-  groupLabel?: string;
-};
-
-type FeedRow = { type: "item"; item: FeedItem } | { type: "group"; group: "join" | "apps"; items: FeedItem[] };
-
-// New members and appearance milestones come in bursts - a batch of
-// sign-ups, or a game where several players hit 5 - and read as a wall of
-// near-identical rows that buries the results and MOTM people come to
-// see. Two or more of the same kind within one section fold into a single
-// card, placed where the newest of them was; everything else is untouched.
-function foldFeedRows(items: FeedItem[]): FeedRow[] {
-  const counts = { join: 0, apps: 0 };
-  for (const i of items) if (i.group) counts[i.group]++;
-  const rows: FeedRow[] = [];
-  const placed = new Set<string>();
-  for (const i of items) {
-    if (i.group && counts[i.group] >= 2) {
-      if (placed.has(i.group)) continue;
-      placed.add(i.group);
-      rows.push({ type: "group", group: i.group, items: items.filter((x) => x.group === i.group) });
-    } else rows.push({ type: "item", item: i });
-  }
-  return rows;
-}
-
-// "A, B, C and 4 more" - enough names to recognise people without a
-// card that runs to ten lines.
-function listNames(names: string[], max = 4) {
-  if (names.length <= max) return names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-  return `${names.slice(0, max).join(", ")} and ${names.length - max} more`;
-}
-
 interface ClubSettings {
   team_white_name: string;
   team_white_color: string;
@@ -345,51 +304,6 @@ function readableTextColor(hex: string) {
   const b = parseInt(c.substring(4, 6), 16) || 0;
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return luminance > 0.6 ? "#0d0d1a" : "#ffffff";
-}
-
-// Avatar chips have no profile-photo feature to draw on, so we derive a
-// stable initial + gradient per player from their name (same person always
-// gets the same colour, no lookup table to maintain).
-const AVATAR_GRADIENTS = [
-  "linear-gradient(140deg,#5B6CFF,#8A5CFF)",
-  "linear-gradient(140deg,#e63946,#f0ac3c)",
-  "linear-gradient(140deg,#22c55e,#1b8f52)",
-  "linear-gradient(140deg,#f0ac3c,#e63946)",
-  "linear-gradient(140deg,#2E74CC,#5B6CFF)",
-  "linear-gradient(140deg,#8A5CFF,#e63946)",
-];
-function avatarFor(name: string) {
-  const initial = (name.trim()[0] || "?").toUpperCase();
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-  return { initial, gradient: AVATAR_GRADIENTS[hash % AVATAR_GRADIENTS.length] };
-}
-
-// A real uploaded photo, when set, always wins over the generated
-// initial+gradient chip - same className either way so every existing
-// avatar-chip CSS rule (size/shape/centering) just works for both.
-function Avatar({
-  name,
-  avatarUrl,
-  className,
-  background,
-  style,
-}: {
-  name: string;
-  avatarUrl?: string | null;
-  className: string;
-  background?: string;
-  style?: React.CSSProperties;
-}) {
-  if (avatarUrl) {
-    return <img className={className} src={avatarUrl} alt={name} style={style} />;
-  }
-  const initial = (name.trim()[0] || "?").toUpperCase();
-  return (
-    <span className={className} style={background ? { background, ...style } : style}>
-      {initial}
-    </span>
-  );
 }
 
 // Derives a light/dark gradient pair from a club's configured team colour so
@@ -495,13 +409,6 @@ function weatherIcon(code: number): string {
   if (code <= 82) return "🌦️";
   if (code <= 86) return "❄️";
   return "⛈️";
-}
-
-// Feed items are dated historical facts, not live status - without a
-// visible date, something like "Pot passed £50" reads as a claim about
-// right now rather than a moment that happened and may since have moved.
-function fmtFeedDate(ts: number) {
-  return new Date(ts).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -5531,52 +5438,19 @@ function App({ session }: { session: Session }) {
           />
         )}
 
-        {tab === "feed" && (() => {
-              const reactionRow = (item: FeedItem) => {
-                const tally = feedReactionTally[item.key] ?? {};
-                return (
-                  <div className="wcf-feed-reactions">
-                    {FEED_REACTION_EMOJI.map((emoji) => {
-                      const count = tally[emoji] ?? 0;
-                      const mine = feedReactions.some((r) => r.item_key === item.key && r.emoji === emoji && r.user_id === myId);
-                      return (
-                        <button
-                          key={emoji}
-                          className={"wcf-feed-pill" + (mine ? " mine" : "")}
-                          onClick={(e) => {
-                            if (!mine) reactBurst(e.currentTarget, emoji, count + 1);
-                            toggleReaction(item.key, emoji);
-                          }}
-                        >
-                          {emoji}{count > 0 && <> <TickNum value={count} /></>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                );
-              };
-
-              return (
-          <>
-            {feedView === "feed" && !showArchived && <PullNet onRefresh={loadAll} />}
-            {!showArchived && (
-              <div className={"wcf-feed-hero" + (feedView === "bootroom" ? " compact" : "")}>
-                <div className="wcf-feed-hero-eyebrow">Community Feed</div>
-                <div className="wcf-feed-hero-title">
-                  {bootRoomVisible ? <>Goals, shoutouts &amp; the Boot Room</> : <>Goals &amp; shoutouts</>}
-                </div>
-                {/* Only one destination while the Boot Room is admin-only,
-                    so no pill row at all rather than a lone "Feed" pill. */}
-                {bootRoomVisible && (
-                  <div className="wcf-feed-hero-tabs">
-                    <button className={feedView === "feed" ? "active" : ""} onClick={() => setFeedView("feed")}>Feed</button>
-                    <button className={feedView === "bootroom" ? "active" : ""} onClick={() => setFeedView("bootroom")}>Boot Room</button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {feedView === "bootroom" && bootRoomVisible && !showArchived && myId && (
+        {tab === "feed" && (
+          <FeedTab
+            isAdmin={isAdmin}
+            myId={myId}
+            profiles={profiles}
+            askConfirm={askConfirm}
+            onRefresh={loadAll}
+            feedView={feedView}
+            setFeedView={setFeedView}
+            showArchived={showArchived}
+            setShowArchived={setShowArchived}
+            bootRoomVisible={bootRoomVisible}
+            bootRoom={
               <BootRoom
                 myId={myId}
                 isAdmin={isAdmin}
@@ -5586,135 +5460,19 @@ function App({ session }: { session: Session }) {
                 notifyError={notifyError}
                 notifySuccess={notifySuccess}
               />
-            )}
-
-            {feedView === "feed" && isAdmin && (
-              <button className="wcf-ghost wcf-archive-toggle" onClick={() => setShowArchived((v) => !v)}>
-                {showArchived ? "Back to feed" : `Show archived${hiddenFeedKeys.length ? ` (${hiddenFeedKeys.length})` : ""}`}
-              </button>
-            )}
-
-            {feedView === "feed" && visibleFeedItems.length === 0 && (
-              showArchived ? (
-                <p className="wcf-empty">Nothing archived.</p>
-              ) : (
-                <EmptyScene kind="feed" title="Nothing on the Feed yet" text="Results, goals and shoutouts land here after the first game." />
-              )
-            )}
-
-            {feedView === "feed" && visibleFeedItems.length > 0 && (() => {
-              const groups: { label: string; items: typeof visibleFeedItems }[] = [];
-              const freshKeys = !showArchived && feedFresh ? feedFresh.keys : new Set<string>();
-              const freshOrder = visibleFeedItems.filter((i) => freshKeys.has(i.key)).map((i) => i.key);
-              const freshStyle = (key: string) => ({ "--d": `${0.15 + Math.max(0, freshOrder.indexOf(key)) * 0.14}s` }) as React.CSSProperties;
-              visibleFeedItems.forEach((item) => {
-                const days = Math.floor((Date.now() - item.ts) / 86400000);
-                const label = freshKeys.has(item.key) ? feedFreshLabel : days <= 7 ? "This week" : days <= 14 ? "Last week" : "Earlier";
-                let g = groups.find((x) => x.label === label);
-                if (!g) { g = { label, items: [] }; groups.push(g); }
-                g.items.push(item);
-              });
-              return (
-                <FeedFreshCtx.Provider value={{ keys: freshKeys, flapDelay: feedFresh?.band ? 2100 : 700 }}>
-                <div style={{ "--ftd": feedFresh?.band ? "2.1s" : ".7s" } as React.CSSProperties}>
-                {groups.map((g) => (
-                <div key={g.label}>
-                  <div className={"wcf-feed-section-label" + (g.label === feedFreshLabel && freshKeys.size > 0 ? " fresh" : "")}>{g.label}</div>
-                  {(showArchived ? g.items.map((item): FeedRow => ({ type: "item", item })) : foldFeedRows(g.items)).map((row) => {
-                    if (row.type === "group") {
-                      const first = row.items[0];
-                      const names = row.items.map((x) => x.groupLabel ?? "");
-                      return (
-                        <article
-                          key={`group-${row.group}-${first.key}`}
-                          className={"wcf-feed-item grouped" + (freshKeys.has(first.key) ? " fresh" : "")}
-                          style={freshKeys.has(first.key) ? freshStyle(first.key) : undefined}
-                        >
-                          <div className={"wcf-feed-icon " + first.tone}>{first.icon}</div>
-                          <div className="wcf-feed-body">
-                            <div className="wcf-feed-text">
-                              {row.group === "join" ? (
-                                <><strong>{row.items.length} new faces</strong> joined the club: {listNames(names)}</>
-                              ) : (
-                                <><strong>Appearance milestones:</strong> {listNames(names)}</>
-                              )}
-                            </div>
-                            {row.group === "join" && (
-                              <div className={"wcf-faces" + (freshKeys.has(first.key) ? " walk" : "")}>
-                                {row.items.slice(0, 6).map((x, i) => {
-                                  const pr = profiles.find((pp) => `join-${pp.id}` === x.key);
-                                  if (!pr) return null;
-                                  return (
-                                    <span key={x.key} className="wcf-face" style={{ "--d": `${0.6 + i * 0.25}s` } as React.CSSProperties}>
-                                      <Avatar name={pr.display_name} avatarUrl={pr.avatar_url} className="wcf-avatar-chip" background={avatarFor(pr.display_name).gradient} />
-                                      <span>{pr.display_name.split(" ")[0]}</span>
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            )}
-                            <div className="wcf-feed-date">{fmtFeedDate(first.ts)}</div>
-                            {isAdmin && (
-                              <div className="wcf-feed-item-actions">
-                                <button
-                                  className="wcf-feed-archive-btn"
-                                  onClick={async () => {
-                                    if (await askConfirm(`Archive these ${row.items.length}?`, "You can restore them one by one from \"Show archived\".", "Archive", false)) {
-                                      hideFeedItems(row.items.map((x) => x.key));
-                                    }
-                                  }}
-                                >
-                                  Archive
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </article>
-                      );
-                    }
-                    const item = row.item;
-                    const isHidden = hiddenFeedKeys.includes(item.key);
-                    return (
-                      <article
-                        key={item.key}
-                        className={"wcf-feed-item" + (freshKeys.has(item.key) ? " fresh" : "")}
-                        style={freshKeys.has(item.key) ? freshStyle(item.key) : undefined}
-                      >
-                        {(feedReactionTally[item.key]?.["🔥"] ?? 0) >= 5 && <span className="wcf-fire-tag">🔥 On fire</span>}
-                        {freshKeys.has(item.key) && item.key.startsWith("pot-") && feedMotionOk() && <CoinRain />}
-                        <div className={"wcf-feed-icon " + item.tone}>{item.icon}</div>
-                        <div className="wcf-feed-body">
-                          <div className="wcf-feed-text">{item.text}</div>
-                          <div className="wcf-feed-date">{fmtFeedDate(item.ts)}</div>
-                          <div className="wcf-feed-item-actions">
-                            {reactionRow(item)}
-                            {isAdmin && (
-                              <button
-                                className="wcf-feed-archive-btn"
-                                onClick={async () => {
-                                  if (isHidden) return unhideFeedItem(item.key);
-                                  if (await askConfirm("Archive this from the feed?", "You can restore it later from \"Show archived\".", "Archive", false)) {
-                                    hideFeedItem(item.key);
-                                  }
-                                }}
-                              >
-                                {isHidden ? "↺ Restore" : "Archive"}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-                ))}
-                </div>
-                </FeedFreshCtx.Provider>
-              );
-            })()}
-          </>
-              );
-            })()}
+            }
+            visibleFeedItems={visibleFeedItems}
+            hiddenFeedKeys={hiddenFeedKeys}
+            hideFeedItem={hideFeedItem}
+            hideFeedItems={hideFeedItems}
+            unhideFeedItem={unhideFeedItem}
+            feedReactions={feedReactions}
+            feedReactionTally={feedReactionTally}
+            toggleReaction={toggleReaction}
+            feedFresh={feedFresh}
+            feedFreshLabel={feedFreshLabel}
+          />
+        )}
 
         {tab === "lineup" && (
           <>
@@ -13373,356 +13131,6 @@ function MultiBookPanel({
   );
 }
 
-// Subtle touches: a number that rolls in when it changes (never on first
-// render), and a match-day countdown that ticks every second in the last
-// hour before kickoff.
-// True for a moment after `value` changes (by `test`, default any change),
-// so the animation class survives the re-renders that follow.
-// ── Feed motion ──
-// The posts you hadn't seen when you opened Feed this visit, and when the
-// full-time score should start flipping (later when the FULL TIME band plays).
-const FeedFreshCtx = createContext<{ keys: Set<string>; flapDelay: number }>({ keys: new Set(), flapDelay: 0 });
-function feedMotionOk() {
-  return typeof window !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-// A full-time score that flips up goal by goal, the first time you see it.
-function FlapNum({ itemKey, value, color }: { itemKey: string; value: number; color: string }) {
-  const { keys, flapDelay } = useContext(FeedFreshCtx);
-  const play = keys.has(itemKey) && feedMotionOk();
-  const [n, setN] = useState(play ? 0 : value);
-  useEffect(() => {
-    if (!play) return setN(value);
-    let iv: ReturnType<typeof setInterval> | undefined;
-    const t = setTimeout(() => {
-      let i = 0;
-      if (value > 0) iv = setInterval(() => { i++; setN(i); if (i >= value && iv) clearInterval(iv); }, 200);
-    }, flapDelay);
-    return () => { clearTimeout(t); if (iv) clearInterval(iv); };
-  }, [play, value, flapDelay]);
-  if (!play) return <b style={{ color }}>{value}</b>;
-  return <span className="wcf-flap"><b key={n} style={{ color }}>{n}</b></span>;
-}
-// The pot milestone counts up from the last £50 the first time you see it.
-function PotCount({ itemKey, value }: { itemKey: string; value: number }) {
-  const play = useContext(FeedFreshCtx).keys.has(itemKey) && feedMotionOk();
-  const [n, setN] = useState(play ? value - 50 : value);
-  useEffect(() => {
-    if (!play) return setN(value);
-    let cur = value - 50;
-    let iv: ReturnType<typeof setInterval> | undefined;
-    const t = setTimeout(() => { iv = setInterval(() => { cur += 5; setN(cur); if (cur >= value && iv) clearInterval(iv); }, 60); }, 700);
-    return () => { clearTimeout(t); if (iv) clearInterval(iv); };
-  }, [play, value]);
-  return <>{n}</>;
-}
-function CoinRain() {
-  return (
-    <span className="wcf-coins" aria-hidden>
-      {Array.from({ length: 10 }, (_, i) => (
-        <i key={i} style={{ left: `${12 + ((i * 37) % 76)}%`, top: `${6 + ((i * 13) % 26)}px`, "--d": `${0.5 + i * 0.09}s` } as React.CSSProperties}>£</i>
-      ))}
-    </span>
-  );
-}
-// Reaction feedback, done on the button itself so it never re-renders the
-// whole app: 👍 punches with a ring, 🔥 throws flames, and the 5th 🔥 on a
-// post sets the card alight.
-function reactBurst(btn: HTMLElement, emoji: string, newCount: number) {
-  if (!feedMotionOk()) return;
-  btn.classList.remove("punch");
-  void btn.offsetWidth;
-  btn.classList.add("punch");
-  const add = (el: HTMLElement, ms: number) => { btn.appendChild(el); setTimeout(() => el.remove(), ms); };
-  if (emoji !== "🔥") {
-    const r = document.createElement("span");
-    r.className = "wcf-react-ring";
-    add(r, 600);
-    return;
-  }
-  for (let i = 0; i < 9; i++) {
-    const e = document.createElement("span");
-    e.className = "wcf-ember";
-    e.textContent = i % 3 ? "🔥" : "✦";
-    e.style.cssText = `--x:${Math.round(Math.random() * 70 - 35)}px;--y:${Math.round(-50 - Math.random() * 50)}px;--r:${Math.round(Math.random() * 60 - 30)}deg;--d:${(0.7 + Math.random() * 0.5).toFixed(2)}s;font-size:${Math.round(10 + Math.random() * 8)}px`;
-    add(e, 1300);
-  }
-  const card = btn.closest(".wcf-feed-item") as HTMLElement | null;
-  if (newCount === 5 && card) {
-    card.classList.add("onfire");
-    setTimeout(() => card.classList.remove("onfire"), 3800);
-    for (let i = 0; i < 14; i++)
-      setTimeout(() => {
-        const sp = document.createElement("span");
-        sp.className = "wcf-spark";
-        sp.style.cssText = `left:${8 + Math.random() * 84}%;top:${Math.random() * 30}%;--x:${Math.round(Math.random() * 30 - 15)}px`;
-        card.appendChild(sp);
-        setTimeout(() => sp.remove(), 1700);
-      }, i * 180);
-  }
-}
-// Pull down at the top of the Feed: a goal net stretches out, and letting
-// go fires a ball into it while everything reloads. Touch only, and all done
-// on the DOM so dragging never re-renders the app.
-function PullNet({ onRefresh }: { onRefresh: () => Promise<unknown> }) {
-  const wrap = useRef<HTMLDivElement>(null);
-  const refresh = useRef(onRefresh);
-  refresh.current = onRefresh;
-  useEffect(() => {
-    const el = wrap.current;
-    const scroller = el?.closest(".wcf-main") as HTMLElement | null;
-    if (!el || !scroller) return;
-    const hs = Array.from(el.querySelectorAll<SVGPathElement>(".nh"));
-    const vs = Array.from(el.querySelectorAll<SVGPathElement>(".nv"));
-    const label = el.querySelector(".wcf-net-label") as HTMLElement;
-    const ball = el.querySelector(".wcf-net-ball") as SVGElement;
-    let startY: number | null = null;
-    let pull = 0;
-    let busy = false;
-    const draw = (bulge: number) => {
-      hs.forEach((p, i) => { const y = 12 + i * 17; p.setAttribute("d", `M12 ${y} Q 160 ${y - bulge * (0.3 + i / 9)} 308 ${y}`); });
-      vs.forEach((p, i) => { const x = 12 + i * (296 / 12); const d = Math.max(0, 1 - Math.abs(x - 160) / 170); p.setAttribute("d", `M${x} 6 Q ${x} 78 ${x + (x - 160) * 0.04} ${130 - bulge * d * 0.9}`); });
-    };
-    const set = (px: number) => {
-      pull = Math.max(0, Math.min(130, px));
-      el.style.height = pull + "px";
-      draw((pull / 130) * 8);
-      label.textContent = pull > 100 ? "Let go to refresh" : "Pull to refresh";
-    };
-    draw(0);
-    const start = (e: TouchEvent) => {
-      if (busy || scroller.scrollTop > 0) return;
-      startY = e.touches[0].clientY;
-      el.style.transition = "";
-    };
-    const move = (e: TouchEvent) => {
-      if (startY == null) return;
-      const dy = e.touches[0].clientY - startY;
-      set(dy > 0 ? dy * 0.5 : 0);
-    };
-    const end = async () => {
-      if (startY == null) return;
-      startY = null;
-      if (pull <= 100) {
-        el.style.transition = "height .3s";
-        return set(0);
-      }
-      busy = true;
-      el.style.transition = "height .25s";
-      el.style.height = "130px";
-      label.textContent = "";
-      label.classList.remove("ok");
-      if (feedMotionOk()) {
-        ball.animate([{ opacity: 1, transform: "translateY(30px) scale(1.5)" }, { opacity: 1, transform: "translateY(-60px) scale(.8)" }], { duration: 260, easing: "cubic-bezier(.3,.7,.4,1)", fill: "forwards" });
-        const t0 = performance.now() + 260;
-        const wob = () => {
-          const t = (performance.now() - t0) / 1000;
-          if (t < 0) return requestAnimationFrame(wob);
-          draw(34 * Math.exp(-t * 4) * Math.cos(t * 16));
-          if (t < 1.1) requestAnimationFrame(wob);
-          else draw(0);
-        };
-        requestAnimationFrame(wob);
-      }
-      await Promise.all([refresh.current().catch(() => null), new Promise((r) => setTimeout(r, 900))]);
-      ball.getAnimations().forEach((a) => a.cancel());
-      label.textContent = "✓ Up to date";
-      label.classList.add("ok");
-      setTimeout(() => {
-        el.style.transition = "height .45s cubic-bezier(.3,1.3,.5,1)";
-        set(0);
-        label.textContent = "";
-        busy = false;
-      }, 900);
-    };
-    scroller.addEventListener("touchstart", start, { passive: true });
-    scroller.addEventListener("touchmove", move, { passive: true });
-    scroller.addEventListener("touchend", end);
-    scroller.addEventListener("touchcancel", end);
-    return () => {
-      scroller.removeEventListener("touchstart", start);
-      scroller.removeEventListener("touchmove", move);
-      scroller.removeEventListener("touchend", end);
-      scroller.removeEventListener("touchcancel", end);
-    };
-  }, []);
-  return (
-    <div className="wcf-net" ref={wrap} aria-hidden>
-      <svg viewBox="0 0 320 130" preserveAspectRatio="none">
-        <rect x="0" y="0" width="320" height="130" fill="#0a1424" />
-        {Array.from({ length: 7 }, (_, i) => <path key={"h" + i} className="nh" fill="none" stroke="rgba(226,232,240,.55)" strokeWidth="1" />)}
-        {Array.from({ length: 13 }, (_, i) => <path key={"v" + i} className="nv" fill="none" stroke="rgba(226,232,240,.4)" strokeWidth="1" />)}
-        <rect x="6" y="0" width="6" height="130" fill="#e5e7eb" />
-        <rect x="308" y="0" width="6" height="130" fill="#e5e7eb" />
-        <rect x="6" y="0" width="308" height="6" fill="#e5e7eb" />
-      </svg>
-      <svg className="wcf-net-ball" viewBox="0 0 24 24" fill="#fff" stroke="#0d0d1a" strokeWidth="1.3">
-        <circle cx="12" cy="12" r="10.5" />
-        <path d="M12 7.5l3 2.2-1.1 3.6h-3.8L9 9.7z" fill="#0d0d1a" />
-      </svg>
-      <div className="wcf-net-label" />
-    </div>
-  );
-}
-
-// ── Empty screens ──
-// A small football scene in place of a grey "nothing here" line. Reduce
-// Motion gets the finished picture.
-type EmptyKind = "feed" | "fixtures" | "results" | "sheet" | "inbox" | "paid";
-function EmptyScene({ kind, title, text, small, children }: { kind: EmptyKind; title: string; text: string; small?: boolean; children?: React.ReactNode }) {
-  const [lit, setLit] = useState(false);
-  const [sb, setSb] = useState<[string, string]>(["–", "–"]);
-  useEffect(() => {
-    const r = requestAnimationFrame(() => setLit(true));
-    return () => cancelAnimationFrame(r);
-  }, []);
-  useEffect(() => {
-    if (kind !== "results" || !feedMotionOk()) return;
-    let i = 0;
-    const iv = setInterval(() => {
-      i++;
-      if (i < 16) setSb([String(Math.floor(Math.random() * 10)), String(Math.floor(Math.random() * 10))]);
-      else { setSb(["–", "–"]); clearInterval(iv); }
-    }, 85);
-    return () => clearInterval(iv);
-  }, [kind]);
-  const v = (o: Record<string, string>) => o as React.CSSProperties;
-  const light = (x: number, d: number, flip: boolean) => (
-    <g key={x} style={v({ "--d": d + "s" })}>
-      <polygon className="wcf-es-cone" points={`${x - 6},22 ${x + 6},22 ${flip ? x - 70 : x + 70},150 ${flip ? x - 10 : x + 10},150`} fill="url(#wcfEsCone)" />
-      <rect x={x - 1.5} y="22" width="3" height="128" fill="#475569" />
-      <rect className="wcf-es-lamp" x={x - 10} y="12" width="20" height="10" rx="2" />
-    </g>
-  );
-  const shirt = (x: number) => `M${x - 13} 40 L${x - 5} 34 L${x} 37 L${x + 5} 34 L${x + 13} 40 L${x + 9} 47 L${x + 7} 45 V70 H${x - 7} V45 L${x - 9} 47 Z`;
-  let art: React.ReactNode = null;
-  if (kind === "feed")
-    art = (
-      <svg viewBox="0 0 280 170">
-        <defs>
-          <linearGradient id="wcfEsCone" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#fff8db" stopOpacity=".55" /><stop offset="1" stopColor="#fff8db" stopOpacity="0" /></linearGradient>
-          <linearGradient id="wcfEsTurf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#14532d" /><stop offset="1" stopColor="#0b2e1a" /></linearGradient>
-        </defs>
-        <path d="M30 150 L70 92 H210 L250 150 Z" fill="url(#wcfEsTurf)" />
-        {light(24, 0.2, false)}{light(256, 0.6, true)}{light(70, 1, false)}{light(210, 1.3, true)}
-        <g className="wcf-es-lines" fill="none" stroke="rgba(255,255,255,.75)" strokeWidth="1.4">
-          <path pathLength={1} d="M36 146 L72 95 H208 L244 146 Z" style={v({ "--d": "1.6s", "--t": "1.1s" })} />
-          <path pathLength={1} d="M140 95 V146" style={v({ "--d": "2s", "--t": ".5s" })} />
-          <ellipse pathLength={1} cx="140" cy="119" rx="22" ry="8" style={v({ "--d": "2.2s", "--t": ".6s" })} />
-        </g>
-        <g className="wcf-es-ball"><circle cx="140" cy="117" r="5" fill="#fff" /><path d="M138 115l2-1 2 1-1 2h-2z" fill="#0d0d1a" /></g>
-      </svg>
-    );
-  if (kind === "fixtures")
-    art = (
-      <svg viewBox="0 0 280 150">
-        <rect x="20" y="10" width="240" height="130" rx="8" fill="#0f3d24" />
-        <g className="wcf-es-lines" fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="2">
-          <rect pathLength={1} x="32" y="20" width="216" height="110" style={v({ "--d": ".1s", "--t": "1.6s" })} />
-          <path pathLength={1} d="M140 20 V130" style={v({ "--d": ".2s", "--t": "2.2s" })} />
-          <circle pathLength={1} cx="140" cy="75" r="20" style={v({ "--d": "1.4s", "--t": ".9s" })} />
-          <path pathLength={1} d="M32 50 H62 V100 H32" style={v({ "--d": "1.9s", "--t": ".7s" })} />
-          <path pathLength={1} d="M248 50 H218 V100 H248" style={v({ "--d": "2.2s", "--t": ".7s" })} />
-        </g>
-        <g className="wcf-es-marker">
-          <g transform="translate(140 75)">
-            <rect x="-9" y="-7" width="18" height="12" rx="2" fill="#e63946" />
-            <circle cx="-6" cy="7" r="3" fill="#1e293b" /><circle cx="6" cy="7" r="3" fill="#1e293b" />
-            <path d="M9 -5 L18 -16" stroke="#cbd5e1" strokeWidth="2" />
-          </g>
-        </g>
-      </svg>
-    );
-  if (kind === "results")
-    art = (
-      <svg viewBox="0 0 280 140">
-        <rect x="20" y="14" width="240" height="112" rx="12" fill="#0b1220" stroke="rgba(148,163,184,.25)" />
-        <text x="80" y="42" textAnchor="middle" className="wcf-es-sblabel">WHITES</text>
-        <text x="200" y="42" textAnchor="middle" className="wcf-es-sblabel">REDS</text>
-        <rect x="52" y="54" width="56" height="54" rx="7" fill="#111a2e" />
-        <rect x="172" y="54" width="56" height="54" rx="7" fill="#111a2e" />
-        <line x1="52" y1="81" x2="108" y2="81" stroke="#000" strokeOpacity=".6" />
-        <line x1="172" y1="81" x2="228" y2="81" stroke="#000" strokeOpacity=".6" />
-        <text x="80" y="94" textAnchor="middle" className="wcf-es-sb" fill="#f5d97a">{sb[0]}</text>
-        <text x="200" y="94" textAnchor="middle" className="wcf-es-sb" fill="#e63946">{sb[1]}</text>
-        <circle cx="140" cy="72" r="3" fill="#475569" /><circle cx="140" cy="90" r="3" fill="#475569" />
-      </svg>
-    );
-  if (kind === "sheet")
-    art = (
-      <svg viewBox="0 0 280 100">
-        <rect x="14" y="22" width="252" height="6" rx="3" fill="#7c5a32" />
-        {Array.from({ length: 8 }, (_, i) => {
-          const x = 30 + i * 31;
-          return (
-            <g key={i}>
-              <circle cx={x} cy="30" r="3.5" fill="#94a3b8" />
-              {i === 0 ? (
-                <g className="wcf-es-swing">
-                  <path d={shirt(x)} fill="#e63946" />
-                  <text x={x} y="61" textAnchor="middle" className="wcf-es-num">1</text>
-                </g>
-              ) : (
-                <path d={shirt(x)} fill="none" stroke="rgba(148,163,184,.3)" strokeDasharray="3 3" />
-              )}
-            </g>
-          );
-        })}
-        <rect x="14" y="84" width="252" height="10" rx="3" fill="#334155" />
-      </svg>
-    );
-  if (kind === "inbox")
-    art = (
-      <svg viewBox="0 0 280 120">
-        <rect x="70" y="14" width="140" height="92" rx="10" fill="#e63946" />
-        <rect x="92" y="40" width="96" height="22" rx="4" fill="#7f1d1d" />
-        <rect className="wcf-es-flapdoor" x="90" y="38" width="100" height="14" rx="3" fill="#cbd5e1" />
-        <text x="140" y="90" textAnchor="middle" className="wcf-es-sblabel" fill="#fff" opacity=".8">LETTERS</text>
-      </svg>
-    );
-  if (kind === "paid")
-    art = (
-      <svg viewBox="0 0 280 130">
-        <path d="M102 22 H178 V30 Q192 36 192 54 V104 Q192 116 178 116 H102 Q88 116 88 104 V54 Q88 36 102 30 Z" fill="rgba(148,163,184,.08)" stroke="rgba(203,213,225,.5)" strokeWidth="2" />
-        {[[120, 92, 0.3], [140, 96, 0.5], [160, 92, 0.7], [130, 82, 0.9], [150, 84, 1.1], [140, 72, 1.3]].map(([x, y, d]) => (
-          <ellipse key={`${x}-${y}`} className="wcf-es-coin" style={v({ animationDelay: d + "s" })} cx={x} cy={y} rx="12" ry="5" fill="#f5d97a" stroke="#b8892a" />
-        ))}
-        <rect x="98" y="14" width="84" height="10" rx="3" fill="#475569" />
-        <g className="wcf-es-stamp">
-          <g transform="rotate(-12 140 64)">
-            <rect x="76" y="48" width="128" height="32" rx="6" fill="none" stroke="#22c55e" strokeWidth="3" />
-            <text x="140" y="70" textAnchor="middle" className="wcf-es-stamptext">ALL SQUARE</text>
-          </g>
-        </g>
-      </svg>
-    );
-  return (
-    <div className={"wcf-es " + kind + (small ? " small" : "") + (lit ? " lit" : "")}>
-      {art}
-      <h3>{title}</h3>
-      <p>{text}</p>
-      {children}
-    </div>
-  );
-}
-
-function useChanged<T>(value: T, test: (prev: T, next: T) => boolean = (a, b) => a !== b, holdMs = 900) {
-  const prev = useRef(value);
-  const [flag, setFlag] = useState(false);
-  useEffect(() => {
-    const hit = test(prev.current, value);
-    prev.current = value;
-    if (!hit) return;
-    setFlag(true);
-    const t = setTimeout(() => setFlag(false), holdMs);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-  return flag;
-}
-function TickNum({ value }: { value: number }) {
-  const changed = useChanged(value);
-  return <span key={value} className={"wcf-tick" + (changed ? " roll" : "")}>{value}</span>;
-}
 function LiveCountdown({ date, kickoff, fallback }: { date: string; kickoff: string; fallback: string }) {
   const [, setTick] = useState(0);
   const left = () => {
