@@ -1786,6 +1786,9 @@ function App({ session }: { session: Session }) {
   const [resultsMonth, setResultsMonth] = useState<string>("all");
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [motmVotersFor, setMotmVotersFor] = useState<{ gameId: string; candidateId: string; candidateName: string } | null>(null);
+  // The vote you just cast gets the medal drop (replaces the old toast).
+  const [justVoted, setJustVoted] = useState<{ gameId: string; candidateId: string; n: number } | null>(null);
+  const [motmMomentClosed, setMotmMomentClosed] = useState<string | null>(null);
   const [playerCardId, setPlayerCardId] = useState<string | null>(null);
   const [playerCardTeam, setPlayerCardTeam] = useState<{ name: string; color: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -2639,7 +2642,8 @@ function App({ session }: { session: Session }) {
       .upsert({ game_id: gameId, voter_id: myId, candidate_id: candidateId, tag: null }, { onConflict: "game_id,voter_id" });
     if (error) return notifyError(error.message);
     await Promise.all([loadMotmVotes(), loadBallotCount(gameId)]);
-    notifySuccess(`Voted for ${candidateName} — tap another name to change your pick`);
+    void candidateName;
+    setJustVoted((cur) => ({ gameId, candidateId, n: (cur?.n ?? 0) + 1 }));
   }
   async function setMotmVoteTag(gameId: string, tag: string | null) {
     setMotmVotes((cur) => cur.map((v) => (v.game_id === gameId && v.voter_id === myId ? { ...v, tag } : v)));
@@ -3297,6 +3301,38 @@ function App({ session }: { session: Session }) {
     for (const [gameId, tally] of Object.entries(motmTallyByGame)) map[gameId] = motmWinners(tally, goalsIn(gameId));
     return map;
   }, [motmTallyByGame, goalRows]);
+  // Your own Man of the Match moment: a game whose vote closed in the last
+  // 3 days that you won, not yet shown on this phone. Marked shown as soon
+  // as it's picked, so it only ever appears once.
+  const [motmMomentShown] = useState<Set<string>>(() => new Set());
+  const myMotmMoment = useMemo(() => {
+    for (const g of pastGames) {
+      if (g.team_white_score == null || g.team_red_score == null) continue;
+      if (kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) > nowUk) continue;
+      if (kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES + 3 * 24 * 60) <= nowUk) continue;
+      const ids = motmWinnerIdsByGame[g.id] ?? [];
+      if (!ids.includes(myId)) continue;
+      const key = `wcf-motm-moment-${myId}-${g.id}`;
+      if (!motmMomentShown.has(g.id)) {
+        try {
+          if (localStorage.getItem(key)) continue;
+          localStorage.setItem(key, "1");
+        } catch {
+          continue;
+        }
+        motmMomentShown.add(g.id);
+      }
+      const tally = motmTallyByGame[g.id] ?? {};
+      return {
+        game: g,
+        votes: tally[myId] ?? 0,
+        total: Object.values(tally).reduce((a, b) => a + b, 0),
+        goals: goalRows.filter((r) => r.game_id === g.id && r.player_id === myId).reduce((a, r) => a + r.goals, 0),
+        joint: ids.length > 1,
+      };
+    }
+    return null;
+  }, [pastGames, motmWinnerIdsByGame, motmTallyByGame, goalRows, myId, nowUk, motmMomentShown]);
 
   const potLedger = useMemo(() => {
     // Only games that have been played. Counting a future game as soon as
@@ -6475,6 +6511,7 @@ function App({ session }: { session: Session }) {
                                               <span className="wcf-vote-name">{isMe ? "You" : c.player.display_name}</span>
                                               {goals > 0 && <span className="wcf-vote-goals">{goals} {goals === 1 ? "goal" : "goals"}</span>}
                                             </span>
+                                            {picked && justVoted?.gameId === g.id && justVoted.candidateId === c.player_id && <MotmMedal key={justVoted.n} className="wcf-vote-medal" />}
                                             {picked && <span className="wcf-vote-tick" aria-label="Your vote">✓</span>}
                                           </button>
                                         );
@@ -6522,13 +6559,29 @@ function App({ session }: { session: Session }) {
                             const winVotes = winners[0]?.votes ?? topVotes;
                             const teamLabel = (t: string | null) => (t === "white" ? cs.team_white_name : t === "red" ? cs.team_red_name : null);
                             const winnerTeams = [...new Set(winners.map((w) => teamLabel(w.candidate.team)).filter(Boolean))];
+                            // Same gold family as Player of the Month: the winner's
+                            // face up top, then every player who got a vote.
+                            const recent = kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES + 7 * 24 * 60) > nowUk;
                             return (
-                              // Same gold family as Player of the Month: the winner's
-                              // face up top, then every player who got a vote.
-                              <div className="wcf-motm-card">
+                              <MotmReveal storageKey={`wcf-motm-reveal-${myId}-${g.id}`} eligible={recent}>
+                              {(phase, skip) => phase === "drum" ? (
+                              <div className="wcf-motm-card wcf-mr-drumming" onPointerDown={skip}>
+                                <div className="wcf-motm-card-k">{winners.length > 1 ? "Joint Man of the Match" : "Man of the Match"}</div>
+                                <div className="wcf-motm-card-main">
+                                  <div className="wcf-motm-card-faces"><span className="wcf-motm-card-face wcf-mr-mystery">?</span></div>
+                                  <div className="wcf-mr-wait">And it goes to<span className="wcf-mr-drum"><i /><i /><i /></span></div>
+                                </div>
+                              </div>
+                              ) : (
+                              <div className={"wcf-motm-card" + (phase === "reveal" ? " wcf-mr-reveal" : "")}>
                                 <div className="wcf-motm-card-k">{winners.length > 1 ? "Joint Man of the Match" : "Man of the Match"}</div>
                                 <div className="wcf-motm-card-main">
                                   <div className="wcf-motm-card-faces">
+                                    {phase === "reveal" && (
+                                      <span className="wcf-mr-rays" aria-hidden="true">
+                                        {Array.from({ length: 10 }, (_, i) => <i key={i} style={{ ["--a" as string]: `${i * 36}deg` }} />)}
+                                      </span>
+                                    )}
                                     {winners.slice(0, 2).map((w) => (
                                       <Avatar key={w.candidate.id} name={w.candidate.player.display_name} avatarUrl={avatarByPlayerId.get(w.candidate.player_id)} className="wcf-motm-card-face" background={avatarFor(w.candidate.player.display_name).gradient} />
                                     ))}
@@ -6549,12 +6602,13 @@ function App({ session }: { session: Session }) {
                                   </div>
                                 </div>
                                 <div className="wcf-motm-rank">
-                                  {ranked.filter((x) => x.votes > 0).map((x) => {
+                                  {ranked.filter((x) => x.votes > 0).map((x, rkIndex) => {
                                     const voters = votersFor(x.candidate.player_id);
                                     const top = winnerIds.includes(x.candidate.player_id);
                                     return (
                                       <button
                                         key={x.candidate.id}
+                                        style={{ ["--i" as string]: rkIndex }}
                                         className={"wcf-motm-rk" + (top ? " top" : "")}
                                         onClick={() => setMotmVotersFor({ gameId: g.id, candidateId: x.candidate.player_id, candidateName: x.candidate.player.display_name })}
                                         aria-label={`See who voted for ${x.candidate.player.display_name}`}
@@ -6577,6 +6631,8 @@ function App({ session }: { session: Session }) {
                                 </div>
                                 <div className="wcf-motm-card-tip">Tap a name to see who voted for them</div>
                               </div>
+                              )}
+                              </MotmReveal>
                             );
                           })()}
 
@@ -7078,6 +7134,19 @@ function App({ session }: { session: Session }) {
           />
         );
       })()}
+
+      {!rateSheetFor && myMotmMoment && motmMomentClosed !== myMotmMoment.game.id && (
+        <MotmWinnerMoment
+          dateLabel={new Date(myMotmMoment.game.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase()}
+          scoreLabel={`${myMotmMoment.game.team_white_score}–${myMotmMoment.game.team_red_score}`}
+          votes={myMotmMoment.votes}
+          total={myMotmMoment.total}
+          goals={myMotmMoment.goals}
+          joint={myMotmMoment.joint}
+          onSee={() => { setMotmMomentClosed(myMotmMoment.game.id); goToResult(myMotmMoment.game.id); }}
+          onClose={() => setMotmMomentClosed(myMotmMoment.game.id)}
+        />
+      )}
 
       {rateSheetFor && rateGame && rateSheetFor === rateGame.id && (
         <RateGameSheet
@@ -7683,6 +7752,66 @@ function MotmVotersModal({
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// The Man of the Match medal (red and white ribbon, gold medal), used for
+// the drop on your vote and the winner's own moment.
+function MotmMedal({ className }: { className: string }) {
+  return (
+    <span className={className} aria-hidden="true">
+      <svg viewBox="0 0 56 120">
+        <path d="M18 0 L28 70 L38 0" fill="none" stroke="#E42A36" strokeWidth="9" />
+        <path d="M23 0 L28 40 M33 0 L28 40" stroke="#f5f6f8" strokeWidth="3" />
+        <circle cx="28" cy="90" r="20" fill="#d4a93c" />
+        <circle cx="28" cy="90" r="20" fill="none" stroke="#f5d97a" strokeWidth="2" />
+        <circle cx="28" cy="90" r="14.5" fill="none" stroke="#a57f22" strokeWidth="1.2" />
+        <path d="M28 80.5l2.8 5.7 6.3.9-4.5 4.4 1 6.2-5.6-2.9-5.6 2.9 1-6.2-4.5-4.4 6.3-.9z" fill="#fff4cc" />
+      </svg>
+    </span>
+  );
+}
+
+// "And Man of the Match is…": the first time you see a game's result
+// (within a week of voting closing), the card holds on a drumroll, then
+// flips the winner in. Once per game per phone; tap skips it; Reduce
+// Motion goes straight to the result.
+type MotmRevealPhase = "drum" | "reveal" | "done";
+function MotmReveal({ storageKey, eligible, children }: { storageKey: string; eligible: boolean; children: (phase: MotmRevealPhase, skip: () => void) => React.ReactNode }) {
+  const [phase, setPhase] = useState<MotmRevealPhase>(() => {
+    if (!eligible || typeof window === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return "done";
+    try {
+      return localStorage.getItem(storageKey) ? "done" : "drum";
+    } catch {
+      return "done";
+    }
+  });
+  useEffect(() => {
+    if (phase !== "drum") return;
+    try {
+      localStorage.setItem(storageKey, "1");
+    } catch {}
+    const t = setTimeout(() => setPhase("reveal"), 1300);
+    return () => clearTimeout(t);
+  }, [phase, storageKey]);
+  return <>{children(phase, () => setPhase("done"))}</>;
+}
+
+// The winner's own moment: full screen, once per game, the first time they
+// open the app after the result (the 8am push). "See the votes" goes to it.
+function MotmWinnerMoment({ dateLabel, scoreLabel, votes, total, goals, joint, onSee, onClose }: { dateLabel: string; scoreLabel: string; votes: number; total: number; goals: number; joint: boolean; onSee: () => void; onClose: () => void }) {
+  return (
+    <div className="wcf-won" onClick={onClose}>
+      <MotmMedal className="wcf-won-medal" />
+      <div className="wcf-won-k">{dateLabel} · {scoreLabel}</div>
+      <div className="wcf-won-h">{joint ? "You're joint Man of the Match" : "You're Man of the Match"}</div>
+      <p className="wcf-won-p">
+        <b>{votes} of {total} votes</b> from your teammates.
+        {goals > 0 && <><br />{goals} {goals === 1 ? "goal" : "goals"} on the night.</>}
+      </p>
+      <button className="wcf-won-btn" onClick={(e) => { e.stopPropagation(); onSee(); }}>See the votes</button>
+      <button className="wcf-won-close" onClick={onClose}>Close</button>
     </div>
   );
 }
@@ -14344,6 +14473,39 @@ a.wcf-set-link{text-decoration:none}
 .wcf-fxs-btn:disabled{opacity:.45;cursor:not-allowed}
 .wcf-fxs-del{display:block;width:100%;padding:4px 0 16px;background:#131624;border:0;color:var(--red-hi);font-weight:700;font-size:12.5px;cursor:pointer}
 @keyframes wcfRateUp{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+/* Man of the Match: medal drop on your vote, the result reveal, the winner's moment */
+.wcf-vote-pick{position:relative}
+.wcf-vote-medal{position:absolute;right:26px;top:-8px;width:20px;height:43px;transform-origin:10px 0;pointer-events:none;animation:wcfMedalSwing 1.5s cubic-bezier(.3,0,.3,1) both}
+.wcf-vote-medal svg,.wcf-won-medal svg{display:block;width:100%;height:100%;overflow:visible}
+@keyframes wcfMedalSwing{0%{transform:translateY(-70px);opacity:0}12%{opacity:1}25%{transform:translateY(0) rotate(16deg)}45%{transform:rotate(-10deg)}62%{transform:rotate(5deg)}80%{transform:rotate(-2deg)}100%{transform:none}}
+.wcf-motm-card-faces{position:relative}
+.wcf-mr-mystery{background:radial-gradient(circle at 50% 35%,#3a3550,#1a1830);color:#f5d97a;font-size:22px}
+.wcf-mr-drumming{cursor:pointer}
+.wcf-mr-wait{display:flex;align-items:center;gap:8px;font-family:var(--display);font-weight:800;font-size:15px;color:var(--dim)}
+.wcf-mr-drum{display:inline-flex;gap:4px}
+.wcf-mr-drum i{width:5px;height:5px;border-radius:50%;background:#f5d97a;animation:wcfMrDrum .5s ease-in-out infinite}
+.wcf-mr-drum i:nth-child(2){animation-delay:.12s}.wcf-mr-drum i:nth-child(3){animation-delay:.24s}
+@keyframes wcfMrDrum{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
+.wcf-mr-reveal .wcf-motm-card-face{animation:wcfMrFlip .6s cubic-bezier(.5,0,.2,1) both}
+@keyframes wcfMrFlip{from{transform:perspective(300px) rotateY(90deg)}to{transform:none}}
+.wcf-mr-rays{position:absolute;left:27px;top:27px;width:0;height:0;pointer-events:none;z-index:1}
+.wcf-mr-rays i{position:absolute;left:-1px;top:-6px;width:2px;height:12px;border-radius:2px;background:#f5d97a;opacity:0;animation:wcfMrRay .7s .3s ease-out both}
+@keyframes wcfMrRay{0%{opacity:0;transform:rotate(var(--a)) translateY(-24px)}30%{opacity:1}100%{opacity:0;transform:rotate(var(--a)) translateY(-44px)}}
+.wcf-mr-reveal .wcf-motm-card-names{animation:wcfRvIn .4s .35s both}
+.wcf-mr-reveal .wcf-motm-card-sub{animation:wcfRvIn .4s .5s both}
+.wcf-mr-reveal .wcf-motm-rk{animation:wcfRvIn .3s both;animation-delay:calc(.7s + var(--i,0) * .1s)}
+.wcf-mr-reveal .wcf-motm-rk-bar i{transform-origin:left;animation:wcfBarGrow .6s cubic-bezier(.3,.8,.3,1) both;animation-delay:calc(.8s + var(--i,0) * .1s)}
+.wcf-mr-reveal .wcf-motm-card-tip{animation:wcfRvIn .3s 1.2s both}
+.wcf-won{position:fixed;inset:0;z-index:140;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;background:radial-gradient(90% 60% at 50% 30%,rgba(234,179,8,.25),rgba(8,8,16,.96) 70%);animation:wcfWonIn .3s both}
+@keyframes wcfWonIn{from{opacity:0}to{opacity:1}}
+.wcf-won-medal{display:block;width:92px;height:197px;transform-origin:46px 0;animation:wcfMedalSwing 1.6s cubic-bezier(.3,0,.3,1) both}
+.wcf-won-k{margin-top:14px;font-size:11px;font-weight:800;letter-spacing:.2em;color:#f5d97a;animation:wcfRvIn .4s 1s both}
+.wcf-won-h{margin-top:8px;font-family:var(--display);font-weight:800;font-size:30px;line-height:1.05;color:#fff;max-width:300px;text-wrap:balance;animation:wcfRvIn .4s 1.15s both}
+.wcf-won-p{margin:10px 0 0;font-size:14px;line-height:1.5;color:var(--dim);animation:wcfRvIn .4s 1.3s both}
+.wcf-won-p b{color:#fff}
+.wcf-won-btn{margin-top:22px;border:0;border-radius:14px;padding:13px 22px;background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308);color:#1a1405;font-weight:800;font-size:14px;cursor:pointer;animation:wcfRvIn .4s 1.5s both}
+.wcf-won-close{margin-top:10px;background:none;border:0;color:var(--dim);font-weight:700;font-size:13px;cursor:pointer;animation:wcfRvIn .4s 1.6s both}
+@media (prefers-reduced-motion:reduce){.wcf-vote-medal,.wcf-won,.wcf-won *,.wcf-mr-reveal *{animation:none!important}}
 .wcf-rate-overlay{position:fixed;inset:0;z-index:130;background:rgba(3,4,8,.6);display:flex;align-items:flex-end;justify-content:center;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 .wcf-rate{width:100%;max-width:480px;border-radius:26px 26px 0 0;overflow:hidden;background:#111427;border-top:1px solid rgba(245,217,122,.4);padding-bottom:env(safe-area-inset-bottom,0px);animation:wcfRateUp .45s cubic-bezier(.2,.8,.2,1)}
 .wcf-rate-photo{position:relative;height:150px;background:linear-gradient(180deg,rgba(17,20,39,.05) 20%,#111427 100%),url('/pitch-floodlit.jpg') center 55%/cover}
