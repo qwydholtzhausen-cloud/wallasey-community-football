@@ -180,6 +180,7 @@ interface GameRow {
   // A one-off special (e.g. Sunday 11-a-side): shown in gold, without the
   // usual red/green booking colours. Undefined until the column exists.
   special?: boolean;
+  published_at?: string | null;
   bookings: BookingRow[];
 }
 
@@ -1791,6 +1792,12 @@ function App({ session }: { session: Session }) {
   const [motmMomentClosed, setMotmMomentClosed] = useState<string | null>(null);
   const [ticketShow, setTicketShow] = useState<{ mode: "booked" | "paid" | "birthday"; gameIds: string[] } | null>(null);
   const [specialShow, setSpecialShow] = useState<string | null>(null);
+  const [fxCalendar, setFxCalendar] = useState<{ month: string; dates: string[]; ids: string[] } | null>(null);
+  const [fxCascade, setFxCascade] = useState<string[]>([]);
+  const [fxChip, setFxChip] = useState(0);
+  const [fxNewStore, setFxNewStore] = useState<Record<string, number>>({});
+  const [envelope, setEnvelope] = useState<{ ids: string[]; items: { from: string; text: string; when: string }[] } | null>(null);
+  const [predLockShown, setPredLockShown] = useState<string | null>(null);
   const [potmShow, setPotmShow] = useState<"everyone" | "winner" | null>(null);
   const [potmLand, setPotmLand] = useState(false);
   const [recordFalls, setRecordFalls] = useState<Record<string, { v: number; who: string }>>({});
@@ -3844,6 +3851,119 @@ function App({ session }: { session: Session }) {
     }, 120);
   }
 
+  // New fixtures since this phone last opened Fixtures (first run records).
+  // A run of 2+ (not specials, which get the poster) brings up the calendar.
+  // The NEW pill stays until you book it or for 3 days.
+  useEffect(() => {
+    if (tab !== "fixtures") {
+      if (fxChip) setFxChip(0);
+      return;
+    }
+    if (loading || !myId || games.length === 0) return;
+    const upcoming = games.filter((g) => g.published && kickoffCutoff(g.date, g.kickoff, 0) > nowUk);
+    const seenKey = `wcf-fx-seen-${myId}`;
+    const newKey = `wcf-fx-newlist-${myId}`;
+    let seen: string[] | null = null;
+    let store: Record<string, number> = {};
+    try {
+      const raw = localStorage.getItem(seenKey);
+      seen = raw ? JSON.parse(raw) : null;
+      store = JSON.parse(localStorage.getItem(newKey) || "{}");
+      localStorage.setItem(seenKey, JSON.stringify(upcoming.map((g) => g.id)));
+    } catch {
+      return;
+    }
+    const fresh = seen ? upcoming.filter((g) => !seen!.includes(g.id) && !g.special) : [];
+    const now = Date.now();
+    for (const g of fresh) store[g.id] = now;
+    for (const id of Object.keys(store)) if (now - store[id] > 3 * 86400000 || !upcoming.some((g) => g.id === id)) delete store[id];
+    try {
+      localStorage.setItem(newKey, JSON.stringify(store));
+    } catch {}
+    setFxNewStore(store);
+    if (fresh.length >= 2 && motionOk()) {
+      const byMonth: Record<string, string[]> = {};
+      for (const g of fresh) (byMonth[g.date.slice(0, 7)] ??= []).push(g.date);
+      const month = Object.keys(byMonth).sort((a, b) => byMonth[b].length - byMonth[a].length || a.localeCompare(b))[0];
+      setFxCalendar({ month, dates: [...new Set(byMonth[month])].sort(), ids: fresh.map((g) => g.id) });
+    } else if (fresh.length) {
+      setFxChip(fresh.length);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, games, loading, myId]);
+  const fxNewIds = useMemo(
+    () => new Set(Object.keys(fxNewStore).filter((id) => !games.find((g) => g.id === id)?.bookings.some((b) => b.player_id === myId))),
+    [fxNewStore, games, myId]
+  );
+  function fxCalendarDone() {
+    if (!fxCalendar) return;
+    const ids = fxCalendar.ids;
+    setFxCalendar(null);
+    setFxChip(ids.length);
+    setFxCascade(ids);
+    const firstId = [...ids].sort((a, b) => (games.find((g) => g.id === a)?.date ?? "").localeCompare(games.find((g) => g.id === b)?.date ?? ""))[0];
+    if (firstId && games.find((g) => g.id === firstId) && !upcomingGames.slice(0, 1).some((g) => g.id === firstId)) {
+      const g = games.find((x) => x.id === firstId)!;
+      const cut = new Date(nowUk.slice(0, 10) + "T00:00:00Z");
+      cut.setUTCDate(cut.getUTCDate() + 28);
+      if (g.date > cut.toISOString().slice(0, 10)) setShowLaterFixtures(true);
+    }
+    setTimeout(() => document.getElementById("fx-" + firstId)?.scrollIntoView({ block: "center", behavior: "smooth" }), 150);
+    setTimeout(() => setFxCascade([]), 3500);
+  }
+
+  // Your prediction, padlocked: the first open after kickoff (within 3
+  // hours) on a game you predicted. Only ever your own guess.
+  const predLock = useMemo(() => {
+    if (!myId) return null;
+    for (const p of scorePredictions) {
+      if (p.player_id !== myId) continue;
+      const g = games.find((x) => x.id === p.game_id);
+      if (!g || g.team_white_score != null) continue;
+      if (kickoffCutoff(g.date, g.kickoff, 0) > nowUk || kickoffCutoff(g.date, g.kickoff, 180) <= nowUk) continue;
+      const key = `wcf-predlock-${myId}-${g.id}`;
+      try {
+        if (localStorage.getItem(key)) continue;
+      } catch {
+        continue;
+      }
+      return { key, gameId: g.id, value: `${cs.team_red_name} ${p.predicted_red}–${p.predicted_white} ${cs.team_white_name}` };
+    }
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scorePredictions, games, myId, nowUk, predLockShown]);
+
+  // A message from an admin (a real sender, never the automated ones),
+  // unread and not yet shown as an envelope on this phone.
+  useEffect(() => {
+    if (loading || !myId || envelope) return;
+    const key = `wcf-env-seen-${myId}`;
+    const manual = myUnreadMessages.filter((m) => m.sender_id);
+    let seen: string[] | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      seen = raw ? JSON.parse(raw) : null;
+      if (!seen) localStorage.setItem(key, JSON.stringify(manual.map((m) => m.id)));
+    } catch {
+      return;
+    }
+    if (!seen || !motionOk()) return;
+    const fresh = manual.filter((m) => !seen!.includes(m.id)).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    if (!fresh.length) return;
+    try {
+      localStorage.setItem(key, JSON.stringify([...seen, ...fresh.map((m) => m.id)].slice(-200)));
+    } catch {}
+    setEnvelope({
+      ids: fresh.map((m) => m.id),
+      items: fresh.map((m) => ({
+        from: profiles.find((p) => p.id === m.sender_id)?.display_name ?? "The admins",
+        text: m.message,
+        when: new Date(m.created_at).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }),
+      })),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myUnreadMessages, loading, myId]);
+
   const ticketGames = useMemo<TicketGame[]>(() => {
     if (!ticketShow) return [];
     return ticketShow.gameIds.flatMap((id) => {
@@ -4971,7 +5091,7 @@ function App({ session }: { session: Session }) {
       <main className="wcf-main" key={tab}>
         <div className="wcf-heading">
           <div>
-            <h2>{heading}</h2>
+            <h2>{heading}{tab === "fixtures" && fxChip > 0 && <span className="wcf-new-chip">{fxChip} NEW</span>}</h2>
           </div>
           {tab === "fixtures" && isAdmin && (
             <div className="wcf-heading-actions">
@@ -5185,6 +5305,8 @@ function App({ session }: { session: Session }) {
                       {games.map((g) => (
                         <GameCard
                           key={g.id}
+                          isNew={fxNewIds.has(g.id)}
+                          cascadeIndex={fxCascade.includes(g.id) ? fxCascade.indexOf(g.id) : undefined}
                           game={g}
                           myId={myId}
                           isAdmin={isAdmin}
@@ -7084,9 +7206,7 @@ function App({ session }: { session: Session }) {
                                         <span className="wcf-predict-reveal-row-label">
                                           Your guess: <b>{cs.team_white_name} {myGamePrediction.predictedWhite}–{myGamePrediction.predictedRed} {cs.team_red_name}</b>
                                         </span>
-                                        <span className={"wcf-predict-pts " + (pts === 3 ? "exact" : pts === 1 ? "partial" : "zero")}>
-                                          +{pts} pt{pts === 1 ? "" : "s"}
-                                        </span>
+                                        <PointsPill pts={pts} storageKey={`wcf-pts-${myId}-${g.id}`} recent={kickoffCutoff(g.date, g.kickoff, 7 * 24 * 60) > nowUk} />
                                       </div>
                                     );
                                   })()}
@@ -7572,6 +7692,30 @@ function App({ session }: { session: Session }) {
           dateLabel={myRecordMoment.dateLabel}
           scoreLine={myRecordMoment.scoreLine}
           onDone={recordMomentClose}
+        />
+      )}
+      {fxCalendar && tab === "fixtures" && !ticketShow && !specialGame && (
+        <FixturesCalendar month={fxCalendar.month} dates={fxCalendar.dates} total={fxCalendar.ids.length} onDone={fxCalendarDone} />
+      )}
+      {predLock && !fxCalendar && !ticketShow && !specialGame && !rateSheetFor && (
+        <PredictionLock
+          key={predLock.key}
+          value={predLock.value}
+          onDone={() => {
+            try {
+              localStorage.setItem(predLock.key, "1");
+            } catch {}
+            setPredLockShown(predLock.key);
+          }}
+        />
+      )}
+      {envelope && !fxCalendar && !predLock && !ticketShow && !specialGame && !rateSheetFor && !promoGame && (
+        <AdminEnvelope
+          items={envelope.items}
+          onDone={() => {
+            setEnvelope(null);
+            setTab("account");
+          }}
         />
       )}
       {specialGame && !ticketShow && (
@@ -8283,6 +8427,154 @@ function MotmVotersModal({
               <span>{v.display_name}</span>
             </button>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// New fixtures: when a run of games has been posted since this phone last
+// opened Fixtures, that month's calendar unfolds and each new game drops
+// onto its date as a gold pin, then it folds down into the list.
+function FixturesCalendar({ month, dates, total, onDone }: { month: string; dates: string[]; total: number; onDone: () => void }) {
+  const [pinned, setPinned] = useState(0);
+  const [leaving, setLeaving] = useState(false);
+  const finish = () => { if (leaving) return; setLeaving(true); setTimeout(onDone, 480); };
+  useEffect(() => {
+    const timers = dates.map((_, i) => setTimeout(() => setPinned(i + 1), 750 + i * 300));
+    timers.push(setTimeout(finish, 750 + dates.length * 300 + 800));
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const first = new Date(month + "-01T12:00:00Z");
+  const lead = (first.getUTCDay() + 6) % 7; // Monday first
+  const days = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  const pinnedDays = new Set(dates.slice(0, pinned).map((d) => Number(d.slice(8, 10))));
+  const counted = Math.round((pinned / Math.max(1, dates.length)) * total);
+  return (
+    <div className={"wcf-moment dim" + (leaving ? " fold" : "")} onClick={finish}>
+      <div className="wcf-cal">
+        <div className="wcf-cal-k">New fixtures</div>
+        <div className="wcf-cal-h"><b>{first.toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" })}</b><span>{counted} game{counted === 1 ? "" : "s"} added</span></div>
+        <div className="wcf-cal-g">
+          {["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"].map((d) => <div key={d} className="dn">{d}</div>)}
+          {Array.from({ length: lead }, (_, i) => <div key={"x" + i} className="c x" />)}
+          {Array.from({ length: days }, (_, i) => <div key={i} className={"c" + (pinnedDays.has(i + 1) ? " pin" : "")}>{i + 1}</div>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Predictions: the matchday slip when you lock in, and the padlock the
+// first time you open the app after kickoff on a game you predicted.
+function PredictionSlip({ value, sub, onDone }: { value: string; sub: string; onDone: () => void }) {
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    const a = setTimeout(() => setLeaving(true), 1700);
+    const b = setTimeout(onDone, 2150);
+    return () => { clearTimeout(a); clearTimeout(b); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div className={"wcf-moment dim" + (leaving ? " foldslip" : "")} onClick={() => { setLeaving(true); setTimeout(onDone, 400); }}>
+      <div className="wcf-slip">
+        <small>YOUR CALL · {sub}</small>
+        <b>{value}</b>
+        <div className="meta">Locks at kickoff</div>
+        <span className="st2">LOCKED IN</span>
+      </div>
+    </div>
+  );
+}
+function PredictionLock({ value, onDone }: { value: string; onDone: () => void }) {
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    const a = setTimeout(() => setLeaving(true), 1900);
+    const b = setTimeout(onDone, 2400);
+    return () => { clearTimeout(a); clearTimeout(b); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div className={"wcf-moment dim" + (leaving ? " out" : "")} onClick={() => { setLeaving(true); setTimeout(onDone, 380); }}>
+      <svg className="wcf-biglock" viewBox="0 0 60 70" aria-hidden="true">
+        <path className="sh" d="M16 32 V20 a14 14 0 0 1 28 0 V32" fill="none" stroke="#f5d97a" strokeWidth="6" strokeLinecap="round" />
+        <rect x="8" y="30" width="44" height="34" rx="7" fill="#f5d97a" />
+        <circle cx="30" cy="45" r="4.5" fill="#1a1405" />
+        <rect x="28.5" y="46" width="3" height="9" rx="1.5" fill="#1a1405" />
+      </svg>
+      <div className="wcf-moment-k" style={{ marginTop: 14 }}>LOCKED AT KICKOFF</div>
+      <div className="wcf-moment-h">{value}</div>
+      <div className="wcf-moment-s">Your prediction. Points land when the score&apos;s in.</div>
+    </div>
+  );
+}
+// The points on a result: the first time you see them (within a week), a
+// big +N bursts over the screen and drops into the pill.
+function PointsPill({ pts, storageKey, recent }: { pts: number; storageKey: string; recent: boolean }) {
+  const [phase, setPhase] = useState<"big" | "pill" | "done">(() => {
+    if (!recent || typeof window === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return "done";
+    try {
+      return localStorage.getItem(storageKey) ? "done" : "big";
+    } catch {
+      return "done";
+    }
+  });
+  useEffect(() => {
+    if (phase !== "big") return;
+    try {
+      localStorage.setItem(storageKey, "1");
+    } catch {}
+    const a = setTimeout(() => setPhase("pill"), 1700);
+    const b = setTimeout(() => setPhase("done"), 2600);
+    return () => { clearTimeout(a); clearTimeout(b); };
+  }, [phase, storageKey]);
+  const cls = "wcf-predict-pts " + (pts === 3 ? "exact" : pts === 1 ? "partial" : "zero");
+  return (
+    <>
+      {phase === "big" && (
+        <div className="wcf-moment dim" onClick={() => setPhase("pill")}>
+          {pts === 3 && <div className="wcf-pts-burst" aria-hidden="true">{Array.from({ length: 14 }, (_, i) => <i key={i} style={{ ["--a" as string]: `${i * 26}deg` }} />)}</div>}
+          <div className={"wcf-bigpts" + (pts ? "" : " zero")}>+{pts}</div>
+          <div className="wcf-moment-h" style={{ marginTop: 4 }}>{pts === 3 ? "Exact score" : pts === 1 ? "Right result" : "Not this time"}</div>
+        </div>
+      )}
+      <span className={cls + (phase === "pill" ? " wcf-pts-pop" : "")} style={phase === "big" ? { opacity: 0 } : undefined}>
+        +{pts} pt{pts === 1 ? "" : "s"}
+      </span>
+    </>
+  );
+}
+
+// A message from an admin (never the automated ones): an envelope, the
+// seal breaks, the letter unfolds. More than one waiting is one envelope.
+function AdminEnvelope({ items, onDone }: { items: { from: string; text: string; when: string }[]; onDone: () => void }) {
+  const [typed, setTyped] = useState(0);
+  const [leaving, setLeaving] = useState(false);
+  const first = items[0];
+  const text = first.text.length > 180 ? first.text.slice(0, 177) + "…" : first.text;
+  useEffect(() => {
+    if (typed >= text.length) return;
+    const t = setTimeout(() => setTyped((n) => Math.min(text.length, n + 2)), typed === 0 ? 2200 : 16);
+    return () => clearTimeout(t);
+  }, [typed, text.length]);
+  const shards = [["0% 0%, 100% 0%", "-30px", "-40px", "-60deg"], ["100% 0%, 100% 100%", "40px", "-20px", "50deg"], ["100% 100%, 0% 100%", "20px", "50px", "80deg"], ["0% 100%, 0% 0%", "-40px", "30px", "-70deg"]];
+  return (
+    <div className={"wcf-moment dim" + (leaving ? " flyaway" : "")}>
+      <div className="wcf-env">
+        <div className="envl" />
+        <div className="seal">
+          {shards.map(([p, dx, dy, r], i) => <i key={i} style={{ ["--p" as string]: p, ["--dx" as string]: dx, ["--dy" as string]: dy, ["--r" as string]: r }} />)}
+          <span>WCF</span>
+        </div>
+        <div className="paper">
+          <div className="pp"><small>{items.length > 1 ? `${items.length} MESSAGES FROM THE ADMINS` : `FROM ${first.from.toUpperCase()} · ${first.when.toUpperCase()}`}</small></div>
+          <div className="pp"><span className="line">{text.slice(0, typed)}</span></div>
+          <div className="pp">
+            <span className="sig">{first.from.split(" ")[0]}</span>
+            {items.length > 1 && <span className="more">+{items.length - 1} more in your inbox</span>}
+            <button className="gotit" onClick={() => { setLeaving(true); setTimeout(onDone, 600); }}>{items.length > 1 ? "Open inbox" : "Got it"}</button>
+          </div>
         </div>
       </div>
     </div>
@@ -11598,6 +11890,11 @@ function PredictPanel({
   const [red, setRed] = useState(myPrediction?.predicted_red ?? 1);
   const [editing, setEditing] = useState(!myPrediction);
   const [saving, setSaving] = useState(false);
+  const [slip, setSlip] = useState(false);
+  const slipView = slip ? <PredictionSlip value={`${redLabel} ${red}–${white} ${whiteLabel}`} sub="NEXT GAME" onDone={() => setSlip(false)} /> : null;
+  const [prevW, setPrevW] = useState(white);
+  const [prevR, setPrevR] = useState(red);
+  const reelCls = (v: number, p: number) => (v === p ? "wcf-reel" : v > p ? "wcf-reel up" : "wcf-reel down");
 
   if (!isBooked) {
     return (
@@ -11617,6 +11914,7 @@ function PredictPanel({
   if (myPrediction && !editing) {
     return (
       <div className="wcf-predict">
+        {slipView}
         <div className="wcf-predict-locked">
           <span className="wcf-predict-locked-icon">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" /></svg>
@@ -11638,6 +11936,7 @@ function PredictPanel({
     await onSave(gameId, white, red);
     setSaving(false);
     setEditing(false);
+    if (typeof window !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) setSlip(true);
   }
 
   return (
@@ -11657,7 +11956,7 @@ function PredictPanel({
           <div className="wcf-predict-team-name">{redLabel}</div>
           <div className="wcf-predict-stepper">
             <button onClick={() => setRed((n) => Math.max(0, n - 1))} aria-label={`Fewer ${redLabel} goals`}>−</button>
-            <span>{red}</span>
+            <span className={reelCls(red, prevR)} key={"r" + red} onAnimationEnd={() => setPrevR(red)}>{red}</span>
             <button onClick={() => setRed((n) => n + 1)} aria-label={`More ${redLabel} goals`}>+</button>
           </div>
         </div>
@@ -11666,7 +11965,7 @@ function PredictPanel({
           <div className="wcf-predict-team-name">{whiteLabel}</div>
           <div className="wcf-predict-stepper">
             <button onClick={() => setWhite((n) => Math.max(0, n - 1))} aria-label={`Fewer ${whiteLabel} goals`}>−</button>
-            <span>{white}</span>
+            <span className={reelCls(white, prevW)} key={"w" + white} onAnimationEnd={() => setPrevW(white)}>{white}</span>
             <button onClick={() => setWhite((n) => n + 1)} aria-label={`More ${whiteLabel} goals`}>+</button>
           </div>
         </div>
@@ -12930,7 +13229,11 @@ function GameCard({
   askConfirm,
   featured,
   countdownText,
+  isNew,
+  cascadeIndex,
 }: {
+  isNew?: boolean;
+  cascadeIndex?: number;
   game: GameRow;
   myId: string;
   isAdmin: boolean;
@@ -13072,7 +13375,11 @@ function GameCard({
   );
 
   return (
-    <article id={"fx-" + game.id} className={featured ? "wcf-card featured " + (game.special ? "special" : bookedClass) : ""} style={featured ? undefined : { marginBottom: 18 }}>
+    <article
+      id={"fx-" + game.id}
+      className={featured ? "wcf-card featured " + (game.special ? "special" : bookedClass) : cascadeIndex !== undefined ? "wcf-fx-cascade" : ""}
+      style={featured ? undefined : { marginBottom: 18, ...(cascadeIndex !== undefined ? { animationDelay: `${cascadeIndex * 200}ms` } : {}) }}
+    >
       {featured ? (
         <>
           {game.special && <span className="wcf-special-ribbon">★ {fmtDate(game.date).split(",")[0]} {game.pitch}</span>}
@@ -13171,8 +13478,8 @@ function GameCard({
                     {editIcon}
                   </button>
                 )}
-                <span className={"wcf-fx-pill " + (game.special ? "gold" : full ? "full" : spotsLeft <= 2 ? "open low" : "open")}>
-                  {game.special && myBooking && !myBooking.waiting ? "YOU'RE IN" : full ? "FULL" : `${spotsLeft} LEFT`}
+                <span className={"wcf-fx-pill " + (game.special ? "gold" : full ? "full" : isNew && !myBooking ? "gold" : spotsLeft <= 2 ? "open low" : "open")}>
+                  {game.special && myBooking && !myBooking.waiting ? "YOU'RE IN" : full ? "FULL" : isNew && !myBooking ? "NEW" : `${spotsLeft} LEFT`}
                 </span>
               </span>
             </div>
@@ -15636,6 +15943,76 @@ a.wcf-set-link{text-decoration:none}
 @keyframes wcfWalkChalk{from{stroke-dashoffset:190}to{stroke-dashoffset:0}}
 .wcf-lineup-head.wcf-walk-stamp::after{content:"TEAMS ARE OUT";position:absolute;right:14px;bottom:16px;padding:8px 12px;border-radius:8px;background:#f5d97a;color:#0d0d1a;font-family:var(--display);font-weight:800;font-size:13px;letter-spacing:.12em;transform:rotate(-6deg);animation:wcfWalkStamp .4s .1s cubic-bezier(.3,1.6,.5,1) both}
 @keyframes wcfWalkStamp{from{opacity:0;transform:rotate(-6deg) scale(2.4)}to{opacity:1;transform:rotate(-6deg) scale(1)}}
+/* New-fixtures calendar, prediction slip/padlock/points, admin envelope */
+.wcf-new-chip{margin-left:8px;padding:3px 8px;border-radius:999px;background:#f5d97a;color:#1a1405;font-family:var(--sans);font-size:10px;font-weight:800;letter-spacing:.06em;vertical-align:3px;animation:wcfPinIn .4s cubic-bezier(.3,1.7,.5,1) both}
+.wcf-cal{width:min(290px,86vw);border-radius:20px;background:radial-gradient(100% 70% at 50% 0%,rgba(245,217,122,.12),transparent 60%),#111427;border:1px solid rgba(245,217,122,.45);box-shadow:0 24px 60px -24px #000;padding:16px 14px 14px;transform-origin:50% 0;animation:wcfUnfoldCal .6s cubic-bezier(.2,.9,.3,1.1) both;text-align:left}
+@keyframes wcfUnfoldCal{from{transform:perspective(700px) rotateX(-85deg);opacity:0}to{transform:none;opacity:1}}
+.wcf-cal-k{font-size:10.5px;font-weight:800;letter-spacing:.14em;color:#f5d97a;text-transform:uppercase}
+.wcf-cal-h{display:flex;justify-content:space-between;align-items:baseline;margin-top:4px}
+.wcf-cal-h b{font-family:var(--display);font-weight:800;font-size:22px}.wcf-cal-h span{font-size:12px;font-weight:800;color:#f5d97a;font-variant-numeric:tabular-nums}
+.wcf-cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:12px}
+.wcf-cal-g .dn{font-size:8.5px;font-weight:800;color:var(--dim);text-align:center;letter-spacing:.08em;padding-bottom:2px}
+.wcf-cal-g .c{position:relative;height:31px;border-radius:8px;background:rgba(255,255,255,.04);display:grid;place-items:center;font-size:11px;font-weight:700;color:#cbd5e1}
+.wcf-cal-g .c.x{background:none}
+.wcf-cal-g .c.pin{background:rgba(245,217,122,.16);color:#fff;box-shadow:inset 0 0 0 1.5px #f5d97a;animation:wcfPinIn .45s cubic-bezier(.3,1.7,.5,1) both}
+.wcf-cal-g .c.pin::after{content:"";position:absolute;top:-5px;right:-3px;width:9px;height:9px;border-radius:50%;background:#f5d97a;box-shadow:0 0 8px rgba(245,217,122,.85)}
+@keyframes wcfPinIn{0%{transform:translateY(-30px) scale(.6);opacity:0}100%{transform:none;opacity:1}}
+.wcf-moment.fold .wcf-cal{animation:wcfCalFold .5s cubic-bezier(.5,0,.8,.4) both}
+@keyframes wcfCalFold{to{transform:translateY(240px) scale(.3);opacity:0}}
+.wcf-fx-cascade{animation:wcfDropIn .45s cubic-bezier(.3,1.3,.5,1) both}
+.wcf-fx-cascade .wcf-fx-row{position:relative;overflow:hidden}
+.wcf-fx-cascade .wcf-fx-row::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 35%,rgba(255,240,200,.16) 50%,transparent 65%);transform:translateX(-130%);animation:wcfRbShine .9s .35s ease-out both;pointer-events:none}
+@keyframes wcfDropIn{from{opacity:0;transform:translateY(-30px)}to{opacity:1;transform:none}}
+.wcf-reel{display:inline-block}
+.wcf-reel.up{animation:wcfReelUp .28s cubic-bezier(.3,1.4,.5,1)}.wcf-reel.down{animation:wcfReelDown .28s cubic-bezier(.3,1.4,.5,1)}
+@keyframes wcfReelUp{from{transform:translateY(80%);opacity:.2}to{transform:none;opacity:1}}
+@keyframes wcfReelDown{from{transform:translateY(-80%);opacity:.2}to{transform:none;opacity:1}}
+.wcf-slip{width:min(270px,82vw);border-radius:12px;background:#f3ead2;color:#1d1a14;padding:16px 18px;text-align:left;box-shadow:0 18px 40px -16px #000;position:relative;animation:wcfPrint .8s steps(8) both}
+@keyframes wcfPrint{from{clip-path:inset(0 0 100% 0)}to{clip-path:inset(0 0 0 0)}}
+.wcf-slip small{display:block;font-size:9.5px;font-weight:800;letter-spacing:.18em;color:#8a7a55}
+.wcf-slip b{display:block;font-family:var(--display);font-weight:800;font-size:23px;margin-top:4px}
+.wcf-slip .meta{font-size:11.5px;color:#4b4330;margin-top:6px}
+.wcf-slip .st2{position:absolute;right:12px;bottom:12px;padding:5px 9px;border-radius:7px;box-shadow:inset 0 0 0 2.5px #b8860b;color:#b8860b;font-family:var(--display);font-weight:800;font-size:11px;letter-spacing:.1em;transform:rotate(8deg);animation:wcfThump2 .35s .8s cubic-bezier(.3,1.6,.5,1) both}
+@keyframes wcfThump2{from{opacity:0;transform:rotate(8deg) scale(2.4)}to{opacity:1;transform:rotate(8deg) scale(1)}}
+.wcf-moment.foldslip .wcf-slip{animation:wcfSlipFold .45s cubic-bezier(.5,0,.8,.4) both}
+.wcf-moment.foldslip{animation:wcfLayerOut .45s ease-in both}
+@keyframes wcfSlipFold{to{transform:translateY(-150px) scaleY(.2);opacity:0}}
+.wcf-biglock{width:110px;height:128px;animation:wcfLockDrop .6s cubic-bezier(.3,1.4,.5,1) both}
+.wcf-biglock .sh{transform:translateY(-14px);animation:wcfClamp .25s .55s ease-in both}
+@keyframes wcfLockDrop{from{transform:translateY(-260px)}to{transform:none}}
+@keyframes wcfClamp{to{transform:none}}
+.wcf-bigpts{font-family:var(--display);font-weight:800;font-size:110px;line-height:1;background:linear-gradient(180deg,#fde68a,#eab308);-webkit-background-clip:text;background-clip:text;color:transparent;animation:wcfPtsIn .5s cubic-bezier(.3,1.7,.5,1) both}
+.wcf-bigpts.zero{background:none;-webkit-text-fill-color:#94a3b8;color:#94a3b8}
+@keyframes wcfPtsIn{from{transform:scale(2.2);opacity:0}to{transform:none;opacity:1}}
+.wcf-pts-burst{position:absolute;left:50%;top:44%;width:0;height:0}
+.wcf-pts-burst i{position:absolute;width:4px;height:16px;margin:-8px 0 0 -2px;border-radius:3px;background:#f5d97a;opacity:0;animation:wcfPtsRay .8s .1s ease-out both}
+@keyframes wcfPtsRay{0%{opacity:0;transform:rotate(var(--a)) translateY(-40px)}30%{opacity:1}100%{opacity:0;transform:rotate(var(--a)) translateY(-130px)}}
+.wcf-pts-pop{display:inline-block;animation:wcfPop .45s cubic-bezier(.3,1.7,.5,1) both}
+.wcf-env{position:relative;width:min(280px,84vw);height:340px}
+.wcf-env .envl{position:absolute;left:5px;right:5px;top:96px;height:150px;border-radius:10px;background:linear-gradient(160deg,#efe3c8,#dcc9a0);box-shadow:0 18px 40px -16px #000;animation:wcfEnvIn .55s cubic-bezier(.3,1.2,.5,1) both,wcfEnvAway .45s 1.3s ease-in both}
+.wcf-env .envl::before{content:"";position:absolute;left:0;right:0;top:0;height:80px;background:linear-gradient(180deg,#e2d2ae,#cdb88c);clip-path:polygon(0 0,100% 0,50% 100%);border-radius:10px 10px 0 0}
+@keyframes wcfEnvIn{from{transform:translateX(340px) rotate(8deg)}to{transform:none}}
+@keyframes wcfEnvAway{to{transform:translateY(220px);opacity:0}}
+.wcf-env .seal{position:absolute;left:50%;top:150px;width:48px;height:48px;margin-left:-24px;z-index:3;animation:wcfEnvIn .55s cubic-bezier(.3,1.2,.5,1) both}
+.wcf-env .seal i{position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 35% 30%,#ffe08a,#c8961c 60%,#8a6414);clip-path:polygon(50% 50%,var(--p));animation:wcfShard .6s .8s ease-in both}
+@keyframes wcfShard{to{transform:translate(var(--dx),var(--dy)) rotate(var(--r));opacity:0}}
+.wcf-env .seal span{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:11px;color:#3b2a06;animation:wcfFadeOut .2s .8s both}
+@keyframes wcfFadeOut{to{opacity:0}}
+.wcf-env .paper{position:absolute;left:0;right:0;top:4px;z-index:2;perspective:800px;text-align:left}
+.wcf-env .pp{background:#fbf7ee;color:#1d1a14;padding:12px 16px;transform-origin:top}
+.wcf-env .pp:first-child{border-radius:8px 8px 0 0;animation:wcfUnf .45s 1.4s ease-out both}
+.wcf-env .pp:nth-child(2){animation:wcfUnf .45s 1.7s ease-out both;border-top:1px dashed rgba(29,26,20,.15)}
+.wcf-env .pp:nth-child(3){border-radius:0 0 8px 8px;animation:wcfUnf .45s 2s ease-out both;border-top:1px dashed rgba(29,26,20,.15)}
+@keyframes wcfUnf{from{transform:rotateX(-90deg);opacity:0}to{transform:none;opacity:1}}
+.wcf-env .pp small{display:block;font-size:9.5px;font-weight:800;letter-spacing:.16em;color:#8a7a55}
+.wcf-env .line{display:block;font-size:13.5px;line-height:1.55;min-height:42px;white-space:pre-wrap}
+.wcf-env .sig{font:italic 700 16px Georgia,serif;position:relative;display:inline-block}
+.wcf-env .sig::after{content:"";position:absolute;left:0;right:0;bottom:-3px;height:2px;background:#b8860b;transform-origin:left;transform:scaleX(0);animation:wcfPen .5s 2.8s ease-out both}
+@keyframes wcfPen{to{transform:scaleX(1)}}
+.wcf-env .more{display:block;margin-top:8px;font-size:11.5px;color:#8a7a55;font-weight:700}
+.wcf-env .gotit{margin-top:10px;width:100%;border:0;border-radius:10px;padding:11px;background:#1d1a14;color:#f5d97a;font-family:var(--display);font-weight:800;font-size:13px;cursor:pointer;animation:wcfRvIn .35s 2.9s both}
+.wcf-moment.flyaway .wcf-env{animation:wcfFlyInbox .6s cubic-bezier(.5,0,.3,1) both}
+@keyframes wcfFlyInbox{to{transform:translate(0,-260px) scale(.2);opacity:0}}
 /* Special poster, pot jar, birthday ribbon, rate-sheet whistle, GaffAI tiki-taka */
 .wcf-poster{width:min(270px,82vw);border-radius:16px;overflow:hidden;position:relative;text-align:left;padding:18px 18px 16px;background:radial-gradient(120% 90% at 100% 0%,rgba(245,217,122,.35),transparent 55%),linear-gradient(160deg,#2a2312,#120f08 70%);box-shadow:0 0 0 1.5px rgba(245,217,122,.7),0 0 40px 6px rgba(234,179,8,.35);transform-origin:50% 0;animation:wcfUnfold .7s cubic-bezier(.2,.9,.3,1.1) both}
 @keyframes wcfUnfold{from{transform:perspective(600px) rotateX(-95deg);opacity:0}to{transform:none;opacity:1}}
