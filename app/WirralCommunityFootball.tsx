@@ -7064,6 +7064,7 @@ function App({ session }: { session: Session }) {
         };
         return (
           <PlayerCardModal
+            key={playerCardId}
             profile={cardProfile}
             stats={stats}
             rating={rating}
@@ -7686,6 +7687,31 @@ function MotmVotersModal({
   );
 }
 
+// Player card "walkout": floodlights, the card rises, a gold line laps its
+// edge and each section arrives in turn (~1.9s). Plays on every open; a
+// tap skips straight to the finished card, and Reduce Motion gets the old
+// quick fade. Numbers count up from 0 on the same clock as the CSS delays.
+const WALKOUT_T0 = 950; // ms, when the card's content starts arriving
+function CountUp({ to, delay, decimals = 0, run }: { to: number; delay: number; decimals?: number; run: boolean }) {
+  const [v, setV] = useState(run ? 0 : to);
+  useEffect(() => {
+    if (!run) {
+      setV(to);
+      return;
+    }
+    let raf = 0;
+    const t0 = performance.now() + delay;
+    const step = (t: number) => {
+      const k = Math.min(1, Math.max(0, (t - t0) / 650));
+      setV(to * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [to, delay, run]);
+  return <>{v.toFixed(decimals)}</>;
+}
+
 function PlayerCardModal({
   profile,
   stats,
@@ -7721,24 +7747,47 @@ function PlayerCardModal({
   const nth = (n: number) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
   const firstName = profile.display_name.split(" ")[0];
   const overall = rating ? ((rating.fitness + rating.attack + rating.defence) / 3).toFixed(1) : null;
+  const [walkout] = useState(() => typeof window === "undefined" || !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const [skipped, setSkipped] = useState(false);
+  const animate = walkout && !skipped;
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [cardSize, setCardSize] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    if (!walkout || !cardRef.current) return;
+    const el = cardRef.current;
+    setCardSize({ w: el.offsetWidth, h: el.offsetHeight });
+  }, [walkout]);
+  const at = (s: number) => WALKOUT_T0 + s * 1000; // content clock, matches --d in the CSS
   return (
-    <div className="wcf-lightbox" onClick={onClose}>
+    <div className={"wcf-lightbox" + (walkout ? " wcf-walkout" : "") + (skipped ? " skipped" : "")} onClick={onClose}>
+      {walkout && <div className="wcf-beam l" />}
+      {walkout && <div className="wcf-beam r" />}
       <button className="wcf-lightbox-close" onClick={onClose} aria-label="Close">×</button>
-      <div className="wcf-pcard" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="wcf-pcard"
+        ref={cardRef}
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={() => walkout && !skipped && setSkipped(true)}
+      >
+        {walkout && cardSize && (
+          <svg className="wcf-pcard-trace" width={cardSize.w + 2} height={cardSize.h + 2} viewBox={`0 0 ${cardSize.w + 2} ${cardSize.h + 2}`} aria-hidden="true">
+            <rect x="1" y="1" width={cardSize.w} height={cardSize.h} rx="20" style={{ strokeDasharray: 2 * (cardSize.w + cardSize.h), ["--per" as string]: 2 * (cardSize.w + cardSize.h) }} />
+          </svg>
+        )}
         <div className="wcf-pcard-head">
           <div className="wcf-pcard-glow" />
           <div className="wcf-pcard-topline" />
           {canSeeRating && (
-            <span className="wcf-pcard-privacy">
+            <span className="wcf-pcard-privacy wcf-rv">
               <span className="wcf-pcard-privacy-dot" />
               {isOwnCard ? "YOUR CARD" : "ADMIN VIEW"}
             </span>
           )}
-          <div className="wcf-pcard-avatar-wrap">
+          <div className="wcf-pcard-avatar-wrap wcf-rv" style={{ ["--d" as string]: "-.15s" }}>
             <Avatar name={profile.display_name} avatarUrl={profile.avatar_url} className="wcf-pcard-avatar" background={a.gradient} />
           </div>
-          <div className="wcf-pcard-name">{profile.display_name}</div>
-          <div className="wcf-pcard-badges">
+          <div className="wcf-pcard-name wcf-rv">{profile.display_name}</div>
+          <div className="wcf-pcard-badges wcf-rv" style={{ ["--d" as string]: ".05s" }}>
             {season?.topScorer && <span className="wcf-pcard-honour">Top scorer</span>}
             {rank != null && rank <= 10 && <span className="wcf-pcard-role-badge">{nth(rank)} for games</span>}
             <span className="wcf-pcard-role-badge">{ROLE_LABEL[profile.role]}</span>
@@ -7758,37 +7807,37 @@ function PlayerCardModal({
         </div>
 
         <div className="wcf-pcard-body">
-          <div className="wcf-pcard-stats">
-            <div className="wcf-pcard-stat"><b>{stats.apps}</b><span>Apps</span></div>
-            <div className="wcf-pcard-stat"><b>{stats.goals}</b><span>Goals</span></div>
-            <div className="wcf-pcard-stat"><b>{stats.motm}</b><span>MOTM</span></div>
+          <div className="wcf-pcard-stats wcf-rv" style={{ ["--d" as string]: ".1s" }}>
+            <div className="wcf-pcard-stat"><b><CountUp to={stats.apps} delay={at(0.15)} run={animate} /></b><span>Apps</span></div>
+            <div className="wcf-pcard-stat"><b><CountUp to={stats.goals} delay={at(0.15)} run={animate} /></b><span>Goals</span></div>
+            <div className="wcf-pcard-stat"><b><CountUp to={stats.motm} delay={at(0.15)} run={animate} /></b><span>MOTM</span></div>
           </div>
 
           {/* Their season at a glance - all of it already public elsewhere
               in the app (Scores, Records), just gathered on one card. */}
           {season && season.W + season.D + season.L > 0 && (
             <div className="wcf-pcard-season">
-              <div className="wcf-pcard-sec-head"><span>Season record</span><b>{season.W}W · {season.D}D · {season.L}L</b></div>
+              <div className="wcf-pcard-sec-head wcf-rv" style={{ ["--d" as string]: ".35s" }}><span>Season record</span><b>{season.W}W · {season.D}D · {season.L}L</b></div>
               <div className="wcf-pcard-wdl">
                 {season.W > 0 && <div style={{ flex: season.W }} className="w">{season.W}</div>}
                 {season.D > 0 && <div style={{ flex: season.D }} className="d">{season.D}</div>}
                 {season.L > 0 && <div style={{ flex: season.L }} className="l">{season.L}</div>}
               </div>
-              <div className="wcf-pcard-sec-head" style={{ marginTop: 12 }}><span>Last {season.form.length}</span><span>oldest → latest</span></div>
+              <div className="wcf-pcard-sec-head wcf-rv" style={{ marginTop: 12, ["--d" as string]: ".6s" }}><span>Last {season.form.length}</span><span>oldest → latest</span></div>
               <div className="wcf-pcard-form">
-                {season.form.map((r, i) => <i key={i} className={"f" + r}>{r}</i>)}
+                {season.form.map((r, i) => <i key={i} className={"f" + r} style={{ ["--i" as string]: i }}>{r}</i>)}
               </div>
-              <div className="wcf-pcard-sec-head" style={{ marginTop: 12 }}><span>Bests</span></div>
-              <div className="wcf-pcard-bests">
-                <div><b>{season.bestGoals?.goals ?? 0}</b><span>{season.bestGoals ? `goals in a game · ${fmtDate(season.bestGoals.date)}` : "goals in a game"}</span></div>
-                <div><b>{season.hatTricks}</b><span>{season.hatTricks === 1 ? "hat-trick" : "hat-tricks"}</span></div>
-                <div><b>{stats.apps ? (stats.goals / stats.apps).toFixed(1) : "0.0"}</b><span>goals per game</span></div>
+              <div className="wcf-pcard-sec-head wcf-rv" style={{ marginTop: 12, ["--d" as string]: "1.05s" }}><span>Bests</span></div>
+              <div className="wcf-pcard-bests wcf-rv" style={{ ["--d" as string]: "1.1s" }}>
+                <div><b><CountUp to={season.bestGoals?.goals ?? 0} delay={at(1.1)} run={animate} /></b><span>{season.bestGoals ? `goals in a game · ${fmtDate(season.bestGoals.date)}` : "goals in a game"}</span></div>
+                <div><b><CountUp to={season.hatTricks} delay={at(1.1)} run={animate} /></b><span>{season.hatTricks === 1 ? "hat-trick" : "hat-tricks"}</span></div>
+                <div><b><CountUp to={stats.apps ? Math.round((stats.goals / stats.apps) * 10) / 10 : 0} decimals={1} delay={at(1.1)} run={animate} /></b><span>goals per game</span></div>
               </div>
             </div>
           )}
 
           {canSeeRating && rating ? (
-            <div className="wcf-pcard-ratings">
+            <div className="wcf-pcard-ratings wcf-rv" style={{ ["--d" as string]: "1.2s" }}>
               <div className="wcf-pcard-ratings-top">
                 <span className="wcf-pcard-ratings-label">Rating</span>
                 <span className="wcf-pcard-ratings-divider" />
@@ -7796,7 +7845,7 @@ function PlayerCardModal({
                   {isOwnCard ? "ONLY YOU" : "ADMIN ONLY"}
                 </span>
               </div>
-              {(["fitness", "attack", "defence", "goalkeeping"] as const).map((k) => (
+              {(["fitness", "attack", "defence", "goalkeeping"] as const).map((k, i) => (
                 <div key={k} className="wcf-pcard-metric">
                   <div className="wcf-pcard-metric-top">
                     <span>{k[0].toUpperCase()}{k.slice(1)}</span>
@@ -7807,6 +7856,7 @@ function PlayerCardModal({
                       className="wcf-pcard-fill"
                       style={{
                         width: `${(rating[k] / 5) * 100}%`,
+                        ["--i" as string]: i,
                         background: `linear-gradient(90deg,${ratingFillColor(rating[k])}99,${ratingFillColor(rating[k])})`,
                       }}
                     />
@@ -7819,13 +7869,13 @@ function PlayerCardModal({
               </div>
             </div>
           ) : (
-            <div className="wcf-pcard-private">
+            <div className="wcf-pcard-private wcf-rv" style={{ ["--d" as string]: "1.25s" }}>
               <span>Ratings are private to {firstName} and the admins.</span>
             </div>
           )}
 
           {canSeeRating && (
-            <div className="wcf-pcard-ratings">
+            <div className="wcf-pcard-ratings wcf-rv" style={{ ["--d" as string]: "1.35s" }}>
               <div className="wcf-pcard-ratings-top">
                 <span className="wcf-pcard-ratings-label">Emergency contact</span>
                 <span className="wcf-pcard-ratings-divider" />
@@ -13291,6 +13341,29 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pcard-emergency-name{font-weight:700;font-size:12.5px;color:#f1f5f9}
 .wcf-pcard-emergency-phone{font-family:var(--mono);font-weight:700;font-size:12.5px;font-variant-numeric:tabular-nums;color:#fca5a5}
 .wcf-lightbox-close{position:fixed;top:16px;right:16px;width:38px;height:38px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--white);font-size:22px;line-height:1;cursor:pointer;z-index:101}
+/* Player card walkout (PlayerCardModal). The resting styles are the
+   finished card, so .skipped (animation:none) lands on it instantly. */
+.wcf-beam{position:fixed;top:-40px;width:170px;height:110vh;background:linear-gradient(180deg,rgba(255,247,220,.42),rgba(255,247,220,0) 75%);filter:blur(8px);opacity:0;transform-origin:50% 0;pointer-events:none;animation:wcfBeam 1.8s ease-out forwards}
+.wcf-beam.l{left:calc(50% - 250px);transform:rotate(-22deg)}
+.wcf-beam.r{right:calc(50% - 250px);transform:rotate(22deg);animation-delay:.12s}
+@keyframes wcfBeam{0%{opacity:0}25%{opacity:1}100%{opacity:.25}}
+.wcf-walkout .wcf-pcard{position:relative;overflow:visible;animation:wcfWalkout .8s .2s cubic-bezier(.2,.8,.2,1) both}
+.wcf-walkout .wcf-pcard-head{border-radius:20px 20px 0 0}
+.wcf-walkout .wcf-pcard-body{border-radius:0 0 20px 20px}
+.wcf-pcard-trace{position:absolute;left:-2px;top:-2px;pointer-events:none;overflow:visible;z-index:2}
+.wcf-pcard-trace rect{fill:none;stroke:#f5d97a;stroke-width:2;opacity:0;animation:wcfTrace 1.1s .8s ease-in-out both}
+@keyframes wcfWalkout{from{transform:translateY(110px) scale(.88);filter:blur(6px) brightness(.4);opacity:0}to{transform:none;filter:none;opacity:1}}
+@keyframes wcfTrace{0%{stroke-dashoffset:var(--per);opacity:1}85%{stroke-dashoffset:0;opacity:1}100%{stroke-dashoffset:0;opacity:0}}
+.wcf-walkout .wcf-rv{animation:wcfRvIn .4s both;animation-delay:calc(.95s + var(--d,0s))}
+.wcf-walkout .wcf-pcard-wdl{transform-origin:left;animation:wcfBarGrow .6s cubic-bezier(.3,.8,.3,1) both;animation-delay:1.4s}
+.wcf-walkout .wcf-pcard-form i{animation:wcfPop .3s cubic-bezier(.3,1.6,.5,1) both;animation-delay:calc(1.65s + var(--i,0) * .09s)}
+.wcf-walkout .wcf-pcard-fill{transform-origin:left;animation:wcfBarGrow .7s cubic-bezier(.3,.8,.3,1) both;animation-delay:calc(2.05s + var(--i,0) * .08s)}
+.wcf-walkout .wcf-pcard-honour{animation:wcfPop .35s cubic-bezier(.3,1.6,.5,1) both;animation-delay:1s}
+@keyframes wcfRvIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes wcfBarGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes wcfPop{from{opacity:0;transform:scale(.4)}to{opacity:1;transform:none}}
+.wcf-walkout.skipped .wcf-pcard,.wcf-walkout.skipped .wcf-pcard *,.wcf-walkout.skipped .wcf-beam{animation:none!important}
+.wcf-walkout.skipped .wcf-beam{display:none}
 .wcf-roles-stats{display:flex;gap:9px}
 .wcf-roles-stat{flex:1;padding:12px 13px;border-radius:14px}
 .wcf-roles-stat.blue{background:linear-gradient(155deg,rgba(46,116,204,.16),rgba(19,22,38,.96) 64%);border:1px solid rgba(46,116,204,.36)}
