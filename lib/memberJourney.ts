@@ -51,8 +51,8 @@ export async function computeJourney(admin: SupabaseClient) {
     admin.from("games").select("id, date, kickoff, venue, pitch, price, max_players, published, team_white_score, bookings(player_id, waiting)"),
   ]);
   // Members only: people waiting for approval have their own GaffAI nudge.
-  const profiles = ((allProfiles ?? []) as { id: string; display_name: string; created_at: string; status?: string }[]).filter(
-    (p) => (p.status ?? "active") === "active"
+  const profiles = ((allProfiles ?? []) as { id: string; display_name: string; created_at: string; status?: string; is_test?: boolean }[]).filter(
+    (p) => (p.status ?? "active") === "active" && !p.is_test
   );
   const gameRows = (games ?? []) as JourneyGame[];
   const confirmedEmail = new Set((usersPage?.users ?? []).filter((u) => u.email_confirmed_at).map((u) => u.id));

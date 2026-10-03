@@ -44,3 +44,9 @@ export const WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR = true;
 // Players' first Wrapped: nobody but admins sees a month before this one,
 // so opening it up never shows players the August story.
 export const WRAPPED_FIRST_MONTH_FOR_ALL = "2026-09";
+
+// Monzo auto-payment matching is built but parked (backlog), and its
+// monzo_transactions table isn't in the live database yet. While this is
+// false the app doesn't ask for it, so every open isn't a failed request.
+// Flip to true once the table exists.
+export const MONZO_MATCHING_LIVE = false;

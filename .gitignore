@@ -9,3 +9,6 @@ yarn-error.log*
 coverage
 .env*.local
 *.tsbuildinfo
+
+# smoke test screenshots
+/smoke-output

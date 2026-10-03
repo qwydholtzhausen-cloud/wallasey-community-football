@@ -8,6 +8,7 @@ import { defaultPitchCost } from "../pitchCost";
 import { BOOT_CATEGORY, type BootCategory } from "../bootRoom";
 import { WRAPPED_OPEN_TO_ALL_FROM } from "../clubPolicy";
 import { computeJourney, fmtJourneyDate } from "../memberJourney";
+import { testAccountIds } from "../testAccounts";
 import { motmWinners, goalsLookup } from "../motm";
 import { checkAppHealth, checkWrapped, computeHealthNudges, computeWrappedGapsNudge } from "./health";
 
@@ -317,8 +318,8 @@ async function findPlayers(admin: SupabaseClient, args: { name_contains?: string
   if (args.role) query = query.eq("role", args.role);
   const { data, error } = await query.order("display_name");
   if (error) throw new Error(error.message);
-  type P = { id: string; display_name: string; role: string; push_opt_in: boolean; status?: string };
-  const members = ((data ?? []) as P[]).filter((p) => (p.status ?? "active") === "active");
+  type P = { id: string; display_name: string; role: string; push_opt_in: boolean; status?: string; is_test?: boolean };
+  const members = ((data ?? []) as P[]).filter((p) => (p.status ?? "active") === "active" && !p.is_test);
   const slim = (p: P) => ({ id: p.id, display_name: p.display_name, role: p.role, push_opt_in: p.push_opt_in });
   if (!args.name_contains) return members.slice(0, args.limit ?? 100).map(slim);
   const q = args.name_contains.trim().toLowerCase();
@@ -575,8 +576,9 @@ async function findUnratedPlayers(admin: SupabaseClient, args: { role?: string }
   const selfSet = new Set((selfRatings ?? []).map((r) => r.player_id));
   const adminSet = new Set((adminRatings ?? []).map((r) => r.player_id));
 
+  const tests = await testAccountIds(admin);
   const players = (profiles ?? [])
-    .filter((p) => !selfSet.has(p.id) || !adminSet.has(p.id))
+    .filter((p) => !tests.has(p.id) && (!selfSet.has(p.id) || !adminSet.has(p.id)))
     .map((p) => ({ name: p.display_name, has_self_rating: selfSet.has(p.id), has_admin_rating: adminSet.has(p.id) }));
   // count is explicit so the model states a number it was handed, not
   // one it counted off the list itself - confirmed real failure mode
@@ -597,7 +599,8 @@ async function findPlayersWithoutEmergencyContact(admin: SupabaseClient) {
     admin.from("emergency_contacts").select("player_id"),
   ]);
   const hasContact = new Set((contacts ?? []).map((c) => c.player_id));
-  const players = (profiles ?? []).filter((p) => !hasContact.has(p.id)).map((p) => ({ name: p.display_name }));
+  const tests = await testAccountIds(admin);
+  const players = (profiles ?? []).filter((p) => !hasContact.has(p.id) && !tests.has(p.id)).map((p) => ({ name: p.display_name }));
   return { count: players.length, players };
 }
 
@@ -614,7 +617,8 @@ async function findPushNotificationIssues(admin: SupabaseClient) {
     admin.from("push_subscriptions").select("user_id"),
   ]);
   const subscribedSet = new Set((subs ?? []).map((s) => s.user_id));
-  const rows = profiles ?? [];
+  const tests = await testAccountIds(admin);
+  const rows = (profiles ?? []).filter((p) => !tests.has(p.id));
   const optedIn = rows.filter((p) => p.push_opt_in);
   const broken = optedIn.filter((p) => !subscribedSet.has(p.id)).map((p) => ({ id: p.id, name: p.display_name }));
   return {
@@ -691,7 +695,8 @@ async function findPossibleDuplicatePlayers(admin: SupabaseClient) {
   const emailLocal: Record<string, string> = {};
   for (const u of usersPage?.users ?? []) emailLocal[u.id] = (u.email ?? "").split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
   const norm = (n: string) => n.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const list = profiles ?? [];
+  const tests = await testAccountIds(admin);
+  const list = (profiles ?? []).filter((p) => !tests.has(p.id));
   const pairs: [number, number, string][] = [];
   for (let i = 0; i < list.length; i++)
     for (let j = i + 1; j < list.length; j++) {
@@ -734,7 +739,8 @@ async function findPlayersWithoutBookings(admin: SupabaseClient) {
     admin.from("bookings").select("player_id"),
   ]);
   const bookedSet = new Set((bookings ?? []).map((b) => b.player_id));
-  const players = (profiles ?? []).filter((p) => !bookedSet.has(p.id)).map((p) => ({ name: p.display_name }));
+  const tests = await testAccountIds(admin);
+  const players = (profiles ?? []).filter((p) => !bookedSet.has(p.id) && !tests.has(p.id)).map((p) => ({ name: p.display_name }));
   return { count: players.length, players };
 }
 
@@ -1308,8 +1314,10 @@ async function getNotificationStats(admin: SupabaseClient, args: { days?: number
 
 // When members last opened the app (profiles.last_active_at). Not shown in the app.
 async function findInactivePlayers(admin: SupabaseClient, args: { inactive_days?: number; player_name_contains?: string }) {
-  const { data: profiles, error } = await admin.from("profiles").select("id, display_name, last_active_at, created_at");
+  const { data: allProfiles, error } = await admin.from("profiles").select("id, display_name, last_active_at, created_at");
   if (error) throw new Error("Last-active tracking isn't set up yet (profiles.last_active_at is missing).");
+  const tests = await testAccountIds(admin);
+  const profiles = (allProfiles ?? []).filter((p) => !tests.has(p.id));
   const { data: games } = await admin.from("games").select("date, kickoff, team_white_score, bookings(player_id, waiting)");
   const nowUk = nowInLondon();
   const lastPlayed: Record<string, string> = {};
@@ -1606,7 +1614,7 @@ async function findPlayersToInvite(admin: SupabaseClient, args: { game_id: strin
   }
 
   type P = { id: string; display_name: string; push_opt_in: boolean; last_active_at?: string | null; status?: string };
-  const candidates = ((profiles ?? []) as P[])
+  const candidates = ((profiles ?? []) as (P & { is_test?: boolean })[]).filter((p) => !p.is_test)
     .filter((p) => (p.status ?? "active") === "active" && !onThisGame.has(p.id))
     .map((p) => {
       const st = stats[p.id] ?? { recent: 0, total: 0, last: null, sameDayBooked: null, sameDayWaiting: null };

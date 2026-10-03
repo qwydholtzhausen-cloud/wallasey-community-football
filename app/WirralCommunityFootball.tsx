@@ -14,6 +14,7 @@ import {
   WRAPPED_OPEN_TO_ALL_FROM,
   WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR,
   WRAPPED_FIRST_MONTH_FOR_ALL,
+  MONZO_MATCHING_LIVE,
 } from "../lib/clubPolicy";
 import { computeWrapped } from "../lib/wrapped";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
@@ -1924,6 +1925,9 @@ function App({ session }: { session: Session }) {
     // (e.g. before the status column exists) just mean nobody's hidden.
     const { data: notIn } = await supabase.from("profiles").select("id, display_name, created_at, status").neq("status", "active");
     const hide = new Set((notIn ?? []).map((p: { id: string }) => p.id));
+    // Test accounts (used by the smoke tests) are hidden from everyone too.
+    const { data: tests } = await supabase.from("profiles").select("id").eq("is_test", true);
+    (tests ?? []).forEach((p: { id: string }) => hide.add(p.id));
     if (data) setProfiles((data as Profile[]).filter((p) => !hide.has(p.id)));
     if (notIn && notIn.length) {
       const { data: reqs } = await supabase.from("join_requests").select("*");
@@ -2044,6 +2048,7 @@ function App({ session }: { session: Session }) {
   // empty, no error, so it's safe to always include in loadAll rather
   // than branching on isAdmin here.
   const loadMonzoUnmatched = useCallback(async () => {
+    if (!MONZO_MATCHING_LIVE) return;
     const { data } = await supabase
       .from("monzo_transactions")
       .select("id, amount_pence, code, reason, created_at, player:profiles(display_name)")
