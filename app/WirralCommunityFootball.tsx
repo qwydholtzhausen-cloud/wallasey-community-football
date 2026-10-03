@@ -19,7 +19,9 @@ import {
 import { computeWrapped } from "../lib/wrapped";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
 import WrappedStory, { drawWrappedCard, wrappedBannerCss, type WrappedExtras } from "./WrappedStory";
-import { Avatar, TickNum, avatarFor, useChanged } from "./ui/shared";
+import { Avatar, POT_CATEGORY_LABEL, TickNum, avatarFor, fmtDate, fmtDateTime, useChanged, type PotCategory } from "./ui/shared";
+import { CountUp, MotmMedal, MotmReveal, PointsPill, PotAmountJar, type MotmRevealPhase } from "./ui/motion";
+import { Icon } from "./ui/icons";
 import { EmptyScene } from "./ui/EmptyScene";
 import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
 import { wrappedThemeFor } from "../lib/wrappedThemes";
@@ -188,8 +190,6 @@ interface GameRow {
   bookings: BookingRow[];
 }
 
-type PotCategory = "pitch" | "socials" | "equipment" | "sponsorship" | "other";
-
 type PlayerPosition = "keeper" | "defence" | "midfield" | "attack";
 const POSITION_LABEL: Record<PlayerPosition, string> = { keeper: "Keeper", defence: "Defence", midfield: "Midfield", attack: "Attack" };
 const POSITIONS: PlayerPosition[] = ["keeper", "defence", "midfield", "attack"];
@@ -211,14 +211,6 @@ interface PlayerBirthday {
   player_id: string;
   date_of_birth: string;
 }
-const POT_CATEGORY_LABEL: Record<PotCategory, string> = {
-  pitch: "Pitch hire",
-  socials: "Socials",
-  equipment: "Equipment",
-  sponsorship: "Sponsorship",
-  other: "Other",
-};
-
 interface PotEntry {
   id: string;
   amount: number;
@@ -384,14 +376,6 @@ interface GoalRow {
 // ever needed string comparison against nowInLondon()'s output.
 function toMs(pseudoUtc: string) {
   return new Date(pseudoUtc + ":00Z").getTime();
-}
-
-function fmtDate(iso: string) {
-  return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-}
-
-function fmtDateTime(iso: string) {
-  return new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 // Open-Meteo's WMO weather codes, collapsed to one emoji each. Deliberately
@@ -1159,51 +1143,6 @@ function urlBase64ToUint8Array(base64String: string) {
   return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
-
-const Icon = {
-  cal: (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="3" y="4.5" width="18" height="16" rx="2.5" />
-      <path d="M3 9h18M8 2.5v4M16 2.5v4" />
-    </svg>
-  ),
-  play: (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M10 8.5l6 3.5-6 3.5z" fill="currentColor" stroke="none" />
-    </svg>
-  ),
-  pulse: (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M7 12h2.5l1.5-4 3 8 1.5-4H17" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
-  ),
-  star: (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 3l2.6 5.6 6 .7-4.4 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.4 9.3l6-.7z" strokeLinejoin="round" />
-    </svg>
-  ),
-  shirt: (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M8 3.5L12 5l4-1.5 4 4-3 3V20H7V10.5l-3-3z" strokeLinejoin="round" />
-    </svg>
-  ),
-  history: (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M3 12a9 9 0 1 0 3-6.7" />
-      <path d="M3 4v4.5h4.5" />
-      <path d="M12 8v4.5l3 2" />
-    </svg>
-  ),
-  trophy: (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M7 4h10v5a5 5 0 0 1-10 0z" strokeLinejoin="round" />
-      <path d="M7 5H4v2a3 3 0 0 0 3 3M17 5h3v2a3 3 0 0 1-3 3" />
-      <path d="M12 14v3M9 20h6M9.5 17h5l.5 3H9z" strokeLinejoin="round" />
-    </svg>
-  ),
-};
 
 // ── Loading screen ──
 // One tunnel walkout covers the whole start-up. Each step that's still
@@ -8478,43 +8417,6 @@ function PredictionLock({ value, onDone }: { value: string; onDone: () => void }
     </div>
   );
 }
-// The points on a result: the first time you see them (within a week), a
-// big +N bursts over the screen and drops into the pill.
-function PointsPill({ pts, storageKey, recent }: { pts: number; storageKey: string; recent: boolean }) {
-  const [phase, setPhase] = useState<"big" | "pill" | "done">(() => {
-    if (!recent || typeof window === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return "done";
-    try {
-      return localStorage.getItem(storageKey) ? "done" : "big";
-    } catch {
-      return "done";
-    }
-  });
-  useEffect(() => {
-    if (phase !== "big") return;
-    try {
-      localStorage.setItem(storageKey, "1");
-    } catch {}
-    const a = setTimeout(() => setPhase("pill"), 1700);
-    const b = setTimeout(() => setPhase("done"), 2600);
-    return () => { clearTimeout(a); clearTimeout(b); };
-  }, [phase, storageKey]);
-  const cls = "wcf-predict-pts " + (pts === 3 ? "exact" : pts === 1 ? "partial" : "zero");
-  return (
-    <>
-      {phase === "big" && (
-        <div className="wcf-moment dim" onClick={() => setPhase("pill")}>
-          {pts === 3 && <div className="wcf-pts-burst" aria-hidden="true">{Array.from({ length: 14 }, (_, i) => <i key={i} style={{ ["--a" as string]: `${i * 26}deg` }} />)}</div>}
-          <div className={"wcf-bigpts" + (pts ? "" : " zero")}>+{pts}</div>
-          <div className="wcf-moment-h" style={{ marginTop: 4 }}>{pts === 3 ? "Exact score" : pts === 1 ? "Right result" : "Not this time"}</div>
-        </div>
-      )}
-      <span className={cls + (phase === "pill" ? " wcf-pts-pop" : "")} style={phase === "big" ? { opacity: 0 } : undefined}>
-        +{pts} pt{pts === 1 ? "" : "s"}
-      </span>
-    </>
-  );
-}
-
 // A message from an admin (never the automated ones): an envelope, the
 // seal breaks, the letter unfolds. More than one waiting is one envelope.
 function AdminEnvelope({ items, onDone }: { items: { from: string; text: string; when: string }[]; onDone: () => void }) {
@@ -8566,60 +8468,6 @@ function SpecialPoster({ date, kickoff, pitch, venue, price, players, onDone }: 
         <div className="wcf-poster-sheen" />
       </div>
     </div>
-  );
-}
-
-// The pot: the total with a jar beside it. After a game's payments land,
-// the first look rolls the total up from where it was, drops a coin in per
-// payer and raises the level. First look on a phone just records.
-function PotAmountJar({ total, money, last, storageKey }: { total: number; money: (n: number) => string; last: { id: string; amount: number; paid?: number } | undefined; storageKey: string }) {
-  const cap = Math.max(500, Math.ceil(Math.max(total, 1) / 500) * 500);
-  const level = (v: number) => Math.max(0.06, Math.min(1, v / cap));
-  const [shown, setShown] = useState(total);
-  const [fill, setFill] = useState(level(total));
-  const [coins, setCoins] = useState<number[]>([]);
-  useEffect(() => {
-    if (!last) return;
-    let prev: string | null = null;
-    try {
-      prev = localStorage.getItem(storageKey);
-      localStorage.setItem(storageKey, last.id);
-    } catch {
-      return;
-    }
-    if (!prev || prev === last.id || last.amount <= 0 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const from = total - last.amount;
-    setShown(from);
-    setFill(level(from));
-    const n = Math.min(16, Math.max(1, last.paid ?? 8));
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    for (let i = 0; i < n; i++) timers.push(setTimeout(() => setCoins((c) => [...c, i]), 400 + i * 120));
-    timers.push(setTimeout(() => setFill(level(total)), 800));
-    const steps = 24;
-    for (let k = 1; k <= steps; k++) timers.push(setTimeout(() => setShown(Math.round(from + ((total - from) * k) / steps)), 500 + k * 55));
-    timers.push(setTimeout(() => setCoins([]), 600 + n * 120 + 700));
-    return () => timers.forEach(clearTimeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [last?.id]);
-  const y = 96 - fill * 82;
-  return (
-    <>
-      <div className={"wcf-pot-hero-amt" + (total < 0 ? " negative" : "")}>{money(shown)}</div>
-      <div className="wcf-pot-jar" aria-hidden="true">
-        <svg viewBox="0 0 80 100">
-          <defs><clipPath id="wcfJarClip"><path d="M14 22 Q14 14 22 14 L58 14 Q66 14 66 22 L66 88 Q66 96 58 96 L22 96 Q14 96 14 88 Z" /></clipPath></defs>
-          <g clipPath="url(#wcfJarClip)">
-            <g className="wcf-pot-jar-fill" style={{ transform: `translateY(${y}px)` }}>
-              <rect x="0" y="0" width="80" height="110" fill="rgba(34,197,94,.55)" />
-              <path d="M0 0 Q10 -4 20 0 T40 0 T60 0 T80 0 V6 H0Z" fill="rgba(74,222,128,.75)" />
-            </g>
-          </g>
-          <path d="M14 22 Q14 14 22 14 L58 14 Q66 14 66 22 L66 88 Q66 96 58 96 L22 96 Q14 96 14 88 Z" fill="none" stroke="rgba(226,232,240,.55)" strokeWidth="2.5" />
-          <rect x="20" y="6" width="40" height="9" rx="3" fill="#334155" stroke="rgba(226,232,240,.45)" strokeWidth="1.5" />
-        </svg>
-        {coins.map((i) => <i key={i} className="wcf-pot-coin" style={{ ["--dx" as string]: `${((i * 37) % 40) - 20}px` }} />)}
-      </div>
-    </>
   );
 }
 
@@ -8930,50 +8778,6 @@ function RecordMoment({ value, label, prev, scoreLine, dateLabel, balls, onDone 
   );
 }
 
-// The Man of the Match medal (red and white ribbon, gold medal), used for
-// the drop on your vote and the winner's own moment.
-function MotmMedal({ className }: { className: string }) {
-  return (
-    <span className={className} aria-hidden="true">
-      <svg viewBox="0 0 56 120">
-        <path d="M18 0 L28 70 L38 0" fill="none" stroke="#E42A36" strokeWidth="9" />
-        <path d="M23 0 L28 40 M33 0 L28 40" stroke="#f5f6f8" strokeWidth="3" />
-        <circle cx="28" cy="90" r="20" fill="#d4a93c" />
-        <circle cx="28" cy="90" r="20" fill="none" stroke="#f5d97a" strokeWidth="2" />
-        <circle cx="28" cy="90" r="14.5" fill="none" stroke="#a57f22" strokeWidth="1.2" />
-        <path d="M28 80.5l2.8 5.7 6.3.9-4.5 4.4 1 6.2-5.6-2.9-5.6 2.9 1-6.2-4.5-4.4 6.3-.9z" fill="#fff4cc" />
-      </svg>
-    </span>
-  );
-}
-
-// "And Man of the Match is…": the first time you see a game's result
-// (within a week of voting closing), the card holds on a drumroll, then
-// flips the winner in. Once per game per phone; tap skips it; Reduce
-// Motion goes straight to the result.
-type MotmRevealPhase = "drum" | "reveal" | "done";
-function MotmReveal({ storageKey, eligible, children }: { storageKey: string; eligible: boolean; children: (phase: MotmRevealPhase, skip: () => void, replay: (() => void) | null) => React.ReactNode }) {
-  const [canPlay] = useState(() => eligible && typeof window !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  const [phase, setPhase] = useState<MotmRevealPhase>(() => {
-    if (!canPlay) return "done";
-    try {
-      return localStorage.getItem(storageKey) ? "done" : "drum";
-    } catch {
-      return "done";
-    }
-  });
-  useEffect(() => {
-    if (phase !== "drum") return;
-    try {
-      localStorage.setItem(storageKey, "1");
-    } catch {}
-    const t = setTimeout(() => setPhase("reveal"), 1300);
-    return () => clearTimeout(t);
-  }, [phase, storageKey]);
-  // "Watch again": same reveal, on demand, while the result's still recent.
-  return <>{children(phase, () => setPhase("done"), canPlay ? () => setPhase("drum") : null)}</>;
-}
-
 // The winner's own moment: full screen, once per game, the first time they
 // open the app after the result (the 8am push). "See the votes" goes to it.
 function MotmWinnerMoment({ dateLabel, scoreLabel, votes, total, goals, joint, onSee, onClose }: { dateLabel: string; scoreLabel: string; votes: number; total: number; goals: number; joint: boolean; onSee: () => void; onClose: () => void }) {
@@ -8997,26 +8801,6 @@ function MotmWinnerMoment({ dateLabel, scoreLabel, votes, total, goals, joint, o
 // tap skips straight to the finished card, and Reduce Motion gets the old
 // quick fade. Numbers count up from 0 on the same clock as the CSS delays.
 const WALKOUT_T0 = 950; // ms, when the card's content starts arriving
-function CountUp({ to, delay, decimals = 0, run }: { to: number; delay: number; decimals?: number; run: boolean }) {
-  const [v, setV] = useState(run ? 0 : to);
-  useEffect(() => {
-    if (!run) {
-      setV(to);
-      return;
-    }
-    let raf = 0;
-    const t0 = performance.now() + delay;
-    const step = (t: number) => {
-      const k = Math.min(1, Math.max(0, (t - t0) / 650));
-      setV(to * (1 - Math.pow(1 - k, 3)));
-      if (k < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [to, delay, run]);
-  return <>{v.toFixed(decimals)}</>;
-}
-
 function PlayerCardModal({
   profile,
   stats,

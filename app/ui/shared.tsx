@@ -80,3 +80,21 @@ export function TickNum({ value }: { value: number }) {
   const changed = useChanged(value);
   return <span key={value} className={"wcf-tick" + (changed ? " roll" : "")}>{value}</span>;
 }
+
+export function fmtDate(iso: string) {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+export function fmtDateTime(iso: string) {
+  return new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+export type PotCategory = "pitch" | "socials" | "equipment" | "sponsorship" | "other";
+
+export const POT_CATEGORY_LABEL: Record<PotCategory, string> = {
+  pitch: "Pitch hire",
+  socials: "Socials",
+  equipment: "Equipment",
+  sponsorship: "Sponsorship",
+  other: "Other",
+};

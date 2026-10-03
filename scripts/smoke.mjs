@@ -10,7 +10,7 @@
 // (see scripts/set-test-password.mjs).
 import { chromium } from "playwright";
 import { createClient } from "@supabase/supabase-js";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 const BASE = process.argv[2] || "https://www.wirral-community-football.com";
 const OUT = "smoke-output";
@@ -66,6 +66,10 @@ async function step(name, fn) {
     await fn();
     const shot = `${OUT}/${String(results.length + 1).padStart(2, "0")}-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.png`;
     await page.screenshot({ path: shot });
+    // The whole screen's text too, so a before/after comparison catches
+    // changes below the fold.
+    const text = await page.evaluate(() => document.querySelector(".wcf-main")?.innerText ?? "").catch(() => "");
+    writeFileSync(shot.replace(/\.png$/, ".txt"), text);
     const fresh = problems.slice(before);
     results.push({ name, ok: fresh.length === 0, ms: Date.now() - t0, notes: fresh });
   } catch (e) {
@@ -114,6 +118,14 @@ await step("Boot Room", async () => {
 });
 await step("Line-up", async () => tab("Line-up", "Next game line-up"));
 await step("Results", async () => tab("Results", "Results"));
+for (const sub of ["Season", "Stats", "Records", "Scores", "Pot"]) {
+  await step(`Results: ${sub}`, async () => {
+    await page.locator(".wcf-subtabs button", { hasText: sub }).first().dispatchEvent("click");
+    await page.waitForFunction((t) => document.querySelector(".wcf-subtabs button.active")?.textContent?.trim() === t, sub, { timeout: 8000 });
+    await page.waitForTimeout(900);
+    await page.evaluate(() => document.querySelector(".wcf-main")?.scrollTo(0, 0));
+  });
+}
 await step("Account", async () => {
   await page.locator(".wcf-role").first().dispatchEvent("click");
   await page.waitForFunction(() => document.querySelector(".wcf-heading h2")?.textContent?.startsWith("Your account"), null, { timeout: 10000 });
