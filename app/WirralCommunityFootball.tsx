@@ -1297,30 +1297,94 @@ const Icon = {
   ),
 };
 
+// ── Loading screen ──
+// One tunnel walkout covers the whole start-up. Each step that's still
+// loading (session, member check, club data) renders <SplashScreen />,
+// which draws nothing itself - it just holds the walkout up. When nothing
+// is holding it any more, the walkout plays its exit (down the tunnel and
+// out into the light). Because the walkout lives at the root it never
+// restarts between steps.
+const SplashHoldCtx = createContext<() => () => void>(() => () => {});
 function SplashScreen() {
+  const hold = useContext(SplashHoldCtx);
+  useEffect(() => hold(), [hold]);
+  return null;
+}
+const SPLASH_LINES = ["Switching on the floodlights", "Chalking the lines", "Pumping up the balls", "Hanging the nets", "Finding the bibs", "Warming up"];
+function TunnelSplash({ leaving }: { leaving: boolean }) {
+  const [line, setLine] = useState(-1);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    if (leaving) return;
+    let iv: ReturnType<typeof setInterval> | undefined;
+    const t = setTimeout(() => {
+      setLine(0);
+      iv = setInterval(() => setLine((n) => n + 1), 1600);
+    }, 1500);
+    // A failed first load would otherwise leave this up for good.
+    const s = setTimeout(() => setStuck(true), 12000);
+    return () => { clearTimeout(t); clearTimeout(s); if (iv) clearInterval(iv); };
+  }, [leaving]);
   return (
-    <div className="wcf-splash">
-      <img className="wcf-splash-photo" src="/tunnel.jpg" alt="" />
-      <div className="wcf-splash-scrim" />
-      <div className="wcf-splash-body">
-        <div className="wcf-splash-est">EST. 2026</div>
-        <div className="wcf-splash-wordmark">
-          WIRRAL
-          <br />
-          <span className="dim">COMMUNITY FOOTBALL</span>
+    <div className={"wcf-sp" + (leaving ? " out" : "")} aria-busy={!leaving} aria-label="Loading Wirral Community Football">
+      <div className="wcf-sp-photo"><img src="/splash-tunnel.jpg" alt="" fetchPriority="high" /></div>
+      <div className="wcf-sp-glow" />
+      <div className="wcf-sp-scrim" />
+      <div className="wcf-sp-body">
+        <img className="wcf-sp-crest" src="/crest.png" alt="" />
+        <div className="wcf-sp-est">EST. 2026</div>
+        <div className="wcf-sp-word">
+          {"WIRRAL".split("").map((c, i) => <i key={i} style={{ "--i": i } as React.CSSProperties}>{c}</i>)}
+          <span className="wcf-sp-sub">COMMUNITY FOOTBALL</span>
         </div>
-        <div className="wcf-splash-loader">
-          <span className="wcf-splash-dot" />
-          <span className="wcf-splash-dot" />
-          <span className="wcf-splash-dot" />
+        <div className="wcf-sp-pitch" aria-hidden>
+          <span className="wcf-sp-line" />
+          <span className="wcf-sp-shadow" />
+          <span className="wcf-sp-ball">
+            <svg viewBox="0 0 24 24" fill="#fff" stroke="#0d0d1a" strokeWidth="1.2"><circle cx="12" cy="12" r="10.5" /><path d="M12 7.5l3 2.2-1.1 3.6h-3.8L9 9.7z" fill="#0d0d1a" /><path d="M12 3v4.5M5 8.5l4 1.7M19 8.5l-4 1.7M7.3 19l1.7-4.9M16.7 19l-1.7-4.9" fill="none" /></svg>
+          </span>
         </div>
+        {stuck ? (
+          <div className="wcf-sp-stuck">
+            This is taking longer than usual.
+            <button onClick={() => window.location.reload()}>Try again</button>
+          </div>
+        ) : (
+          <div className="wcf-sp-status">{line >= 0 && <span key={line}>{SPLASH_LINES[line % SPLASH_LINES.length]}…</span>}</div>
+        )}
       </div>
+      <div className="wcf-sp-flash" />
     </div>
   );
 }
 
 export default function WirralCommunityFootball() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
+  // The walkout is up from the first paint (it's in the server HTML too)
+  // until no step is holding it; then it plays its exit and goes.
+  const [splash, setSplash] = useState<"on" | "leaving" | "gone">("on");
+  const holds = useRef(0);
+  const settle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const hold = useCallback(() => {
+    holds.current++;
+    clearTimeout(settle.current);
+    setSplash((p) => (p === "gone" ? "on" : p));
+    return () => {
+      holds.current--;
+      clearTimeout(settle.current);
+      // Wait a beat (one step's hold often ends just as the next begins),
+      // and let the walkout play for at least 1.7s so the crest and name land.
+      const shown = typeof performance !== "undefined" ? performance.now() : 0;
+      settle.current = setTimeout(() => {
+        if (holds.current === 0) setSplash((p) => (p === "on" ? "leaving" : p));
+      }, Math.max(120, 1700 - shown));
+    };
+  }, []);
+  useEffect(() => {
+    if (splash !== "leaving") return;
+    const t = setTimeout(() => setSplash("gone"), 950);
+    return () => clearTimeout(t);
+  }, [splash]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -1331,6 +1395,7 @@ export default function WirralCommunityFootball() {
   return (
     <div className="wcf-root">
       <style>{css}</style>
+      <SplashHoldCtx.Provider value={hold}>
       {session === undefined ? (
         <SplashScreen />
       ) : session ? (
@@ -1338,6 +1403,8 @@ export default function WirralCommunityFootball() {
       ) : (
         <SignIn />
       )}
+      </SplashHoldCtx.Provider>
+      {splash !== "gone" && <TunnelSplash leaving={splash === "leaving"} />}
     </div>
   );
 }
@@ -2062,8 +2129,11 @@ function App({ session }: { session: Session }) {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await loadAll();
-      setLoading(false);
+      try {
+        await loadAll();
+      } finally {
+        setLoading(false);
+      }
     })();
   }, [loadAll]);
 
@@ -14119,27 +14189,55 @@ const css = `
 .wcf-root *{box-sizing:border-box}
 .wcf-root path{stroke-linecap:round}
 
-.wcf-splash{position:relative;flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
-.wcf-splash-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 38%;
-  animation:wcfSplashZoom 9s ease-in-out infinite alternate}
-.wcf-splash-scrim{position:absolute;inset:0;
-  background:linear-gradient(180deg,rgba(5,5,10,.55) 0%,rgba(5,5,10,.15) 30%,rgba(5,5,10,.35) 55%,rgba(5,5,10,.92) 82%,var(--bg) 100%),
-    radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%)}
-.wcf-splash-body{position:relative;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
-  padding:0 24px 15%;text-align:center}
-.wcf-splash-est{font-family:var(--mono);font-weight:600;font-size:10px;letter-spacing:3px;color:var(--red-hi);margin-bottom:10px;opacity:.9}
-.wcf-splash-wordmark{font-family:var(--display);font-weight:800;font-size:34px;letter-spacing:-.5px;line-height:1.15;
-  color:var(--white);text-shadow:0 4px 20px rgba(0,0,0,.6)}
-.wcf-splash-wordmark .dim{color:rgba(245,246,248,.4)}
-.wcf-splash-loader{margin-top:26px;display:flex;align-items:center;justify-content:center;gap:7px}
-.wcf-splash-dot{width:6px;height:6px;border-radius:50%;background:rgba(245,246,248,.35);animation:wcfSplashDot 1.2s ease-in-out infinite}
-.wcf-splash-dot:nth-child(2){animation-delay:.15s}
-.wcf-splash-dot:nth-child(3){animation-delay:.3s}
-@keyframes wcfSplashZoom{from{transform:scale(1.05)}to{transform:scale(1.16)}}
-@keyframes wcfSplashDot{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
-@media (prefers-reduced-motion: reduce){
-  .wcf-splash-photo{animation:none;transform:scale(1.08)}
-  .wcf-splash-dot{animation:none;opacity:.7}
+/* Loading screen: walking out of the tunnel. One overlay for the whole
+   start-up, so it never restarts; it plays its exit when the app is ready. */
+.wcf-sp{position:fixed;top:0;bottom:0;left:50%;width:min(100%,520px);transform:translateX(-50%);z-index:3000;overflow:hidden;background:#05060c;color:#F5F6F8;font-family:var(--sans)}
+.wcf-sp{--door:46%;--soft:0px}
+.wcf-sp-photo{position:absolute;inset:-2%;transform-origin:50% var(--door);animation:wcfSpDolly 7s cubic-bezier(.25,.1,.25,1) both}
+.wcf-sp-photo img{width:100%;height:100%;object-fit:cover;object-position:50% var(--door);filter:blur(var(--soft)) saturate(1.08) brightness(.95)}
+.wcf-sp-glow{position:absolute;left:50%;top:var(--door);width:min(90vmin,470px);height:min(90vmin,470px);margin:calc(min(90vmin,470px) / -2) 0 0 calc(min(90vmin,470px) / -2);border-radius:50%;
+  background:radial-gradient(circle,rgba(255,248,219,.55) 0%,rgba(190,220,255,.22) 18%,rgba(120,170,255,.08) 38%,transparent 62%);
+  mix-blend-mode:screen;opacity:0;animation:wcfSpFlick .9s .25s steps(1) forwards,wcfSpBreathe 3.2s 1.2s ease-in-out infinite alternate}
+.wcf-sp-scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(5,6,12,.5) 0%,rgba(5,6,12,.05) 28%,rgba(5,6,12,.2) 50%,rgba(5,6,12,.88) 74%,#05060c 100%),radial-gradient(ellipse at 50% var(--door),transparent 40%,rgba(0,0,0,.6) 100%)}
+.wcf-sp-body{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;text-align:center;padding:0 24px calc(env(safe-area-inset-bottom,0px) + 9vh)}
+.wcf-sp-crest{width:58px;height:58px;object-fit:contain;filter:drop-shadow(0 6px 18px rgba(0,0,0,.6));animation:wcfSpCrest .7s .5s cubic-bezier(.3,1.5,.5,1) both}
+.wcf-sp-est{margin-top:14px;font-family:var(--mono);font-weight:600;font-size:10px;letter-spacing:3px;color:#f0525e;animation:wcfSpUp .5s .8s both}
+.wcf-sp-word{margin-top:8px;font-family:var(--display);font-weight:800;font-size:38px;letter-spacing:-.5px;line-height:1.05;text-shadow:0 4px 24px rgba(0,0,0,.7)}
+.wcf-sp-word i{display:inline-block;font-style:normal;animation:wcfSpLetter .55s calc(.9s + var(--i) * .06s) cubic-bezier(.3,1.4,.5,1) both}
+.wcf-sp-sub{display:block;margin-top:6px;font-family:var(--sans);font-weight:800;font-size:11px;letter-spacing:.32em;color:rgba(245,246,248,.5);animation:wcfSpUp .5s 1.4s both}
+.wcf-sp-pitch{position:relative;width:150px;height:46px;margin-top:26px;animation:wcfSpUp .5s 1.5s both}
+.wcf-sp-ball{position:absolute;left:50%;bottom:10px;width:20px;height:20px;margin-left:-10px;animation:wcfSpBounce .62s cubic-bezier(.5,0,.5,1) infinite alternate}
+.wcf-sp-ball svg{width:100%;height:100%;animation:wcfSpSpin 1.24s linear infinite}
+.wcf-sp-shadow{position:absolute;left:50%;bottom:6px;width:20px;height:5px;margin-left:-10px;border-radius:50%;background:rgba(0,0,0,.55);animation:wcfSpShadow .62s cubic-bezier(.5,0,.5,1) infinite alternate}
+.wcf-sp-line{position:absolute;left:0;right:0;bottom:8px;height:1.5px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent)}
+.wcf-sp-status{height:18px;margin-top:6px;font-size:12px;font-weight:600;color:rgba(245,246,248,.62);letter-spacing:.02em}
+.wcf-sp-status span{display:inline-block;animation:wcfSpStatus 1.6s ease-in-out both}
+.wcf-sp-stuck{margin-top:6px;display:flex;flex-direction:column;align-items:center;gap:10px;font-size:13px;color:rgba(245,246,248,.75);animation:wcfSpUp .4s both}
+.wcf-sp-stuck button{border:0;border-radius:12px;padding:11px 20px;background:var(--red,#e63946);color:#fff;font-family:var(--display);font-weight:800;font-size:13.5px;cursor:pointer}
+.wcf-sp-flash{position:absolute;inset:0;pointer-events:none;opacity:0;background:radial-gradient(circle at 50% var(--door),#fffdf2 0%,rgba(255,248,219,.9) 25%,rgba(255,248,219,.35) 55%,transparent 80%)}
+/* The exit: straight down the tunnel and out into the light */
+.wcf-sp.out{animation:wcfSpGone .32s .58s ease-in forwards;pointer-events:none}
+.wcf-sp.out .wcf-sp-photo{animation:wcfSpRush .75s cubic-bezier(.6,0,.85,.4) forwards}
+.wcf-sp.out .wcf-sp-body{animation:wcfSpDrop .35s ease-in forwards}
+.wcf-sp.out .wcf-sp-flash{animation:wcfSpFlash .75s ease-in forwards}
+@keyframes wcfSpDolly{from{transform:scale(1.02)}to{transform:scale(1.22)}}
+@keyframes wcfSpFlick{0%{opacity:.6}12%{opacity:0}26%{opacity:.85}38%{opacity:.15}52%{opacity:1}100%{opacity:1}}
+@keyframes wcfSpBreathe{from{transform:scale(1)}to{transform:scale(1.08)}}
+@keyframes wcfSpCrest{from{opacity:0;transform:translateY(-24px) scale(.6) rotate(-10deg)}to{opacity:1;transform:none}}
+@keyframes wcfSpUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes wcfSpLetter{from{opacity:0;transform:translateY(22px) scale(.85)}to{opacity:1;transform:none}}
+@keyframes wcfSpBounce{from{transform:translateY(-26px)}to{transform:translateY(0) scale(1.08,.92)}}
+@keyframes wcfSpShadow{from{transform:scale(.45);opacity:.35}to{transform:scale(1);opacity:1}}
+@keyframes wcfSpSpin{to{transform:rotate(360deg)}}
+@keyframes wcfSpStatus{0%{opacity:0;transform:translateY(6px)}18%,82%{opacity:1;transform:none}100%{opacity:0;transform:translateY(-6px)}}
+@keyframes wcfSpRush{from{transform:scale(1.2)}to{transform:scale(4.2)}}
+@keyframes wcfSpDrop{to{opacity:0;transform:translateY(30px)}}
+@keyframes wcfSpFlash{0%,30%{opacity:0}75%{opacity:1}100%{opacity:1}}
+@keyframes wcfSpGone{to{opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .wcf-sp *,.wcf-sp-word i{animation:none!important}
+  .wcf-sp-glow{opacity:1}
+  .wcf-sp.out{animation:wcfSpGone .3s ease-in forwards}
 }
 
 .wcf-gate{position:relative;flex:1;min-height:100dvh;display:flex;flex-direction:column;gap:12px;padding:calc(env(safe-area-inset-top,0px) + 28px) 22px calc(env(safe-area-inset-bottom,0px) + 24px);background:var(--bg);color:#fff;overflow-y:auto}
