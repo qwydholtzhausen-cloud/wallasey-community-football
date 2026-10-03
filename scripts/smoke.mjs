@@ -47,7 +47,7 @@ const context = await browser.newContext({
   reducedMotion: "reduce",
 });
 await context.addInitScript(([k, v]) => localStorage.setItem(k, v), [storageKey, JSON.stringify(auth.session)]);
-const page = await context.newPage();
+let page = await context.newPage();
 
 const problems = [];
 page.on("pageerror", (e) => problems.push(`Page error: ${e.message}`));
@@ -139,6 +139,71 @@ await step("Account", async () => {
   await page.waitForFunction(() => document.querySelector(".wcf-heading h2")?.textContent?.startsWith("Your account"), null, { timeout: 10000 });
   await page.waitForTimeout(900);
 });
+
+// ── Admin pass ──
+// The test account is a player at rest (its password is simple, so it must
+// never be a standing admin). For this pass only it's promoted to admin,
+// then put back to player - in a finally, so a failed check can't leave it
+// an admin. Look-only: it presses Generate (which only suggests teams on
+// screen) but never "Use these teams", and never sends, saves or deletes.
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (process.env.SMOKE_ADMIN !== "0" && serviceKey) {
+  const svc = createClient(url, serviceKey, { auth: { persistSession: false } });
+  const setRole = async (role) => {
+    const { error } = await svc.from("profiles").update({ role }).eq("id", auth.user.id).eq("is_test", true);
+    if (error) throw new Error(`Couldn't set the test account's role: ${error.message}`);
+  };
+  try {
+    await setRole("admin");
+    const adminCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+    await adminCtx.addInitScript(([k, v]) => localStorage.setItem(k, v), [storageKey, JSON.stringify(auth.session)]);
+    const adminPage = await adminCtx.newPage();
+    adminPage.on("pageerror", (e) => problems.push(`Page error: ${e.message}`));
+    adminPage.on("console", (m) => {
+      if (m.type() === "error" && !/favicon|Failed to load resource: net::ERR_ABORTED/.test(m.text())) problems.push(`Console error: ${m.text().slice(0, 200)}`);
+    });
+    adminPage.on("response", (r) => {
+      if (r.status() >= 400 && r.url().includes(".supabase.co")) problems.push(`HTTP ${r.status()} from ${new URL(r.url()).pathname}`);
+    });
+    page = adminPage;
+    await step("Admin: open the app", async () => {
+      await page.goto(BASE, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".wcf-sp", { state: "detached", timeout: 20000 });
+      await page.locator(".wcf-navbtn", { hasText: "Admin" }).first().waitFor({ timeout: 10000 });
+    });
+    await step("Admin tab", async () => tab("Admin", "Admin"));
+    for (const sub of ["Today", "Fixtures", "Payments", "Messages"]) {
+      await step(`Admin: ${sub}`, async () => {
+        await page.locator(".wcf-admin-tabs button", { hasText: sub }).first().dispatchEvent("click");
+        await page.waitForFunction((t) => document.querySelector(".wcf-admin-tabs button.active")?.textContent?.trim().startsWith(t), sub, { timeout: 8000 });
+        await page.waitForTimeout(900);
+        await page.evaluate(() => document.querySelector(".wcf-main")?.scrollTo(0, 0));
+      });
+    }
+    await step("Admin: Line-up Teams", async () => {
+      await tab("Line-up", "Next game line-up");
+      await page.locator(".wcf-subtabs button", { hasText: "Teams" }).first().dispatchEvent("click");
+      await page.waitForFunction(() => document.querySelector(".wcf-subtabs button.active")?.textContent?.trim() === "Teams", null, { timeout: 8000 });
+      await page.waitForTimeout(900);
+    });
+    // Random split, so its screenshot differs run to run; compare ignores it.
+    await step("Admin: Generate teams (random)", async () => {
+      const gen = page.locator("button", { hasText: /^(Generate teams|Generate a new split|↻ Shuffle again|Shuffle)/ }).first();
+      if (!(await gen.count())) throw new Error("No Generate button on the Teams screen");
+      await gen.dispatchEvent("click");
+      await page.locator("button", { hasText: "Use these teams" }).first().waitFor({ timeout: 8000 });
+      await page.waitForTimeout(600);
+    });
+    await step("Admin: Account", async () => {
+      await page.locator(".wcf-role").first().dispatchEvent("click");
+      await page.waitForFunction(() => document.querySelector(".wcf-heading h2")?.textContent?.startsWith("Your account"), null, { timeout: 10000 });
+      await page.waitForTimeout(900);
+    });
+    await adminCtx.close();
+  } finally {
+    await setRole("player");
+  }
+}
 
 await browser.close();
 await sb.auth.signOut();

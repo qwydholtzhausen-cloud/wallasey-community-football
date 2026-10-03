@@ -5,7 +5,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { chromium } from "playwright";
 
 const [a, b] = process.argv.slice(2);
-const names = readdirSync(a).filter((f) => f.endsWith(".png") && !f.startsWith("FAILED"));
+const names = readdirSync(a).filter((f) => f.endsWith(".png") && !f.startsWith("FAILED") && !f.includes("random"));
 const browser = await chromium.launch();
 const page = await browser.newPage();
 let changed = 0;
