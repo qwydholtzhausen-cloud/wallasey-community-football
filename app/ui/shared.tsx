@@ -98,3 +98,61 @@ export const POT_CATEGORY_LABEL: Record<PotCategory, string> = {
   sponsorship: "Sponsorship",
   other: "Other",
 };
+
+// Picks black or white text so admin-chosen team colours stay readable
+// regardless of how light/dark the colour they picked is.
+export function readableTextColor(hex: string) {
+  const c = hex.replace("#", "");
+  const r = parseInt(c.substring(0, 2), 16) || 0;
+  const g = parseInt(c.substring(2, 4), 16) || 0;
+  const b = parseInt(c.substring(4, 6), 16) || 0;
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? "#0d0d1a" : "#ffffff";
+}
+
+// Derives a light/dark gradient pair from a club's configured team colour so
+// jersey chips stay correct even if an admin picks a colour other than
+// literal red/white - same "respect the real setting" pattern as the rest
+// of the Line-up screen already uses team_*_color for.
+export function teamGradient(hex: string) {
+  const c = hex.replace("#", "");
+  const r = parseInt(c.substring(0, 2), 16) || 0;
+  const g = parseInt(c.substring(2, 4), 16) || 0;
+  const b = parseInt(c.substring(4, 6), 16) || 0;
+  const mix = (v: number, target: number, amt: number) => Math.round(v + (target - v) * amt);
+  const light = `rgb(${mix(r, 255, 0.35)},${mix(g, 255, 0.35)},${mix(b, 255, 0.35)})`;
+  const dark = `rgb(${mix(r, 0, 0.35)},${mix(g, 0, 0.35)},${mix(b, 0, 0.35)})`;
+  return `linear-gradient(160deg,${light},${dark})`;
+}
+
+export type PlayerPosition = "keeper" | "defence" | "midfield" | "attack";
+
+export const POSITION_LABEL: Record<PlayerPosition, string> = { keeper: "Keeper", defence: "Defence", midfield: "Midfield", attack: "Attack" };
+
+export const POSITIONS: PlayerPosition[] = ["keeper", "defence", "midfield", "attack"];
+
+// Same collapse pattern as "View players"/Tabs elsewhere - reused here as
+// a small generic wrapper since Account groups several of these back to
+// back (settings, rating, guides, and - for admins - roles/log/settings/
+// awards) rather than each hand-rolling its own toggle button.
+// A note on the Teams tab: line icon, short title, one specific line.
+// Gold = a tip, red = a real imbalance, green = all good.
+export function TeamCallout({ tone, icon, title, children }: { tone: "gold" | "red" | "green"; icon: "glove" | "scale" | "split" | "check"; title: string; children: React.ReactNode }) {
+  const paths: Record<typeof icon, React.ReactNode> = {
+    glove: <path d="M7 21h9a3 3 0 0 0 3-3v-6.5a1.5 1.5 0 0 0-3 0V11V5.5a1.5 1.5 0 0 0-3 0V10V4.5a1.5 1.5 0 0 0-3 0V10V6.5a1.5 1.5 0 0 0-3 0V14l-1.6-1.6a1.6 1.6 0 0 0-2.3 2.2L7 19" />,
+    scale: <path d="M12 3v18M5 7h14M5 7l-3 7a3.5 3.5 0 0 0 6 0zM19 7l-3 7a3.5 3.5 0 0 0 6 0z" />,
+    split: <path d="M4 8h14l-3.5-3.5M20 16H6l3.5 3.5" />,
+    check: <path d="M5 12l5 5L20 7" />,
+  };
+  return (
+    <div className={"wcf-callout " + tone}>
+      <span className="wcf-callout-ic">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[icon]}</svg>
+      </span>
+      <div>
+        <div className="wcf-callout-t">{title}</div>
+        <div className="wcf-callout-b">{children}</div>
+      </div>
+    </div>
+  );
+}

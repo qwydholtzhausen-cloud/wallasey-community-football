@@ -117,6 +117,14 @@ await step("Boot Room", async () => {
   await page.locator(".wcf-feed-hero-tabs button", { hasText: "Feed" }).first().dispatchEvent("click");
 });
 await step("Line-up", async () => tab("Line-up", "Next game line-up"));
+for (const sub of ["Team Sheet", "Predict"]) {
+  await step(`Line-up: ${sub}`, async () => {
+    await page.locator(".wcf-subtabs button", { hasText: sub }).first().dispatchEvent("click");
+    await page.waitForFunction((t) => document.querySelector(".wcf-subtabs button.active")?.textContent?.trim() === t, sub, { timeout: 8000 });
+    await page.waitForTimeout(900);
+    await page.evaluate(() => document.querySelector(".wcf-main")?.scrollTo(0, 0));
+  });
+}
 await step("Results", async () => tab("Results", "Results"));
 for (const sub of ["Season", "Stats", "Records", "Scores", "Pot"]) {
   await step(`Results: ${sub}`, async () => {
