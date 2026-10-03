@@ -5027,6 +5027,39 @@ function App({ session }: { session: Session }) {
     [upcomingGames, myId]
   );
 
+  // ── One big moment at a time ──
+  // Every automatic full-screen moment goes through this queue: the most
+  // important one waiting shows, it stays until it finishes, and at most
+  // MOMENTS_PER_OPEN play per app open (the rest are dropped, never
+  // stacked). The rating sheet, Wrapped, a player card or your own booking
+  // ticket pause the queue. Time-critical moments come first.
+  const MOMENTS_PER_OPEN = 2;
+  const momentCandidates: string[] = [];
+  if (promoGame) momentCandidates.push("promo:" + promoGame.id);
+  if (envelope) momentCandidates.push("envelope:" + envelope.ids.join(","));
+  if (predLock) momentCandidates.push("predlock:" + predLock.key);
+  if (myMotmMoment && motmMomentClosed !== myMotmMoment.game.id) momentCandidates.push("motm:" + myMotmMoment.game.id);
+  if (potmShow) momentCandidates.push("potm:" + potmShow);
+  if (myRecordMoment && !recordMomentDone) momentCandidates.push("record:" + myRecordMoment.seenKey);
+  if (nextBigMoment) momentCandidates.push("big:" + nextBigMoment.key);
+  if (ticketShow && ticketShow.mode !== "booked" && ticketGames.length > 0) momentCandidates.push("ticket:" + ticketShow.mode + ticketShow.gameIds.join(","));
+  if (specialGame) momentCandidates.push("special:" + specialGame.id);
+  if (fxCalendar && tab === "fixtures") momentCandidates.push("fx:" + fxCalendar.ids.join(","));
+  const momentsPaused = !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked";
+  const [momentNow, setMomentNow] = useState<string | null>(null);
+  const [momentsPlayed, setMomentsPlayed] = useState(0);
+  const momentKey = momentCandidates.join("|");
+  useEffect(() => {
+    if (momentNow && !momentCandidates.includes(momentNow)) {
+      setMomentNow(null);
+      setMomentsPlayed((n) => n + 1);
+      return;
+    }
+    if (!momentNow && !momentsPaused && momentsPlayed < MOMENTS_PER_OPEN && momentCandidates.length) setMomentNow(momentCandidates[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [momentKey, momentNow, momentsPaused, momentsPlayed]);
+  const showMoment = (prefix: string) => !!momentNow && momentNow.startsWith(prefix + ":") && momentCandidates.includes(momentNow);
+
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
     { k: "feed", label: "Feed", icon: Icon.pulse },
@@ -7673,17 +7706,17 @@ function App({ session }: { session: Session }) {
         );
       })()}
 
-      {promoGame && (
+      {promoGame && showMoment("promo") && (
         <SubBoard
           number={promoGame.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)).findIndex((b) => b.player_id === myId) + 1 || promoGame.max_players}
           label={`${new Date(promoGame.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase()} · ${promoGame.kickoff} · ${promoGame.venue.toUpperCase()}`}
           onDone={() => { const id = promoGame.id; setPromoShow(null); setTicketShow({ mode: "booked", gameIds: [id] }); }}
         />
       )}
-      {nextBigMoment && !promoGame && !rateSheetFor && !ticketShow && !potmShow && !wrappedOpen && !playerCardId && !(myRecordMoment && !recordMomentDone) && !(myMotmMoment && motmMomentClosed !== myMotmMoment.game.id) && (
+      {nextBigMoment && showMoment("big") && (
         <BigMomentView key={nextBigMoment.key} m={nextBigMoment} onDone={() => bigMomentDone(nextBigMoment)} />
       )}
-      {!rateSheetFor && !ticketShow && !potmShow && myRecordMoment && (
+      {myRecordMoment && showMoment("record") && (
         <RecordMoment
           value={myRecordMoment.value}
           label={myRecordMoment.label}
@@ -7694,10 +7727,10 @@ function App({ session }: { session: Session }) {
           onDone={recordMomentClose}
         />
       )}
-      {fxCalendar && tab === "fixtures" && !ticketShow && !specialGame && (
+      {fxCalendar && showMoment("fx") && (
         <FixturesCalendar month={fxCalendar.month} dates={fxCalendar.dates} total={fxCalendar.ids.length} onDone={fxCalendarDone} />
       )}
-      {predLock && !fxCalendar && !ticketShow && !specialGame && !rateSheetFor && (
+      {predLock && showMoment("predlock") && (
         <PredictionLock
           key={predLock.key}
           value={predLock.value}
@@ -7709,7 +7742,7 @@ function App({ session }: { session: Session }) {
           }}
         />
       )}
-      {envelope && !fxCalendar && !predLock && !ticketShow && !specialGame && !rateSheetFor && !promoGame && (
+      {envelope && showMoment("envelope") && (
         <AdminEnvelope
           items={envelope.items}
           onDone={() => {
@@ -7718,7 +7751,7 @@ function App({ session }: { session: Session }) {
           }}
         />
       )}
-      {specialGame && !ticketShow && (
+      {specialGame && showMoment("special") && (
         <SpecialPoster
           date={new Date(specialGame.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" })}
           kickoff={specialGame.kickoff}
@@ -7729,8 +7762,8 @@ function App({ session }: { session: Session }) {
           onDone={() => specialDone(specialGame.id)}
         />
       )}
-      {ticketShow && ticketGames.length > 0 && <MatchTickets key={ticketShow.mode + ticketShow.gameIds.join(",")} mode={ticketShow.mode} games={ticketGames} onDone={() => setTicketShow(null)} />}
-      {potmShow === "everyone" && playerOfMonth && (
+      {ticketShow && ticketGames.length > 0 && (ticketShow.mode === "booked" || showMoment("ticket")) && <MatchTickets key={ticketShow.mode + ticketShow.gameIds.join(",")} mode={ticketShow.mode} games={ticketGames} onDone={() => setTicketShow(null)} />}
+      {potmShow === "everyone" && playerOfMonth && showMoment("potm") && (
         <PotmIntro
           month={playerOfMonth.monthLabel.split(" ")[0]}
           prevMonth={new Date(previousMonthKey(playerOfMonth.monthKey + "-15") + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" })}
@@ -7738,12 +7771,12 @@ function App({ session }: { session: Session }) {
           onDone={potmDone}
         />
       )}
-      {potmShow === "winner" && playerOfMonth && (() => {
+      {potmShow === "winner" && playerOfMonth && showMoment("potm") && (() => {
         const me = playerOfMonth.winners.find((w) => w.id === myId);
         return me ? <PotmWinner monthLabel={playerOfMonth.monthLabel} joint={playerOfMonth.winners.length > 1} wins={me.wins} votes={me.votes} onDone={potmDone} /> : null;
       })()}
 
-      {!rateSheetFor && myMotmMoment && motmMomentClosed !== myMotmMoment.game.id && (
+      {myMotmMoment && motmMomentClosed !== myMotmMoment.game.id && showMoment("motm") && (
         <MotmWinnerMoment
           dateLabel={new Date(myMotmMoment.game.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase()}
           scoreLabel={`${myMotmMoment.game.team_white_score}–${myMotmMoment.game.team_red_score}`}
