@@ -1789,7 +1789,8 @@ function App({ session }: { session: Session }) {
   // The vote you just cast gets the medal drop (replaces the old toast).
   const [justVoted, setJustVoted] = useState<{ gameId: string; candidateId: string; n: number } | null>(null);
   const [motmMomentClosed, setMotmMomentClosed] = useState<string | null>(null);
-  const [ticketShow, setTicketShow] = useState<{ mode: "booked" | "paid"; gameIds: string[] } | null>(null);
+  const [ticketShow, setTicketShow] = useState<{ mode: "booked" | "paid" | "birthday"; gameIds: string[] } | null>(null);
+  const [specialShow, setSpecialShow] = useState<string | null>(null);
   const [potmShow, setPotmShow] = useState<"everyone" | "winner" | null>(null);
   const [potmLand, setPotmLand] = useState(false);
   const [recordFalls, setRecordFalls] = useState<Record<string, { v: number; who: string }>>({});
@@ -3804,6 +3805,45 @@ function App({ session }: { session: Session }) {
     if (fresh.length > 0 && motionOk()) setTicketShow({ mode: "paid", gameIds: fresh.map((m) => m.gameId) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [games, loading, myId]);
+  // Birthday games (made free by an admin) and newly published special
+  // fixtures: same "since this phone last looked" rule, first run records.
+  useEffect(() => {
+    if (loading || !myId || games.length === 0 || ticketShow || specialShow) return;
+    const upcoming = games.filter((g) => g.published && kickoffCutoff(g.date, g.kickoff, 0) > nowUk);
+    const seenList = (key: string, ids: string[]) => {
+      try {
+        const raw = localStorage.getItem(key);
+        localStorage.setItem(key, JSON.stringify(ids));
+        return raw ? (JSON.parse(raw) as string[]) : null;
+      } catch {
+        return [] as string[] | null;
+      }
+    };
+    const bdays = upcoming.flatMap((g) => g.bookings.filter((b) => b.player_id === myId && !b.waiting && (b.pot_exempt_reason as string) === "birthday").map((b) => ({ id: b.id, gameId: g.id })));
+    const bSeen = seenList(`wcf-bday-seen-${myId}`, bdays.map((b) => b.id));
+    const specials = upcoming.filter((g) => g.special).map((g) => g.id);
+    const sSeen = seenList(`wcf-special-seen-${myId}`, specials);
+    if (!motionOk()) return;
+    const freshB = bSeen ? bdays.find((b) => !bSeen.includes(b.id)) : undefined;
+    if (freshB) return setTicketShow({ mode: "birthday", gameIds: [freshB.gameId] });
+    const freshS = sSeen ? specials.find((id) => !sSeen.includes(id)) : undefined;
+    if (freshS) setSpecialShow(freshS);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, loading, myId]);
+  const specialGame = specialShow ? games.find((g) => g.id === specialShow) ?? null : null;
+  function specialDone(id: string) {
+    setSpecialShow(null);
+    setTab("fixtures");
+    setTimeout(() => {
+      const el = document.getElementById("fx-" + id);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.remove("wcf-row-flash");
+      void el.offsetWidth;
+      el.classList.add("wcf-row-flash");
+    }, 120);
+  }
+
   const ticketGames = useMemo<TicketGame[]>(() => {
     if (!ticketShow) return [];
     return ticketShow.gameIds.flatMap((id) => {
@@ -7068,7 +7108,7 @@ function App({ session }: { session: Session }) {
                       own payment. */}
                   <div className="wcf-pot-hero">
                     <div className="wcf-pot-hero-k">Community pot</div>
-                    <div className={"wcf-pot-hero-amt" + (potTotal < 0 ? " negative" : "")}>{money(potTotal)}</div>
+                    <PotAmountJar total={potTotal} money={money} last={lastGame ? { id: lastGame.id, amount: lastGame.amount, paid: (lastGame as { paid?: number }).paid } : undefined} storageKey={`wcf-pot-seen-${myId}`} />
                     {lastGame && (
                       <div className="wcf-pot-hero-sub">
                         <b>{lastGame.amount >= 0 ? "+" : ""}{money(lastGame.amount)}</b> from {fmtDate(lastGame.date)} · <b>{gameEntries.length}</b> {gameEntries.length === 1 ? "game" : "games"}
@@ -7498,6 +7538,17 @@ function App({ session }: { session: Session }) {
           dateLabel={myRecordMoment.dateLabel}
           scoreLine={myRecordMoment.scoreLine}
           onDone={recordMomentClose}
+        />
+      )}
+      {specialGame && !ticketShow && (
+        <SpecialPoster
+          date={new Date(specialGame.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" })}
+          kickoff={specialGame.kickoff}
+          pitch={specialGame.pitch}
+          venue={specialGame.venue}
+          price={specialGame.price}
+          players={specialGame.max_players}
+          onDone={() => specialDone(specialGame.id)}
         />
       )}
       {ticketShow && ticketGames.length > 0 && <MatchTickets key={ticketShow.mode + ticketShow.gameIds.join(",")} mode={ticketShow.mode} games={ticketGames} onDone={() => setTicketShow(null)} />}
@@ -8135,6 +8186,107 @@ function MotmVotersModal({
   );
 }
 
+// A special one-off fixture arrives as a gold matchday poster.
+function SpecialPoster({ date, kickoff, pitch, venue, price, players, onDone }: { date: string; kickoff: string; pitch: string; venue: string; price: number; players: number; onDone: () => void }) {
+  const [leaving, setLeaving] = useState(false);
+  const go = () => { if (leaving) return; setLeaving(true); setTimeout(onDone, 480); };
+  const [day, ...rest] = date.split(" ");
+  return (
+    <div className={"wcf-moment dim" + (leaving ? " fold" : "")} onClick={go}>
+      <div className="wcf-poster">
+        <span className="wcf-poster-rib">★ SPECIAL FIXTURE</span>
+        <div className="wcf-poster-big">{day.toUpperCase()}<br />{rest.join(" ").toUpperCase()}</div>
+        <div className="wcf-poster-sub">{kickoff} · {pitch.toUpperCase()}</div>
+        <div className="wcf-poster-meta"><b>{venue}</b><br />£{price} · {players} players · one-off</div>
+        <button className="wcf-poster-cta" onClick={(e) => { e.stopPropagation(); go(); }}>See it in Fixtures</button>
+        <div className="wcf-poster-sheen" />
+      </div>
+    </div>
+  );
+}
+
+// The pot: the total with a jar beside it. After a game's payments land,
+// the first look rolls the total up from where it was, drops a coin in per
+// payer and raises the level. First look on a phone just records.
+function PotAmountJar({ total, money, last, storageKey }: { total: number; money: (n: number) => string; last: { id: string; amount: number; paid?: number } | undefined; storageKey: string }) {
+  const cap = Math.max(500, Math.ceil(Math.max(total, 1) / 500) * 500);
+  const level = (v: number) => Math.max(0.06, Math.min(1, v / cap));
+  const [shown, setShown] = useState(total);
+  const [fill, setFill] = useState(level(total));
+  const [coins, setCoins] = useState<number[]>([]);
+  useEffect(() => {
+    if (!last) return;
+    let prev: string | null = null;
+    try {
+      prev = localStorage.getItem(storageKey);
+      localStorage.setItem(storageKey, last.id);
+    } catch {
+      return;
+    }
+    if (!prev || prev === last.id || last.amount <= 0 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const from = total - last.amount;
+    setShown(from);
+    setFill(level(from));
+    const n = Math.min(16, Math.max(1, last.paid ?? 8));
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (let i = 0; i < n; i++) timers.push(setTimeout(() => setCoins((c) => [...c, i]), 400 + i * 120));
+    timers.push(setTimeout(() => setFill(level(total)), 800));
+    const steps = 24;
+    for (let k = 1; k <= steps; k++) timers.push(setTimeout(() => setShown(Math.round(from + ((total - from) * k) / steps)), 500 + k * 55));
+    timers.push(setTimeout(() => setCoins([]), 600 + n * 120 + 700));
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [last?.id]);
+  const y = 96 - fill * 82;
+  return (
+    <>
+      <div className={"wcf-pot-hero-amt" + (total < 0 ? " negative" : "")}>{money(shown)}</div>
+      <div className="wcf-pot-jar" aria-hidden="true">
+        <svg viewBox="0 0 80 100">
+          <defs><clipPath id="wcfJarClip"><path d="M14 22 Q14 14 22 14 L58 14 Q66 14 66 22 L66 88 Q66 96 58 96 L22 96 Q14 96 14 88 Z" /></clipPath></defs>
+          <g clipPath="url(#wcfJarClip)">
+            <g className="wcf-pot-jar-fill" style={{ transform: `translateY(${y}px)` }}>
+              <rect x="0" y="0" width="80" height="110" fill="rgba(34,197,94,.55)" />
+              <path d="M0 0 Q10 -4 20 0 T40 0 T60 0 T80 0 V6 H0Z" fill="rgba(74,222,128,.75)" />
+            </g>
+          </g>
+          <path d="M14 22 Q14 14 22 14 L58 14 Q66 14 66 22 L66 88 Q66 96 58 96 L22 96 Q14 96 14 88 Z" fill="none" stroke="rgba(226,232,240,.55)" strokeWidth="2.5" />
+          <rect x="20" y="6" width="40" height="9" rx="3" fill="#334155" stroke="rgba(226,232,240,.45)" strokeWidth="1.5" />
+        </svg>
+        {coins.map((i) => <i key={i} className="wcf-pot-coin" style={{ ["--dx" as string]: `${((i * 37) % 40) - 20}px` }} />)}
+      </div>
+    </>
+  );
+}
+
+// GaffAI thinking: a little tactics board with the ball passing around.
+function TikiTaka() {
+  const pts = [[30, 64], [72, 30], [72, 98], [118, 50], [118, 82], [170, 64]];
+  const route = [0, 1, 2, 3, 1, 3, 4, 2, 4, 5, 3, 0];
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setStep((s) => s + 1), 650);
+    return () => clearInterval(t);
+  }, []);
+  const at = (i: number) => pts[route[i % route.length]];
+  const lines = [step - 2, step - 1].filter((i) => i >= 0);
+  const [bx, by] = at(step);
+  return (
+    <div className="gaffai-tiki" aria-label="GaffAI is working">
+      <svg viewBox="0 0 210 128">
+        {lines.map((i) => {
+          const [x1, y1] = at(i);
+          const [x2, y2] = at(i + 1);
+          return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} />;
+        })}
+      </svg>
+      {pts.map(([x, y], i) => <span key={i} className="p us" style={{ left: `${(x / 210) * 100}%`, top: `${(y / 128) * 100}%` }} />)}
+      {[[150, 30], [150, 100], [96, 66]].map(([x, y], i) => <span key={"t" + i} className="p them" style={{ left: `${(x / 210) * 100}%`, top: `${(y / 128) * 100}%` }} />)}
+      <span className="ball" style={{ left: `${(bx / 210) * 100}%`, top: `${(by / 128) * 100}%` }} />
+    </div>
+  );
+}
+
 // "You're in": the fourth official's LED board when you come off the
 // waiting list, then your BOOKED ticket.
 function SubBoard({ number, label, onDone }: { number: number; label: string; onDone: () => void }) {
@@ -8232,16 +8384,17 @@ function BigMomentView({ m, onDone }: { m: BigMoment; onDone: () => void }) {
 // approvals) are one fanned stack, so it never becomes a queue of pop-ups.
 // About 2s whatever the count, tap to dismiss. Not shown under Reduce Motion.
 interface TicketGame { id: string; date: string; kickoff: string; venue: string; spot: string; side: string }
-function MatchTickets({ mode, games, onDone }: { mode: "booked" | "paid"; games: TicketGame[]; onDone: () => void }) {
+function MatchTickets({ mode, games, onDone }: { mode: "booked" | "paid" | "birthday"; games: TicketGame[]; onDone: () => void }) {
   const [leaving, setLeaving] = useState(false);
   const [count, setCount] = useState(0);
   const sorted = useMemo(() => [...games].sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)), [games]);
-  const multi = sorted.length > 1;
+  const multi = sorted.length > 1 && mode !== "birthday";
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
     if (multi) for (let k = 1; k <= sorted.length; k++) timers.push(setTimeout(() => setCount(k), 600 + k * Math.min(170, 900 / sorted.length)));
-    timers.push(setTimeout(() => setLeaving(true), multi ? 2600 : 1900));
-    timers.push(setTimeout(onDone, multi ? 3050 : 2350));
+    const stay = multi ? 2600 : mode === "birthday" ? 3400 : 1900;
+    timers.push(setTimeout(() => setLeaving(true), stay));
+    timers.push(setTimeout(onDone, stay + 450));
     return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -8267,11 +8420,27 @@ function MatchTickets({ mode, games, onDone }: { mode: "booked" | "paid"; games:
               <div className="wcf-ticket-club">WCF · MATCHDAY</div>
               <div className="wcf-ticket-fx">{last.venue}</div>
               <div className="wcf-ticket-when">{day(last, { weekday: "long", day: "numeric", month: "long" })} · {time(last.kickoff)}</div>
-              <div className="wcf-ticket-row"><div>SIDE<b>{last.side}</b></div><div>SPOT<b>{last.spot}</b></div></div>
+              <div className="wcf-ticket-row"><div>SIDE<b>{last.side}</b></div>{mode === "birthday" ? <div>PRICE<b>£0</b></div> : <div>SPOT<b>{last.spot}</b></div>}</div>
             </div>
             <div className="wcf-ticket-stub"><span>ADMIT ONE</span></div>
           </div>
-          {stamp("booked")}
+          {mode === "birthday" ? (
+            <>
+              <div className="wcf-ribbon" aria-hidden="true">
+                <div className="v" />
+                <div className="h" />
+                <svg className="bow" viewBox="0 0 54 34">
+                  <path d="M27 17 C14 2 2 6 4 15 C6 24 18 22 27 17 Z" fill="#f5d97a" stroke="#b8860b" strokeWidth="1.5" />
+                  <path d="M27 17 C40 2 52 6 50 15 C48 24 36 22 27 17 Z" fill="#f5d97a" stroke="#b8860b" strokeWidth="1.5" />
+                  <path d="M27 17 L20 33 M27 17 L34 33" stroke="#b8860b" strokeWidth="4" strokeLinecap="round" />
+                  <circle cx="27" cy="17" r="5" fill="#eab308" stroke="#b8860b" strokeWidth="1.5" />
+                </svg>
+              </div>
+              <div className="wcf-tk-st onus"><div>ON US<small>HAPPY BIRTHDAY</small></div></div>
+            </>
+          ) : (
+            stamp("booked")
+          )}
           {mode === "paid" && stamp("paid")}
         </div>
       ) : (
@@ -8295,6 +8464,11 @@ function MatchTickets({ mode, games, onDone }: { mode: "booked" | "paid"; games:
           <>
             <b>{count} games {mode === "paid" ? "paid" : "booked"}</b>
             <span>{mode === "paid" ? "You're sorted until" : "Through to"} {day(last, { weekday: "short", day: "numeric", month: "short" })}</span>
+          </>
+        ) : mode === "birthday" ? (
+          <>
+            <b>Happy birthday.</b>
+            <span>This one&apos;s on the club.</span>
           </>
         ) : (
           <b>{mode === "paid" ? "Paid. You're all set." : "You're in."}</b>
@@ -9948,13 +10122,16 @@ function GaffAIChat({
                   {m.action && m.actionState === "failed" && <div className="gaffai-action-result cancel">Couldn't complete that.</div>}
                 </div>
               ))}
-              {loading && (
-                <div className="gaffai-typing">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-              )}
+              {loading &&
+                (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? (
+                  <div className="gaffai-typing">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                ) : (
+                  <TikiTaka />
+                ))}
             </div>
 
 
@@ -10011,7 +10188,7 @@ function RateGameMeter({ value, onRate, small }: { value: number; onRate: (n: nu
   return (
     <div className={"wcf-rate-meter" + (small ? " small" : "")} role="radiogroup" aria-label="Rate the game">
       {[1, 2, 3, 4, 5].map((n) => (
-        <button key={n} role="radio" aria-checked={value === n} aria-label={`${n} of 5, ${RATING_WORDS[n - 1]}`} className={n <= value ? "on" : ""} onClick={() => onRate(n)} />
+        <button key={n} role="radio" aria-checked={value === n} aria-label={`${n} of 5, ${RATING_WORDS[n - 1]}`} className={n <= value ? "on" : ""} style={{ ["--i" as string]: n - 1 }} onClick={() => onRate(n)} />
       ))}
     </div>
   );
@@ -10036,23 +10213,53 @@ function RateGameSheet({
   onClose: () => void;
 }) {
   const day = new Date(game.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase();
+  // Final whistle: three blasts, then each score clicks up to the result.
+  const [motion] = useState(() => typeof window !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const fullW = game.team_white_score ?? 0;
+  const fullR = game.team_red_score ?? 0;
+  const [shownW, setShownW] = useState(motion ? 0 : fullW);
+  const [shownR, setShownR] = useState(motion ? 0 : fullR);
+  useEffect(() => {
+    if (!motion) return;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const run = (to: number, set: (n: number) => void, start: number) => {
+      let t = start;
+      for (let n = 1; n <= to; n++) {
+        t += 70 + n * 9;
+        timers.push(setTimeout(() => set(n), t));
+      }
+    };
+    run(fullW, setShownW, 1400);
+    run(fullR, setShownR, 1650);
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div className="wcf-rate-overlay" onClick={onClose}>
       <div className="wcf-rate" onClick={(e) => e.stopPropagation()}>
         <div className="wcf-rate-photo">
           <span className="wcf-rate-k">{day} · FULL TIME</span>
           <button className="wcf-rate-x" onClick={onClose} aria-label="Close">✕</button>
+          {motion && (
+            <svg className="wcf-rate-whistle" viewBox="0 0 44 44" aria-hidden="true">
+              <path className="body" d="M6 20h18l10-6v6a10 10 0 1 1-20 6" />
+              <circle cx="16" cy="27" r="3" fill="none" stroke="#f5d97a" strokeWidth="2" />
+              <path className="wave" d="M37 10q3 3 0 6" />
+              <path className="wave" d="M40 7q5 6 0 12" />
+              <path className="wave" d="M43 4q7 9 0 18" />
+            </svg>
+          )}
           <div className="wcf-rate-score">
-            {game.team_white_score}
+            <span key={"w" + shownW} className={motion && shownW > 0 ? "wcf-flap" : undefined}>{shownW}</span>
             <small>{cs.team_white_name.toUpperCase()} · {cs.team_red_name.toUpperCase()}</small>
-            {game.team_red_score}
+            <span key={"r" + shownR} className={motion && shownR > 0 ? "wcf-flap" : undefined}>{shownR}</span>
           </div>
         </div>
         <div className="wcf-rate-body">
           <div className="wcf-rate-q">{rating ? "Thanks, noted." : "How was tonight?"}</div>
           <RateGameMeter value={rating} onRate={onRate} />
           <div className="wcf-rate-ends"><span>Scrappy</span><span>Classic</span></div>
-          <div className="wcf-rate-verdict">{rating ? RATING_WORDS[rating - 1] : " "}</div>
+          <div key={rating} className={"wcf-rate-verdict" + (rating ? " pop" : "")}>{rating ? RATING_WORDS[rating - 1] : " "}</div>
           {rating > 0 && votingOpen && (
             <button className="wcf-rate-next" onClick={onVote}>Vote Man of the Match →</button>
           )}
@@ -12714,7 +12921,7 @@ function GameCard({
   );
 
   return (
-    <article className={featured ? "wcf-card featured " + (game.special ? "special" : bookedClass) : ""} style={featured ? undefined : { marginBottom: 18 }}>
+    <article id={"fx-" + game.id} className={featured ? "wcf-card featured " + (game.special ? "special" : bookedClass) : ""} style={featured ? undefined : { marginBottom: 18 }}>
       {featured ? (
         <>
           {game.special && <span className="wcf-special-ribbon">★ {fmtDate(game.date).split(",")[0]} {game.pitch}</span>}
@@ -15278,6 +15485,58 @@ a.wcf-set-link{text-decoration:none}
 @keyframes wcfWalkChalk{from{stroke-dashoffset:190}to{stroke-dashoffset:0}}
 .wcf-lineup-head.wcf-walk-stamp::after{content:"TEAMS ARE OUT";position:absolute;right:14px;bottom:16px;padding:8px 12px;border-radius:8px;background:#f5d97a;color:#0d0d1a;font-family:var(--display);font-weight:800;font-size:13px;letter-spacing:.12em;transform:rotate(-6deg);animation:wcfWalkStamp .4s .1s cubic-bezier(.3,1.6,.5,1) both}
 @keyframes wcfWalkStamp{from{opacity:0;transform:rotate(-6deg) scale(2.4)}to{opacity:1;transform:rotate(-6deg) scale(1)}}
+/* Special poster, pot jar, birthday ribbon, rate-sheet whistle, GaffAI tiki-taka */
+.wcf-poster{width:min(270px,82vw);border-radius:16px;overflow:hidden;position:relative;text-align:left;padding:18px 18px 16px;background:radial-gradient(120% 90% at 100% 0%,rgba(245,217,122,.35),transparent 55%),linear-gradient(160deg,#2a2312,#120f08 70%);box-shadow:0 0 0 1.5px rgba(245,217,122,.7),0 0 40px 6px rgba(234,179,8,.35);transform-origin:50% 0;animation:wcfUnfold .7s cubic-bezier(.2,.9,.3,1.1) both}
+@keyframes wcfUnfold{from{transform:perspective(600px) rotateX(-95deg);opacity:0}to{transform:none;opacity:1}}
+.wcf-poster-rib{display:inline-block;padding:4px 9px;border-radius:6px;background:#f5d97a;color:#1a1405;font-size:10px;font-weight:800;letter-spacing:.14em}
+.wcf-poster-big{font-family:var(--display);font-weight:800;font-size:40px;line-height:1;margin-top:12px;color:#fff;letter-spacing:-.02em}
+.wcf-poster-sub{font-family:var(--display);font-weight:800;font-size:13px;color:#f5d97a;margin-top:6px;letter-spacing:.06em}
+.wcf-poster-meta{font-size:12.5px;color:#d6cfb8;margin-top:12px;line-height:1.5}
+.wcf-poster-meta b{color:#fff}
+.wcf-poster-cta{margin-top:14px;width:100%;border:0;border-radius:12px;padding:11px;background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308);color:#1a1405;font-family:var(--display);font-weight:800;font-size:13px;cursor:pointer}
+.wcf-poster-sheen{position:absolute;inset:0;background:linear-gradient(105deg,transparent 35%,rgba(255,240,200,.35) 50%,transparent 65%);transform:translateX(-130%);animation:wcfRbShine .9s .7s ease-out both;pointer-events:none}
+.wcf-moment.fold .wcf-poster{animation:wcfFoldDown .45s cubic-bezier(.5,0,.8,.4) both}
+.wcf-moment.fold{animation:wcfLayerOut .45s ease-in both}
+@keyframes wcfFoldDown{to{transform:translateY(120px) scale(.4);opacity:0}}
+.wcf-row-flash{animation:wcfRowFlash 1.2s ease-out}
+.wcf-row-flash .wcf-fx-row{animation:wcfRowFlash 1.2s ease-out}
+@keyframes wcfRowFlash{0%{box-shadow:0 0 0 0 rgba(245,217,122,0)}30%{box-shadow:0 0 0 2px rgba(245,217,122,.9),0 0 30px 6px rgba(234,179,8,.5)}100%{box-shadow:0 0 0 0 rgba(245,217,122,0)}}
+.wcf-pot-hero{position:relative}
+.wcf-pot-jar{position:absolute;right:14px;top:12px;width:60px;height:76px}
+.wcf-pot-jar svg{width:100%;height:100%;display:block}
+.wcf-pot-jar-fill{transition:transform 1.2s cubic-bezier(.3,.8,.3,1)}
+.wcf-pot-coin{position:absolute;left:50%;top:-56px;width:13px;height:13px;margin-left:-6.5px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff3b0,#eab308 60%,#a57f22);box-shadow:0 0 0 1px #a57f22;animation:wcfCoin .55s cubic-bezier(.5,0,.8,.6) both}
+@keyframes wcfCoin{0%{opacity:0;transform:translate(var(--dx),0) rotateY(0)}15%{opacity:1}85%{opacity:1;transform:translate(0,96px) rotateY(540deg)}100%{opacity:0;transform:translate(0,104px)}}
+.wcf-ribbon{position:absolute;inset:0;pointer-events:none}
+.wcf-ribbon .v{position:absolute;top:-6px;bottom:-6px;left:62%;width:14px;background:linear-gradient(90deg,#b8860b,#f5d97a 50%,#b8860b);animation:wcfSlipV .6s 1.5s cubic-bezier(.5,0,.8,.4) both}
+.wcf-ribbon .h{position:absolute;left:-6px;right:-6px;top:46%;height:14px;background:linear-gradient(180deg,#b8860b,#f5d97a 50%,#b8860b);animation:wcfSlipH .6s 1.5s cubic-bezier(.5,0,.8,.4) both}
+.wcf-ribbon .bow{position:absolute;left:62%;top:46%;width:54px;height:34px;margin:-10px 0 0 -20px;transform-origin:27px 17px;animation:wcfUntie .8s .7s ease-in-out both}
+@keyframes wcfUntie{0%{transform:none}40%{transform:rotate(-14deg) scale(1.05)}70%{transform:rotate(10deg) scale(.9);opacity:1}100%{transform:rotate(40deg) translate(30px,60px) scale(.4);opacity:0}}
+@keyframes wcfSlipV{to{transform:translateY(160%);opacity:0}}
+@keyframes wcfSlipH{to{transform:translateX(160%);opacity:0}}
+.wcf-tk-st.onus{right:44px;bottom:-30px;--r:-10deg;transform:rotate(-10deg);color:#b8860b;box-shadow:inset 0 0 0 3px #b8860b,inset 0 0 0 6px #f3ead2,inset 0 0 0 7.5px #b8860b;animation:wcfThump .38s 2.2s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-tk-layer.birthday .wcf-tk-cap{animation-delay:2.4s}
+.wcf-rate-whistle{position:absolute;left:50%;top:34px;width:40px;height:40px;margin-left:-20px;overflow:visible;animation:wcfWhIn 1.7s both}
+.wcf-rate-whistle .body{fill:none;stroke:#f5d97a;stroke-width:2;stroke-linejoin:round}
+.wcf-rate-whistle .wave{fill:none;stroke:#f5d97a;stroke-width:2;stroke-linecap:round;opacity:0;animation:wcfToot .42s both}
+.wcf-rate-whistle .wave:nth-of-type(2){animation-delay:.45s}.wcf-rate-whistle .wave:nth-of-type(3){animation-delay:.9s}
+@keyframes wcfWhIn{0%{opacity:0;transform:scale(.6)}12%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
+@keyframes wcfToot{0%{opacity:0;transform:translateX(-3px)}40%{opacity:1}100%{opacity:0;transform:translateX(3px)}}
+.wcf-flap{display:inline-block;animation:wcfFlap .07s linear}
+@keyframes wcfFlap{50%{transform:scaleY(.78)}}
+.wcf-rate-meter button.on{animation:wcfHeat .35s cubic-bezier(.3,1.6,.5,1) both;animation-delay:calc(var(--i,0) * 60ms)}
+@keyframes wcfHeat{0%{transform:scaleY(.6);filter:brightness(1.6)}100%{transform:none;filter:none}}
+.wcf-rate-verdict.pop{animation:wcfStampIn .4s cubic-bezier(.3,1.6,.5,1) both}
+@keyframes wcfStampIn{from{transform:scale(1.8);opacity:0}to{transform:none;opacity:1}}
+.gaffai-tiki{position:relative;width:210px;max-width:100%;aspect-ratio:210/128;border-radius:10px;background:#1d4d32;box-shadow:inset 0 0 0 2px rgba(255,255,255,.55);overflow:hidden;margin:4px 0}
+.gaffai-tiki::before{content:"";position:absolute;left:50%;top:0;bottom:0;border-left:2px solid rgba(255,255,255,.5)}
+.gaffai-tiki::after{content:"";position:absolute;left:50%;top:50%;width:19%;aspect-ratio:1;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.5)}
+.gaffai-tiki svg{position:absolute;inset:0;width:100%;height:100%;z-index:1}
+.gaffai-tiki line{stroke:rgba(245,246,248,.85);stroke-width:2;stroke-dasharray:4 5;stroke-linecap:round;animation:wcfLineFade 1.4s ease-out forwards}
+@keyframes wcfLineFade{to{opacity:0}}
+.gaffai-tiki .p{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;z-index:2;box-shadow:0 2px 0 rgba(0,0,0,.3)}
+.gaffai-tiki .p.us{background:#f5f6f8}.gaffai-tiki .p.them{background:#E42A36}
+.gaffai-tiki .ball{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:#fff;box-shadow:0 0 0 1.5px #0d0d1a;z-index:3;transition:left .55s cubic-bezier(.4,0,.2,1),top .55s cubic-bezier(.4,0,.2,1)}
 /* Matchday tickets (MatchTickets): BOOKED on booking, PAID after confirmation */
 .wcf-tk-layer{position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,6,12,.74);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);cursor:pointer;animation:wcfWonIn .25s both}
 .wcf-tk-wrap{position:relative;width:min(290px,86vw)}
