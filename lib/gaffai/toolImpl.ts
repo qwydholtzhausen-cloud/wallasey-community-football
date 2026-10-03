@@ -2084,37 +2084,83 @@ async function computeBirthdayNudge(admin: SupabaseClient): Promise<Nudge | null
 // Member journey alerts: the points where people get lost - can't log in,
 // never booked, came once, drifted away - plus games being full so far
 // ahead that a new member can't get one. Each lists names so an admin can
-// reach out personally; the keys change when the people do.
-async function computeJourneyNudges(admin: SupabaseClient): Promise<Nudge[]> {
+// reach out personally.
+//
+// Dismissing one means "I've seen these people": for that admin it only
+// comes back for people who weren't on any list they dismissed in the last
+// 60 days, and then names just the new ones. (Keyed on the whole list, it
+// used to return whenever a single person joined or left it.)
+const JOURNEY_SEEN_DAYS = 60;
+const JOURNEY_FULL_QUIET_DAYS = 14;
+type JourneyDismissals = { seen: Record<string, Set<string>>; fullQuiet: boolean };
+async function journeyDismissals(admin: SupabaseClient, forAdminId: string): Promise<JourneyDismissals> {
+  const since = new Date(Date.now() - JOURNEY_SEEN_DAYS * 86400000).toISOString();
+  const { data } = await admin
+    .from("gaffai_dismissed_nudges")
+    .select("nudge_key, dismissed_at")
+    .eq("dismissed_by", forAdminId)
+    .like("nudge_key", "journey-%")
+    .gte("dismissed_at", since);
+  const seen: Record<string, Set<string>> = {};
+  let fullQuiet = false;
+  for (const r of (data ?? []) as { nudge_key: string; dismissed_at: string }[]) {
+    if (r.nudge_key.startsWith("journey-full-")) {
+      if (Date.now() - new Date(r.dismissed_at).getTime() < JOURNEY_FULL_QUIET_DAYS * 86400000) fullQuiet = true;
+      continue;
+    }
+    for (const prefix of ["journey-unconfirmed", "journey-never-booked", "journey-one-and-done", "journey-lapsed"]) {
+      if (!r.nudge_key.startsWith(prefix + "-")) continue;
+      const set = (seen[prefix] ??= new Set());
+      r.nudge_key.slice(prefix.length + 1).split(",").forEach((id) => set.add(id));
+    }
+  }
+  return { seen, fullQuiet };
+}
+async function computeJourneyNudges(admin: SupabaseClient, dismissals?: JourneyDismissals): Promise<Nudge[]> {
   const j = await computeJourney(admin);
   const names = (people: { name: string }[]) =>
     people.length <= 8 ? people.map((p) => p.name).join(", ") : `${people.slice(0, 8).map((p) => p.name).join(", ")} and ${people.length - 8} more`;
+  // Just the people this admin hasn't already dismissed, and whether that
+  // makes it a follow-up ("2 more ...") rather than the first time.
+  const fresh = <T extends { id: string }>(prefix: string, people: T[]) => {
+    const seen = dismissals?.seen[prefix];
+    const list = seen ? people.filter((p) => !seen.has(p.id)) : people;
+    return { list, more: !!seen && seen.size > 0 && list.length < people.length ? " more" : "" };
+  };
   const out: Nudge[] = [];
-  if (j.unconfirmed.length > 0) {
+  const unconfirmed = fresh("journey-unconfirmed", j.unconfirmed);
+  if (unconfirmed.list.length > 0) {
+    const n = unconfirmed.list.length;
     out.push({
-      key: contentKey("journey-unconfirmed", j.unconfirmed.map((p) => p.id)),
-      text: `${j.unconfirmed.length} sign-up${j.unconfirmed.length === 1 ? " hasn't" : "s haven't"} confirmed their email, so they can't log in: ${names(j.unconfirmed)}. You can send a login code from Account → Manage roles.`,
+      key: contentKey("journey-unconfirmed", unconfirmed.list.map((p) => p.id)),
+      text: `${n}${unconfirmed.more} sign-up${n === 1 ? " hasn't" : "s haven't"} confirmed their email, so they can't log in: ${names(unconfirmed.list)}. You can send a login code from Account → Manage roles.`,
     });
   }
-  if (j.neverBooked.length > 0) {
+  const neverBooked = fresh("journey-never-booked", j.neverBooked);
+  if (neverBooked.list.length > 0) {
+    const n = neverBooked.list.length;
     out.push({
-      key: contentKey("journey-never-booked", j.neverBooked.map((p) => p.id)),
-      text: `${j.neverBooked.length} member${j.neverBooked.length === 1 ? " joined" : "s joined"} 2+ weeks ago and never booked a game: ${names(j.neverBooked)}.${j.nextOpen ? ` The next game with a free spot is ${fmtJourneyDate(j.nextOpen.date)}.` : ""}`,
+      key: contentKey("journey-never-booked", neverBooked.list.map((p) => p.id)),
+      text: `${n}${neverBooked.more} member${n === 1 ? " joined" : "s joined"} 2+ weeks ago and never booked a game: ${names(neverBooked.list)}.${j.nextOpen ? ` The next game with a free spot is ${fmtJourneyDate(j.nextOpen.date)}.` : ""}`,
     });
   }
-  if (j.oneAndDone.length > 0) {
+  const oneAndDone = fresh("journey-one-and-done", j.oneAndDone);
+  if (oneAndDone.list.length > 0) {
+    const n = oneAndDone.list.length;
     out.push({
-      key: contentKey("journey-one-and-done", j.oneAndDone.map((p) => p.id)),
-      text: `${j.oneAndDone.length} player${j.oneAndDone.length === 1 ? "" : "s"} came to one game and haven't booked again: ${names(j.oneAndDone)}.`,
+      key: contentKey("journey-one-and-done", oneAndDone.list.map((p) => p.id)),
+      text: `${n}${oneAndDone.more} player${n === 1 ? "" : "s"} came to one game and haven't booked again: ${names(oneAndDone.list)}.`,
     });
   }
-  if (j.lapsed.length > 0) {
+  const lapsed = fresh("journey-lapsed", j.lapsed);
+  if (lapsed.list.length > 0) {
+    const n = lapsed.list.length;
     out.push({
-      key: contentKey("journey-lapsed", j.lapsed.map((p) => p.id)),
-      text: `${j.lapsed.length} regular${j.lapsed.length === 1 ? " hasn't" : "s haven't"} played in 4+ weeks and ${j.lapsed.length === 1 ? "has" : "have"} nothing booked: ${names(j.lapsed)}.`,
+      key: contentKey("journey-lapsed", lapsed.list.map((p) => p.id)),
+      text: `${n}${lapsed.more} regular${n === 1 ? " hasn't" : "s haven't"} played in 4+ weeks and ${n === 1 ? "has" : "have"} nothing booked: ${names(lapsed.list)}.`,
     });
   }
-  if (j.nextOpen && j.nextOpen.daysAway > 21) {
+  if (j.nextOpen && j.nextOpen.daysAway > 21 && !dismissals?.fullQuiet) {
     out.push({
       key: contentKey("journey-full", [j.nextOpen.date]),
       text: `Every game is full until ${fmtJourneyDate(j.nextOpen.date)} (${Math.round(j.nextOpen.daysAway / 7)} weeks away), so a new member can't get a game before then except off a waiting list. Worth adding fixtures if pitches allow.`,
@@ -2204,7 +2250,8 @@ export async function computeNudges(admin: SupabaseClient, forAdminId?: string):
     computeMatchdayNotFullNudge(admin),
     computeBirthdayNudge(admin),
   ]);
-  const journey = await computeJourneyNudges(admin).catch(() => [] as Nudge[]);
+  const journeySeen = forAdminId ? await journeyDismissals(admin, forAdminId).catch(() => undefined) : undefined;
+  const journey = await computeJourneyNudges(admin, journeySeen).catch(() => [] as Nudge[]);
   const membersWaiting = await computeMembersWaitingNudge(admin).catch(() => null);
   const health = await computeHealthNudges(admin).catch(() => [] as Nudge[]);
   const wrappedGaps = await computeWrappedGapsNudge(admin).catch(() => null);
