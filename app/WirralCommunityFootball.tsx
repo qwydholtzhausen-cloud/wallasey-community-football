@@ -4719,7 +4719,7 @@ function App({ session }: { session: Session }) {
         </button>
       )}
 
-      <main className="wcf-main">
+      <main className="wcf-main" key={tab}>
         <div className="wcf-heading">
           <div>
             <h2>{heading}</h2>
@@ -12222,6 +12222,55 @@ function MultiBookPanel({
   );
 }
 
+// Subtle touches: a number that rolls in when it changes (never on first
+// render), and a match-day countdown that ticks every second in the last
+// hour before kickoff.
+// True for a moment after `value` changes (by `test`, default any change),
+// so the animation class survives the re-renders that follow.
+function useChanged<T>(value: T, test: (prev: T, next: T) => boolean = (a, b) => a !== b, holdMs = 900) {
+  const prev = useRef(value);
+  const [flag, setFlag] = useState(false);
+  useEffect(() => {
+    const hit = test(prev.current, value);
+    prev.current = value;
+    if (!hit) return;
+    setFlag(true);
+    const t = setTimeout(() => setFlag(false), holdMs);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return flag;
+}
+function TickNum({ value }: { value: number }) {
+  const changed = useChanged(value);
+  return <span key={value} className={"wcf-tick" + (changed ? " roll" : "")}>{value}</span>;
+}
+function LiveCountdown({ date, kickoff, fallback }: { date: string; kickoff: string; fallback: string }) {
+  const [, setTick] = useState(0);
+  const left = () => {
+    const kick = new Date(kickoffCutoff(date, kickoff, 0) + ":00Z").getTime();
+    const now = new Date(nowInLondon() + ":00Z").getTime() + new Date().getSeconds() * 1000;
+    return Math.floor((kick - now) / 1000);
+  };
+  const s = left();
+  const live = s > 0 && s <= 3600;
+  useEffect(() => {
+    if (!live) {
+      const t = setInterval(() => setTick((n) => n + 1), 30000);
+      return () => clearInterval(t);
+    }
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [live]);
+  if (!live) return <span className="wcf-hero-countdown combo">⏱ {fallback}</span>;
+  return (
+    <span className="wcf-hero-countdown combo wcf-cd-live">
+      <span className="wcf-cd-dot" />
+      {Math.floor(s / 60)}:{String(s % 60).padStart(2, "0")} to kickoff
+    </span>
+  );
+}
+
 function GameCard({
   game,
   myId,
@@ -12271,6 +12320,7 @@ function GameCard({
   const full = confirmed.length >= game.max_players;
   const spotsLeft = Math.max(0, game.max_players - confirmed.length);
   const fillPct = Math.min(100, (confirmed.length / game.max_players) * 100);
+  const countChanged = useChanged(confirmed.length);
   const openSheet = () => { setSheetTab("playing"); setShowSheet(true); };
   // Red/amber/green glow (via the .in.<status> CSS below) replaces what used
   // to be a separate "Payment confirmed" card - it tells the viewer their
@@ -12305,9 +12355,10 @@ function GameCard({
   // bookings realtime channel already refreshes this card), and getting a
   // place sends the "You're in" push from the booking-promoted webhook.
   const queuePos = myBooking?.waiting ? waitingList.findIndex((b) => b.player_id === myId) + 1 : 0;
+  const movedUp = useChanged(queuePos, (a, b) => b > 0 && a > b);
   const nth = (n: number) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
   const queueStrip = queuePos > 0 && (
-    <div className="wcf-queue">
+    <div key={queuePos} className={"wcf-queue" + (movedUp ? " moved" : "")}>
       <div className="wcf-queue-k">You&apos;re on the waiting list</div>
       <div className="wcf-queue-t">{queuePos === 1 ? "Next in line" : `${nth(queuePos)} in line`}</div>
       <div className="wcf-queue-line">
@@ -12404,7 +12455,7 @@ function GameCard({
               {game.venue}
               {!game.published && <span className="wcf-draft-badge">Draft</span>}
             </span>
-            {countdownText && <span className="wcf-hero-countdown combo">⏱ {countdownText}</span>}
+            {countdownText && <LiveCountdown date={game.date} kickoff={game.kickoff} fallback={countdownText} />}
           </div>
           <div className="wcf-hero-meta">
             <span>{game.pitch}</span><span className="wcf-hero-dot" /><span>£{game.price}</span>
@@ -12417,7 +12468,7 @@ function GameCard({
             </div>
             <div className="wcf-hero-roster-text" style={{ flex: 1 }}>
               <div className="wcf-hero-roster-row">
-                <span className="wcf-hero-roster-n2">{confirmed.length}/{game.max_players}</span>
+                <span className="wcf-hero-roster-n2"><TickNum value={confirmed.length} />/{game.max_players}</span>
                 {waitingList.length > 0 && <span className="wcf-hero-waiting-chip">+{waitingList.length} WAITING</span>}
               </div>
               <div className="wcf-hero-bar-track">
@@ -12437,7 +12488,7 @@ function GameCard({
                   />
                 );
               })}
-              {confirmed.length > 4 && <span className="wcf-avatar-chip lg more">+{confirmed.length - 4}</span>}
+              {confirmed.length > 4 && <span key={confirmed.length} className={"wcf-avatar-chip lg more" + (countChanged ? " roll" : "")}>+{confirmed.length - 4}</span>}
             </span>
             <span className="wcf-hero-roster-chev">›</span>
           </button>
@@ -12479,7 +12530,7 @@ function GameCard({
                     {editIcon}
                   </button>
                 )}
-                <span className={"wcf-fx-pill " + (game.special ? "gold" : full ? "full" : "open")}>
+                <span className={"wcf-fx-pill " + (game.special ? "gold" : full ? "full" : spotsLeft <= 2 ? "open low" : "open")}>
                   {game.special && myBooking && !myBooking.waiting ? "YOU'RE IN" : full ? "FULL" : `${spotsLeft} LEFT`}
                 </span>
               </span>
@@ -12515,7 +12566,7 @@ function GameCard({
               {(sheetTab === "playing" ? confirmed : waitingList).map((b, i) => {
                 const a = avatarFor(b.player.display_name);
                 return (
-                  <div key={b.id} className="wcf-sheet-row">
+                  <div key={b.id} className="wcf-sheet-row" style={{ ["--i" as string]: Math.min(i, 12) }}>
                     <button className="wcf-sheet-row-main" onClick={() => onOpenPlayerCard(b.player_id)}>
                       <span className="wcf-sheet-row-n">{String(i + 1).padStart(2, "0")}</span>
                       <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-sheet-row-avatar" background={a.gradient} />
@@ -14865,6 +14916,35 @@ a.wcf-set-link{text-decoration:none}
 .wcf-won-btn{margin-top:22px;border:0;border-radius:14px;padding:13px 22px;background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308);color:#1a1405;font-weight:800;font-size:14px;cursor:pointer;animation:wcfRvIn .4s 1.5s both}
 .wcf-won-close{margin-top:10px;background:none;border:0;color:var(--dim);font-weight:700;font-size:13px;cursor:pointer;animation:wcfRvIn .4s 1.6s both}
 @media (prefers-reduced-motion:reduce){.wcf-vote-medal,.wcf-won,.wcf-won *,.wcf-mr-reveal *{animation:none!important}}
+/* Subtle touches */
+.wcf-book:active:not(:disabled){transform:scale(.96)}
+.wcf-hero-bar-fill,.wcf-fx-bar-fill{transition:width .7s cubic-bezier(.3,.8,.3,1)}
+.wcf-tick{display:inline-block}
+.wcf-tick.roll{animation:wcfTickRoll .45s cubic-bezier(.3,1.4,.5,1)}
+.wcf-avatar-chip.more.roll{animation:wcfChipBump .45s cubic-bezier(.3,1.6,.5,1)}
+@keyframes wcfTickRoll{from{transform:translateY(-70%);opacity:0}to{transform:none;opacity:1}}
+@keyframes wcfChipBump{40%{transform:scale(1.22)}100%{transform:none}}
+.wcf-card.featured,.wcf-fx-row{transition:border-color .7s ease,box-shadow .7s ease}
+.wcf-pay-strip{animation:wcfStripIn .4s cubic-bezier(.3,1.2,.5,1) both}
+@keyframes wcfStripIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.wcf-fx-pill.low{background:rgba(234,179,8,.14);border:1px solid rgba(234,179,8,.45);color:#f5d97a;animation:wcfBreathe 2.6s ease-in-out infinite}
+@keyframes wcfBreathe{0%,100%{box-shadow:0 0 0 0 rgba(234,179,8,0)}50%{box-shadow:0 0 0 4px rgba(234,179,8,.18),0 0 14px 2px rgba(234,179,8,.45)}}
+.wcf-cd-live{color:#f5d97a!important;display:inline-flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
+.wcf-cd-dot{width:6px;height:6px;border-radius:50%;background:#f5d97a;animation:wcfCdDot 1s ease-in-out infinite}
+@keyframes wcfCdDot{50%{opacity:.25;transform:scale(.7)}}
+.wcf-queue.moved{animation:wcfQFlash .9s ease-out}
+.wcf-queue.moved .wcf-queue-t{animation:wcfTickRoll .45s cubic-bezier(.3,1.4,.5,1)}
+.wcf-queue.moved .wcf-queue-slot{animation:wcfSlotLeft .45s cubic-bezier(.3,1.2,.5,1) both}
+@keyframes wcfQFlash{0%{box-shadow:0 0 0 0 rgba(245,217,122,0)}30%{box-shadow:0 0 0 2px rgba(245,217,122,.7),0 0 24px 4px rgba(234,179,8,.35)}100%{box-shadow:0 0 0 0 rgba(245,217,122,0)}}
+@keyframes wcfSlotLeft{from{transform:translateX(44px)}to{transform:none}}
+.wcf-navbtn.active svg{animation:wcfNavBounce .45s cubic-bezier(.3,1.8,.5,1)}
+@keyframes wcfNavBounce{30%{transform:translateY(-4px) scale(1.15)}100%{transform:none}}
+.wcf-main{animation:wcfViewIn .28s ease-out}
+@keyframes wcfViewIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.wcf-sheet-overlay .wcf-squad-sheet{animation:wcfSpringUp .55s cubic-bezier(.2,1.25,.35,1) both}
+@keyframes wcfSpringUp{from{transform:translateY(100%)}to{transform:none}}
+.wcf-squad-sheet .wcf-sheet-row{animation:wcfViewIn .3s both;animation-delay:calc(.2s + var(--i,0) * 35ms)}
+@media (prefers-reduced-motion:reduce){.wcf-tick,.wcf-avatar-chip.more,.wcf-pay-strip,.wcf-fx-pill.low,.wcf-cd-dot,.wcf-queue,.wcf-queue *,.wcf-navbtn svg,.wcf-main,.wcf-squad-sheet,.wcf-sheet-row,.wcf-tk-layer,.wcf-tk-layer *,.wcf-potm-intro,.wcf-potm-intro *{animation:none!important}.wcf-card.featured,.wcf-fx-row,.wcf-hero-bar-fill,.wcf-fx-bar-fill,.wcf-book{transition:none!important}}
 /* Matchday tickets (MatchTickets): BOOKED on booking, PAID after confirmation */
 .wcf-tk-layer{position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,6,12,.74);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);cursor:pointer;animation:wcfWonIn .25s both}
 .wcf-tk-wrap{position:relative;width:min(290px,86vw)}
