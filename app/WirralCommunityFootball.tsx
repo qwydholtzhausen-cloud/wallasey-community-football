@@ -16,7 +16,7 @@ import {
   WRAPPED_FIRST_MONTH_FOR_ALL,
 } from "../lib/clubPolicy";
 import { computeWrapped } from "../lib/wrapped";
-import { computeRecords, computePersonalBests, type Holder } from "../lib/records";
+import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
 import WrappedStory, { drawWrappedCard, wrappedBannerCss, type WrappedExtras } from "./WrappedStory";
 import { wrappedThemeFor } from "../lib/wrappedThemes";
 import { MOTM_TAGS } from "./motmTags";
@@ -1792,6 +1792,8 @@ function App({ session }: { session: Session }) {
   const [ticketShow, setTicketShow] = useState<{ mode: "booked" | "paid"; gameIds: string[] } | null>(null);
   const [potmShow, setPotmShow] = useState<"everyone" | "winner" | null>(null);
   const [potmLand, setPotmLand] = useState(false);
+  const [recordFalls, setRecordFalls] = useState<Record<string, { v: number; who: string }>>({});
+  const [recordMomentDone, setRecordMomentDone] = useState(false);
   const [playerCardId, setPlayerCardId] = useState<string | null>(null);
   const [playerCardTeam, setPlayerCardTeam] = useState<{ name: string; color: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -4116,6 +4118,84 @@ function App({ session }: { session: Session }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastGames, goalRows, closedMotmTallies, profiles, activeStatsYear]);
 
+  // A record falls: opening Records (this season) after one's been beaten
+  // since this phone last looked plays the old holder being struck off.
+  // The first look on a phone just records where things stand.
+  const recordTeam = (w: number, rd: number) => `${cs.team_white_name} ${w}–${rd} ${cs.team_red_name}`;
+  useEffect(() => {
+    if (resultsView !== "records" || tab !== "results") {
+      if (Object.keys(recordFalls).length) setRecordFalls({});
+      return;
+    }
+    if (loading || !myId || activeStatsYear !== currentSeasonYear || !clubRecords.highestScoring) return;
+    const key = `wcf-records-seen-${myId}-${activeStatsYear}`;
+    const now = recordSnapshot(clubRecords, recordTeam);
+    let before: RecordSnap | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      before = raw ? JSON.parse(raw) : null;
+      localStorage.setItem(key, JSON.stringify(now));
+    } catch {
+      return;
+    }
+    if (!before || !motionOk()) return;
+    const fell: Record<string, { v: number; who: string }> = {};
+    for (const [k, x] of Object.entries(now)) if (before[k] && x.v > before[k].v) fell[k] = before[k];
+    if (Object.keys(fell).length) setRecordFalls(fell);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultsView, tab, loading, myId, activeStatsYear, clubRecords]);
+
+  // Your own record: a single-game record you set in the last 3 days that
+  // beat the one before it (not just equalled it), once per phone.
+  const myRecordMoment = useMemo(() => {
+    if (recordMomentDone || !myId) return null;
+    const seasonGames = pastGames.filter((g) => g.date.slice(0, 4) === String(currentSeasonYear) && g.team_white_score != null && g.team_red_score != null);
+    const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
+    const rec = (games: typeof seasonGames) => computeRecords({ games, goals: goalRows, motmTallyByGame: closedMotmTallies, names: (id) => nameById.get(id) ?? "Former player" });
+    const nowRec = rec(seasonGames);
+    const kinds = [
+      { key: "goals", cur: nowRec.mostGoalsInGame, val: (r: ClubRecords) => r.mostGoalsInGame?.goals ?? 0, who: (r: ClubRecords) => r.mostGoalsInGame?.holders ?? [], label: "goals in one game", balls: true },
+      { key: "votes1", cur: nowRec.mostMotmVotesInGame, val: (r: ClubRecords) => r.mostMotmVotesInGame?.votes ?? 0, who: (r: ClubRecords) => r.mostMotmVotesInGame?.holders ?? [], label: "Man of the Match votes in one game", balls: false },
+    ];
+    for (const k of kinds) {
+      if (!k.cur) continue;
+      const mine = k.who(nowRec).find((h) => h.playerId === myId && h.date);
+      if (!mine?.date || kickoffCutoff(mine.date, "00:00", 4 * 24 * 60) <= nowUk) continue;
+      const prevRec = rec(seasonGames.filter((g) => g.date < mine.date!));
+      const prevV = k.val(prevRec);
+      if (!prevV || prevV >= k.val(nowRec)) continue;
+      const seenKey = `wcf-record-moment-${myId}-${k.key}-${mine.date}`;
+      try {
+        if (localStorage.getItem(seenKey)) continue;
+      } catch {
+        continue;
+      }
+      const g = seasonGames.find((x) => x.date === mine.date);
+      const prevWho = k.who(prevRec).map((h) => h.name).slice(0, 2).join(" & ");
+      return {
+        seenKey,
+        value: k.val(nowRec),
+        label: k.label,
+        balls: k.balls,
+        prev: `${prevWho}'s ${prevV}`,
+        dateLabel: fmtDate(mine.date),
+        scoreLine: g ? recordTeam(g.team_white_score!, g.team_red_score!) : "",
+      };
+    }
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastGames, goalRows, closedMotmTallies, profiles, myId, recordMomentDone, currentSeasonYear]);
+  function recordMomentClose() {
+    if (myRecordMoment) {
+      try {
+        localStorage.setItem(myRecordMoment.seenKey, "1");
+      } catch {}
+    }
+    setRecordMomentDone(true);
+    setTab("results");
+    setResultsView("records");
+  }
+
   const nextGame = upcomingGames[0];
   const nextConfirmed = useMemo(
     () => (nextGame ? nextGame.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)) : []),
@@ -6251,13 +6331,16 @@ function App({ session }: { session: Session }) {
               const row = (key: string, value: React.ReactNode, label: string, detail: React.ReactNode, holders: Holder[] = []) => {
                 const faces = holders.filter((h, i, all) => all.findIndex((x) => x.playerId === h.playerId) === i).slice(0, 3);
                 const mine = holders.some((h) => h.playerId === myId);
+                const fell = recordFalls[key];
+                const was = fell && (key === "win" ? `+${fell.v}` : fell.v);
                 return (
-                  <div key={key} className={"wcf-rec-row" + (faces.length ? " has-faces" : "") + (mine ? " mine" : "")}>
-                    <div className="wcf-rec-val">{value}</div>
+                  <div key={key} className={"wcf-rec-row" + (faces.length ? " has-faces" : "") + (mine ? " mine" : "") + (fell ? " wcf-rb-play" : "")}>
+                    <div className="wcf-rec-val">{fell ? <><span className="wcf-rb-old">{was}</span><span className="wcf-rb-new">{value}</span></> : value}</div>
                     <div className="wcf-rec-body">
-                      {label && <div className="wcf-rec-label">{label}{mine && <span className="wcf-rec-you">You</span>}</div>}
-                      <div className="wcf-rec-who">{detail}</div>
+                      {label && <div className="wcf-rec-label">{label}{mine && <span className="wcf-rec-you">You</span>}{fell && <span className="wcf-rb-chip">NEW</span>}</div>}
+                      <div className="wcf-rec-who">{fell ? <><span className="wcf-rb-was">{fell.who}</span><span className="wcf-rb-now">{detail}</span></> : detail}</div>
                     </div>
+                    {fell && <div className="wcf-rb-shine" />}
                     {faces.length > 0 && (
                       <div className="wcf-rec-faces">
                         {faces.map((h) => (
@@ -6278,15 +6361,16 @@ function App({ session }: { session: Session }) {
               const empty = !r.highestScoring;
               return (
                 <div className="wcf-board">
-                  <div className="wcf-rec-hero">
+                  <div className={"wcf-rec-hero" + (recordFalls.goals ? " wcf-rb-play" : "")}>
                     <div className="wcf-rec-hero-bg" />
+                    {recordFalls.goals && <div className="wcf-rb-tag">NEW RECORD</div>}
                     <div className="wcf-rec-hero-in">
                       <div className="wcf-lb-eyebrow" style={{ color: "#f5d97a" }}>Record book</div>
                       <h3 className="wcf-lb-title">Club records</h3>
                       {r.mostGoalsInGame && (
                         <div className="wcf-rec-hero-stat">
-                          <b>{r.mostGoalsInGame.goals}</b>
-                          <span>goals in one game<br />{r.mostGoalsInGame.holders[0].name}{r.mostGoalsInGame.holders.length > 1 ? ` +${r.mostGoalsInGame.holders.length - 1}` : ""}</span>
+                          <b>{recordFalls.goals ? <><span className="wcf-rb-old">{recordFalls.goals.v}</span><span className="wcf-rb-new">{r.mostGoalsInGame.goals}</span></> : r.mostGoalsInGame.goals}</b>
+                          <span>goals in one game<br />{recordFalls.goals && <span className="wcf-rb-was">{recordFalls.goals.who}</span>}<span className={recordFalls.goals ? "wcf-rb-now" : undefined}>{r.mostGoalsInGame.holders[0].name}{r.mostGoalsInGame.holders.length > 1 ? ` +${r.mostGoalsInGame.holders.length - 1}` : ""}</span></span>
                         </div>
                       )}
                     </div>
@@ -7216,6 +7300,17 @@ function App({ session }: { session: Session }) {
         );
       })()}
 
+      {!rateSheetFor && !ticketShow && !potmShow && myRecordMoment && (
+        <RecordMoment
+          value={myRecordMoment.value}
+          label={myRecordMoment.label}
+          balls={myRecordMoment.balls}
+          prev={myRecordMoment.prev}
+          dateLabel={myRecordMoment.dateLabel}
+          scoreLine={myRecordMoment.scoreLine}
+          onDone={recordMomentClose}
+        />
+      )}
       {ticketShow && ticketGames.length > 0 && <MatchTickets key={ticketShow.mode + ticketShow.gameIds.join(",")} mode={ticketShow.mode} games={ticketGames} onDone={() => setTicketShow(null)} />}
       {potmShow === "everyone" && playerOfMonth && (
         <PotmIntro
@@ -7972,6 +8067,48 @@ function PotmTrophy({ className, filled }: { className: string; filled?: boolean
       <line x1="22" y1="86" x2="62" y2="86" />
       <path d="M26 76h32v10H26z" />
     </svg>
+  );
+}
+
+// Club records as comparable numbers, so a phone can tell when one's been
+// beaten since it last looked (stored per season in localStorage).
+type RecordSnap = Record<string, { v: number; who: string }>;
+function recordSnapshot(r: ClubRecords, team: (w: number, rd: number) => string): RecordSnap {
+  const names = (h: Holder[]) => h.slice(0, 2).map((x) => x.name).join(", ") + (h.length > 2 ? ` +${h.length - 2}` : "");
+  const out: RecordSnap = {};
+  if (r.mostGoalsInGame) out.goals = { v: r.mostGoalsInGame.goals, who: names(r.mostGoalsInGame.holders) };
+  if (r.biggestWin) out.win = { v: r.biggestWin.margin, who: team(r.biggestWin.white, r.biggestWin.red) };
+  if (r.highestScoring) out.high = { v: r.highestScoring.total, who: team(r.highestScoring.white, r.highestScoring.red) };
+  if (r.mostMotmVotesInGame) out.votes1 = { v: r.mostMotmVotesInGame.votes, who: names(r.mostMotmVotesInGame.holders) };
+  const season = [["ws", r.winStreak], ["ub", r.unbeaten], ["row", r.gamesInARow], ["mw", r.motmWins], ["mv", r.motmVotes], ["wl", r.promotions]] as const;
+  for (const [k, x] of season) if (x) out[k] = { v: x.n, who: names(x.holders) };
+  return out;
+}
+
+// The record breaker's own moment: the next open after they set a
+// single-game record (within 3 days), once per record per phone.
+function RecordMoment({ value, label, prev, scoreLine, dateLabel, balls, onDone }: { value: number; label: string; prev: string; scoreLine: string; dateLabel: string; balls: boolean; onDone: () => void }) {
+  const [leaving, setLeaving] = useState(false);
+  return (
+    <div className={"wcf-potm-intro winner" + (leaving ? " out" : "")}>
+      <div className="wcf-rbm-k">NEW CLUB RECORD</div>
+      {balls ? (
+        <div className="wcf-rbm-balls">
+          {Array.from({ length: Math.min(value, 9) }, (_, i) => (
+            <svg key={i} viewBox="0 0 24 24" style={{ animationDelay: `${0.2 + i * 0.18}s` }} aria-hidden="true">
+              <circle cx="12" cy="12" r="10.3" fill="#f5f6f8" stroke="#0d0d1a" strokeWidth="1.4" />
+              <path d="M12 8.2 15.6 10.8 14.2 15 9.8 15 8.4 10.8Z" fill="#0d0d1a" />
+              <g stroke="#0d0d1a" strokeWidth="1.2"><line x1="12" y1="8.2" x2="12" y2="1.8" /><line x1="15.6" y1="10.8" x2="21.6" y2="8.8" /><line x1="14.2" y1="15" x2="17.9" y2="20.2" /><line x1="9.8" y1="15" x2="6.1" y2="20.2" /><line x1="8.4" y1="10.8" x2="2.4" y2="8.8" /></g>
+            </svg>
+          ))}
+        </div>
+      ) : (
+        <div className="wcf-rbm-big">{value}</div>
+      )}
+      <div className="wcf-rbm-h">{value} {label}</div>
+      <div className="wcf-rbm-s">You beat <b>{prev}</b>.<br />{dateLabel} · {scoreLine}</div>
+      <button className="wcf-pw-btn" onClick={() => { setLeaving(true); setTimeout(onDone, 380); }}>See the record book</button>
+    </div>
   );
 }
 
@@ -14807,6 +14944,33 @@ a.wcf-set-link{text-decoration:none}
 .wcf-potm-land .wcf-potm-stats span:nth-child(1){animation-delay:.6s}.wcf-potm-land .wcf-potm-stats span:nth-child(2){animation-delay:.7s}.wcf-potm-land .wcf-potm-stats span:nth-child(3){animation-delay:.8s}
 @keyframes wcfPotmBg{from{opacity:0;transform:scale(1.1)}to{opacity:.9;transform:none}}
 @keyframes wcfFaceIn{from{opacity:0;transform:scale(.3) rotate(-20deg)}to{opacity:1;transform:none}}
+/* A record falls (Records page) and the record breaker's moment */
+.wcf-rec-hero{position:relative}
+.wcf-rec-hero-stat b span{font-size:inherit;line-height:inherit;color:inherit;font-weight:inherit}
+.wcf-rb-play .wcf-rb-old,.wcf-rb-play .wcf-rb-was{position:relative;display:inline-block;white-space:nowrap;animation:wcfRbOut 1.6s both}
+.wcf-rb-play .wcf-rb-old::after,.wcf-rb-play .wcf-rb-was::after{content:"";position:absolute;left:-4%;right:-4%;top:52%;height:3px;background:#E42A36;transform-origin:left;animation:wcfRbLine .35s .5s ease-out both}
+.wcf-rb-play .wcf-rb-new{display:inline-block;animation:wcfRbIn .5s 1.1s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-rb-play .wcf-rec-val .wcf-rb-new{color:#f5d97a}
+.wcf-rb-play .wcf-rb-now{display:inline-block;animation:wcfRbIn .45s 1.25s both}
+.wcf-rb-tag{position:absolute;right:14px;top:14px;z-index:2;padding:6px 9px;border-radius:7px;background:#f5d97a;color:#0d0d1a;font-family:var(--display);font-weight:800;font-size:11px;letter-spacing:.1em;transform:rotate(6deg);animation:wcfRbStamp .38s 1.45s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-rb-chip{margin-left:6px;padding:2px 6px;border-radius:999px;background:#f5d97a;color:#0d0d1a;font-size:9px;font-weight:800;letter-spacing:.08em;vertical-align:1px;animation:wcfRbIn .3s 1.6s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-rec-row.wcf-rb-play{position:relative;overflow:hidden}
+.wcf-rb-shine{position:absolute;inset:0;pointer-events:none;background:linear-gradient(105deg,transparent 35%,rgba(255,240,200,.22) 50%,transparent 65%);transform:translateX(-130%);animation:wcfRbShine .9s 1.5s ease-out both}
+@keyframes wcfRbOut{0%,65%{opacity:1;max-width:240px}100%{opacity:0;max-width:0}}
+@keyframes wcfRbLine{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes wcfRbIn{from{opacity:0;transform:scale(.4) translateY(6px)}to{opacity:1;transform:none}}
+@keyframes wcfRbStamp{from{opacity:0;transform:rotate(6deg) scale(2.4)}to{opacity:1;transform:rotate(6deg) scale(1)}}
+@keyframes wcfRbShine{to{transform:translateX(130%)}}
+.wcf-rbm-k{font-size:11px;font-weight:800;letter-spacing:.26em;color:#f5d97a}
+.wcf-rbm-balls{display:grid;grid-template-columns:repeat(3,34px);gap:10px;margin-top:18px}
+.wcf-rbm-balls svg{width:34px;height:34px;animation:wcfRbDrop .5s cubic-bezier(.3,1.4,.5,1) both}
+.wcf-rbm-big{font-family:var(--display);font-weight:800;font-size:96px;line-height:1;margin-top:10px;background:linear-gradient(180deg,#fde68a,#eab308);-webkit-background-clip:text;background-clip:text;color:transparent;animation:wcfLift 1s cubic-bezier(.2,.8,.2,1) both}
+.wcf-rbm-h{font-family:var(--display);font-weight:800;font-size:27px;line-height:1.1;color:#fff;margin-top:18px;max-width:300px;text-wrap:balance;animation:wcfRvIn .4s 1.6s both}
+.wcf-rbm-s{font-size:13.5px;color:var(--dim);line-height:1.5;margin-top:8px;animation:wcfRvIn .4s 1.75s both}
+.wcf-rbm-s b{color:#fff}
+.wcf-potm-intro .wcf-pw-btn{animation-delay:1.95s}
+.wcf-potm-intro.winner .wcf-pw-k~.wcf-pw-btn{animation-delay:1.3s}
+@keyframes wcfRbDrop{from{opacity:0;transform:translateY(-120px) rotate(-180deg)}to{opacity:1;transform:none}}
 @keyframes wcfGoldRing{0%{box-shadow:0 0 0 0 rgba(245,217,122,0)}30%{box-shadow:0 0 0 3px rgba(245,217,122,.8),0 0 40px 6px rgba(234,179,8,.45)}100%{box-shadow:0 0 0 0 rgba(245,217,122,0)}}
 
 .wcf-rate-overlay{position:fixed;inset:0;z-index:130;background:rgba(3,4,8,.6);display:flex;align-items:flex-end;justify-content:center;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
