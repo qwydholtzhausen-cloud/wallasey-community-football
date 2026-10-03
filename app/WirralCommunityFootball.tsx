@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
 import { motmWinners, goalsLookup } from "../lib/motm";
-import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt } from "../lib/time";
+import { MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES, kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, nextMonthStart } from "../lib/time";
 import { predictionPoints, buildLeaderboard, buildMonthlyLeaderboards, topScorers, type ScoredPrediction } from "../lib/predictions";
 import { assignToTeams, computePerformanceStats, performanceBonus, type RatedPlayer } from "../lib/teamBalance";
 import { defaultPitchCost } from "../lib/pitchCost";
@@ -1789,6 +1789,9 @@ function App({ session }: { session: Session }) {
   // The vote you just cast gets the medal drop (replaces the old toast).
   const [justVoted, setJustVoted] = useState<{ gameId: string; candidateId: string; n: number } | null>(null);
   const [motmMomentClosed, setMotmMomentClosed] = useState<string | null>(null);
+  const [ticketShow, setTicketShow] = useState<{ mode: "booked" | "paid"; gameIds: string[] } | null>(null);
+  const [potmShow, setPotmShow] = useState<"everyone" | "winner" | null>(null);
+  const [potmLand, setPotmLand] = useState(false);
   const [playerCardId, setPlayerCardId] = useState<string | null>(null);
   const [playerCardTeam, setPlayerCardTeam] = useState<{ name: string; color: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -2344,7 +2347,10 @@ function App({ session }: { session: Session }) {
     // status - checking here (right when a spot's actually taken) rather
     // than on payment confirmation, which could happen long after the
     // game's already full.
-    if (data && !data.waiting) pushNotify("notify-last-spot", { gameId });
+    if (data && !data.waiting) {
+      pushNotify("notify-last-spot", { gameId });
+      if (motionOk()) setTicketShow({ mode: "booked", gameIds: [gameId] });
+    }
   }
   // Same insert as book(), just every selected game in one round trip
   // instead of N. RLS's overdue check runs per row regardless of batch
@@ -2366,7 +2372,12 @@ function App({ session }: { session: Session }) {
     (data ?? []).filter((d) => !d.waiting).forEach((d) => pushNotify("notify-last-spot", { gameId: d.game_id }));
     setMultiBookMode(false);
     setMultiBookSelected(new Set());
-    notifySuccess(`Booked into ${gameIds.length} game${gameIds.length === 1 ? "" : "s"}`);
+    const gotSpots = (data ?? []).filter((d) => !d.waiting).map((d) => d.game_id);
+    if (gotSpots.length > 0 && motionOk()) setTicketShow({ mode: "booked", gameIds: gotSpots });
+    else notifySuccess(`Booked into ${gameIds.length} game${gameIds.length === 1 ? "" : "s"}`);
+  }
+  function motionOk() {
+    return typeof window !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
   async function addBooking(gameId: string, playerId: string) {
     const { data, error } = await supabase.from("bookings").insert({ game_id: gameId, player_id: playerId }).select("waiting").single();
@@ -3753,12 +3764,79 @@ function App({ session }: { session: Session }) {
     }
 
     return {
+      monthKey,
       monthLabel: new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
       names: leaders.map((id) => names[id]).filter(Boolean),
       // For the card: why they won.
       winners: leaders.map((id) => ({ id, name: names[id], wins: wins[id] ?? 0, votes: votes[id] ?? 0, goals: goals[id] ?? 0 })),
     };
   }, [games, pastGames, motmTallyByGame, motmWinnerIdsByGame, goalRows, nowUk]);
+
+  // PAID tickets: bookings of yours on upcoming games that have become
+  // confirmed since this phone last looked. The first run on a phone just
+  // records what's already confirmed, so nobody gets a stack of old ones.
+  useEffect(() => {
+    if (loading || !myId || games.length === 0 || ticketShow) return;
+    const key = `wcf-paid-seen-${myId}`;
+    const mine = games
+      .filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) > nowUk)
+      .flatMap((g) => g.bookings.filter((b) => b.player_id === myId && !b.waiting && b.status === "confirmed").map((b) => ({ id: b.id, gameId: g.id })));
+    let seen: string[] | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      seen = raw ? JSON.parse(raw) : null;
+    } catch {
+      return;
+    }
+    const save = (ids: string[]) => {
+      try {
+        localStorage.setItem(key, JSON.stringify(ids));
+      } catch {}
+    };
+    if (!seen) return save(mine.map((m) => m.id));
+    const fresh = mine.filter((m) => !seen!.includes(m.id));
+    save(mine.map((m) => m.id));
+    if (fresh.length > 0 && motionOk()) setTicketShow({ mode: "paid", gameIds: fresh.map((m) => m.gameId) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, loading, myId]);
+  const ticketGames = useMemo<TicketGame[]>(() => {
+    if (!ticketShow) return [];
+    return ticketShow.gameIds.flatMap((id) => {
+      const g = games.find((x) => x.id === id);
+      if (!g) return [];
+      const playing = g.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
+      const mine = playing.find((b) => b.player_id === myId);
+      const at = mine ? playing.indexOf(mine) + 1 : playing.length;
+      const side = mine?.team === "white" ? cs.team_white_name : mine?.team === "red" ? cs.team_red_name : "Picked on the day";
+      return [{ id: g.id, date: g.date, kickoff: g.kickoff, venue: g.venue, spot: `${at} of ${g.max_players}`, side }];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketShow]);
+
+  // Player of the Month night: once per month per phone, within a week of
+  // the 1st, the first time the winner's out. Under Reduce Motion it's
+  // skipped and the card just shows, as before.
+  useEffect(() => {
+    if (loading || !playerOfMonth || potmShow || !myId) return;
+    if (kickoffCutoff(nextMonthStart(playerOfMonth.monthKey), "08:00", 7 * 24 * 60) <= nowUk) return;
+    const key = `wcf-potm-intro-${myId}-${playerOfMonth.monthKey}`;
+    try {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, "1");
+    } catch {
+      return;
+    }
+    if (!motionOk()) return;
+    setPotmShow(playerOfMonth.winners.some((w) => w.id === myId) ? "winner" : "everyone");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerOfMonth?.monthKey, loading, myId]);
+  function potmDone() {
+    setPotmShow(null);
+    setTab("results");
+    setResultsView("season");
+    setPotmLand(true);
+    setTimeout(() => setPotmLand(false), 2500);
+  }
 
   // Monthly Wrapped: your own story of last month, same "last completed
   // month" window as Player of the Month above, and computed the same way
@@ -5842,7 +5920,7 @@ function App({ session }: { session: Session }) {
                   return (
                     // A photo card like the season hero above it, not a
                     // text shout-out: the winner's face, name and why.
-                    <div className="wcf-potm-card">
+                    <div className={"wcf-potm-card" + (potmLand ? " wcf-potm-land" : "")}>
                       <div className="wcf-potm-bg" />
                       <div className="wcf-potm-top">
                         <span className="wcf-potm-eyebrow">{joint ? "Players of the month" : "Player of the month"} · {playerOfMonth.monthLabel}</span>
@@ -5868,9 +5946,9 @@ function App({ session }: { session: Session }) {
                       </div>
                       {!joint && ws[0] && (
                         <div className="wcf-potm-stats">
-                          <span><b>{ws[0].wins}</b>{ws[0].wins === 1 ? "MOTM win" : "MOTM wins"}</span>
-                          <span><b>{ws[0].votes}</b>{ws[0].votes === 1 ? "vote" : "votes"}</span>
-                          <span><b>{ws[0].goals}</b>{ws[0].goals === 1 ? "goal" : "goals"}</span>
+                          <span><b><CountUp to={ws[0].wins} delay={600} run={potmLand} /></b>{ws[0].wins === 1 ? "MOTM win" : "MOTM wins"}</span>
+                          <span><b><CountUp to={ws[0].votes} delay={700} run={potmLand} /></b>{ws[0].votes === 1 ? "vote" : "votes"}</span>
+                          <span><b><CountUp to={ws[0].goals} delay={800} run={potmLand} /></b>{ws[0].goals === 1 ? "goal" : "goals"}</span>
                         </div>
                       )}
                       {joint && <div className="wcf-potm-note">Level on {plural(ws[0].wins, "MOTM win", "MOTM wins")} and votes. Shared honours.</div>}
@@ -7138,6 +7216,20 @@ function App({ session }: { session: Session }) {
         );
       })()}
 
+      {ticketShow && ticketGames.length > 0 && <MatchTickets key={ticketShow.mode + ticketShow.gameIds.join(",")} mode={ticketShow.mode} games={ticketGames} onDone={() => setTicketShow(null)} />}
+      {potmShow === "everyone" && playerOfMonth && (
+        <PotmIntro
+          month={playerOfMonth.monthLabel.split(" ")[0]}
+          prevMonth={new Date(previousMonthKey(playerOfMonth.monthKey + "-15") + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" })}
+          names={playerOfMonth.winners.map((w) => w.name.split(" ")[0]).join(" & ")}
+          onDone={potmDone}
+        />
+      )}
+      {potmShow === "winner" && playerOfMonth && (() => {
+        const me = playerOfMonth.winners.find((w) => w.id === myId);
+        return me ? <PotmWinner monthLabel={playerOfMonth.monthLabel} joint={playerOfMonth.winners.length > 1} wins={me.wins} votes={me.votes} onDone={potmDone} /> : null;
+      })()}
+
       {!rateSheetFor && myMotmMoment && motmMomentClosed !== myMotmMoment.game.id && (
         <MotmWinnerMoment
           dateLabel={new Date(myMotmMoment.game.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase()}
@@ -7756,6 +7848,130 @@ function MotmVotersModal({
         </div>
       </div>
     </div>
+  );
+}
+
+// Matchday tickets: BOOKED when you take a spot, PAID the first time you
+// open the app after an admin (or Monzo) confirms your payment. One game
+// is one big ticket; several (Book multiple games, or a batch of
+// approvals) are one fanned stack, so it never becomes a queue of pop-ups.
+// About 2s whatever the count, tap to dismiss. Not shown under Reduce Motion.
+interface TicketGame { id: string; date: string; kickoff: string; venue: string; spot: string; side: string }
+function MatchTickets({ mode, games, onDone }: { mode: "booked" | "paid"; games: TicketGame[]; onDone: () => void }) {
+  const [leaving, setLeaving] = useState(false);
+  const [count, setCount] = useState(0);
+  const sorted = useMemo(() => [...games].sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)), [games]);
+  const multi = sorted.length > 1;
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    if (multi) for (let k = 1; k <= sorted.length; k++) timers.push(setTimeout(() => setCount(k), 600 + k * Math.min(170, 900 / sorted.length)));
+    timers.push(setTimeout(() => setLeaving(true), multi ? 2600 : 1900));
+    timers.push(setTimeout(onDone, multi ? 3050 : 2350));
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const day = (g: TicketGame, opts: Intl.DateTimeFormatOptions) => new Date(g.date + "T12:00:00Z").toLocaleDateString("en-GB", { ...opts, timeZone: "UTC" });
+  const time = (k: string) => {
+    const [h, m] = k.split(":").map(Number);
+    return `${h % 12 === 0 ? 12 : h % 12}${m ? ":" + String(m).padStart(2, "0") : ""}${h < 12 ? "am" : "pm"}`;
+  };
+  const last = sorted[sorted.length - 1];
+  const shown = sorted.slice(0, 3).reverse(); // soonest at the front
+  const stamp = (cls: string) =>
+    mode === "booked" || cls === "booked" ? (
+      <div className="wcf-tk-st booked"><div>BOOKED<small>WCF · {sorted[0]?.date.slice(0, 4)}</small></div></div>
+    ) : (
+      <div className="wcf-tk-st paid"><div>PAID<small>CONFIRMED</small></div></div>
+    );
+  return (
+    <div className={"wcf-tk-layer " + mode + (leaving ? " out" : "")} onClick={() => { setLeaving(true); setTimeout(onDone, 300); }}>
+      {!multi && last ? (
+        <div className="wcf-tk-wrap">
+          <div className="wcf-ticket">
+            <div className="wcf-ticket-main">
+              <div className="wcf-ticket-club">WCF · MATCHDAY</div>
+              <div className="wcf-ticket-fx">{last.venue}</div>
+              <div className="wcf-ticket-when">{day(last, { weekday: "long", day: "numeric", month: "long" })} · {time(last.kickoff)}</div>
+              <div className="wcf-ticket-row"><div>SIDE<b>{last.side}</b></div><div>SPOT<b>{last.spot}</b></div></div>
+            </div>
+            <div className="wcf-ticket-stub"><span>ADMIT ONE</span></div>
+          </div>
+          {stamp("booked")}
+          {mode === "paid" && stamp("paid")}
+        </div>
+      ) : (
+        <div className="wcf-tk-stack" style={{ height: 120 + (shown.length - 1) * 50 }}>
+          {shown.map((g, i) => (
+            <div key={g.id} className="wcf-mt" style={{ ["--i" as string]: i, ["--n" as string]: shown.length }}>
+              <div className="wcf-mt-main">
+                <div className="wcf-mt-date">{day(g, { weekday: "short", day: "numeric", month: "short" }).toUpperCase()} · {time(g.kickoff).toUpperCase()}</div>
+                <div className="wcf-mt-fx">{g.venue}</div>
+                <div className="wcf-mt-club">WCF · MATCHDAY</div>
+              </div>
+              <div className="wcf-mt-stub"><span>ADMIT ONE</span></div>
+              <div className={"wcf-tk-st sm " + mode} style={{ ["--d" as string]: shown.length - 1 - i }}><div>{mode === "paid" ? "PAID" : "BOOKED"}</div></div>
+            </div>
+          ))}
+          {sorted.length > 3 && <span className="wcf-tk-more">+{sorted.length - 3} more</span>}
+        </div>
+      )}
+      <div className="wcf-tk-cap">
+        {multi ? (
+          <>
+            <b>{count} games {mode === "paid" ? "paid" : "booked"}</b>
+            <span>{mode === "paid" ? "You're sorted until" : "Through to"} {day(last, { weekday: "short", day: "numeric", month: "short" })}</span>
+          </>
+        ) : (
+          <b>{mode === "paid" ? "Paid. You're all set." : "You're in."}</b>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Player of the Month night: the first open after the month's winner is
+// out (within a week), once per month per phone. Everyone sees the
+// calendar page tear and the trophy draw; the winner gets their own.
+function PotmIntro({ prevMonth, month, names, onDone }: { prevMonth: string; month: string; names: string; onDone: () => void }) {
+  const [leaving, setLeaving] = useState(false);
+  const finish = () => { if (leaving) return; setLeaving(true); setTimeout(onDone, 380); };
+  useEffect(() => {
+    const t = setTimeout(finish, 3800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div className={"wcf-potm-intro" + (leaving ? " out" : "")} onClick={finish}>
+      <div className="wcf-pi-k">PLAYER OF THE MONTH</div>
+      <div className="wcf-pi-page"><div className="new">{month.toUpperCase()}</div><div className="old">{prevMonth.toUpperCase()}</div></div>
+      <PotmTrophy className="wcf-pi-trophy" />
+      <div className="wcf-pi-name">{names}</div>
+      <div className="wcf-pi-tap">Tap to continue</div>
+    </div>
+  );
+}
+function PotmWinner({ monthLabel, joint, wins, votes, onDone }: { monthLabel: string; joint: boolean; wins: number; votes: number; onDone: () => void }) {
+  const [leaving, setLeaving] = useState(false);
+  return (
+    <div className={"wcf-potm-intro winner" + (leaving ? " out" : "")}>
+      <PotmTrophy className="wcf-pi-trophy big" filled />
+      <div className="wcf-pw-k">{monthLabel.toUpperCase()}</div>
+      <div className="wcf-pw-h">{joint ? "You're joint Player of the Month" : "You're Player of the Month"}</div>
+      <div className="wcf-pw-s"><b>{wins} Man of the Match {wins === 1 ? "win" : "wins"}</b> and <b>{votes} {votes === 1 ? "vote" : "votes"}</b> from the squad.</div>
+      <button className="wcf-pw-btn" onClick={() => { setLeaving(true); setTimeout(onDone, 380); }}>See your card</button>
+    </div>
+  );
+}
+function PotmTrophy({ className, filled }: { className: string; filled?: boolean }) {
+  return (
+    <svg className={className} viewBox="0 0 84 96" aria-hidden="true">
+      <path className={"cup" + (filled ? " filled" : "")} d="M22 8h40v18c0 13-9 24-20 24S22 39 22 26z" />
+      <path d="M22 14H10c0 12 6 20 15 21M62 14h12c0 12-6 20-15 21" />
+      <line x1="42" y1="50" x2="42" y2="66" />
+      <path d="M30 66h24l4 10H26z" />
+      <line x1="22" y1="86" x2="62" y2="86" />
+      <path d="M26 76h32v10H26z" />
+    </svg>
   );
 }
 
@@ -14512,6 +14728,87 @@ a.wcf-set-link{text-decoration:none}
 .wcf-won-btn{margin-top:22px;border:0;border-radius:14px;padding:13px 22px;background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308);color:#1a1405;font-weight:800;font-size:14px;cursor:pointer;animation:wcfRvIn .4s 1.5s both}
 .wcf-won-close{margin-top:10px;background:none;border:0;color:var(--dim);font-weight:700;font-size:13px;cursor:pointer;animation:wcfRvIn .4s 1.6s both}
 @media (prefers-reduced-motion:reduce){.wcf-vote-medal,.wcf-won,.wcf-won *,.wcf-mr-reveal *{animation:none!important}}
+/* Matchday tickets (MatchTickets): BOOKED on booking, PAID after confirmation */
+.wcf-tk-layer{position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,6,12,.74);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);cursor:pointer;animation:wcfWonIn .25s both}
+.wcf-tk-wrap{position:relative;width:min(290px,86vw)}
+.wcf-ticket{display:grid;grid-template-columns:1fr 62px;border-radius:12px;overflow:hidden;background:#f3ead2;color:#1d1a14;box-shadow:0 18px 40px -16px #000;animation:wcfTkUp .5s cubic-bezier(.2,.9,.3,1.1) both}
+.wcf-ticket-main{padding:15px}
+.wcf-ticket-club{font-size:9px;font-weight:800;letter-spacing:.2em;color:#8a7a55}
+.wcf-ticket-fx{font-family:var(--display);font-weight:800;font-size:19px;line-height:1.1;margin-top:6px}
+.wcf-ticket-when{font-size:12px;font-weight:600;margin-top:4px;color:#4b4330}
+.wcf-ticket-row{display:flex;gap:16px;margin-top:11px;font-size:9px;font-weight:800;letter-spacing:.12em;color:#8a7a55}
+.wcf-ticket-row b{display:block;font-size:12.5px;font-weight:800;color:#1d1a14;letter-spacing:0;margin-top:2px}
+.wcf-ticket-stub{border-left:2px dashed rgba(29,26,20,.35);display:grid;place-items:center}
+.wcf-ticket-stub span,.wcf-mt-stub span{writing-mode:vertical-rl;transform:rotate(180deg);font-size:9px;font-weight:800;letter-spacing:.24em;color:#8a7a55}
+.wcf-tk-st{position:absolute;width:80px;height:80px;border-radius:50%;display:grid;place-items:center;text-align:center;font-family:var(--display);font-weight:800;font-size:13.5px;line-height:1;letter-spacing:.08em;background:rgba(243,234,210,.94)}
+.wcf-tk-st small{display:block;font-family:var(--sans);font-size:7px;letter-spacing:.16em;margin-top:4px}
+.wcf-tk-st.booked{right:-18px;top:-30px;--r:-14deg;transform:rotate(-14deg);color:#b8860b;box-shadow:inset 0 0 0 3px #b8860b,inset 0 0 0 6px #f3ead2,inset 0 0 0 7.5px #b8860b}
+.wcf-tk-st.paid{right:70px;bottom:-42px;--r:10deg;transform:rotate(10deg);color:#15803d;box-shadow:inset 0 0 0 3px #15803d,inset 0 0 0 6px #f3ead2,inset 0 0 0 7.5px #15803d}
+.wcf-tk-layer.booked .wcf-tk-wrap>.wcf-tk-st.booked{animation:wcfThump .38s .55s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-tk-layer.paid .wcf-tk-wrap>.wcf-tk-st.paid{animation:wcfThump .38s .5s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-tk-layer.paid .wcf-tk-wrap{animation:wcfShake .25s .8s both}
+.wcf-tk-stack{position:relative;width:min(260px,80vw)}
+.wcf-mt{position:absolute;left:0;right:0;top:calc(var(--i) * 50px);display:grid;grid-template-columns:1fr 48px;border-radius:11px;background:#f3ead2;color:#1d1a14;box-shadow:0 14px 30px -14px #000;transform:rotate(calc((var(--i) - 1) * 3deg));animation:wcfTkFan .5s cubic-bezier(.2,.9,.3,1.1) both;animation-delay:calc(var(--i) * 70ms)}
+.wcf-mt-main{padding:11px 12px}
+.wcf-mt-date{font-family:var(--display);font-weight:800;font-size:12px;letter-spacing:.06em}
+.wcf-mt-fx{font-family:var(--display);font-weight:800;font-size:15px;line-height:1.1;margin-top:4px}
+.wcf-mt-club{font-size:8px;font-weight:800;letter-spacing:.2em;margin-top:3px;color:#8a7a55}
+.wcf-mt-stub{border-left:2px dashed rgba(29,26,20,.35);display:grid;place-items:center}
+.wcf-mt-stub span{font-size:7.5px}
+.wcf-tk-st.sm{width:52px;height:52px;font-size:9.5px;right:-10px;top:-14px;bottom:auto;z-index:2;opacity:0;--r:10deg;animation:wcfThumpSm .32s cubic-bezier(.3,1.6,.5,1) both;animation-delay:calc(.6s + var(--d) * .2s)}
+.wcf-tk-st.sm.booked{--r:-12deg}
+.wcf-tk-more{position:absolute;right:-8px;bottom:-12px;padding:5px 9px;border-radius:999px;background:#15803d;color:#fff;font-weight:800;font-size:11px;box-shadow:0 6px 14px -6px #000;animation:wcfPop .3s 1.35s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-tk-layer.booked .wcf-tk-more{background:#b8860b}
+.wcf-tk-cap{margin-top:48px;text-align:center;color:#fff;animation:wcfRvIn .35s .9s both}
+.wcf-tk-stack+.wcf-tk-cap{animation-delay:.4s}
+.wcf-tk-cap b{display:block;font-family:var(--display);font-weight:800;font-size:23px;font-variant-numeric:tabular-nums}
+.wcf-tk-cap span{display:block;font-size:13px;color:var(--dim);margin-top:4px}
+.wcf-tk-layer.out{animation:wcfTkOut .45s ease-in both}
+.wcf-tk-layer.out .wcf-tk-wrap,.wcf-tk-layer.out .wcf-tk-stack,.wcf-tk-layer.out .wcf-tk-cap{animation:wcfTkInto .45s cubic-bezier(.5,0,.8,.4) both}
+@keyframes wcfTkUp{from{transform:translateY(260px) rotate(6deg);opacity:0}to{transform:none;opacity:1}}
+@keyframes wcfTkFan{from{transform:translateY(300px) rotate(8deg);opacity:0}to{transform:rotate(calc((var(--i) - 1) * 3deg));opacity:1}}
+@keyframes wcfThump{from{transform:rotate(var(--r)) scale(2.4);opacity:0}to{transform:rotate(var(--r)) scale(1);opacity:1}}
+@keyframes wcfThumpSm{from{opacity:0;transform:rotate(var(--r)) scale(2.4)}to{opacity:1;transform:rotate(var(--r)) scale(1)}}
+@keyframes wcfShake{0%,100%{transform:none}30%{transform:translate(-2px,1px)}60%{transform:translate(2px,-1px)}}
+@keyframes wcfTkOut{to{background:rgba(4,6,12,0);-webkit-backdrop-filter:blur(0);backdrop-filter:blur(0)}}
+@keyframes wcfTkInto{to{transform:translateY(-40px) scale(.25);opacity:0}}
+/* Player of the Month night (PotmIntro, PotmWinner) and the card landing */
+.wcf-potm-intro{position:fixed;inset:0;z-index:145;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;cursor:pointer;background:radial-gradient(80% 55% at 50% 38%,rgba(234,179,8,.22),rgba(8,8,16,.97) 70%),rgba(8,8,16,.88);animation:wcfWonIn .3s both}
+.wcf-potm-intro.winner{cursor:default;background:radial-gradient(90% 60% at 50% 35%,rgba(234,179,8,.3),rgba(8,8,16,.97) 70%),rgba(8,8,16,.9)}
+.wcf-potm-intro.out{animation:wcfLayerOut .38s ease-in both}
+@keyframes wcfLayerOut{to{opacity:0;transform:scale(1.04)}}
+.wcf-pi-k{font-size:11px;font-weight:800;letter-spacing:.3em;color:#f5d97a}
+.wcf-pi-page{margin-top:10px;width:160px;height:48px;perspective:400px;position:relative}
+.wcf-pi-page div{position:absolute;inset:0;border-radius:8px;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:18px;letter-spacing:.08em;backface-visibility:hidden}
+.wcf-pi-page .old{background:#334155;color:#94a3b8;transform-origin:50% 0;animation:wcfTear .6s .25s cubic-bezier(.5,0,.7,1) both}
+.wcf-pi-page .new{background:linear-gradient(180deg,#2a2440,#1a1830);box-shadow:inset 0 0 0 1.5px rgba(245,217,122,.5);color:#fff;animation:wcfPop .3s .65s both}
+.wcf-pi-trophy{width:100px;height:114px;margin-top:18px}
+.wcf-pi-trophy path,.wcf-pi-trophy line{fill:none;stroke:#f5d97a;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:300;animation:wcfDraw 1s .85s ease-out both}
+.wcf-pi-trophy .cup{animation:wcfDraw 1s .85s ease-out both,wcfFillGold .5s 1.75s both}
+.wcf-pi-trophy .cup.filled{fill:rgba(245,217,122,.85)}
+.wcf-pi-trophy.big{width:124px;height:142px;animation:wcfLift 1.2s cubic-bezier(.2,.8,.2,1) both}
+.wcf-pi-trophy.big path,.wcf-pi-trophy.big line{animation:none}
+.wcf-pi-name{font-family:var(--display);font-weight:800;font-size:36px;margin-top:12px;color:#fff;animation:wcfRvIn .45s 1.95s both}
+.wcf-pi-tap{font-size:12px;color:var(--dim);margin-top:18px;animation:wcfRvIn .4s 2.4s both}
+.wcf-pw-k{font-size:10.5px;font-weight:800;letter-spacing:.2em;color:#f5d97a;margin-top:12px;animation:wcfRvIn .4s .8s both}
+.wcf-pw-h{font-family:var(--display);font-weight:800;font-size:28px;line-height:1.1;margin-top:6px;color:#fff;max-width:280px;text-wrap:balance;animation:wcfRvIn .4s .95s both}
+.wcf-pw-s{font-size:13.5px;color:var(--dim);margin-top:8px;line-height:1.5;animation:wcfRvIn .4s 1.1s both}
+.wcf-pw-s b{color:#fff}
+.wcf-pw-btn{margin-top:20px;border:0;border-radius:14px;padding:13px 22px;background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308);color:#1a1405;font-weight:800;font-size:14px;cursor:pointer;animation:wcfRvIn .4s 1.3s both}
+@keyframes wcfTear{to{transform:rotateX(-110deg) translateY(30px);opacity:0}}
+@keyframes wcfDraw{from{stroke-dashoffset:300}to{stroke-dashoffset:0}}
+@keyframes wcfFillGold{to{fill:rgba(245,217,122,.85)}}
+@keyframes wcfLift{0%{transform:translateY(80px) scale(.7);opacity:0}60%{transform:translateY(-14px) scale(1.05);opacity:1}100%{transform:none}}
+.wcf-potm-land{animation:wcfGoldRing 1.4s ease-out}
+.wcf-potm-land .wcf-potm-bg{animation:wcfPotmBg 1s ease-out both}
+.wcf-potm-land .wcf-potm-face{animation:wcfFaceIn .55s .25s cubic-bezier(.3,1.5,.5,1) both}
+.wcf-potm-land .wcf-potm-name{animation:wcfRvIn .4s .45s both}
+.wcf-potm-land .wcf-potm-stats span{animation:wcfRvIn .35s both}
+.wcf-potm-land .wcf-potm-stats span:nth-child(1){animation-delay:.6s}.wcf-potm-land .wcf-potm-stats span:nth-child(2){animation-delay:.7s}.wcf-potm-land .wcf-potm-stats span:nth-child(3){animation-delay:.8s}
+@keyframes wcfPotmBg{from{opacity:0;transform:scale(1.1)}to{opacity:.9;transform:none}}
+@keyframes wcfFaceIn{from{opacity:0;transform:scale(.3) rotate(-20deg)}to{opacity:1;transform:none}}
+@keyframes wcfGoldRing{0%{box-shadow:0 0 0 0 rgba(245,217,122,0)}30%{box-shadow:0 0 0 3px rgba(245,217,122,.8),0 0 40px 6px rgba(234,179,8,.45)}100%{box-shadow:0 0 0 0 rgba(245,217,122,0)}}
+
 .wcf-rate-overlay{position:fixed;inset:0;z-index:130;background:rgba(3,4,8,.6);display:flex;align-items:flex-end;justify-content:center;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 .wcf-rate{width:100%;max-width:480px;border-radius:26px 26px 0 0;overflow:hidden;background:#111427;border-top:1px solid rgba(245,217,122,.4);padding-bottom:env(safe-area-inset-bottom,0px);animation:wcfRateUp .45s cubic-bezier(.2,.8,.2,1)}
 .wcf-rate-photo{position:relative;height:150px;background:linear-gradient(180deg,rgba(17,20,39,.05) 20%,#111427 100%),url('/pitch-floodlit.jpg') center 55%/cover}
