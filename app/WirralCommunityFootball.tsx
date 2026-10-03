@@ -4324,6 +4324,91 @@ function App({ session }: { session: Session }) {
     });
     return [...redTokens, ...whiteTokens];
   }, [nextGrouped, nextGame?.lineup_positions, editingPositions, positionDraft]);
+
+  // "Teams are out" walkout: the first time this phone sees the published
+  // teams on the pitch (once per game, again only if the teams change), the
+  // players come out of the tunnel in Red/White pairs and jog to their
+  // spots, colouring in as they arrive; you come out last. Starts when the
+  // pitch is properly on screen; a tap on the pitch skips it.
+  const walkoutSig = useMemo(
+    () => (nextGame ? `${nextGame.id}-${[...nextGrouped.red.map((b) => b.player_id)].sort().join(".")}-${[...nextGrouped.white.map((b) => b.player_id)].sort().join(".")}` : ""),
+    [nextGame, nextGrouped]
+  );
+  useEffect(() => {
+    if (tab !== "lineup" || lineupView !== "sheet" || lineupDisplayView !== "pitch" || editingLineup || editingPositions) return;
+    if (!nextGame || !myId || (nextGrouped.red.length === 0 && nextGrouped.white.length === 0) || !motionOk()) return;
+    const key = `wcf-walkout-${myId}-${walkoutSig.slice(0, 180)}`;
+    try {
+      if (localStorage.getItem(key)) return;
+    } catch {
+      return;
+    }
+    const card = pitchCardRef.current;
+    if (!card) return;
+    const tokens = Array.from(card.querySelectorAll<HTMLElement>(".wcf-lineup-token"));
+    tokens.forEach((el) => el.classList.add("wcf-walk-pending"));
+    let started = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const run = () => {
+      if (started) return;
+      started = true;
+      try {
+        localStorage.setItem(key, "1");
+      } catch {}
+      card.closest(".wcf-main")?.querySelector(".wcf-lineup-head")?.classList.add("wcf-walk-stamp");
+      const reds = tokens.filter((el) => el.dataset.red === "1" && el.dataset.me !== "1");
+      const whites = tokens.filter((el) => el.dataset.red !== "1" && el.dataset.me !== "1");
+      const me = tokens.find((el) => el.dataset.me === "1");
+      const order: HTMLElement[] = [];
+      for (let i = 0; i < Math.max(reds.length, whites.length); i++) {
+        if (reds[i]) order.push(reds[i]);
+        if (whites[i]) order.push(whites[i]);
+      }
+      if (me) order.push(me);
+      order.forEach((el, i) => {
+        const red = el.dataset.red === "1";
+        const side = red ? -1 : 1;
+        const a = el.animate(
+          [
+            { left: `${50 + side * 3}%`, top: "104%", opacity: 0 },
+            { opacity: 1, offset: 0.08 },
+            { left: `${50 + side * 6}%`, top: "86%", offset: 0.25 },
+            { left: el.style.left, top: el.style.top, opacity: 1 },
+          ],
+          { duration: red ? 1250 : 950, delay: 400 + Math.floor(i / 2) * 230 + (i % 2) * 70 + (el === me ? 250 : 0), easing: "cubic-bezier(.35,.1,.25,1)", fill: "backwards" }
+        );
+        const land = () => {
+          el.classList.remove("wcf-walk-pending");
+          if (el === me) el.classList.add("wcf-walk-me");
+        };
+        a.onfinish = land;
+        a.oncancel = land;
+      });
+      timers.push(setTimeout(() => card.classList.add("wcf-walk-chalk"), 400 + Math.ceil(order.length / 2) * 230 + 1300));
+    };
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.intersectionRatio >= 0.45)) {
+        io.disconnect();
+        run();
+      }
+    }, { threshold: [0.45] });
+    io.observe(card);
+    return () => {
+      io.disconnect();
+      timers.forEach(clearTimeout);
+      if (!started) tokens.forEach((el) => el.classList.remove("wcf-walk-pending"));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, lineupView, lineupDisplayView, editingLineup, editingPositions, walkoutSig, myId]);
+  function finishWalkout() {
+    const card = pitchCardRef.current;
+    if (!card) return;
+    card.getAnimations({ subtree: true }).forEach((a) => {
+      try {
+        a.finish();
+      } catch {}
+    });
+  }
   // Same grouping as above but reading the local edit draft instead of the
   // saved team - lets the Team Sheet stay grouped-by-team (matching what
   // players see) even while an admin's mid-edit.
@@ -5672,6 +5757,8 @@ function App({ session }: { session: Session }) {
                       <button
                         key={t.booking.id}
                         className={"wcf-lineup-token" + (draggable ? " draggable" : "") + (draggingPlayerId === t.booking.player_id ? " dragging" : "")}
+                        data-red={t.isRed ? "1" : "0"}
+                        data-me={me ? "1" : "0"}
                         style={{ left: `${t.x}%`, top: `${t.y}%` }}
                         onClick={() => { if (!draggable) setSelectedLineupPlayerId((v) => (v === t.booking.player_id ? null : t.booking.player_id)); }}
                         onPointerDown={
@@ -5723,7 +5810,7 @@ function App({ session }: { session: Session }) {
                         </div>
                       )}
                       {lineupDisplayView === "pitch" && (
-                        <div className="wcf-lineup-pitch-card" ref={pitchCardRef}>
+                        <div className="wcf-lineup-pitch-card" ref={pitchCardRef} onClick={finishWalkout}>
                           <svg viewBox="0 0 200 300" preserveAspectRatio="none" className="wcf-lineup-pitch-lines">
                             <rect x="10" y="8" width="180" height="284" rx="2" />
                             <line x1="10" y1="150" x2="190" y2="150" />
@@ -15178,6 +15265,19 @@ a.wcf-set-link{text-decoration:none}
 @keyframes wcfClubRay{0%{opacity:0;transform:rotate(var(--a)) translateY(-40px)}30%{opacity:1}100%{opacity:0;transform:rotate(var(--a)) translateY(-130px)}}
 .wcf-pcard-ms{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:999px;background:radial-gradient(circle at 35% 30%,#ffe9a6,#eab308 70%);color:#1a1405;display:inline-flex;align-items:center}
 @media (prefers-reduced-motion:reduce){.wcf-moment,.wcf-moment *{animation:none!important}}
+/* Line-up walkout (pitch tokens) */
+.wcf-lineup-token-chip{transition:background .45s ease,color .45s ease,box-shadow .45s ease}
+.wcf-lineup-token.wcf-walk-pending .wcf-lineup-token-chip{background:#475569!important;color:#cbd5e1!important;box-shadow:0 6px 14px -6px rgba(0,0,0,.85)!important}
+.wcf-lineup-token .wcf-lineup-token-label{transition:opacity .3s}
+.wcf-lineup-token.wcf-walk-pending .wcf-lineup-token-label{opacity:0}
+.wcf-lineup-token.wcf-walk-me .wcf-lineup-token-chip{box-shadow:0 0 0 2.5px #f5d97a,0 0 18px 3px rgba(234,179,8,.55)!important;animation:wcfWalkGlow 1.6s ease-in-out 2}
+.wcf-lineup-token.wcf-walk-me::before{content:"YOU";position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:1px;font-size:8.5px;font-weight:800;letter-spacing:.1em;color:#0d0d1a;background:#f5d97a;padding:2px 6px;border-radius:999px;white-space:nowrap;animation:wcfWalkTag .4s cubic-bezier(.3,1.6,.5,1) both}
+@keyframes wcfWalkGlow{50%{box-shadow:0 0 0 4px #f5d97a,0 0 26px 6px rgba(234,179,8,.7)}}
+@keyframes wcfWalkTag{from{opacity:0;transform:translate(-50%,6px) scale(.5)}to{opacity:1;transform:translateX(-50%)}}
+.wcf-walk-chalk .wcf-lineup-pitch-lines circle[r="30"]{stroke-dasharray:190;animation:wcfWalkChalk .8s ease-out both}
+@keyframes wcfWalkChalk{from{stroke-dashoffset:190}to{stroke-dashoffset:0}}
+.wcf-lineup-head.wcf-walk-stamp::after{content:"TEAMS ARE OUT";position:absolute;right:14px;bottom:16px;padding:8px 12px;border-radius:8px;background:#f5d97a;color:#0d0d1a;font-family:var(--display);font-weight:800;font-size:13px;letter-spacing:.12em;transform:rotate(-6deg);animation:wcfWalkStamp .4s .1s cubic-bezier(.3,1.6,.5,1) both}
+@keyframes wcfWalkStamp{from{opacity:0;transform:rotate(-6deg) scale(2.4)}to{opacity:1;transform:rotate(-6deg) scale(1)}}
 /* Matchday tickets (MatchTickets): BOOKED on booking, PAID after confirmation */
 .wcf-tk-layer{position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,6,12,.74);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);cursor:pointer;animation:wcfWonIn .25s both}
 .wcf-tk-wrap{position:relative;width:min(290px,86vw)}
