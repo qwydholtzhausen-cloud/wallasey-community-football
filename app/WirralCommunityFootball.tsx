@@ -6564,7 +6564,7 @@ function App({ session }: { session: Session }) {
                             const recent = kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES + 7 * 24 * 60) > nowUk;
                             return (
                               <MotmReveal storageKey={`wcf-motm-reveal-${myId}-${g.id}`} eligible={recent}>
-                              {(phase, skip) => phase === "drum" ? (
+                              {(phase, skip, replay) => phase === "drum" ? (
                               <div className="wcf-motm-card wcf-mr-drumming" onPointerDown={skip}>
                                 <div className="wcf-motm-card-k">{winners.length > 1 ? "Joint Man of the Match" : "Man of the Match"}</div>
                                 <div className="wcf-motm-card-main">
@@ -6629,7 +6629,10 @@ function App({ session }: { session: Session }) {
                                     );
                                   })}
                                 </div>
-                                <div className="wcf-motm-card-tip">Tap a name to see who voted for them</div>
+                                <div className="wcf-motm-card-tip">
+                                  Tap a name to see who voted for them
+                                  {replay && <> · <button className="wcf-mr-again" onClick={replay}>Watch the reveal again</button></>}
+                                </div>
                               </div>
                               )}
                               </MotmReveal>
@@ -7778,9 +7781,10 @@ function MotmMedal({ className }: { className: string }) {
 // flips the winner in. Once per game per phone; tap skips it; Reduce
 // Motion goes straight to the result.
 type MotmRevealPhase = "drum" | "reveal" | "done";
-function MotmReveal({ storageKey, eligible, children }: { storageKey: string; eligible: boolean; children: (phase: MotmRevealPhase, skip: () => void) => React.ReactNode }) {
+function MotmReveal({ storageKey, eligible, children }: { storageKey: string; eligible: boolean; children: (phase: MotmRevealPhase, skip: () => void, replay: (() => void) | null) => React.ReactNode }) {
+  const [canPlay] = useState(() => eligible && typeof window !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [phase, setPhase] = useState<MotmRevealPhase>(() => {
-    if (!eligible || typeof window === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return "done";
+    if (!canPlay) return "done";
     try {
       return localStorage.getItem(storageKey) ? "done" : "drum";
     } catch {
@@ -7795,7 +7799,8 @@ function MotmReveal({ storageKey, eligible, children }: { storageKey: string; el
     const t = setTimeout(() => setPhase("reveal"), 1300);
     return () => clearTimeout(t);
   }, [phase, storageKey]);
-  return <>{children(phase, () => setPhase("done"))}</>;
+  // "Watch again": same reveal, on demand, while the result's still recent.
+  return <>{children(phase, () => setPhase("done"), canPlay ? () => setPhase("drum") : null)}</>;
 }
 
 // The winner's own moment: full screen, once per game, the first time they
@@ -14481,6 +14486,7 @@ a.wcf-set-link{text-decoration:none}
 .wcf-motm-card-faces{position:relative}
 .wcf-mr-mystery{background:radial-gradient(circle at 50% 35%,#3a3550,#1a1830);color:#f5d97a;font-size:22px}
 .wcf-mr-drumming{cursor:pointer}
+.wcf-mr-again{background:none;border:0;padding:0;font:inherit;font-weight:700;color:#f5d97a;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .wcf-mr-wait{display:flex;align-items:center;gap:8px;font-family:var(--display);font-weight:800;font-size:15px;color:var(--dim)}
 .wcf-mr-drum{display:inline-flex;gap:4px}
 .wcf-mr-drum i{width:5px;height:5px;border-radius:50%;background:#f5d97a;animation:wcfMrDrum .5s ease-in-out infinite}
