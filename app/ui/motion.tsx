@@ -43,7 +43,15 @@ export function MotmMedal({ className }: { className: string }) {
 // Motion goes straight to the result.
 export type MotmRevealPhase = "drum" | "reveal" | "done";
 
-export function MotmReveal({ storageKey, eligible, children }: { storageKey: string; eligible: boolean; children: (phase: MotmRevealPhase, skip: () => void, replay: (() => void) | null) => React.ReactNode }) {
+export function MotmReveal({
+  storageKey,
+  eligible,
+  children,
+}: {
+  storageKey: string;
+  eligible: boolean;
+  children: (phase: MotmRevealPhase, skip: () => void, replay: (() => void) | null) => React.ReactNode;
+}) {
   const [canPlay] = useState(() => eligible && typeof window !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [phase, setPhase] = useState<MotmRevealPhase>(() => {
     if (!canPlay) return "done";
@@ -83,16 +91,27 @@ export function PointsPill({ pts, storageKey, recent }: { pts: number; storageKe
     } catch {}
     const a = setTimeout(() => setPhase("pill"), 1700);
     const b = setTimeout(() => setPhase("done"), 2600);
-    return () => { clearTimeout(a); clearTimeout(b); };
+    return () => {
+      clearTimeout(a);
+      clearTimeout(b);
+    };
   }, [phase, storageKey]);
   const cls = "wcf-predict-pts " + (pts === 3 ? "exact" : pts === 1 ? "partial" : "zero");
   return (
     <>
       {phase === "big" && (
         <div className="wcf-moment dim" onClick={() => setPhase("pill")}>
-          {pts === 3 && <div className="wcf-pts-burst" aria-hidden="true">{Array.from({ length: 14 }, (_, i) => <i key={i} style={{ ["--a" as string]: `${i * 26}deg` }} />)}</div>}
+          {pts === 3 && (
+            <div className="wcf-pts-burst" aria-hidden="true">
+              {Array.from({ length: 14 }, (_, i) => (
+                <i key={i} style={{ ["--a" as string]: `${i * 26}deg` }} />
+              ))}
+            </div>
+          )}
           <div className={"wcf-bigpts" + (pts ? "" : " zero")}>+{pts}</div>
-          <div className="wcf-moment-h" style={{ marginTop: 4 }}>{pts === 3 ? "Exact score" : pts === 1 ? "Right result" : "Not this time"}</div>
+          <div className="wcf-moment-h" style={{ marginTop: 4 }}>
+            {pts === 3 ? "Exact score" : pts === 1 ? "Right result" : "Not this time"}
+          </div>
         </div>
       )}
       <span className={cls + (phase === "pill" ? " wcf-pts-pop" : "")} style={phase === "big" ? { opacity: 0 } : undefined}>
@@ -105,7 +124,17 @@ export function PointsPill({ pts, storageKey, recent }: { pts: number; storageKe
 // The pot: the total with a jar beside it. After a game's payments land,
 // the first look rolls the total up from where it was, drops a coin in per
 // payer and raises the level. First look on a phone just records.
-export function PotAmountJar({ total, money, last, storageKey }: { total: number; money: (n: number) => string; last: { id: string; amount: number; paid?: number } | undefined; storageKey: string }) {
+export function PotAmountJar({
+  total,
+  money,
+  last,
+  storageKey,
+}: {
+  total: number;
+  money: (n: number) => string;
+  last: { id: string; amount: number; paid?: number } | undefined;
+  storageKey: string;
+}) {
   const cap = Math.max(500, Math.ceil(Math.max(total, 1) / 500) * 500);
   const level = (v: number) => Math.max(0.06, Math.min(1, v / cap));
   const [shown, setShown] = useState(total);
@@ -140,17 +169,28 @@ export function PotAmountJar({ total, money, last, storageKey }: { total: number
       <div className={"wcf-pot-hero-amt" + (total < 0 ? " negative" : "")}>{money(shown)}</div>
       <div className="wcf-pot-jar" aria-hidden="true">
         <svg viewBox="0 0 80 100">
-          <defs><clipPath id="wcfJarClip"><path d="M14 22 Q14 14 22 14 L58 14 Q66 14 66 22 L66 88 Q66 96 58 96 L22 96 Q14 96 14 88 Z" /></clipPath></defs>
+          <defs>
+            <clipPath id="wcfJarClip">
+              <path d="M14 22 Q14 14 22 14 L58 14 Q66 14 66 22 L66 88 Q66 96 58 96 L22 96 Q14 96 14 88 Z" />
+            </clipPath>
+          </defs>
           <g clipPath="url(#wcfJarClip)">
             <g className="wcf-pot-jar-fill" style={{ transform: `translateY(${y}px)` }}>
               <rect x="0" y="0" width="80" height="110" fill="rgba(34,197,94,.55)" />
               <path d="M0 0 Q10 -4 20 0 T40 0 T60 0 T80 0 V6 H0Z" fill="rgba(74,222,128,.75)" />
             </g>
           </g>
-          <path d="M14 22 Q14 14 22 14 L58 14 Q66 14 66 22 L66 88 Q66 96 58 96 L22 96 Q14 96 14 88 Z" fill="none" stroke="rgba(226,232,240,.55)" strokeWidth="2.5" />
+          <path
+            d="M14 22 Q14 14 22 14 L58 14 Q66 14 66 22 L66 88 Q66 96 58 96 L22 96 Q14 96 14 88 Z"
+            fill="none"
+            stroke="rgba(226,232,240,.55)"
+            strokeWidth="2.5"
+          />
           <rect x="20" y="6" width="40" height="9" rx="3" fill="#334155" stroke="rgba(226,232,240,.45)" strokeWidth="1.5" />
         </svg>
-        {coins.map((i) => <i key={i} className="wcf-pot-coin" style={{ ["--dx" as string]: `${((i * 37) % 40) - 20}px` }} />)}
+        {coins.map((i) => (
+          <i key={i} className="wcf-pot-coin" style={{ ["--dx" as string]: `${((i * 37) % 40) - 20}px` }} />
+        ))}
       </div>
     </>
   );

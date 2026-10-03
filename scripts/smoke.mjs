@@ -129,6 +129,7 @@ for (const sub of ["Season", "Stats", "Records", "Scores", "Pot"]) {
 await step("Account", async () => {
   await page.locator(".wcf-role").first().dispatchEvent("click");
   await page.waitForFunction(() => document.querySelector(".wcf-heading h2")?.textContent?.startsWith("Your account"), null, { timeout: 10000 });
+  await page.waitForTimeout(900);
 });
 
 await browser.close();
