@@ -136,8 +136,8 @@ interface Profile {
 
 type Team = "white" | "red";
 
-type PotExemptReason = "prize" | "carried_over" | "other";
-const POT_EXEMPT_LABEL: Record<PotExemptReason, string> = { prize: "Free · prize", carried_over: "Free · carried over", other: "Free · other" };
+type PotExemptReason = "birthday" | "prize" | "carried_over" | "other";
+const POT_EXEMPT_LABEL: Record<PotExemptReason, string> = { birthday: "Free · birthday", prize: "Free · prize", carried_over: "Free · carried over", other: "Free · other" };
 
 interface BookingRow {
   id: string;
@@ -4327,6 +4327,39 @@ function App({ session }: { session: Session }) {
     setResultsView("records");
   }
 
+  // Birthday games: for each player with a birthday on record, the game
+  // they're booked on closest to it (3 days before to 7 days after), unless
+  // one in that window is already free for their birthday. Admins get a
+  // one-tap "make it free" on that game, and it tops the ⋯ menu.
+  const birthdaySuggest = useMemo(() => {
+    const out: Record<string, string> = {};
+    if (!isAdmin) return out;
+    const shift = (d: string, n: number) => {
+      const x = new Date(d + "T12:00:00Z");
+      x.setUTCDate(x.getUTCDate() + n);
+      return x.toISOString().slice(0, 10);
+    };
+    const year = Number(nowUk.slice(0, 4));
+    const upcomingPublished = upcomingGames.filter((g) => g.published);
+    for (const b of birthdays) {
+      const md = b.date_of_birth.slice(5, 10);
+      for (const y of [year, year + 1]) {
+        const day = md === "02-29" && !(y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)) ? `${y}-02-28` : `${y}-${md}`;
+        const lo = shift(day, -3);
+        const hi = shift(day, 7);
+        const inWindow = upcomingPublished.flatMap((g) =>
+          g.date >= lo && g.date <= hi ? g.bookings.filter((x) => x.player_id === b.player_id && !x.waiting).map((x) => ({ g, x })) : []
+        );
+        if (!inWindow.length || inWindow.some(({ x }) => (x.pot_exempt_reason as string) === "birthday")) continue;
+        const dist = (d: string) => Math.abs(new Date(d + "T12:00:00Z").getTime() - new Date(day + "T12:00:00Z").getTime());
+        const best = inWindow.sort((a, c) => dist(a.g.date) - dist(c.g.date))[0];
+        if (best.x.pot_exempt_reason) continue;
+        out[best.x.id] = new Date(day + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+      }
+    }
+    return out;
+  }, [isAdmin, birthdays, upcomingGames, nowUk]);
+
   const nextGame = upcomingGames[0];
   const nextConfirmed = useMemo(
     () => (nextGame ? nextGame.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)) : []),
@@ -5215,6 +5248,7 @@ function App({ session }: { session: Session }) {
             }}
             emergencyContacts={emergencyContacts}
             onConfirmPayments={confirmPayments}
+            birthdaySuggest={birthdaySuggest}
             askConfirm={askConfirm}
           />
         )}
@@ -7764,8 +7798,39 @@ function FixtureSheet({
   const [pickDate, setPickDate] = useState(false);
   // Weekly
   const [weekDays, setWeekDays] = useState<Set<number>>(new Set([1, 4]));
-  const [weeks, setWeeks] = useState<number | "until">(4);
-  const [until, setUntil] = useState(addDays(todayStr, 28));
+  // "Every week": a From–To range (quick picks or custom) and individual
+  // dates you can tap to skip, e.g. Bonfire Night or Christmas Eve.
+  const monthEnd = (d: string) => {
+    const x = new Date(d.slice(0, 7) + "-01T12:00:00Z");
+    x.setUTCMonth(x.getUTCMonth() + 1);
+    x.setUTCDate(0);
+    return x.toISOString().slice(0, 10);
+  };
+  const monthStartAfter = (d: string, n: number) => {
+    const x = new Date(d.slice(0, 7) + "-01T12:00:00Z");
+    x.setUTCMonth(x.getUTCMonth() + n);
+    return x.toISOString().slice(0, 10);
+  };
+  const monthName = (d: string) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+  const rangePresets: { key: string; label: string; from: string; to: string }[] = [
+    { key: "n4", label: "Next 4 weeks", from: addDays(todayStr, 1), to: addDays(todayStr, 28) },
+    { key: "rest", label: `Rest of ${monthName(todayStr).slice(0, 3)}`, from: addDays(todayStr, 1), to: monthEnd(todayStr) },
+    { key: "m1", label: monthName(monthStartAfter(todayStr, 1)), from: monthStartAfter(todayStr, 1), to: monthEnd(monthStartAfter(todayStr, 1)) },
+    { key: "m2", label: monthName(monthStartAfter(todayStr, 2)), from: monthStartAfter(todayStr, 2), to: monthEnd(monthStartAfter(todayStr, 2)) },
+  ];
+  const [rangeKey, setRangeKey] = useState("n4");
+  const [rangeFrom, setRangeFrom] = useState(addDays(todayStr, 1));
+  const [rangeTo, setRangeTo] = useState(addDays(todayStr, 28));
+  const [skipDates, setSkipDates] = useState<Set<string>>(new Set());
+  const pickRange = (key: string) => {
+    setRangeKey(key);
+    setSkipDates(new Set());
+    const p = rangePresets.find((x) => x.key === key);
+    if (p) {
+      setRangeFrom(p.from);
+      setRangeTo(p.to);
+    }
+  };
 
   const gameDates = new Set(games.filter((g) => g.id !== game?.id).map((g) => g.date));
   const kickoffs = [...new Set([cs.default_kickoff, "12:00", "19:00", "20:00", "21:00", ...games.map((g) => g.kickoff)])].filter(Boolean).sort().slice(0, 6);
@@ -7796,13 +7861,14 @@ function FixtureSheet({
   const strip = Array.from({ length: 21 }, (_, i) => addDays(todayStr, i));
   const weeklyDates = (() => {
     if (tab !== "weekly") return [] as string[];
-    const end = weeks === "until" ? until : addDays(todayStr, weeks * 7 - 1);
+    const start = rangeFrom > todayStr ? rangeFrom : addDays(todayStr, 1);
     const out: string[] = [];
-    for (let d = addDays(todayStr, 1); d <= end; d = addDays(d, 1)) if (weekDays.has(new Date(d + "T12:00:00Z").getUTCDay())) out.push(d);
+    for (let d = start; d <= rangeTo && out.length < 120; d = addDays(d, 1)) if (weekDays.has(new Date(d + "T12:00:00Z").getUTCDay())) out.push(d);
     return out;
   })();
-  const weeklyNew = weeklyDates.filter((d) => !gameDates.has(d));
-  const weeklySkipped = weeklyDates.length - weeklyNew.length;
+  const weeklyNew = weeklyDates.filter((d) => !gameDates.has(d) && !skipDates.has(d));
+  const weeklySkipped = weeklyDates.filter((d) => gameDates.has(d)).length;
+  const weeklyUserSkipped = weeklyDates.filter((d) => !gameDates.has(d) && skipDates.has(d)).length;
   const shortDate = (d: string) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 
   async function submit(post: boolean) {
@@ -7887,15 +7953,51 @@ function FixtureSheet({
                 </div>
               </div>
               <div>
-                <div className="wcf-fxs-lab"><span>For</span></div>
+                <div className="wcf-fxs-lab"><span>When</span></div>
                 <div className="wcf-fxs-chips">
-                  {[2, 4, 8].map((n) => (
-                    <button key={n} className={weeks === n ? "on" : ""} onClick={() => setWeeks(n)}>{n} weeks</button>
+                  {rangePresets.map((p) => (
+                    <button key={p.key} className={rangeKey === p.key ? "on" : ""} onClick={() => pickRange(p.key)}>{p.label}</button>
                   ))}
-                  <button className={weeks === "until" ? "on" : "add"} onClick={() => setWeeks("until")}>Until…</button>
+                  <button className={rangeKey === "custom" ? "on" : "add"} onClick={() => setRangeKey("custom")}>Custom</button>
                 </div>
-                {weeks === "until" && <input className="wcf-fxs-input" type="date" value={until} min={todayStr} onChange={(e) => setUntil(e.target.value)} />}
+                {rangeKey === "custom" && (
+                  <div className="wcf-fxs-range">
+                    <label>From<input className="wcf-fxs-input" type="date" value={rangeFrom} min={addDays(todayStr, 1)} onChange={(e) => e.target.value && setRangeFrom(e.target.value)} /></label>
+                    <label>To<input className="wcf-fxs-input" type="date" value={rangeTo} min={rangeFrom} onChange={(e) => e.target.value && setRangeTo(e.target.value)} /></label>
+                  </div>
+                )}
               </div>
+              {weeklyDates.length > 0 && (
+                <div>
+                  <div className="wcf-fxs-lab"><span>Dates</span><small className="wcf-fxs-tapnote">Tap a date to skip it</small></div>
+                  <div className="wcf-fxs-dates">
+                    {weeklyDates.map((dt) => {
+                      const on = gameDates.has(dt);
+                      const skip = skipDates.has(dt);
+                      const x = new Date(dt + "T12:00:00Z");
+                      return (
+                        <button
+                          key={dt}
+                          className={"wcf-fxs-dt" + (on ? " on" : skip ? " skip" : " new")}
+                          disabled={on}
+                          onClick={() =>
+                            setSkipDates((cur) => {
+                              const next = new Set(cur);
+                              if (next.has(dt)) next.delete(dt);
+                              else next.add(dt);
+                              return next;
+                            })
+                          }
+                        >
+                          <small>{x.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }).toUpperCase()}</small>
+                          <b>{x.getUTCDate()} {x.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" })}</b>
+                          {on && <i>on</i>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -7980,7 +8082,8 @@ function FixtureSheet({
               ) : (
                 <>
                   <b>{weeklyNew.length} game{weeklyNew.length === 1 ? "" : "s"}</b>, {shortDate(weeklyNew[0])} to {shortDate(weeklyNew[weeklyNew.length - 1])}, {f.kickoff} at {f.venue || "…"}, £{f.price}, {f.max_players} places.
-                  {weeklySkipped > 0 && ` ${weeklySkipped} day${weeklySkipped === 1 ? " already has" : "s already have"} a game and ${weeklySkipped === 1 ? "is" : "are"} skipped.`}
+                  {weeklySkipped > 0 && ` ${weeklySkipped} day${weeklySkipped === 1 ? " already has" : "s already have"} a game and ${weeklySkipped === 1 ? "is" : "are"} left alone.`}
+                  {weeklyUserSkipped > 0 && ` ${weeklyUserSkipped} skipped.`}
                 </>
               )}
             </div>
@@ -11596,8 +11699,10 @@ function AdminConsole({
   onShareResult,
   emergencyContacts,
   onConfirmPayments,
+  birthdaySuggest,
   askConfirm,
 }: {
+  birthdaySuggest: Record<string, string>;
   upcoming: GameRow[];
   previous: GameRow[];
   overdue: { booking: BookingRow; game: GameRow }[];
@@ -11633,6 +11738,7 @@ function AdminConsole({
     onSaveResult,
     onAddBooking,
     onSetPotExempt,
+    birthdaySuggest,
     askConfirm,
   };
 
@@ -12104,8 +12210,10 @@ function AdminGameRow({
   onAddBooking,
   onSetPotExempt,
   emergencyContacts,
+  birthdaySuggest,
   askConfirm,
 }: {
+  birthdaySuggest?: Record<string, string>;
   game: GameRow;
   past: boolean;
   emergencyContacts: EmergencyContact[];
@@ -12131,6 +12239,17 @@ function AdminGameRow({
   const [showContacts, setShowContacts] = useState(false);
   // The booking whose actions sheet is open (tap ⋯ on a row).
   const [actionFor, setActionFor] = useState<BookingRow | null>(null);
+  const [bdayDismissed, setBdayDismissed] = useState<string[]>([]);
+  const bdaySuggestions = past
+    ? []
+    : game.bookings.filter((b) => {
+        if (b.waiting || b.pot_exempt_reason || !birthdaySuggest?.[b.id] || bdayDismissed.includes(b.id)) return false;
+        try {
+          return !localStorage.getItem(`wcf-bday-dismiss-${b.id}`);
+        } catch {
+          return true;
+        }
+      });
 
   const bookedIds = new Set(game.bookings.map((b) => b.player_id));
   const eligiblePlayers = profiles.filter((p) => !bookedIds.has(p.id)).sort((a, b) => a.display_name.localeCompare(b.display_name));
@@ -12181,7 +12300,7 @@ function AdminGameRow({
         <small>
           Booked {fmtDateTime(b.created_at)}
           {b.status === "confirmed" && b.auto_confirmed ? " · paid via Monzo" : b.status === "confirmed" && b.confirmer ? ` · approved by ${b.confirmer.display_name.split(" ")[0]}` : ""}
-          {b.pot_exempt_reason ? ` · ${b.pot_exempt_reason === "prize" ? "prize" : b.pot_exempt_reason === "carried_over" ? "carried over" : "free"}` : ""}
+          {b.pot_exempt_reason ? ` · ${b.pot_exempt_reason === "birthday" ? "free · birthday" : b.pot_exempt_reason === "prize" ? "prize" : b.pot_exempt_reason === "carried_over" ? "carried over" : "free"}` : ""}
         </small>
       </span>
       {chip(b)}
@@ -12229,6 +12348,31 @@ function AdminGameRow({
             </div>
           )}
 
+          {bdaySuggestions.map((b) => (
+            <div key={b.id} className="wcf-bday-suggest">
+              <div className="ico">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="10" width="18" height="11" rx="2" /><path d="M12 10V6M8 10V7M16 10V7M3 15c3 2 6-2 9 0s6 2 9 0" /></svg>
+              </div>
+              <div className="txt">
+                <b>{b.player.display_name.split(" ")[0]}&apos;s birthday is {birthdaySuggest?.[b.id]}</b>
+                <small>They&apos;re booked on this game. Make it their free birthday game?</small>
+              </div>
+              <div className="btns">
+                <button className="yes" onClick={() => onSetPotExempt(b.id, "birthday")}>Make it free</button>
+                <button
+                  className="no"
+                  onClick={() => {
+                    try {
+                      localStorage.setItem(`wcf-bday-dismiss-${b.id}`, "1");
+                    } catch {}
+                    setBdayDismissed((d) => [...d, b.id]);
+                  }}
+                >
+                  Not this time
+                </button>
+              </div>
+            </div>
+          ))}
           {confirmed.length === 0 && <p className="wcf-empty small">No one booked in.</p>}
           {confirmed.length > 0 && (
             <div className={"wcf-admin-owing" + (owing.length === 0 ? " clear" : "")}>
@@ -12399,6 +12543,13 @@ function AdminGameRow({
                   <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, null))}>£ Make it a paying game again</button>
                 ) : (
                   <>
+                    <button
+                      className={"wcf-action-opt" + (birthdaySuggest?.[actionFor.id] ? " bday" : "")}
+                      onClick={() => act(() => onSetPotExempt(actionFor.id, "birthday"))}
+                    >
+                      Free game: birthday
+                      {birthdaySuggest?.[actionFor.id] && <small>Birthday {birthdaySuggest[actionFor.id]}</small>}
+                    </button>
                     <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "prize"))}>Free game: prize</button>
                     <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "carried_over"))}>Free game: carried over</button>
                     <button className="wcf-action-opt" onClick={() => act(() => onSetPotExempt(actionFor.id, "other"))}>Free game: other</button>
@@ -15537,6 +15688,31 @@ a.wcf-set-link{text-decoration:none}
 .gaffai-tiki .p{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;z-index:2;box-shadow:0 2px 0 rgba(0,0,0,.3)}
 .gaffai-tiki .p.us{background:#f5f6f8}.gaffai-tiki .p.them{background:#E42A36}
 .gaffai-tiki .ball{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:#fff;box-shadow:0 0 0 1.5px #0d0d1a;z-index:3;transition:left .55s cubic-bezier(.4,0,.2,1),top .55s cubic-bezier(.4,0,.2,1)}
+/* Add fixtures: date range and tap-to-skip dates */
+.wcf-fxs-range{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.wcf-fxs-range label{font-size:10.5px;font-weight:800;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;display:flex;flex-direction:column;gap:4px}
+.wcf-fxs-range .wcf-fxs-input{margin:0}
+.wcf-fxs-tapnote{font-size:10.5px;color:var(--dim);font-weight:600;letter-spacing:0;text-transform:none}
+.wcf-fxs-dates{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.wcf-fxs-dt{border:1px solid rgba(148,163,184,.25);border-radius:10px;padding:6px 4px;background:rgba(255,255,255,.04);color:var(--white);text-align:center;cursor:pointer;font:inherit;transition:background .2s,opacity .2s,transform .15s}
+.wcf-fxs-dt:active:not(:disabled){transform:scale(.95)}
+.wcf-fxs-dt small{display:block;font-size:9px;font-weight:800;letter-spacing:.08em;color:var(--dim)}
+.wcf-fxs-dt b{display:block;font-family:var(--display);font-weight:800;font-size:14px}
+.wcf-fxs-dt i{display:block;font-style:normal;font-size:8.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.wcf-fxs-dt.new{border-color:rgba(34,197,94,.5);background:rgba(34,197,94,.1)}
+.wcf-fxs-dt.skip{opacity:.45;text-decoration:line-through;border-style:dashed;background:none}
+.wcf-fxs-dt.on{border-color:rgba(148,163,184,.15);background:none;color:var(--dim);cursor:default}
+/* Admin: birthday game suggestion and menu option */
+.wcf-bday-suggest{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:center;padding:12px;margin-bottom:10px;border-radius:14px;background:radial-gradient(100% 90% at 100% 0%,rgba(245,217,122,.18),transparent 60%),rgba(245,217,122,.06);border:1px solid rgba(245,217,122,.5)}
+.wcf-bday-suggest .ico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(245,217,122,.16);color:#f5d97a}
+.wcf-bday-suggest .ico svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.wcf-bday-suggest .txt b{display:block;font-size:13px;color:#fff}
+.wcf-bday-suggest .txt small{display:block;font-size:11.5px;color:var(--dim);margin-top:2px;line-height:1.4}
+.wcf-bday-suggest .btns{grid-column:1/-1;display:flex;gap:8px}
+.wcf-bday-suggest .yes{flex:1;border:0;border-radius:10px;padding:9px;background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308);color:#1a1405;font-family:var(--display);font-weight:800;font-size:12.5px;cursor:pointer}
+.wcf-bday-suggest .no{border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:none;color:var(--dim);font-weight:700;font-size:12px;cursor:pointer}
+.wcf-action-opt.bday{color:#f5d97a;border-color:rgba(245,217,122,.5);background:rgba(245,217,122,.08);display:flex;flex-direction:column;align-items:flex-start}
+.wcf-action-opt.bday small{font-size:10.5px;color:var(--dim);font-weight:600;margin-top:2px}
 /* Matchday tickets (MatchTickets): BOOKED on booking, PAID after confirmation */
 .wcf-tk-layer{position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,6,12,.74);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);cursor:pointer;animation:wcfWonIn .25s both}
 .wcf-tk-wrap{position:relative;width:min(290px,86vw)}
