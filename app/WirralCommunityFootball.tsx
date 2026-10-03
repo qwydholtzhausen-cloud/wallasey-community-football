@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
 import { motmWinners, goalsLookup } from "../lib/motm";
@@ -3487,9 +3487,9 @@ function App({ session }: { session: Session }) {
               </div>
               <div className="wcf-ft-score">
                 <span className="wcf-ft-team">{cs.team_white_name}</span>
-                <b style={{ color: cs.team_white_color }}>{w}</b>
+                <FlapNum itemKey={`game-${g.id}-fulltime`} value={w} color={cs.team_white_color} />
                 <span className="wcf-ft-dash">–</span>
-                <b style={{ color: cs.team_red_color }}>{r}</b>
+                <FlapNum itemKey={`game-${g.id}-fulltime`} value={r} color={cs.team_red_color} />
                 <span className="wcf-ft-team">{cs.team_red_name}</span>
               </div>
               {scorers.length > 0 && (
@@ -3565,7 +3565,7 @@ function App({ session }: { session: Session }) {
           tone: "green",
           text: (
             <>
-              Community pot passed <strong>£{t}</strong>
+              Community pot passed <strong>£<PotCount itemKey={`pot-${t}`} value={t} /></strong>
             </>
           ),
         });
@@ -5060,6 +5060,54 @@ function App({ session }: { session: Session }) {
   }, [momentKey, momentNow, momentsPaused, momentsPlayed]);
   const showMoment = (prefix: string) => !!momentNow && momentNow.startsWith(prefix + ":") && momentCandidates.includes(momentNow);
 
+  // ── What's new on the Feed ──
+  // Each open of Feed compares the posts against the ones you'd already
+  // seen (kept on this device). Anything new deals in under a "New since"
+  // line, once. The first ever open only records what's there.
+  const [feedFresh, setFeedFresh] = useState<{ keys: Set<string>; since: number; band: boolean } | null>(null);
+  const [ftBand, setFtBand] = useState<string | null>(null);
+  useEffect(() => {
+    if (tab !== "feed") {
+      if (feedFresh) setFeedFresh(null);
+      return;
+    }
+    if (feedFresh || !myId || feedItems.length === 0) return;
+    const kSeen = `wcf-feed-seen-${myId}`;
+    const kVisit = `wcf-feed-visit-${myId}`;
+    let seen: string[] | null = null;
+    let since = 0;
+    try {
+      const raw = localStorage.getItem(kSeen);
+      seen = raw ? JSON.parse(raw) : null;
+      since = Number(localStorage.getItem(kVisit)) || 0;
+      localStorage.setItem(kSeen, JSON.stringify(feedItems.map((i) => i.key)));
+      localStorage.setItem(kVisit, String(Date.now()));
+    } catch {
+      setFeedFresh({ keys: new Set(), since: 0, band: false });
+      return;
+    }
+    const seenSet = new Set(seen ?? feedItems.map((i) => i.key));
+    const keys = new Set(visibleFeedItems.filter((i) => !seenSet.has(i.key)).slice(0, 8).map((i) => i.key));
+    const ft = visibleFeedItems.find((i) => keys.has(i.key) && i.key.endsWith("-fulltime"));
+    const band = !!ft && motionOk() && !momentNow && !rateSheetFor;
+    setFeedFresh({ keys, since, band });
+    if (band && ft) setFtBand(ft.key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, myId, feedItems]);
+  useEffect(() => {
+    if (!ftBand) return;
+    const t = setTimeout(() => setFtBand(null), 2000);
+    return () => clearTimeout(t);
+  }, [ftBand]);
+  const feedFreshLabel = (() => {
+    if (!feedFresh?.since) return "New since your last visit";
+    const then = new Date(feedFresh.since);
+    const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(feedFresh.since).setHours(0, 0, 0, 0)) / 86400000);
+    if (days === 0) return "New since earlier today";
+    if (days < 7) return `New since ${then.toLocaleDateString("en-GB", { weekday: "long" })}`;
+    return "New since your last visit";
+  })();
+
   const TABS = [
     { k: "fixtures", label: "Fixtures", icon: Icon.cal },
     { k: "feed", label: "Feed", icon: Icon.pulse },
@@ -5124,7 +5172,7 @@ function App({ session }: { session: Session }) {
       <main className="wcf-main" key={tab}>
         <div className="wcf-heading">
           <div>
-            <h2>{heading}{tab === "fixtures" && fxChip > 0 && <span className="wcf-new-chip">{fxChip} NEW</span>}</h2>
+            <h2>{heading}{tab === "fixtures" && fxChip > 0 && <span className="wcf-new-chip">{fxChip} NEW</span>}{tab === "feed" && feedView === "feed" && !showArchived && (feedFresh?.keys.size ?? 0) > 0 && <span className="wcf-new-chip">{feedFresh!.keys.size} NEW</span>}</h2>
           </div>
           {tab === "fixtures" && isAdmin && (
             <div className="wcf-heading-actions">
@@ -5256,7 +5304,7 @@ function App({ session }: { session: Session }) {
                 . Speak to an admin to confirm you&apos;ve paid before booking your next game.
               </div>
             )}
-            {upcomingGames.length === 0 && <p className="wcf-empty">No games on. {isAdmin ? "Add one above." : "Check back soon."}</p>}
+            {upcomingGames.length === 0 && <EmptyScene kind="fixtures" title="No games on yet" text={isAdmin ? "Add one above." : "New games show up here as soon as they're posted."} />}
 
             {(() => {
               const publishedUpcoming = upcomingGames.filter((g) => g.published);
@@ -5420,9 +5468,12 @@ function App({ session }: { session: Session }) {
                         <button
                           key={emoji}
                           className={"wcf-feed-pill" + (mine ? " mine" : "")}
-                          onClick={() => toggleReaction(item.key, emoji)}
+                          onClick={(e) => {
+                            if (!mine) reactBurst(e.currentTarget, emoji, count + 1);
+                            toggleReaction(item.key, emoji);
+                          }}
                         >
-                          {emoji}{count > 0 ? ` ${count}` : ""}
+                          {emoji}{count > 0 && <> <TickNum value={count} /></>}
                         </button>
                       );
                     })}
@@ -5432,6 +5483,7 @@ function App({ session }: { session: Session }) {
 
               return (
           <>
+            {feedView === "feed" && !showArchived && <PullNet onRefresh={loadAll} />}
             {!showArchived && (
               <div className={"wcf-feed-hero" + (feedView === "bootroom" ? " compact" : "")}>
                 <div className="wcf-feed-hero-eyebrow">Community Feed</div>
@@ -5468,29 +5520,41 @@ function App({ session }: { session: Session }) {
             )}
 
             {feedView === "feed" && visibleFeedItems.length === 0 && (
-              <p className="wcf-empty">
-                {showArchived ? "Nothing archived." : "Nothing yet — check back after the first game."}
-              </p>
+              showArchived ? (
+                <p className="wcf-empty">Nothing archived.</p>
+              ) : (
+                <EmptyScene kind="feed" title="Nothing on the Feed yet" text="Results, goals and shoutouts land here after the first game." />
+              )
             )}
 
             {feedView === "feed" && visibleFeedItems.length > 0 && (() => {
               const groups: { label: string; items: typeof visibleFeedItems }[] = [];
+              const freshKeys = !showArchived && feedFresh ? feedFresh.keys : new Set<string>();
+              const freshOrder = visibleFeedItems.filter((i) => freshKeys.has(i.key)).map((i) => i.key);
+              const freshStyle = (key: string) => ({ "--d": `${0.15 + Math.max(0, freshOrder.indexOf(key)) * 0.14}s` }) as React.CSSProperties;
               visibleFeedItems.forEach((item) => {
                 const days = Math.floor((Date.now() - item.ts) / 86400000);
-                const label = days <= 7 ? "This week" : days <= 14 ? "Last week" : "Earlier";
+                const label = freshKeys.has(item.key) ? feedFreshLabel : days <= 7 ? "This week" : days <= 14 ? "Last week" : "Earlier";
                 let g = groups.find((x) => x.label === label);
                 if (!g) { g = { label, items: [] }; groups.push(g); }
                 g.items.push(item);
               });
-              return groups.map((g) => (
+              return (
+                <FeedFreshCtx.Provider value={{ keys: freshKeys, flapDelay: feedFresh?.band ? 2100 : 700 }}>
+                <div style={{ "--ftd": feedFresh?.band ? "2.1s" : ".7s" } as React.CSSProperties}>
+                {groups.map((g) => (
                 <div key={g.label}>
-                  <div className="wcf-feed-section-label">{g.label}</div>
+                  <div className={"wcf-feed-section-label" + (g.label === feedFreshLabel && freshKeys.size > 0 ? " fresh" : "")}>{g.label}</div>
                   {(showArchived ? g.items.map((item): FeedRow => ({ type: "item", item })) : foldFeedRows(g.items)).map((row) => {
                     if (row.type === "group") {
                       const first = row.items[0];
                       const names = row.items.map((x) => x.groupLabel ?? "");
                       return (
-                        <article key={`group-${row.group}-${first.key}`} className="wcf-feed-item grouped">
+                        <article
+                          key={`group-${row.group}-${first.key}`}
+                          className={"wcf-feed-item grouped" + (freshKeys.has(first.key) ? " fresh" : "")}
+                          style={freshKeys.has(first.key) ? freshStyle(first.key) : undefined}
+                        >
                           <div className={"wcf-feed-icon " + first.tone}>{first.icon}</div>
                           <div className="wcf-feed-body">
                             <div className="wcf-feed-text">
@@ -5500,6 +5564,20 @@ function App({ session }: { session: Session }) {
                                 <><strong>Appearance milestones:</strong> {listNames(names)}</>
                               )}
                             </div>
+                            {row.group === "join" && (
+                              <div className={"wcf-faces" + (freshKeys.has(first.key) ? " walk" : "")}>
+                                {row.items.slice(0, 6).map((x, i) => {
+                                  const pr = profiles.find((pp) => `join-${pp.id}` === x.key);
+                                  if (!pr) return null;
+                                  return (
+                                    <span key={x.key} className="wcf-face" style={{ "--d": `${0.6 + i * 0.25}s` } as React.CSSProperties}>
+                                      <Avatar name={pr.display_name} avatarUrl={pr.avatar_url} className="wcf-avatar-chip" background={avatarFor(pr.display_name).gradient} />
+                                      <span>{pr.display_name.split(" ")[0]}</span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
                             <div className="wcf-feed-date">{fmtFeedDate(first.ts)}</div>
                             {isAdmin && (
                               <div className="wcf-feed-item-actions">
@@ -5522,7 +5600,13 @@ function App({ session }: { session: Session }) {
                     const item = row.item;
                     const isHidden = hiddenFeedKeys.includes(item.key);
                     return (
-                      <article key={item.key} className="wcf-feed-item">
+                      <article
+                        key={item.key}
+                        className={"wcf-feed-item" + (freshKeys.has(item.key) ? " fresh" : "")}
+                        style={freshKeys.has(item.key) ? freshStyle(item.key) : undefined}
+                      >
+                        {(feedReactionTally[item.key]?.["🔥"] ?? 0) >= 5 && <span className="wcf-fire-tag">🔥 On fire</span>}
+                        {freshKeys.has(item.key) && item.key.startsWith("pot-") && feedMotionOk() && <CoinRain />}
                         <div className={"wcf-feed-icon " + item.tone}>{item.icon}</div>
                         <div className="wcf-feed-body">
                           <div className="wcf-feed-text">{item.text}</div>
@@ -5548,7 +5632,10 @@ function App({ session }: { session: Session }) {
                     );
                   })}
                 </div>
-              ));
+                ))}
+                </div>
+                </FeedFreshCtx.Provider>
+              );
             })()}
           </>
               );
@@ -5891,7 +5978,11 @@ function App({ session }: { session: Session }) {
                     </div>
                   )}
                 </div>
-                {nextConfirmed.length === 0 && <p className="wcf-empty">No one&apos;s booked in yet.</p>}
+                {nextConfirmed.length === 0 && (
+                  <EmptyScene kind="sheet" title="No one's booked in yet" text="Be first on the team sheet.">
+                    <button className="wcf-book" onClick={() => setTab("fixtures")}>Grab a spot</button>
+                  </EmptyScene>
+                )}
 
                 {isAdmin && editingLineup && (
                   // A live count, then anyone still to place first.
@@ -6911,7 +7002,7 @@ function App({ session }: { session: Session }) {
                   ))}
                 </select>
 
-                {filteredResults.length === 0 && <p className="wcf-empty">No results yet.</p>}
+                {filteredResults.length === 0 && (scoredPastGames.length === 0 ? <EmptyScene kind="results" title="No results yet" text="The first score lands here at full time." /> : <p className="wcf-empty">No results yet.</p>)}
                 {filteredResults.map((g, resultIndex) => {
                   const scorers = goalRows.filter((r) => r.game_id === g.id && r.goals > 0).sort((a, b) => b.goals - a.goals);
                   const teamOf = (playerId: string) => g.bookings.find((b) => b.player_id === playerId)?.team;
@@ -7706,6 +7797,18 @@ function App({ session }: { session: Session }) {
         );
       })()}
 
+      {ftBand && (() => {
+        const g = games.find((x) => `game-${x.id}-fulltime` === ftBand);
+        return (
+          <div className="wcf-ft-band" aria-hidden>
+            <b>
+              <svg viewBox="0 0 40 40" fill="#fff"><path d="M6 18a10 10 0 1 0 19.6 3H36v-7H16.5A10 10 0 0 0 6 18z" /><circle cx="16" cy="21" r="3.2" fill="#b8202c" /><rect x="24" y="9" width="4" height="6" rx="1" /></svg>
+              FULL TIME
+            </b>
+            <small>{cs.team_white_name} v {cs.team_red_name}{g ? ` · ${fmtDate(g.date)}` : ""}</small>
+          </div>
+        );
+      })()}
       {promoGame && showMoment("promo") && (
         <SubBoard
           number={promoGame.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)).findIndex((b) => b.player_id === myId) + 1 || promoGame.max_players}
@@ -11161,7 +11264,7 @@ function AccountPanel({
               {showAllUnread ? "Show fewer" : `${unreadMessages.length - INBOX_SHOWN} more unread`}
             </button>
           )}
-          {unreadMessages.length === 0 && <p className="wcf-empty small">No new messages.</p>}
+          {unreadMessages.length === 0 && <EmptyScene kind="inbox" small title="All caught up" text="No new messages." />}
           {readMessages.length > 0 && (
             <button className="wcf-rec-more quiet" onClick={() => setOpenReadMessages((v) => !v)}>
               {openReadMessages ? "Hide read messages" : `Read messages (${readMessages.length})`}
@@ -12350,7 +12453,7 @@ function AdminConsole({
           )}
 
           <div className="wcf-admin-group"><span>Owed from past games</span>{owingTotal > 0 && <b className="red">£{owingTotal}</b>}</div>
-      {owingTabs.length === 0 && <p className="wcf-empty small">Nothing outstanding — everyone's settled up.</p>}
+      {owingTabs.length === 0 && <EmptyScene kind="paid" small title="Everyone's settled up" text="Nothing outstanding." />}
       {owingTabs.map((row) => {
         const owedTotal = row.owed.reduce((sum, o) => sum + o.game.price, 0);
         const expanded = expandedTabId === row.playerId;
@@ -13200,6 +13303,333 @@ function MultiBookPanel({
 // hour before kickoff.
 // True for a moment after `value` changes (by `test`, default any change),
 // so the animation class survives the re-renders that follow.
+// ── Feed motion ──
+// The posts you hadn't seen when you opened Feed this visit, and when the
+// full-time score should start flipping (later when the FULL TIME band plays).
+const FeedFreshCtx = createContext<{ keys: Set<string>; flapDelay: number }>({ keys: new Set(), flapDelay: 0 });
+function feedMotionOk() {
+  return typeof window !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+// A full-time score that flips up goal by goal, the first time you see it.
+function FlapNum({ itemKey, value, color }: { itemKey: string; value: number; color: string }) {
+  const { keys, flapDelay } = useContext(FeedFreshCtx);
+  const play = keys.has(itemKey) && feedMotionOk();
+  const [n, setN] = useState(play ? 0 : value);
+  useEffect(() => {
+    if (!play) return setN(value);
+    let iv: ReturnType<typeof setInterval> | undefined;
+    const t = setTimeout(() => {
+      let i = 0;
+      if (value > 0) iv = setInterval(() => { i++; setN(i); if (i >= value && iv) clearInterval(iv); }, 200);
+    }, flapDelay);
+    return () => { clearTimeout(t); if (iv) clearInterval(iv); };
+  }, [play, value, flapDelay]);
+  if (!play) return <b style={{ color }}>{value}</b>;
+  return <span className="wcf-flap"><b key={n} style={{ color }}>{n}</b></span>;
+}
+// The pot milestone counts up from the last £50 the first time you see it.
+function PotCount({ itemKey, value }: { itemKey: string; value: number }) {
+  const play = useContext(FeedFreshCtx).keys.has(itemKey) && feedMotionOk();
+  const [n, setN] = useState(play ? value - 50 : value);
+  useEffect(() => {
+    if (!play) return setN(value);
+    let cur = value - 50;
+    let iv: ReturnType<typeof setInterval> | undefined;
+    const t = setTimeout(() => { iv = setInterval(() => { cur += 5; setN(cur); if (cur >= value && iv) clearInterval(iv); }, 60); }, 700);
+    return () => { clearTimeout(t); if (iv) clearInterval(iv); };
+  }, [play, value]);
+  return <>{n}</>;
+}
+function CoinRain() {
+  return (
+    <span className="wcf-coins" aria-hidden>
+      {Array.from({ length: 10 }, (_, i) => (
+        <i key={i} style={{ left: `${12 + ((i * 37) % 76)}%`, top: `${6 + ((i * 13) % 26)}px`, "--d": `${0.5 + i * 0.09}s` } as React.CSSProperties}>£</i>
+      ))}
+    </span>
+  );
+}
+// Reaction feedback, done on the button itself so it never re-renders the
+// whole app: 👍 punches with a ring, 🔥 throws flames, and the 5th 🔥 on a
+// post sets the card alight.
+function reactBurst(btn: HTMLElement, emoji: string, newCount: number) {
+  if (!feedMotionOk()) return;
+  btn.classList.remove("punch");
+  void btn.offsetWidth;
+  btn.classList.add("punch");
+  const add = (el: HTMLElement, ms: number) => { btn.appendChild(el); setTimeout(() => el.remove(), ms); };
+  if (emoji !== "🔥") {
+    const r = document.createElement("span");
+    r.className = "wcf-react-ring";
+    add(r, 600);
+    return;
+  }
+  for (let i = 0; i < 9; i++) {
+    const e = document.createElement("span");
+    e.className = "wcf-ember";
+    e.textContent = i % 3 ? "🔥" : "✦";
+    e.style.cssText = `--x:${Math.round(Math.random() * 70 - 35)}px;--y:${Math.round(-50 - Math.random() * 50)}px;--r:${Math.round(Math.random() * 60 - 30)}deg;--d:${(0.7 + Math.random() * 0.5).toFixed(2)}s;font-size:${Math.round(10 + Math.random() * 8)}px`;
+    add(e, 1300);
+  }
+  const card = btn.closest(".wcf-feed-item") as HTMLElement | null;
+  if (newCount === 5 && card) {
+    card.classList.add("onfire");
+    setTimeout(() => card.classList.remove("onfire"), 3800);
+    for (let i = 0; i < 14; i++)
+      setTimeout(() => {
+        const sp = document.createElement("span");
+        sp.className = "wcf-spark";
+        sp.style.cssText = `left:${8 + Math.random() * 84}%;top:${Math.random() * 30}%;--x:${Math.round(Math.random() * 30 - 15)}px`;
+        card.appendChild(sp);
+        setTimeout(() => sp.remove(), 1700);
+      }, i * 180);
+  }
+}
+// Pull down at the top of the Feed: a goal net stretches out, and letting
+// go fires a ball into it while everything reloads. Touch only, and all done
+// on the DOM so dragging never re-renders the app.
+function PullNet({ onRefresh }: { onRefresh: () => Promise<unknown> }) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const refresh = useRef(onRefresh);
+  refresh.current = onRefresh;
+  useEffect(() => {
+    const el = wrap.current;
+    const scroller = el?.closest(".wcf-main") as HTMLElement | null;
+    if (!el || !scroller) return;
+    const hs = Array.from(el.querySelectorAll<SVGPathElement>(".nh"));
+    const vs = Array.from(el.querySelectorAll<SVGPathElement>(".nv"));
+    const label = el.querySelector(".wcf-net-label") as HTMLElement;
+    const ball = el.querySelector(".wcf-net-ball") as SVGElement;
+    let startY: number | null = null;
+    let pull = 0;
+    let busy = false;
+    const draw = (bulge: number) => {
+      hs.forEach((p, i) => { const y = 12 + i * 17; p.setAttribute("d", `M12 ${y} Q 160 ${y - bulge * (0.3 + i / 9)} 308 ${y}`); });
+      vs.forEach((p, i) => { const x = 12 + i * (296 / 12); const d = Math.max(0, 1 - Math.abs(x - 160) / 170); p.setAttribute("d", `M${x} 6 Q ${x} 78 ${x + (x - 160) * 0.04} ${130 - bulge * d * 0.9}`); });
+    };
+    const set = (px: number) => {
+      pull = Math.max(0, Math.min(130, px));
+      el.style.height = pull + "px";
+      draw((pull / 130) * 8);
+      label.textContent = pull > 100 ? "Let go to refresh" : "Pull to refresh";
+    };
+    draw(0);
+    const start = (e: TouchEvent) => {
+      if (busy || scroller.scrollTop > 0) return;
+      startY = e.touches[0].clientY;
+      el.style.transition = "";
+    };
+    const move = (e: TouchEvent) => {
+      if (startY == null) return;
+      const dy = e.touches[0].clientY - startY;
+      set(dy > 0 ? dy * 0.5 : 0);
+    };
+    const end = async () => {
+      if (startY == null) return;
+      startY = null;
+      if (pull <= 100) {
+        el.style.transition = "height .3s";
+        return set(0);
+      }
+      busy = true;
+      el.style.transition = "height .25s";
+      el.style.height = "130px";
+      label.textContent = "";
+      label.classList.remove("ok");
+      if (feedMotionOk()) {
+        ball.animate([{ opacity: 1, transform: "translateY(30px) scale(1.5)" }, { opacity: 1, transform: "translateY(-60px) scale(.8)" }], { duration: 260, easing: "cubic-bezier(.3,.7,.4,1)", fill: "forwards" });
+        const t0 = performance.now() + 260;
+        const wob = () => {
+          const t = (performance.now() - t0) / 1000;
+          if (t < 0) return requestAnimationFrame(wob);
+          draw(34 * Math.exp(-t * 4) * Math.cos(t * 16));
+          if (t < 1.1) requestAnimationFrame(wob);
+          else draw(0);
+        };
+        requestAnimationFrame(wob);
+      }
+      await Promise.all([refresh.current().catch(() => null), new Promise((r) => setTimeout(r, 900))]);
+      ball.getAnimations().forEach((a) => a.cancel());
+      label.textContent = "✓ Up to date";
+      label.classList.add("ok");
+      setTimeout(() => {
+        el.style.transition = "height .45s cubic-bezier(.3,1.3,.5,1)";
+        set(0);
+        label.textContent = "";
+        busy = false;
+      }, 900);
+    };
+    scroller.addEventListener("touchstart", start, { passive: true });
+    scroller.addEventListener("touchmove", move, { passive: true });
+    scroller.addEventListener("touchend", end);
+    scroller.addEventListener("touchcancel", end);
+    return () => {
+      scroller.removeEventListener("touchstart", start);
+      scroller.removeEventListener("touchmove", move);
+      scroller.removeEventListener("touchend", end);
+      scroller.removeEventListener("touchcancel", end);
+    };
+  }, []);
+  return (
+    <div className="wcf-net" ref={wrap} aria-hidden>
+      <svg viewBox="0 0 320 130" preserveAspectRatio="none">
+        <rect x="0" y="0" width="320" height="130" fill="#0a1424" />
+        {Array.from({ length: 7 }, (_, i) => <path key={"h" + i} className="nh" fill="none" stroke="rgba(226,232,240,.55)" strokeWidth="1" />)}
+        {Array.from({ length: 13 }, (_, i) => <path key={"v" + i} className="nv" fill="none" stroke="rgba(226,232,240,.4)" strokeWidth="1" />)}
+        <rect x="6" y="0" width="6" height="130" fill="#e5e7eb" />
+        <rect x="308" y="0" width="6" height="130" fill="#e5e7eb" />
+        <rect x="6" y="0" width="308" height="6" fill="#e5e7eb" />
+      </svg>
+      <svg className="wcf-net-ball" viewBox="0 0 24 24" fill="#fff" stroke="#0d0d1a" strokeWidth="1.3">
+        <circle cx="12" cy="12" r="10.5" />
+        <path d="M12 7.5l3 2.2-1.1 3.6h-3.8L9 9.7z" fill="#0d0d1a" />
+      </svg>
+      <div className="wcf-net-label" />
+    </div>
+  );
+}
+
+// ── Empty screens ──
+// A small football scene in place of a grey "nothing here" line. Reduce
+// Motion gets the finished picture.
+type EmptyKind = "feed" | "fixtures" | "results" | "sheet" | "inbox" | "paid";
+function EmptyScene({ kind, title, text, small, children }: { kind: EmptyKind; title: string; text: string; small?: boolean; children?: React.ReactNode }) {
+  const [lit, setLit] = useState(false);
+  const [sb, setSb] = useState<[string, string]>(["–", "–"]);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setLit(true));
+    return () => cancelAnimationFrame(r);
+  }, []);
+  useEffect(() => {
+    if (kind !== "results" || !feedMotionOk()) return;
+    let i = 0;
+    const iv = setInterval(() => {
+      i++;
+      if (i < 16) setSb([String(Math.floor(Math.random() * 10)), String(Math.floor(Math.random() * 10))]);
+      else { setSb(["–", "–"]); clearInterval(iv); }
+    }, 85);
+    return () => clearInterval(iv);
+  }, [kind]);
+  const v = (o: Record<string, string>) => o as React.CSSProperties;
+  const light = (x: number, d: number, flip: boolean) => (
+    <g key={x} style={v({ "--d": d + "s" })}>
+      <polygon className="wcf-es-cone" points={`${x - 6},22 ${x + 6},22 ${flip ? x - 70 : x + 70},150 ${flip ? x - 10 : x + 10},150`} fill="url(#wcfEsCone)" />
+      <rect x={x - 1.5} y="22" width="3" height="128" fill="#475569" />
+      <rect className="wcf-es-lamp" x={x - 10} y="12" width="20" height="10" rx="2" />
+    </g>
+  );
+  const shirt = (x: number) => `M${x - 13} 40 L${x - 5} 34 L${x} 37 L${x + 5} 34 L${x + 13} 40 L${x + 9} 47 L${x + 7} 45 V70 H${x - 7} V45 L${x - 9} 47 Z`;
+  let art: React.ReactNode = null;
+  if (kind === "feed")
+    art = (
+      <svg viewBox="0 0 280 170">
+        <defs>
+          <linearGradient id="wcfEsCone" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#fff8db" stopOpacity=".55" /><stop offset="1" stopColor="#fff8db" stopOpacity="0" /></linearGradient>
+          <linearGradient id="wcfEsTurf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#14532d" /><stop offset="1" stopColor="#0b2e1a" /></linearGradient>
+        </defs>
+        <path d="M30 150 L70 92 H210 L250 150 Z" fill="url(#wcfEsTurf)" />
+        {light(24, 0.2, false)}{light(256, 0.6, true)}{light(70, 1, false)}{light(210, 1.3, true)}
+        <g className="wcf-es-lines" fill="none" stroke="rgba(255,255,255,.75)" strokeWidth="1.4">
+          <path pathLength={1} d="M36 146 L72 95 H208 L244 146 Z" style={v({ "--d": "1.6s", "--t": "1.1s" })} />
+          <path pathLength={1} d="M140 95 V146" style={v({ "--d": "2s", "--t": ".5s" })} />
+          <ellipse pathLength={1} cx="140" cy="119" rx="22" ry="8" style={v({ "--d": "2.2s", "--t": ".6s" })} />
+        </g>
+        <g className="wcf-es-ball"><circle cx="140" cy="117" r="5" fill="#fff" /><path d="M138 115l2-1 2 1-1 2h-2z" fill="#0d0d1a" /></g>
+      </svg>
+    );
+  if (kind === "fixtures")
+    art = (
+      <svg viewBox="0 0 280 150">
+        <rect x="20" y="10" width="240" height="130" rx="8" fill="#0f3d24" />
+        <g className="wcf-es-lines" fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="2">
+          <rect pathLength={1} x="32" y="20" width="216" height="110" style={v({ "--d": ".1s", "--t": "1.6s" })} />
+          <path pathLength={1} d="M140 20 V130" style={v({ "--d": ".2s", "--t": "2.2s" })} />
+          <circle pathLength={1} cx="140" cy="75" r="20" style={v({ "--d": "1.4s", "--t": ".9s" })} />
+          <path pathLength={1} d="M32 50 H62 V100 H32" style={v({ "--d": "1.9s", "--t": ".7s" })} />
+          <path pathLength={1} d="M248 50 H218 V100 H248" style={v({ "--d": "2.2s", "--t": ".7s" })} />
+        </g>
+        <g className="wcf-es-marker">
+          <g transform="translate(140 75)">
+            <rect x="-9" y="-7" width="18" height="12" rx="2" fill="#e63946" />
+            <circle cx="-6" cy="7" r="3" fill="#1e293b" /><circle cx="6" cy="7" r="3" fill="#1e293b" />
+            <path d="M9 -5 L18 -16" stroke="#cbd5e1" strokeWidth="2" />
+          </g>
+        </g>
+      </svg>
+    );
+  if (kind === "results")
+    art = (
+      <svg viewBox="0 0 280 140">
+        <rect x="20" y="14" width="240" height="112" rx="12" fill="#0b1220" stroke="rgba(148,163,184,.25)" />
+        <text x="80" y="42" textAnchor="middle" className="wcf-es-sblabel">WHITES</text>
+        <text x="200" y="42" textAnchor="middle" className="wcf-es-sblabel">REDS</text>
+        <rect x="52" y="54" width="56" height="54" rx="7" fill="#111a2e" />
+        <rect x="172" y="54" width="56" height="54" rx="7" fill="#111a2e" />
+        <line x1="52" y1="81" x2="108" y2="81" stroke="#000" strokeOpacity=".6" />
+        <line x1="172" y1="81" x2="228" y2="81" stroke="#000" strokeOpacity=".6" />
+        <text x="80" y="94" textAnchor="middle" className="wcf-es-sb" fill="#f5d97a">{sb[0]}</text>
+        <text x="200" y="94" textAnchor="middle" className="wcf-es-sb" fill="#e63946">{sb[1]}</text>
+        <circle cx="140" cy="72" r="3" fill="#475569" /><circle cx="140" cy="90" r="3" fill="#475569" />
+      </svg>
+    );
+  if (kind === "sheet")
+    art = (
+      <svg viewBox="0 0 280 100">
+        <rect x="14" y="22" width="252" height="6" rx="3" fill="#7c5a32" />
+        {Array.from({ length: 8 }, (_, i) => {
+          const x = 30 + i * 31;
+          return (
+            <g key={i}>
+              <circle cx={x} cy="30" r="3.5" fill="#94a3b8" />
+              {i === 0 ? (
+                <g className="wcf-es-swing">
+                  <path d={shirt(x)} fill="#e63946" />
+                  <text x={x} y="61" textAnchor="middle" className="wcf-es-num">1</text>
+                </g>
+              ) : (
+                <path d={shirt(x)} fill="none" stroke="rgba(148,163,184,.3)" strokeDasharray="3 3" />
+              )}
+            </g>
+          );
+        })}
+        <rect x="14" y="84" width="252" height="10" rx="3" fill="#334155" />
+      </svg>
+    );
+  if (kind === "inbox")
+    art = (
+      <svg viewBox="0 0 280 120">
+        <rect x="70" y="14" width="140" height="92" rx="10" fill="#e63946" />
+        <rect x="92" y="40" width="96" height="22" rx="4" fill="#7f1d1d" />
+        <rect className="wcf-es-flapdoor" x="90" y="38" width="100" height="14" rx="3" fill="#cbd5e1" />
+        <text x="140" y="90" textAnchor="middle" className="wcf-es-sblabel" fill="#fff" opacity=".8">LETTERS</text>
+      </svg>
+    );
+  if (kind === "paid")
+    art = (
+      <svg viewBox="0 0 280 130">
+        <path d="M102 22 H178 V30 Q192 36 192 54 V104 Q192 116 178 116 H102 Q88 116 88 104 V54 Q88 36 102 30 Z" fill="rgba(148,163,184,.08)" stroke="rgba(203,213,225,.5)" strokeWidth="2" />
+        {[[120, 92, 0.3], [140, 96, 0.5], [160, 92, 0.7], [130, 82, 0.9], [150, 84, 1.1], [140, 72, 1.3]].map(([x, y, d]) => (
+          <ellipse key={`${x}-${y}`} className="wcf-es-coin" style={v({ animationDelay: d + "s" })} cx={x} cy={y} rx="12" ry="5" fill="#f5d97a" stroke="#b8892a" />
+        ))}
+        <rect x="98" y="14" width="84" height="10" rx="3" fill="#475569" />
+        <g className="wcf-es-stamp">
+          <g transform="rotate(-12 140 64)">
+            <rect x="76" y="48" width="128" height="32" rx="6" fill="none" stroke="#22c55e" strokeWidth="3" />
+            <text x="140" y="70" textAnchor="middle" className="wcf-es-stamptext">ALL SQUARE</text>
+          </g>
+        </g>
+      </svg>
+    );
+  return (
+    <div className={"wcf-es " + kind + (small ? " small" : "") + (lit ? " lit" : "")}>
+      {art}
+      <h3>{title}</h3>
+      <p>{text}</p>
+      {children}
+    </div>
+  );
+}
+
 function useChanged<T>(value: T, test: (prev: T, next: T) => boolean = (a, b) => a !== b, holdMs = 900) {
   const prev = useRef(value);
   const [flag, setFlag] = useState(false);
@@ -15902,6 +16332,102 @@ a.wcf-set-link{text-decoration:none}
 .wcf-hero-bar-fill,.wcf-fx-bar-fill{transition:width .7s cubic-bezier(.3,.8,.3,1)}
 .wcf-tick{display:inline-block}
 .wcf-tick.roll{animation:wcfTickRoll .45s cubic-bezier(.3,1.4,.5,1)}
+/* Feed: what's new since you last looked */
+.wcf-feed-section-label.fresh{color:#f5d97a}
+.wcf-feed-section-label.fresh:after{background:linear-gradient(90deg,#f5d97a,transparent);transform-origin:left;animation:wcfLineDraw .8s .1s ease-out both}
+@keyframes wcfLineDraw{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.wcf-feed-item.fresh{animation:wcfDealIn .6s var(--d,0s) cubic-bezier(.3,1.3,.5,1) both,wcfFreshGlow 3.4s var(--d,0s) ease-out both}
+@keyframes wcfDealIn{from{opacity:0;transform:translateY(-26px) rotate(-3deg) scale(.96)}to{opacity:1;transform:none}}
+@keyframes wcfFreshGlow{0%{box-shadow:0 0 0 1.5px rgba(245,217,122,.95),0 0 26px -6px rgba(245,217,122,.6)}70%{box-shadow:0 0 0 1.5px rgba(245,217,122,.6),0 0 0 0 transparent}100%{box-shadow:0 0 0 1px transparent}}
+.wcf-feed-item{position:relative}
+/* Full time: band, split-flap score, pill stamp, scorers, vote pulse */
+.wcf-ft-band{position:fixed;left:0;right:0;top:38%;z-index:900;height:92px;display:grid;place-items:center;pointer-events:none;background:linear-gradient(90deg,#b8202c,var(--red) 40%,#b8202c);box-shadow:0 20px 50px -10px rgba(0,0,0,.8);animation:wcfBandIn .5s cubic-bezier(.6,0,.2,1) both,wcfBandOut .5s 1.5s cubic-bezier(.6,0,.2,1) forwards}
+.wcf-ft-band b{font-family:var(--display);font-weight:800;font-size:40px;letter-spacing:-.02em;color:#fff;display:flex;align-items:center;gap:12px}
+.wcf-ft-band small{position:absolute;bottom:10px;font-size:10px;font-weight:800;letter-spacing:.3em;text-transform:uppercase;color:rgba(255,255,255,.75)}
+.wcf-ft-band svg{width:34px;height:34px;animation:wcfBlow .18s .4s 4 alternate}
+@keyframes wcfBandIn{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
+@keyframes wcfBandOut{from{clip-path:inset(0 0 0 0)}to{clip-path:inset(0 0 0 100%)}}
+@keyframes wcfBlow{to{transform:rotate(-14deg) scale(1.12)}}
+.wcf-flap{position:relative;display:inline-grid;place-items:center;min-width:30px;height:34px;border-radius:6px;background:#0b1220;box-shadow:inset 0 0 0 1px rgba(148,163,184,.18);overflow:hidden;align-self:center}
+.wcf-flap:after{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(0,0,0,.6)}
+.wcf-flap b{animation:wcfFlip .1s linear}
+@keyframes wcfFlip{from{transform:rotateX(80deg);opacity:.4}to{transform:none;opacity:1}}
+.wcf-feed-item.fresh .wcf-ft-head .wcf-res-pill{animation:wcfStamp .45s calc(var(--ftd,.7s) + 1.3s) cubic-bezier(.3,1.6,.5,1) both;display:inline-block}
+.wcf-feed-item.fresh .wcf-ft-scorers{animation:wcfRise .4s calc(var(--ftd,.7s) + 1.6s) both}
+.wcf-feed-item.fresh .wcf-ft-vote{animation:wcfVotePulse 1.4s calc(var(--ftd,.7s) + 2s) ease-out 2}
+@keyframes wcfStamp{from{opacity:0;transform:scale(2.4) rotate(-12deg)}to{opacity:1;transform:none}}
+@keyframes wcfRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes wcfVotePulse{0%{box-shadow:0 0 0 0 rgba(245,217,122,.6)}100%{box-shadow:0 0 0 14px rgba(245,217,122,0)}}
+/* Reactions */
+.wcf-feed-pill{position:relative}
+.wcf-feed-pill.punch{animation:wcfPunch .4s cubic-bezier(.3,1.8,.5,1)}
+@keyframes wcfPunch{30%{transform:scale(1.28)}100%{transform:none}}
+.wcf-react-ring{position:absolute;inset:-2px;border-radius:22px;border:2px solid var(--green);pointer-events:none;animation:wcfRing .5s ease-out forwards}
+@keyframes wcfRing{to{transform:scale(1.6);opacity:0}}
+.wcf-ember{position:absolute;left:50%;top:40%;pointer-events:none;color:#fdba74;animation:wcfEmber var(--d,.9s) ease-out forwards}
+@keyframes wcfEmber{from{opacity:1;transform:translate(-50%,0) scale(.6)}to{opacity:0;transform:translate(calc(-50% + var(--x)),var(--y)) scale(1.1) rotate(var(--r))}}
+.wcf-feed-item.onfire{animation:wcfFire 1.2s ease-in-out 3 alternate}
+@keyframes wcfFire{from{box-shadow:0 0 0 1px rgba(251,146,60,.4),0 0 16px -6px rgba(251,146,60,.5)}to{box-shadow:0 0 0 1.5px rgba(251,146,60,.9),0 0 30px -4px rgba(239,68,68,.55)}}
+.wcf-fire-tag{position:absolute;top:-9px;right:12px;z-index:1;padding:2px 8px;border-radius:999px;background:linear-gradient(90deg,#f97316,#ef4444);color:#fff;font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+.wcf-spark{position:absolute;width:4px;height:4px;border-radius:50%;background:#fdba74;pointer-events:none;animation:wcfSpark 1.6s ease-out forwards}
+@keyframes wcfSpark{from{opacity:1;transform:none}to{opacity:0;transform:translate(var(--x),-60px)}}
+/* Pot coins and new faces */
+.wcf-coins{position:absolute;inset:0;pointer-events:none;overflow:visible}
+.wcf-coins i{position:absolute;width:22px;height:22px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff3c4,#f5d97a 45%,#b8892a);color:#6b4e0f;font:normal 900 11px var(--sans);display:grid;place-items:center;box-shadow:0 2px 4px rgba(0,0,0,.4);animation:wcfCoinDrop .7s var(--d) cubic-bezier(.5,0,.6,1.4) both,wcfCoinFade .5s calc(var(--d) + 1.4s) forwards}
+@keyframes wcfCoinDrop{from{opacity:0;transform:translateY(-120px) rotate(-90deg)}60%{opacity:1}to{opacity:1;transform:none}}
+@keyframes wcfCoinFade{to{opacity:0}}
+.wcf-faces{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.wcf-face{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;color:var(--dim);max-width:52px}
+.wcf-face span{max-width:52px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-face .wcf-avatar-chip{width:30px;height:30px;font-size:12px;margin:0}
+.wcf-faces.walk .wcf-face{animation:wcfWalkIn .7s var(--d) cubic-bezier(.3,1.3,.5,1) both}
+@keyframes wcfWalkIn{0%{opacity:0;transform:translateX(-60px)}60%{opacity:1;transform:translate(4px,-4px)}80%{transform:none}100%{transform:none}}
+/* Pull to refresh: the net */
+.wcf-net{height:0;overflow:hidden;position:relative;margin:0 -14px}
+.wcf-net svg:first-child{position:absolute;left:0;right:0;bottom:0;width:100%;height:130px}
+.wcf-net-ball{position:absolute;left:50%;bottom:8px;width:26px;height:26px;margin-left:-13px;opacity:0}
+.wcf-net-label{position:absolute;left:0;right:0;bottom:6px;text-align:center;font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+.wcf-net-label.ok{color:var(--green)}
+/* Empty screens */
+.wcf-es{display:flex;flex-direction:column;align-items:center;text-align:center;padding:18px 8px 24px;gap:12px}
+.wcf-es.small{padding:6px 8px 12px;gap:8px}
+.wcf-es svg{width:100%;max-width:270px;height:auto;display:block}
+.wcf-es.small svg{max-width:180px}
+.wcf-es h3{margin:0;font-family:var(--display);font-weight:800;font-size:17px;color:var(--white);letter-spacing:-.01em}
+.wcf-es.small h3{font-size:15px}
+.wcf-es p{margin:0;color:var(--dim);font-size:13px;line-height:1.5;max-width:30ch}
+.wcf-es .wcf-book{flex:none;padding:12px 22px}
+.wcf-es>*{animation:wcfRise .45s both}
+.wcf-es>*:nth-child(2){animation-delay:.5s}.wcf-es>*:nth-child(3){animation-delay:.65s}.wcf-es>*:nth-child(4){animation-delay:.8s}
+.wcf-es-cone{opacity:0}
+.wcf-es.lit .wcf-es-cone{animation:wcfFlick .7s var(--d) steps(1) forwards,wcfCone .5s calc(var(--d) + .7s) forwards}
+@keyframes wcfFlick{0%{opacity:.5}20%{opacity:0}40%{opacity:.7}55%{opacity:.1}100%{opacity:.9}}
+@keyframes wcfCone{to{opacity:.9}}
+.wcf-es-lamp{fill:#334155}
+.wcf-es.lit .wcf-es-lamp{animation:wcfLampOn .1s var(--d) forwards}
+@keyframes wcfLampOn{to{fill:#fff8db}}
+.wcf-es-lines>*{stroke-dasharray:1;stroke-dashoffset:1}
+.wcf-es.lit .wcf-es-lines>*{animation:wcfPaint var(--t,1s) var(--d,0s) ease-in-out forwards}
+@keyframes wcfPaint{to{stroke-dashoffset:0}}
+.wcf-es-ball{transform-box:fill-box;transform-origin:center;animation:wcfRollIn 1.4s 2.1s cubic-bezier(.2,.8,.3,1) both}
+@keyframes wcfRollIn{from{transform:translateX(-150px) rotate(-540deg)}to{transform:none}}
+.wcf-es-marker{animation:wcfMarker 2.2s .2s ease-in-out both}
+@keyframes wcfMarker{from{transform:translateX(-110px)}to{transform:translateX(110px)}}
+.wcf-es-sblabel{font-family:var(--sans);font-weight:800;font-size:11px;letter-spacing:2px;fill:#94a3b8}
+.wcf-es-sb{font-family:var(--display);font-weight:800;font-size:34px}
+.wcf-es-num{font-family:var(--display);font-weight:800;font-size:10px;fill:#fff}
+.wcf-es-swing{transform-box:fill-box;transform-origin:50% 0;animation:wcfSwing 2.4s ease-in-out infinite alternate}
+@keyframes wcfSwing{from{transform:rotate(-6deg)}to{transform:rotate(6deg)}}
+.wcf-es-flapdoor{transform-box:fill-box;transform-origin:50% 0;animation:wcfDoor 2.6s ease-in-out infinite}
+@keyframes wcfDoor{0%,60%,100%{transform:none}70%{transform:rotateX(55deg)}80%{transform:rotateX(-15deg)}90%{transform:rotateX(8deg)}}
+.wcf-es-coin{animation:wcfJarDrop .6s cubic-bezier(.5,0,.6,1.3) both}
+@keyframes wcfJarDrop{from{transform:translateY(-90px);opacity:0}50%{opacity:1}to{transform:none;opacity:1}}
+.wcf-es-stamp{transform-box:fill-box;transform-origin:center;animation:wcfStamp .5s 2.1s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-es-stamptext{font-family:var(--display);font-weight:800;font-size:16px;letter-spacing:2px;fill:#22c55e}
+@media (prefers-reduced-motion:reduce){
+  .wcf-es *,.wcf-es>*,.wcf-feed-item.fresh,.wcf-feed-item.fresh *,.wcf-faces.walk .wcf-face,.wcf-ft-band{animation:none!important}
+  .wcf-es-cone{opacity:.9}.wcf-es-lamp{fill:#fff8db}.wcf-es-lines>*{stroke-dashoffset:0}.wcf-ft-band{display:none}
+}
 .wcf-avatar-chip.more.roll{animation:wcfChipBump .45s cubic-bezier(.3,1.6,.5,1)}
 @keyframes wcfTickRoll{from{transform:translateY(-70%);opacity:0}to{transform:none;opacity:1}}
 @keyframes wcfChipBump{40%{transform:scale(1.22)}100%{transform:none}}
