@@ -149,7 +149,7 @@ Booking history is complete from the club's first game (Aug 2026). Filter ops: e
   {
     name: "find_overdue_players",
     description:
-      "Every player currently blocked from booking a new game because they have an unconfirmed, non-waiting booking on a game that's already happened - mirrors the exact rule the app enforces.",
+      "Every player currently blocked from booking a new game because they have an unconfirmed, non-waiting, non-free booking on a game that's already happened - mirrors the exact rule the app enforces. Each has a state: 'owes' (unpaid - shown in the admin console under Payments as owing) or 'awaiting_confirmation' (they tapped I've paid - shown under Pending approvals, NOT as overdue). Never call awaiting_confirmation players overdue or say they owe money; say they're waiting for an admin to confirm, which is what's blocking them.",
     input_schema: { type: "object", properties: {} },
   },
   {

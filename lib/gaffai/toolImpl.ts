@@ -740,7 +740,8 @@ async function findPlayersWithoutBookings(admin: SupabaseClient) {
 
 async function findOverduePlayers(admin: SupabaseClient) {
   const todayUk = nowInLondon().slice(0, 10);
-  const { data } = await admin.from("bookings").select("player_id, status, games(date, venue)").eq("waiting", false).neq("status", "confirmed");
+  // Free bookings (birthday, prize...) never block, same as has_overdue_payment().
+  const { data } = await admin.from("bookings").select("player_id, status, games(date, venue)").eq("waiting", false).neq("status", "confirmed").is("pot_exempt_reason", null);
 
   type Row = { player_id: string; status: string; games: { date: string; venue: string } | { date: string; venue: string }[] | null };
   const rows = (data ?? []) as Row[];
@@ -760,8 +761,19 @@ async function findOverduePlayers(admin: SupabaseClient) {
     byPlayer[b.player_id] ??= { player_id: b.player_id, name: nameOf[b.player_id] ?? "Unknown", games: [] };
     byPlayer[b.player_id].games.push({ date: g.date, venue: g.venue, status: b.status });
   }
-  const players = Object.values(byPlayer);
-  return { count: players.length, players };
+  // The admin console splits these: "owes" (unpaid) is under Payments →
+  // owing, "awaiting_confirmation" (they tapped I've paid) is under Pending
+  // approvals. Both block booking until an admin confirms.
+  const players = Object.values(byPlayer).map((p) => ({
+    ...p,
+    state: p.games.some((g) => g.status === "unpaid") ? ("owes" as const) : ("awaiting_confirmation" as const),
+  }));
+  return {
+    count: players.length,
+    owes: players.filter((p) => p.state === "owes").length,
+    awaiting_confirmation: players.filter((p) => p.state === "awaiting_confirmation").length,
+    players,
+  };
 }
 
 async function getPaymentStatus(admin: SupabaseClient, args: { game_id: string }) {
@@ -1809,12 +1821,16 @@ async function computeUnpaidNextGameNudge(admin: SupabaseClient): Promise<Nudge 
 async function computeOverdueNudge(admin: SupabaseClient): Promise<Nudge | null> {
   const { players } = await findOverduePlayers(admin);
   if (players.length === 0) return null;
-  const ids = players.map((p) => p.player_id);
-  const names = players.map((p) => p.name).join(", ");
-  return {
-    key: contentKey("overdue", ids),
-    text: `${players.length} player${players.length === 1 ? "" : "s"} currently blocked from booking (unpaid on a past game): ${names}.`,
-  };
+  const ids = players.map((p) => `${p.player_id}:${p.state}`);
+  const fmt = (d: string) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  const who = (list: typeof players) => list.map((p) => `${p.name} (${p.games.map((g) => fmt(g.date)).join(", ")})`).join(", ");
+  const owes = players.filter((p) => p.state === "owes");
+  const waiting = players.filter((p) => p.state === "awaiting_confirmation");
+  const parts: string[] = [];
+  if (owes.length) parts.push(`${owes.length} still owe${owes.length === 1 ? "s" : ""} for a past game: ${who(owes)} (Payments → owing).`);
+  if (waiting.length)
+    parts.push(`${waiting.length} said they've paid and ${waiting.length === 1 ? "is" : "are"} waiting for you to confirm: ${who(waiting)} (Pending approvals). They can't book again until you do.`);
+  return { key: contentKey("overdue", ids), text: parts.join(" ") };
 }
 
 async function computePushIssuesNudge(admin: SupabaseClient): Promise<Nudge | null> {
