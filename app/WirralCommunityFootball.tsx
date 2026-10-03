@@ -12877,8 +12877,8 @@ const css = `
 .wcf-hero-roster-icon{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.08);border:1px solid var(--line);display:grid;place-items:center;flex:0 0 auto}
 .wcf-hero-roster-text{display:flex;flex-direction:column;flex:0 0 auto}
 .wcf-hero-roster-row{display:flex;align-items:center;gap:8px}
-.wcf-hero-roster-n2{font-family:var(--display);font-weight:800;font-size:15px;color:var(--white)}
-.wcf-hero-waiting-chip{font-family:var(--sans);font-weight:800;font-size:8.5px;letter-spacing:.6px;color:#f5d97a;background:rgba(234,179,8,.16);border:1px solid rgba(234,179,8,.4);padding:3px 7px;border-radius:999px;white-space:nowrap}
+.wcf-hero-roster-n2{font-family:var(--display);font-weight:800;font-size:15px;color:var(--white);white-space:nowrap;flex:none}
+.wcf-hero-waiting-chip{white-space:nowrap;font-family:var(--sans);font-weight:800;font-size:8.5px;letter-spacing:.6px;color:#f5d97a;background:rgba(234,179,8,.16);border:1px solid rgba(234,179,8,.4);padding:3px 7px;border-radius:999px;white-space:nowrap}
 .wcf-hero-bar-track{height:4px;border-radius:3px;background:rgba(255,255,255,.12);margin-top:7px;overflow:hidden;width:100%}
 .wcf-hero-bar-fill{height:100%;background:linear-gradient(90deg,var(--red),rgba(230,57,70,.5))}
 .wcf-hero-roster-chev{color:var(--dim);font-size:18px;flex:0 0 auto}
