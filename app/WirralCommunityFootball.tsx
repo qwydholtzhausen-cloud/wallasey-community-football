@@ -1794,6 +1794,8 @@ function App({ session }: { session: Session }) {
   const [potmLand, setPotmLand] = useState(false);
   const [recordFalls, setRecordFalls] = useState<Record<string, { v: number; who: string }>>({});
   const [recordMomentDone, setRecordMomentDone] = useState(false);
+  const [promoShow, setPromoShow] = useState<string | null>(null);
+  const [momentsDone, setMomentsDone] = useState<string[]>([]);
   const [playerCardId, setPlayerCardId] = useState<string | null>(null);
   const [playerCardTeam, setPlayerCardTeam] = useState<{ name: string; color: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -2099,7 +2101,8 @@ function App({ session }: { session: Session }) {
       if (prevStatus[g.id] && prevStatus[g.id] !== "confirmed" && mine.status === "confirmed" && !selfConfirmedRef.current.has(mine.id)) {
         notifySuccess(`✓ Payment confirmed for ${g.venue} · ${fmtDate(g.date)}`);
       }
-      if (prevWaiting[g.id] === true && mine.waiting === false) {
+      // With motion on, the substitution board (promoShow) says this instead.
+      if (prevWaiting[g.id] === true && mine.waiting === false && !motionOk()) {
         notifySuccess(`✓ You're in for ${g.venue} · ${fmtDate(g.date)}: a spot opened up`);
       }
     });
@@ -4185,6 +4188,94 @@ function App({ session }: { session: Session }) {
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastGames, goalRows, closedMotmTallies, profiles, myId, recordMomentDone, currentSeasonYear]);
+  // Off the waiting list: your bookings on upcoming games that were
+  // promoted since this phone last looked. First run just records them.
+  useEffect(() => {
+    if (loading || !myId || games.length === 0 || promoShow) return;
+    const key = `wcf-promo-seen-${myId}`;
+    const mine = games
+      .filter((g) => kickoffCutoff(g.date, g.kickoff, 0) > nowUk)
+      .flatMap((g) => g.bookings.filter((b) => b.player_id === myId && !b.waiting && b.promoted_at).map((b) => ({ id: b.id, gameId: g.id })));
+    let seen: string[] | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      seen = raw ? JSON.parse(raw) : null;
+      localStorage.setItem(key, JSON.stringify(mine.map((m) => m.id)));
+    } catch {
+      return;
+    }
+    if (!seen || !motionOk()) return;
+    const fresh = mine.find((m) => !seen!.includes(m.id));
+    if (fresh) setPromoShow(fresh.gameId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, loading, myId]);
+  const promoGame = promoShow ? games.find((g) => g.id === promoShow) ?? null : null;
+
+  // Debut, milestone shirts and club milestones: each once per phone,
+  // within 3 days of the game that made it, one at a time.
+  const bigMoments = useMemo<BigMoment[]>(() => {
+    if (!myId || loading) return [];
+    const played = pastGames
+      .filter((g) => g.team_white_score != null && g.team_red_score != null)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff));
+    const recent = (g: GameRow) => kickoffCutoff(g.date, g.kickoff, 3 * 24 * 60) > nowUk;
+    const seen = (k: string) => {
+      try {
+        return !!localStorage.getItem(k);
+      } catch {
+        return true;
+      }
+    };
+    const me = profiles.find((p) => p.id === myId);
+    const first = (me?.display_name ?? "").split(" ")[0] || "you";
+    const back = (me?.display_name ?? "").trim().split(/\s+/).pop()?.toUpperCase() ?? "";
+    const scoreLine = (g: GameRow) => `${cs.team_white_name} ${g.team_white_score}–${g.team_red_score} ${cs.team_red_name}`;
+    const out: BigMoment[] = [];
+    const mine = played.filter((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting));
+    if (mine.length >= 1 && recent(mine[0])) {
+      const key = `wcf-moment-debut-${myId}`;
+      if (!seen(key)) out.push({ kind: "debut", key, first, dateLabel: new Date(mine[0].date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }), result: scoreLine(mine[0]) });
+    }
+    for (const n of [10, 25, 50, 100, 150, 200]) {
+      const g = mine[n - 1];
+      if (!g || !recent(g)) continue;
+      const key = `wcf-moment-apps-${myId}-${n}`;
+      if (!seen(key)) out.push({ kind: "apps", key, n, first, back, since: new Date(mine[0].date + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }) });
+    }
+    let goals = 0;
+    const goalMarks = [50, 100, 150, 200, 250, 300, 400, 500, 750, 1000, 1500, 2000];
+    const gameMarks = [10, 20, 25, 50, 75, 100, 150, 200, 250, 300];
+    played.forEach((g, i) => {
+      const before = goals;
+      goals += g.team_white_score! + g.team_red_score!;
+      if (!recent(g)) return;
+      for (const m of goalMarks) {
+        if (before < m && goals >= m) {
+          const key = `wcf-moment-club-goals-${m}`;
+          if (!seen(key)) out.push({ kind: "club", key, n: m, unit: "goals", detail: `Reached in ${fmtDate(g.date)}'s game: ${scoreLine(g)}` });
+        }
+      }
+      if (gameMarks.includes(i + 1)) {
+        const key = `wcf-moment-club-games-${i + 1}`;
+        if (!seen(key)) out.push({ kind: "club", key, n: i + 1, unit: "games", detail: `Game ${i + 1} was ${fmtDate(g.date)}: ${scoreLine(g)}` });
+      }
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastGames, myId, loading, profiles]);
+  const nextBigMoment = motionOk() ? bigMoments.find((m) => !momentsDone.includes(m.key)) ?? null : null;
+  function bigMomentDone(m: BigMoment) {
+    try {
+      localStorage.setItem(m.key, "1");
+    } catch {}
+    setMomentsDone((d) => [...d, m.key]);
+  }
+  // Highest appearance milestone (all time) for the player card badge.
+  const appsMilestoneFor = (playerId: string) => {
+    const n = pastGames.filter((g) => g.team_white_score != null && g.bookings.some((b) => b.player_id === playerId && !b.waiting)).length;
+    return [200, 150, 100, 50, 25, 10].find((m) => n >= m) ?? null;
+  };
+
   function recordMomentClose() {
     if (myRecordMoment) {
       try {
@@ -7295,11 +7386,22 @@ function App({ session }: { session: Session }) {
             rank={appsRank > 0 ? appsRank : null}
             team={playerCardTeam}
             season={cardSeason}
+            appsMilestone={appsMilestoneFor(playerCardId)}
             onClose={() => { setPlayerCardId(null); setPlayerCardTeam(null); }}
           />
         );
       })()}
 
+      {promoGame && (
+        <SubBoard
+          number={promoGame.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)).findIndex((b) => b.player_id === myId) + 1 || promoGame.max_players}
+          label={`${new Date(promoGame.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase()} · ${promoGame.kickoff} · ${promoGame.venue.toUpperCase()}`}
+          onDone={() => { const id = promoGame.id; setPromoShow(null); setTicketShow({ mode: "booked", gameIds: [id] }); }}
+        />
+      )}
+      {nextBigMoment && !promoGame && !rateSheetFor && !ticketShow && !potmShow && !wrappedOpen && !playerCardId && !(myRecordMoment && !recordMomentDone) && !(myMotmMoment && motmMomentClosed !== myMotmMoment.game.id) && (
+        <BigMomentView key={nextBigMoment.key} m={nextBigMoment} onDone={() => bigMomentDone(nextBigMoment)} />
+      )}
       {!rateSheetFor && !ticketShow && !potmShow && myRecordMoment && (
         <RecordMoment
           value={myRecordMoment.value}
@@ -7946,6 +8048,97 @@ function MotmVotersModal({
   );
 }
 
+// "You're in": the fourth official's LED board when you come off the
+// waiting list, then your BOOKED ticket.
+function SubBoard({ number, label, onDone }: { number: number; label: string; onDone: () => void }) {
+  const [leaving, setLeaving] = useState(false);
+  const finish = () => { if (leaving) return; setLeaving(true); setTimeout(onDone, 350); };
+  useEffect(() => {
+    const t = setTimeout(finish, 2700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div className={"wcf-moment dim" + (leaving ? " out" : "")} onClick={finish}>
+      <div className="wcf-led">
+        <div className="l1">SUBSTITUTION</div>
+        <div className="row">
+          <svg className="arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6" /></svg>
+          <span className="num">{number}</span>
+        </div>
+        <div className="l3">ON: YOU</div>
+        <div className="l4">{label}</div>
+        <div className="dots" />
+      </div>
+      <div className="wcf-moment-s" style={{ marginTop: 18 }}>A spot opened up. You&apos;re off the waiting list.</div>
+    </div>
+  );
+}
+
+// Once-only personal and club moments, one at a time (the queue lives in
+// the main component): a debut cap, a milestone shirt, a club milestone.
+type BigMoment =
+  | { kind: "debut"; key: string; first: string; dateLabel: string; result: string }
+  | { kind: "apps"; key: string; n: number; first: string; back: string; since: string }
+  | { kind: "club"; key: string; n: number; unit: "goals" | "games"; detail: string };
+function BigMomentView({ m, onDone }: { m: BigMoment; onDone: () => void }) {
+  const [leaving, setLeaving] = useState(false);
+  const [count, setCount] = useState(m.kind === "club" ? Math.max(0, m.n - 14) : 0);
+  useEffect(() => {
+    if (m.kind !== "club" || count >= m.n) return;
+    const t = setTimeout(() => setCount((c) => c + 1), count === m.n - 14 ? 500 : 60 + (14 - (m.n - count)) * 9);
+    return () => clearTimeout(t);
+  }, [count, m]);
+  const close = () => { if (leaving) return; setLeaving(true); setTimeout(onDone, 380); };
+  return (
+    <div className={"wcf-moment " + (m.kind === "club" ? "club" : "dim") + (leaving ? " out" : "")} onClick={close}>
+      {m.kind === "debut" && (
+        <>
+          <svg className="wcf-cap" viewBox="0 0 150 120" aria-hidden="true">
+            <path d="M20 78 Q20 22 75 20 Q130 22 130 78 Z" fill="#1d2a6b" stroke="#f5d97a" strokeWidth="2" />
+            <path d="M75 20 L75 78 M40 30 L55 78 M110 30 L95 78" stroke="#f5d97a" strokeWidth="1.5" opacity=".7" />
+            <path d="M12 78 Q75 96 138 78 L138 86 Q75 104 12 86 Z" fill="#14205a" stroke="#f5d97a" strokeWidth="2" />
+            <g className="tassel"><line x1="75" y1="22" x2="75" y2="8" stroke="#f5d97a" strokeWidth="2" /><path d="M70 0 L80 0 L84 12 L66 12 Z" fill="#f5d97a" /></g>
+            <text x="75" y="64" textAnchor="middle" fontFamily="Sora, sans-serif" fontWeight="800" fontSize="13" fill="#f5d97a">{m.dateLabel.slice(-4)}</text>
+          </svg>
+          <div className="wcf-moment-after">
+            <div className="wcf-moment-k">DEBUT · {m.dateLabel.toUpperCase()}</div>
+            <div className="wcf-moment-h">Welcome to the squad, {m.first}</div>
+            <div className="wcf-moment-s">Your first game: <b>{m.result}</b><br />Good to have you.</div>
+          </div>
+        </>
+      )}
+      {m.kind === "apps" && (
+        <>
+          <svg className="wcf-shirt" viewBox="0 0 170 180" aria-hidden="true">
+            <path d="M55 8 L85 18 L115 8 L162 38 L146 72 L130 64 L130 172 L40 172 L40 64 L24 72 L8 38 Z" fill="#EEF4FC" stroke="#cfd8e6" strokeWidth="2" strokeLinejoin="round" />
+            <path d="M70 12 Q85 26 100 12" fill="none" stroke="#cfd8e6" strokeWidth="3" />
+            <text x="85" y="66" textAnchor="middle" fontFamily="Sora, sans-serif" fontWeight="800" fontSize={m.back.length > 9 ? 12 : 15} letterSpacing="2" fill="#0d0d1a">{m.back}</text>
+            <text x="85" y="142" textAnchor="middle" fontFamily="Sora, sans-serif" fontWeight="800" fontSize={m.n >= 100 ? 56 : 72} fill="#0d0d1a">{m.n}</text>
+          </svg>
+          <div className="wcf-ms-badge"><div><b>{m.n}</b>APPS</div></div>
+          <div className="wcf-moment-after">
+            <div className="wcf-moment-k" style={{ marginTop: 14 }}>MILESTONE</div>
+            <div className="wcf-moment-h">Your {m.n}th game, {m.first}</div>
+            <div className="wcf-moment-s">{m.n} games for the club since {m.since}.<br />Your badge is on your player card now.</div>
+          </div>
+        </>
+      )}
+      {m.kind === "club" && (
+        <>
+          <div className={"wcf-club-rays" + (count >= m.n ? " go" : "")} aria-hidden="true">
+            {Array.from({ length: 12 }, (_, i) => <i key={i} style={{ ["--a" as string]: `${i * 30}deg` }} />)}
+          </div>
+          <div className="wcf-moment-k">CLUB MILESTONE</div>
+          <div className={"wcf-club-count" + (count >= m.n ? " hit" : "")}>{count}</div>
+          <div className="wcf-moment-h" style={{ marginTop: 4 }}>club {m.unit}</div>
+          <div className="wcf-moment-s">{count >= m.n ? m.detail : "\u00a0"}</div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Matchday tickets: BOOKED when you take a spot, PAID the first time you
 // open the app after an admin (or Monzo) confirms your payment. One game
 // is one big ticket; several (Book multiple games, or a batch of
@@ -8209,8 +8402,10 @@ function PlayerCardModal({
   rank,
   team,
   season,
+  appsMilestone,
   onClose,
 }: {
+  appsMilestone?: number | null;
   profile: Profile;
   stats: { apps: number; goals: number; motm: number };
   rating: PlayerRating | null;
@@ -8276,6 +8471,7 @@ function PlayerCardModal({
           <div className="wcf-pcard-name wcf-rv">{profile.display_name}</div>
           <div className="wcf-pcard-badges wcf-rv" style={{ ["--d" as string]: ".05s" }}>
             {season?.topScorer && <span className="wcf-pcard-honour">Top scorer</span>}
+            {appsMilestone && <span className="wcf-pcard-ms">{appsMilestone} apps</span>}
             {rank != null && rank <= 10 && <span className="wcf-pcard-role-badge">{nth(rank)} for games</span>}
             <span className="wcf-pcard-role-badge">{ROLE_LABEL[profile.role]}</span>
             {team && (
@@ -14945,6 +15141,43 @@ a.wcf-set-link{text-decoration:none}
 @keyframes wcfSpringUp{from{transform:translateY(100%)}to{transform:none}}
 .wcf-squad-sheet .wcf-sheet-row{animation:wcfViewIn .3s both;animation-delay:calc(.2s + var(--i,0) * 35ms)}
 @media (prefers-reduced-motion:reduce){.wcf-tick,.wcf-avatar-chip.more,.wcf-pay-strip,.wcf-fx-pill.low,.wcf-cd-dot,.wcf-queue,.wcf-queue *,.wcf-navbtn svg,.wcf-main,.wcf-squad-sheet,.wcf-sheet-row,.wcf-tk-layer,.wcf-tk-layer *,.wcf-potm-intro,.wcf-potm-intro *{animation:none!important}.wcf-card.featured,.wcf-fx-row,.wcf-hero-bar-fill,.wcf-fx-bar-fill,.wcf-book{transition:none!important}}
+/* Big moments: substitution board, debut cap, milestone shirt, club milestone */
+.wcf-moment{position:fixed;inset:0;z-index:146;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;color:#fff;cursor:pointer;animation:wcfWonIn .3s both}
+.wcf-moment.dim{background:rgba(4,6,12,.88);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.wcf-moment.club{background:radial-gradient(80% 55% at 50% 40%,rgba(234,179,8,.22),rgba(8,8,16,.97) 70%),rgba(8,8,16,.9)}
+.wcf-moment.out{animation:wcfLayerOut .38s ease-in both}
+.wcf-moment-k{font-size:10.5px;font-weight:800;letter-spacing:.24em;color:#f5d97a}
+.wcf-moment-h{font-family:var(--display);font-weight:800;font-size:27px;line-height:1.1;margin-top:8px;max-width:300px;text-wrap:balance}
+.wcf-moment-s{font-size:13.5px;color:var(--dim);margin-top:8px;line-height:1.5}
+.wcf-moment-s b{color:#fff}
+.wcf-moment-after{animation:wcfRvIn .4s 1.5s both}
+.wcf-led{width:min(280px,82vw);border-radius:10px;background:#050508;box-shadow:0 0 0 4px #22222c,0 18px 40px -18px #000;position:relative;overflow:hidden;padding:16px 0 18px;font-family:var(--display)}
+.wcf-led .l1{font-size:14px;font-weight:800;letter-spacing:.18em;color:#fbbf24;text-shadow:0 0 12px rgba(251,191,36,.8);animation:wcfLedBlink .45s steps(2) 3 both}
+.wcf-led .row{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px}
+.wcf-led .arrow{width:26px;height:26px;fill:none;stroke:#4ade80;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 6px rgba(74,222,128,.8))}
+.wcf-led .num{font-size:40px;font-weight:800;color:#4ade80;text-shadow:0 0 14px rgba(74,222,128,.85);animation:wcfLedWipe .5s .9s steps(6) both}
+.wcf-led .l3{font-size:26px;font-weight:800;color:#4ade80;text-shadow:0 0 14px rgba(74,222,128,.85);margin-top:6px;animation:wcfLedWipe .6s 1.3s steps(8) both}
+.wcf-led .l4{font-size:11px;font-weight:700;color:#e5e7eb;letter-spacing:.12em;margin-top:10px;padding:0 10px;animation:wcfLedWipe .6s 1.8s steps(10) both}
+.wcf-led .dots{position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle,transparent 1.35px,rgba(5,5,8,.8) 1.75px) 0 0/3.5px 3.5px}
+@keyframes wcfLedBlink{0%{opacity:0}50%{opacity:1}}
+@keyframes wcfLedWipe{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
+.wcf-cap{width:150px;height:120px;overflow:visible;animation:wcfCapIn 1.2s cubic-bezier(.3,1.2,.4,1) both}
+.wcf-cap .tassel{transform-origin:75px 22px;animation:wcfTassel 2s 1s ease-in-out both}
+@keyframes wcfCapIn{0%{transform:translateY(-200px) rotate(-30deg);opacity:0}60%{transform:translateY(8px) rotate(4deg);opacity:1}100%{transform:none}}
+@keyframes wcfTassel{0%{transform:rotate(18deg)}30%{transform:rotate(-12deg)}60%{transform:rotate(6deg)}100%{transform:none}}
+.wcf-shirt{width:170px;height:180px;overflow:visible;transform-origin:50% 0;animation:wcfShirtDrop 1.4s cubic-bezier(.3,0,.3,1) both}
+@keyframes wcfShirtDrop{0%{transform:translateY(-260px)}30%{transform:translateY(0) rotate(5deg)}50%{transform:rotate(-3deg)}70%{transform:rotate(1.5deg)}100%{transform:none}}
+.wcf-ms-badge{width:74px;height:74px;margin-top:-20px;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 35% 30%,#ffe9a6,#eab308 60%,#a57f22);color:#1a1405;font-family:var(--display);font-weight:800;font-size:12px;line-height:1;letter-spacing:.06em;box-shadow:0 0 0 3px #0d0d1a,0 0 0 5px rgba(245,217,122,.6),0 10px 30px rgba(234,179,8,.4);animation:wcfPop .45s 1.3s cubic-bezier(.3,1.6,.5,1) both;position:relative;z-index:2}
+.wcf-ms-badge b{display:block;font-size:24px}
+.wcf-club-count{font-family:var(--display);font-weight:800;font-size:96px;line-height:1;margin-top:10px;font-variant-numeric:tabular-nums;background:linear-gradient(180deg,#fde68a,#eab308);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wcf-club-count.hit{animation:wcfClubHit .5s cubic-bezier(.3,1.6,.5,1)}
+@keyframes wcfClubHit{40%{transform:scale(1.25)}100%{transform:none}}
+.wcf-club-rays{position:absolute;left:50%;top:44%;width:0;height:0}
+.wcf-club-rays i{position:absolute;width:3px;height:26px;margin:-13px 0 0 -1.5px;background:#f5d97a;border-radius:2px;opacity:0}
+.wcf-club-rays.go i{animation:wcfClubRay .8s ease-out both}
+@keyframes wcfClubRay{0%{opacity:0;transform:rotate(var(--a)) translateY(-40px)}30%{opacity:1}100%{opacity:0;transform:rotate(var(--a)) translateY(-130px)}}
+.wcf-pcard-ms{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:999px;background:radial-gradient(circle at 35% 30%,#ffe9a6,#eab308 70%);color:#1a1405;display:inline-flex;align-items:center}
+@media (prefers-reduced-motion:reduce){.wcf-moment,.wcf-moment *{animation:none!important}}
 /* Matchday tickets (MatchTickets): BOOKED on booking, PAID after confirmation */
 .wcf-tk-layer{position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,6,12,.74);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);cursor:pointer;animation:wcfWonIn .25s both}
 .wcf-tk-wrap{position:relative;width:min(290px,86vw)}
