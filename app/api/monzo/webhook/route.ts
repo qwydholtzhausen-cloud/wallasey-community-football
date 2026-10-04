@@ -12,6 +12,8 @@ interface OutstandingBooking {
   id: string;
   game_id: string;
   price_pence: number;
+  // "YYYY-MM-DD HH:MM", for soonest-first.
+  when: string;
 }
 
 // Every non-empty combination of outstanding bookings whose prices sum to
@@ -111,27 +113,43 @@ export async function POST(req: NextRequest) {
 
   const { data: bookingRows } = await admin
     .from("bookings")
-    .select("id, game_id, status, waiting, games(price)")
+    .select("id, game_id, status, waiting, games(price, date, kickoff)")
     .eq("player_id", player.id)
     .eq("waiting", false)
     .in("status", ["unpaid", "pending"]);
 
-  const outstanding: OutstandingBooking[] = ((bookingRows ?? []) as unknown as { id: string; game_id: string; games: { price: number } | null }[])
+  const outstanding: OutstandingBooking[] = ((bookingRows ?? []) as unknown as { id: string; game_id: string; games: { price: number; date: string; kickoff: string } | null }[])
     .filter((b) => b.games)
-    .map((b) => ({ id: b.id, game_id: b.game_id, price_pence: Math.round((b.games!.price ?? 0) * 100) }));
+    .map((b) => ({ id: b.id, game_id: b.game_id, price_pence: Math.round((b.games!.price ?? 0) * 100), when: `${b.games!.date} ${b.games!.kickoff}` }))
+    .sort((a, b) => a.when.localeCompare(b.when));
 
   if (outstanding.length === 0) {
     await recordUnmatched("no outstanding bookings for this player", player.id);
     return NextResponse.json({ ok: true });
   }
 
+  // One exact set of games: confirm it. Several possible sets (most games
+  // cost the same, so £10 against four £5 games could be any two): part
+  // payments cover the soonest games first, so take the soonest run of
+  // games that adds up to exactly the amount.
   const combos = findMatchingCombinations(outstanding, amountPence);
-  if (combos.length !== 1) {
+  let matched: OutstandingBooking[] | null = combos.length === 1 ? combos[0] : null;
+  if (!matched && combos.length > 1) {
+    let sum = 0;
+    for (let i = 0; i < outstanding.length; i++) {
+      sum += outstanding[i].price_pence;
+      if (sum === amountPence) {
+        matched = outstanding.slice(0, i + 1);
+        break;
+      }
+      if (sum > amountPence) break;
+    }
+  }
+  if (!matched) {
     await recordUnmatched(combos.length === 0 ? "amount didn't match any combination of their bookings" : "amount matches more than one possible combination", player.id);
     return NextResponse.json({ ok: true });
   }
 
-  const matched = combos[0];
   const matchedIds = matched.map((b) => b.id);
   await admin
     .from("bookings")

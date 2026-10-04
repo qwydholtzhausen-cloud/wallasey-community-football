@@ -48,7 +48,7 @@ import { EmptyScene } from "./ui/EmptyScene";
 import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
 import { ResultsTab } from "./ui/results";
 import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
-import { OweBar, PaySheet, PAY_SOON_MS, untilLabel, type DueGame } from "./ui/pay";
+import { OweBar, PaySheet, PayReceipt, PayWaiting, PAY_SOON_MS, untilLabel, type DueGame, type PayIntent } from "./ui/pay";
 import { LineupTab } from "./ui/lineup";
 import { AccountPanel } from "./ui/account";
 import { wrappedThemeFor } from "../lib/wrappedThemes";
@@ -1666,8 +1666,10 @@ function App({ session }: { session: Session }) {
   };
 
   const loadProfile = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id, display_name, role, push_opt_in, avatar_url").eq("id", myId).single();
-    if (data) setMyProfile(data as Profile);
+    // payment_code (your bank reference) only exists once auto-payments are set up.
+    const cols: string = MONZO_MATCHING_LIVE ? "id, display_name, role, push_opt_in, avatar_url, payment_code" : "id, display_name, role, push_opt_in, avatar_url";
+    const { data } = await supabase.from("profiles").select(cols).eq("id", myId).single();
+    if (data) setMyProfile(data as unknown as Profile);
   }, [myId]);
 
   const [pendingMembers, setPendingMembers] = useState<PendingMember[]>([]);
@@ -1698,7 +1700,7 @@ function App({ session }: { session: Session }) {
     const { data } = await supabase
       .from("games")
       .select(
-        "*, bookings(id, player_id, status, waiting, team, created_at, promoted_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
+        `*, bookings(id, player_id, status, waiting, team, created_at, promoted_at, pot_exempt_reason${MONZO_MATCHING_LIVE ? ", auto_confirmed" : ""}, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))`
       )
       .order("date", { ascending: true });
     if (data) setGames(data as unknown as GameRow[]);
@@ -3123,6 +3125,34 @@ function App({ session }: { session: Session }) {
     [upcomingGames, myId, nowUk]
   );
   const [paySheetOpen, setPaySheetOpen] = useState(false);
+  // Auto-payments: a payment you've just made, until it lands (kept on this
+  // phone so it survives the trip to your bank), then its receipt.
+  const payIntentKey = `wcf-pay-intent-${myId}`;
+  const [payIntent, setPayIntentState] = useState<PayIntent | null>(() => {
+    if (!MONZO_MATCHING_LIVE) return null;
+    try {
+      const v = JSON.parse(localStorage.getItem(`wcf-pay-intent-${myId}`) || "null") as PayIntent | null;
+      return v && Date.now() - v.at < 24 * 3600000 ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  const setPayIntent = (v: PayIntent | null) => {
+    setPayIntentState(v);
+    try {
+      if (v) localStorage.setItem(payIntentKey, JSON.stringify(v));
+      else localStorage.removeItem(payIntentKey);
+    } catch {}
+  };
+  const [payReceipt, setPayReceipt] = useState<{ games: { date: string; kickoff: string; price: number }[]; auto: boolean } | null>(null);
+  useEffect(() => {
+    if (!payIntent) return;
+    const mine = games.flatMap((g) => g.bookings.filter((b) => payIntent.bookingIds.includes(b.id)).map((b) => ({ b, g })));
+    if (mine.length === 0 || !mine.every(({ b }) => b.status === "confirmed")) return;
+    setPayIntent(null);
+    setPayReceipt({ games: mine.map(({ g }) => ({ date: g.date, kickoff: g.kickoff, price: g.price })), auto: mine.every(({ b }) => b.auto_confirmed) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, payIntent]);
   // Split for the "Your tab" card display only - owed (unpaid, real
   // debt) vs pending (already tapped I've paid, awaiting admin
   // confirmation). Doesn't change what counts as "overdue" for the
@@ -4930,7 +4960,7 @@ function App({ session }: { session: Session }) {
   if (ticketShow && ticketShow.mode !== "booked" && ticketGames.length > 0) momentCandidates.push("ticket:" + ticketShow.mode + ticketShow.gameIds.join(","));
   if (specialGame) momentCandidates.push("special:" + specialGame.id);
   if (fxCalendar && tab === "fixtures") momentCandidates.push("fx:" + fxCalendar.ids.join(","));
-  const momentsPaused = !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || !!queueTicket;
+  const momentsPaused = !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || !!queueTicket || !!payReceipt || paySheetOpen;
   const [momentNow, setMomentNow] = useState<string | null>(null);
   const [momentsPlayed, setMomentsPlayed] = useState(0);
   const momentKey = momentCandidates.join("|");
@@ -5075,7 +5105,7 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
-            <OweBar due={myDue} onOpen={() => setPaySheetOpen(true)} />
+            {payIntent ? <PayWaiting intent={payIntent} onDismiss={() => setPayIntent(null)} /> : <OweBar due={myDue} onOpen={() => setPaySheetOpen(true)} />}
             {rateGame && !myRatings[rateGame.id] && rateDismissed[rateGame.id] && (
               <div className="wcf-rate-card">
                 <div>
@@ -5761,7 +5791,21 @@ function App({ session }: { session: Session }) {
           onDone={() => specialDone(specialGame.id)}
         />
       )}
-      {paySheetOpen && <PaySheet due={myDue} paymentLink={PAYMENT_LINK} onMarkPaid={markPaid} onClose={() => setPaySheetOpen(false)} />}
+      {paySheetOpen && (
+        <PaySheet
+          due={myDue}
+          paymentLink={PAYMENT_LINK}
+          paymentRef={MONZO_MATCHING_LIVE ? myProfile?.payment_code ?? null : null}
+          onMarkPaid={markPaid}
+          onPayStart={(amount, bookingIds) => {
+            setPayIntent({ amount, bookingIds, at: Date.now() });
+            setPaySheetOpen(false);
+            notifySuccess("Reference copied. Pay in your bank, then come back here: it confirms itself.");
+          }}
+          onClose={() => setPaySheetOpen(false)}
+        />
+      )}
+      {payReceipt && <PayReceipt games={payReceipt.games} auto={payReceipt.auto} paymentRef={myProfile?.payment_code ?? null} onDone={() => setPayReceipt(null)} />}
       {queueTicket && (() => {
         const g = games.find((x) => x.id === queueTicket.gameId);
         if (!g) return null;
@@ -12673,6 +12717,36 @@ a.wcf-set-link{text-decoration:none}
 .wcf-paysheet .ft .tot span:last-child{font-size:20px}
 .wcf-paysheet .ft .pn{display:grid;place-items:center;min-height:48px;border-radius:14px;background:var(--red);color:#fff;font-family:var(--display);font-weight:800;font-size:14px;text-decoration:none}
 .wcf-paysheet .ft small{text-align:center;color:var(--dim);font-size:11px}
+/* Auto-payments: reference, choice, waiting, receipt */
+.wcf-payref{display:flex;align-items:center;gap:10px;margin:6px 4px 8px;padding:10px 12px;border-radius:12px;background:rgba(245,217,122,.08);border:1px dashed rgba(245,217,122,.5)}
+.wcf-payref .k{display:block;font-weight:800;font-size:10px;letter-spacing:.16em;color:#f5d97a}
+.wcf-payref .code{display:block;font-family:var(--mono);font-weight:800;font-size:22px;letter-spacing:.18em;color:#fff}
+.wcf-payref button{margin-left:auto;background:rgba(255,255,255,.08);border:1px solid var(--line);color:#fff;border-radius:9px;padding:8px 12px;min-height:36px;font-weight:800;font-size:11.5px;cursor:pointer}
+.wcf-paychoose{display:flex;gap:8px;margin:0 4px}
+.wcf-paychoose button{flex:1;padding:10px 8px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--dim);font-weight:700;font-size:12px;cursor:pointer;text-align:left;line-height:1.3}
+.wcf-paychoose button b{display:block;font-family:var(--display);font-weight:800;font-size:16px;color:#fff}
+.wcf-paychoose button.on{border-color:rgba(230,57,70,.7);background:rgba(230,57,70,.12);color:#fecaca}
+.wcf-payrule{margin:6px 6px 0;font-size:11px;color:#fde68a}
+.wcf-payother{background:none;border:0;color:var(--dim);font-size:11.5px;font-weight:700;text-decoration:underline;text-underline-offset:3px;cursor:pointer;padding:4px}
+.wcf-paywait{display:flex;align-items:center;gap:12px;margin:0 2px 18px;padding:12px 14px;border-radius:16px;border:1px solid rgba(245,217,122,.45);background:rgba(245,217,122,.07)}
+.wcf-paywait .spin{width:26px;height:26px;flex:none;border-radius:50%;border:3px solid rgba(245,217,122,.25);border-top-color:#f5d97a;animation:wcfSpin 1s linear infinite}
+.wcf-paywait .warn{width:26px;height:26px;flex:none;border-radius:50%;display:grid;place-items:center;background:#f59e0b;color:#1a1405;font-weight:900}
+.wcf-paywait .tx{flex:1;min-width:0;font-size:12px;color:var(--dim);line-height:1.4}
+.wcf-paywait .tx b{display:block;color:#fff;font-size:13.5px}
+.wcf-paywait button{background:none;border:0;color:var(--dim);font-size:16px;cursor:pointer;min-width:36px;min-height:36px}
+@keyframes wcfSpin{to{transform:rotate(360deg)}}
+.wcf-rcpt-layer{position:fixed;inset:0;z-index:1500;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,6,12,.86);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);animation:wcfQtIn .3s both}
+.wcf-rcpt-layer.out{animation:wcfQtOut .38s ease-in both}
+.wcf-rcpt-till{width:238px;height:46px;border-radius:12px 12px 6px 6px;background:linear-gradient(180deg,#334155,#1e293b);box-shadow:0 16px 40px -10px #000;position:relative;animation:wcfQtDrop .45s cubic-bezier(.3,1.3,.5,1) both}
+.wcf-rcpt-till::after{content:"";position:absolute;left:22px;right:22px;bottom:6px;height:5px;border-radius:3px;background:#020617}
+.wcf-rcpt{position:relative;width:210px;margin-top:-6px;padding:16px 16px 18px;background:#fbfaf5;color:#1f2937;font-family:var(--mono);font-weight:600;font-size:11px;text-align:left;box-shadow:0 18px 30px -12px #000;clip-path:inset(0 0 100% 0);animation:wcfQtPrint 1.3s .4s steps(18) forwards}
+.wcf-rcpt .c{text-align:center}
+.wcf-rcpt .big{font-weight:800;font-size:13px;letter-spacing:.08em}
+.wcf-rcpt hr{border:0;border-top:1px dashed #9ca3af;margin:8px 0}
+.wcf-rcpt .ln{display:flex;justify-content:space-between;gap:8px;margin-top:3px}
+.wcf-rcpt .tot{font-weight:800;font-size:15px}
+.wcf-rcpt .st{margin-top:8px;text-align:center;font-weight:800;color:#15803d;letter-spacing:.08em}
+@media (prefers-reduced-motion:reduce){.wcf-rcpt{animation:none;clip-path:none}.wcf-rcpt-till{animation:none}.wcf-paywait .spin{animation:none}}
 /* Line-up: pick between games on the same night */
 .wcf-gamepick{display:flex;gap:8px;margin:-4px 2px 16px}
 .wcf-gamepick button{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);color:var(--dim);cursor:pointer;text-align:left}

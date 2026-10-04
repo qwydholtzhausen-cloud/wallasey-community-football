@@ -625,6 +625,19 @@ export async function GET(req: Request) {
   // retried here in case it failed at OAuth-callback time (e.g. Monzo's
   // API hiccuped right after approval).
   const monzoToken = await ensureFreshMonzoToken(admin);
+  // Monzo only lets the token see the account once the holder has also
+  // approved access in the Monzo app, which usually happens after the
+  // OAuth callback - so if the callback couldn't find the account, look
+  // again here until it can.
+  if (monzoToken && !monzoToken.account_id) {
+    const res = await fetch("https://api.monzo.com/accounts", { headers: { Authorization: `Bearer ${monzoToken.access_token}` } }).catch(() => null);
+    const body = res?.ok ? ((await res.json()) as { accounts: { id: string; closed: boolean; type: string }[] }) : null;
+    const account = body?.accounts.find((a) => !a.closed && (a.type === "uk_retail" || a.type === "uk_retail_joint"));
+    if (account) {
+      await admin.from("monzo_tokens").update({ account_id: account.id }).eq("id", true);
+      monzoToken.account_id = account.id;
+    }
+  }
   if (monzoToken?.account_id && !monzoToken.webhook_registered) {
     await registerMonzoWebhook(admin, monzoToken.access_token, monzoToken.account_id);
   }
