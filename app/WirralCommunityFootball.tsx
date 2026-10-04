@@ -12893,6 +12893,14 @@ a.wcf-set-link{text-decoration:none}
 @media (prefers-reduced-motion:reduce){.wcf-story,.wcf-story .card,.wcf-story .meta div,.wcf-story .sclist>div{animation:none}.wcf-story .split div,.wcf-story .vb .t i{animation:none;width:var(--w)}}
 /* Admins have the GaffAI button bottom-right: room to scroll the last row clear of it. */
 .wcf-main.has-fab{padding-bottom:160px}
+/* Pill buttons in place of drop-downs (Scores, Stats, Records, Predict) */
+.wcf-pillchoice{display:flex;gap:8px;overflow-x:auto;margin:0 2px 14px;padding:2px 0;scrollbar-width:none}
+.wcf-pillchoice::-webkit-scrollbar{display:none}
+.wcf-pillchoice button{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:38px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--dim);font-weight:700;font-size:12.5px;white-space:nowrap;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.wcf-pillchoice button small{font-size:10.5px;font-weight:800;opacity:.75}
+.wcf-pillchoice button.on{background:var(--red);border-color:var(--red);color:#fff}
+.wcf-pillchoice button:focus-visible{outline:2px solid #f5d97a;outline-offset:2px}
+.wcf-lb-list-card .wcf-pillchoice{margin:0 0 10px}
 /* Line-up: pick between games on the same night */
 .wcf-gamepick{display:flex;gap:8px;margin:-4px 2px 16px}
 .wcf-gamepick button{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);color:var(--dim);cursor:pointer;text-align:left}

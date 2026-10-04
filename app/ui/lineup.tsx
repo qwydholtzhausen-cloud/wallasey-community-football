@@ -1,4 +1,4 @@
-import { Avatar, POSITION_LABEL, TeamCallout, avatarFor, fmtDate, readableTextColor, teamGradient, type PlayerPosition } from "./shared";
+import { PillChoice, Avatar, POSITION_LABEL, TeamCallout, avatarFor, fmtDate, readableTextColor, teamGradient, type PlayerPosition } from "./shared";
 import { EmptyScene } from "./EmptyScene";
 import { PredictPanel } from "./predict";
 import { predictionPoints, topScorers, type LeaderboardRow, type ScoredPrediction } from "../../lib/predictions";
@@ -980,21 +980,18 @@ export function LineupTab({
                 </div>
               )}
 
-              <select
-                className="wcf-month-filter"
+              <PillChoice
+                label="Which leaderboard"
                 value={predictView}
-                onChange={(e) => {
-                  setPredictView(e.target.value);
+                onChange={(v) => {
+                  setPredictView(v);
                   setPredictOpenId(null);
                 }}
-              >
-                <option value="season">Overall (this season)</option>
-                {predictionMonths.map((m) => (
-                  <option key={m} value={m}>
-                    {new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: "season", label: "This season" },
+                  ...predictionMonths.map((m) => ({ value: m, label: new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long" }) })),
+                ]}
+              />
 
               {leader && (
                 <div className="wcf-pl-leader-card">

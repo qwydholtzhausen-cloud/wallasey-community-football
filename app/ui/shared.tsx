@@ -338,3 +338,28 @@ export function ratingFillColor(v: number) {
   // amber below 2.5, green above 4, blue in between - reads at a glance without a legend
   return v >= 4 ? "#22c55e" : v < 2.5 ? "#eab308" : "#2E74CC";
 }
+
+// A row of pill buttons in place of a drop-down: one tap instead of
+// opening a menu, in the app's own style. Scrolls sideways if it's long.
+export function PillChoice<T extends string | number>({
+  options,
+  value,
+  onChange,
+  label,
+}: {
+  options: { value: T; label: string; count?: number }[];
+  value: T;
+  onChange: (v: T) => void;
+  label: string;
+}) {
+  return (
+    <div className="wcf-pillchoice" role="radiogroup" aria-label={label}>
+      {options.map((o) => (
+        <button key={String(o.value)} type="button" role="radio" aria-checked={o.value === value} className={o.value === value ? "on" : ""} onClick={() => onChange(o.value)}>
+          {o.label}
+          {o.count != null && <small>{o.count}</small>}
+        </button>
+      ))}
+    </div>
+  );
+}

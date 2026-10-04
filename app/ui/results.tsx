@@ -1,4 +1,4 @@
-import { Avatar, POT_CATEGORY_LABEL, avatarFor, fmtDate, fmtDateTime, type PotCategory } from "./shared";
+import { Avatar, POT_CATEGORY_LABEL, PillChoice, avatarFor, fmtDate, fmtDateTime, type PotCategory } from "./shared";
 import { CountUp, MotmMedal, MotmReveal, PointsPill, PotAmountJar } from "./motion";
 import { Icon } from "./icons";
 import { EmptyScene } from "./EmptyScene";
@@ -566,20 +566,15 @@ export function ResultsTab({
               )}
 
               <div className="wcf-lb-list-card">
-                <select
-                  className="wcf-month-filter"
+                <PillChoice
+                  label="Which season"
                   value={activeStatsYear}
-                  onChange={(e) => {
-                    setStatsSeasonYear(Number(e.target.value));
+                  onChange={(y) => {
+                    setStatsSeasonYear(y);
                     setStatsOpenId(null);
                   }}
-                >
-                  {seasonYears.map((y) => (
-                    <option key={y} value={y}>
-                      Season {y - SEASON_EPOCH_YEAR + 1} ({y}){y === currentSeasonYear ? " — current" : ""}
-                    </option>
-                  ))}
-                </select>
+                  options={seasonYears.map((y) => ({ value: y, label: `Season ${y - SEASON_EPOCH_YEAR + 1} · ${y}${y === currentSeasonYear ? " (now)" : ""}` }))}
+                />
                 <p className="wcf-board-note">
                   Confirmed spots across upcoming fixtures, plus goals logged by admins. Sorted by {statsSort === "goals" ? "goals" : "appearances"}.
                 </p>
@@ -780,13 +775,7 @@ export function ResultsTab({
                   )}
                 </div>
               </div>
-              <select className="wcf-month-filter wcf-rec-season" value={activeStatsYear} onChange={(e) => setStatsSeasonYear(Number(e.target.value))}>
-                {seasonYears.map((y) => (
-                  <option key={y} value={y}>
-                    Season {y - SEASON_EPOCH_YEAR + 1} ({y}){y === currentSeasonYear ? " — current" : ""}
-                  </option>
-                ))}
-              </select>
+              <PillChoice label="Which season" value={activeStatsYear} onChange={setStatsSeasonYear} options={seasonYears.map((y) => ({ value: y, label: `Season ${y - SEASON_EPOCH_YEAR + 1} · ${y}${y === currentSeasonYear ? " (now)" : ""}` }))} />
               {myBests.games > 0 &&
                 (() => {
                   const b = myBests;
@@ -935,14 +924,15 @@ export function ResultsTab({
 
       {resultsView === "fixtures" && (
         <>
-          <select className="wcf-month-filter" value={resultsMonth} onChange={(e) => setResultsMonth(e.target.value)}>
-            <option value="all">All results</option>
-            {resultsMonths.map((m) => (
-              <option key={m} value={m}>
-                {new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
-              </option>
-            ))}
-          </select>
+          <PillChoice
+            label="Which results"
+            value={resultsMonth}
+            onChange={setResultsMonth}
+            options={[
+              { value: "all", label: "All", count: scoredPastGames.length },
+              ...resultsMonths.map((m) => ({ value: m, label: new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: m.slice(0, 4) === String(currentSeasonYear) ? undefined : "numeric" }), count: scoredPastGames.filter((g) => g.date.slice(0, 7) === m).length })),
+            ]}
+          />
 
           {filteredResults.length === 0 &&
             (scoredPastGames.length === 0 ? (
