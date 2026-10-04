@@ -10400,13 +10400,12 @@ const css = `
   background-image:linear-gradient(180deg,rgba(8,10,14,.15) 0%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/pitch-night.jpg');
   background-size:cover;background-position:center 30%;border-radius:24px;padding:24px;margin-bottom:22px;
 }
-/* The second game on a two-game night. Until it has its own photo, the
-   same pitch mirrored with a cooler tint, so the two cards don't look
-   like the same game twice. */
-.wcf-card.featured.alt{position:relative;isolation:isolate;background-image:none;background-color:#0b1424}
-.wcf-card.featured.alt::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;
-  background-image:linear-gradient(180deg,rgba(20,60,140,.28) 0%,rgba(8,16,40,.55) 55%,rgba(6,8,18,.92) 100%),url('/pitch-night.jpg');
-  background-size:auto 190%;background-position:25% 12%;transform:scaleX(-1);filter:hue-rotate(20deg) saturate(1.2) brightness(1.15)}
+/* The second game on a two-game night: its own photo (a goal under the
+   floodlights), so the two cards are easy to tell apart. */
+.wcf-card.featured.alt{
+  background-image:linear-gradient(180deg,rgba(8,10,14,.5) 0%,rgba(8,10,14,.45) 30%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/pitch-goal-night.jpg');
+  background-position:42% 40%;
+}
 /* Payment-status glow (own booking only): red=unpaid, amber=pending,
    green=confirmed. Box-shadow, not an inner gradient div, since the
    card's own overflow:hidden (for the photo's rounded corners) would
