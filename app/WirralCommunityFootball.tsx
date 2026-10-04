@@ -5156,7 +5156,7 @@ function App({ session }: { session: Session }) {
         </button>
       )}
 
-      <main className="wcf-main" key={tab}>
+      <main className={"wcf-main" + (isAdmin ? " has-fab" : "")} key={tab}>
         <div className="wcf-heading">
           <div>
             <h2>{heading}{tab === "fixtures" && fxChip > 0 && <span className="wcf-new-chip">{fxChip} NEW</span>}{tab === "feed" && feedView === "feed" && !showArchived && (feedFresh?.keys.size ?? 0) > 0 && <span className="wcf-new-chip">{feedFresh!.keys.size} NEW</span>}</h2>
@@ -7104,7 +7104,7 @@ function PlayerCardModal({
           <div className="wcf-pcard-name wcf-rv">{profile.display_name}</div>
           <div className="wcf-pcard-badges wcf-rv" style={{ ["--d" as string]: ".05s" }}>
             {season?.topScorer && <span className="wcf-pcard-honour">Top scorer</span>}
-            {appsMilestone && <span className="wcf-pcard-ms">{appsMilestone} apps</span>}
+            {appsMilestone && <span className="wcf-pcard-ms">{appsMilestone}+ apps</span>}
             {rank != null && rank <= 10 && <span className="wcf-pcard-role-badge">{nth(rank)} for games</span>}
             <span className="wcf-pcard-role-badge">{ROLE_LABEL[profile.role]}</span>
             {team && (
@@ -8337,24 +8337,25 @@ function GaffAIChat({
     await supabase.from("gaffai_conversations").delete().eq("admin_id", myId);
   }
 
-  // The button floats over whatever list is underneath, so on admin
-  // screens it sat on top of each row's badge in turn. It fades and shrinks
-  // while anything scrolls, and comes back once scrolling stops. A
-  // capture-phase listener on document catches the inner scroll containers
-  // too, since scroll events don't bubble.
+  // The button floats over whatever list is underneath, and used to come
+  // back on top of whichever row had stopped under it (an Emergency
+  // contact "Add", a payment's Confirm). Now it gets out of the way when
+  // you scroll down and stays away until you scroll back up or reach the
+  // top. A capture-phase listener on document catches the inner scroll
+  // containers too, since scroll events don't bubble.
   const [scrolling, setScrolling] = useState(false);
   useEffect(() => {
-    let t: ReturnType<typeof setTimeout> | undefined;
-    const onScroll = () => {
-      setScrolling(true);
-      clearTimeout(t);
-      t = setTimeout(() => setScrolling(false), 650);
+    let lastY = 0;
+    const onScroll = (e: Event) => {
+      const el = e.target as HTMLElement | Document;
+      const y = el instanceof HTMLElement ? el.scrollTop : window.scrollY;
+      if (y < 24) setScrolling(false);
+      else if (y > lastY + 4) setScrolling(true);
+      else if (y < lastY - 4) setScrolling(false);
+      lastY = y;
     };
     document.addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => {
-      document.removeEventListener("scroll", onScroll, { capture: true });
-      clearTimeout(t);
-    };
+    return () => document.removeEventListener("scroll", onScroll, { capture: true });
   }, []);
 
   return (
@@ -12890,6 +12891,8 @@ a.wcf-set-link{text-decoration:none}
 .wcf-story .tapzones{position:absolute;inset:70px 0 0;display:grid;grid-template-columns:1fr 2fr;z-index:2;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .wcf-story .tapzones button{background:none;border:0;cursor:pointer}
 @media (prefers-reduced-motion:reduce){.wcf-story,.wcf-story .card,.wcf-story .meta div,.wcf-story .sclist>div{animation:none}.wcf-story .split div,.wcf-story .vb .t i{animation:none;width:var(--w)}}
+/* Admins have the GaffAI button bottom-right: room to scroll the last row clear of it. */
+.wcf-main.has-fab{padding-bottom:160px}
 /* Line-up: pick between games on the same night */
 .wcf-gamepick{display:flex;gap:8px;margin:-4px 2px 16px}
 .wcf-gamepick button{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);color:var(--dim);cursor:pointer;text-align:left}
