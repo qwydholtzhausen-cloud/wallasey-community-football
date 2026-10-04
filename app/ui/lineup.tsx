@@ -1,7 +1,9 @@
-import { PillChoice, Avatar, POSITION_LABEL, TeamCallout, avatarFor, fmtDate, readableTextColor, teamGradient, type PlayerPosition } from "./shared";
+import { PillChoice, Avatar, motionAllowed, POSITION_LABEL, TeamCallout, avatarFor, fmtDate, readableTextColor, teamGradient, type PlayerPosition } from "./shared";
 import { EmptyScene } from "./EmptyScene";
+import { BirthdayBunting, BirthdayTag, PartyHat } from "./celebrate";
 import { PredictPanel } from "./predict";
-import { predictionPoints, topScorers, type LeaderboardRow, type ScoredPrediction } from "../../lib/predictions";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { buildLeaderboard, predictionPoints, topScorers, type LeaderboardRow, type ScoredPrediction } from "../../lib/predictions";
 import type { BookingRow, ClubSettings, GameRow, ScorePrediction, Team } from "../WirralCommunityFootball";
 
 // ── The Line-up tab ──
@@ -166,6 +168,71 @@ export function LineupTab({
   teamFairness,
   teamStats,
 }: LineupTabProps) {
+  // Someone's free birthday game: bunting on the team sheet.
+  const bdays = nextConfirmed.filter((b) => b.pot_exempt_reason === "birthday");
+
+  // ── Climbing the leaderboard ──
+  // The first time you open the season leaderboard (within a week) after a
+  // game that moved you up: your row starts where you were, the new points
+  // tick in, then it overtakes the people you passed. Once per game.
+  const climb = useMemo(() => {
+    if (!myId) return null;
+    const season = scoredPredictionInputs.filter((p) => p.gameDate.slice(0, 4) === String(currentSeasonYear));
+    const latest = [...season].sort((a, b) => b.gameDate.localeCompare(a.gameDate) || b.gameId.localeCompare(a.gameId))[0];
+    if (!latest) return null;
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+    if ((Date.parse(today) - Date.parse(latest.gameDate)) / 864e5 > 7) return null;
+    const mine = season.find((p) => p.gameId === latest.gameId && p.playerId === myId);
+    if (!mine) return null;
+    const gained = predictionPoints(mine.predictedWhite, mine.predictedRed, mine.actualWhite, mine.actualRed);
+    if (!gained) return null;
+    const from = buildLeaderboard(season.filter((p) => p.gameId !== latest.gameId)).findIndex((r) => r.playerId === myId);
+    const to = predictionSeasonLeaderboard.findIndex((r) => r.playerId === myId);
+    if (from < 0 || to < 0 || from <= to) return null;
+    return { key: `wcf-climb-${myId}-${latest.gameId}`, from, to, gained, prevPts: predictionSeasonLeaderboard[to].points - gained };
+  }, [scoredPredictionInputs, predictionSeasonLeaderboard, currentSeasonYear, myId]);
+  const [climbPhase, setClimbPhase] = useState<"before" | "points" | "move" | "done" | null>(null);
+  const rowEls = useRef(new Map<string, HTMLDivElement>());
+  const rowTops = useRef(new Map<string, number>());
+  useEffect(() => {
+    if (!climb || lineupView !== "predict" || predictView !== "season" || !motionAllowed()) return;
+    try {
+      if (localStorage.getItem(climb.key)) return;
+      localStorage.setItem(climb.key, "1");
+    } catch {
+      return;
+    }
+    setClimbPhase("before");
+    const timers = [
+      setTimeout(() => rowEls.current.get(myId)?.scrollIntoView({ block: "center", behavior: "smooth" }), 60),
+      setTimeout(() => setClimbPhase("points"), 1100),
+      setTimeout(() => {
+        rowTops.current = new Map([...rowEls.current].map(([id, el]) => [id, el.getBoundingClientRect().top]));
+        setClimbPhase("move");
+      }, 2100),
+      setTimeout(() => setClimbPhase("done"), 3300),
+    ];
+    return () => {
+      timers.forEach(clearTimeout);
+      setClimbPhase((p) => (p ? "done" : p));
+    };
+  }, [climb, lineupView, predictView, myId]);
+  useLayoutEffect(() => {
+    if (climbPhase !== "move") return;
+    const ease = "cubic-bezier(.5,0,.2,1)";
+    rowEls.current.forEach((el, id) => {
+      const before = rowTops.current.get(id);
+      if (before == null) return;
+      const d = before - el.getBoundingClientRect().top;
+      if (!d) return;
+      if (id === myId) el.animate([{ transform: `translateY(${d}px)` }, { transform: `translateY(${d / 2}px) scale(1.04)`, offset: 0.5 }, { transform: "none" }], { duration: 1100, easing: ease });
+      else {
+        el.animate([{ transform: `translateY(${d}px)` }, { transform: "none" }], { duration: 1100, easing: ease });
+        el.firstElementChild?.animate([{ filter: "none" }, { filter: "brightness(.65)", transform: "translateX(4px)", offset: 0.4 }, { filter: "none" }], { duration: 650, delay: 250, easing: "ease-out" });
+      }
+    });
+  }, [climbPhase, myId]);
+
   return (
     <>
       <div className="wcf-subtabs">
@@ -544,12 +611,19 @@ export function LineupTab({
           {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
           {nextGame && (
             <>
-              <div className="wcf-lineup-head">
+              <div className={"wcf-lineup-head" + (bdays.length ? " bday" : "")}>
+                {bdays.length > 0 && <BirthdayBunting />}
                 <div className="wcf-lineup-eyebrow">Line-up</div>
                 <div className="wcf-lineup-title">{nextGame.venue}</div>
                 <div className="wcf-lineup-sub">
                   {fmtDate(nextGame.date)} · {nextGame.kickoff}
                 </div>
+                {bdays.length > 0 && (
+                  <BirthdayTag
+                    names={bdays.map((b) => (b.player_id === myId ? "You" : b.player.display_name.split(" ")[0]))}
+                    avatarUrl={bdays[0].player.avatar_url ?? null}
+                  />
+                )}
                 {isAdmin && (
                   <div className="wcf-lineup-head-actions">
                     {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
@@ -828,6 +902,7 @@ export function LineupTab({
                                   <span className="wcf-lineup-list-name">
                                     {b.player.display_name}
                                     {b.player_id === myId ? " (you)" : ""}
+                                    {b.pot_exempt_reason === "birthday" && <span aria-label="birthday"> 🎂</span>}
                                   </span>
                                 </button>
                               ))}
@@ -889,7 +964,12 @@ export function LineupTab({
                         and faces are what people recognise at a glance. */}
                   <div className="wcf-lineup-grid">
                     {nextGrouped.unassigned.map((b) => (
-                      <button key={b.id} className={"wcf-lineup-chip" + (b.player_id === myId ? " me" : "")} onClick={() => openPlayerCard(b.player_id)}>
+                      <button
+                        key={b.id}
+                        className={"wcf-lineup-chip" + (b.player_id === myId ? " me" : "") + (b.pot_exempt_reason === "birthday" ? " bday" : "")}
+                        onClick={() => openPlayerCard(b.player_id)}
+                      >
+                        {b.pot_exempt_reason === "birthday" && <PartyHat />}
                         <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-lineup-chip-avatar" />
                         <span className="wcf-lineup-chip-name">{b.player_id === myId ? "You" : b.player.display_name}</span>
                       </button>
@@ -1078,7 +1158,11 @@ export function LineupTab({
               {board.length === 0 && <p className="wcf-empty">No predictions scored yet {isSeason ? "this season" : "this month"}.</p>}
               {board.length > 0 && (
                 <div className="wcf-lb">
-                  {board.map((row, i) => {
+                  {(isSeason && climb && (climbPhase === "before" || climbPhase === "points")
+                    ? [...board.slice(0, climb.to), ...board.slice(climb.to + 1, climb.from + 1), board[climb.to], ...board.slice(climb.from + 1)]
+                    : board
+                  ).map((row, i) => {
+                    const climbing = isSeason && !!climb && !!climbPhase && row.playerId === myId;
                     const inPrizes = isSeason && i < 3 && row.points > 0;
                     const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
                     const results = row.points - row.exactCount * 3;
@@ -1090,7 +1174,14 @@ export function LineupTab({
                       .map((p) => predictionPoints(p.predictedWhite, p.predictedRed, p.actualWhite, p.actualRed));
                     const open = predictOpenId === row.playerId;
                     return (
-                      <div key={row.playerId}>
+                      <div
+                        key={row.playerId}
+                        className={climbing && climbPhase !== "done" ? "wcf-climbing" : undefined}
+                        ref={(el) => {
+                          if (el) rowEls.current.set(row.playerId, el);
+                          else rowEls.current.delete(row.playerId);
+                        }}
+                      >
                         <div
                           className={"wcf-pl-row" + (i === 0 ? " lead" : "") + (row.playerId === myId ? " me" : "")}
                           onClick={() => setPredictOpenId((v) => (v === row.playerId ? null : row.playerId))}
@@ -1108,6 +1199,7 @@ export function LineupTab({
                                   {row.exactCount} exact score{row.exactCount === 1 ? "" : "s"}
                                 </span>
                               )}
+                              {climbing && climbPhase === "done" && <span className="wcf-climb-up">▲ {climb!.from - climb!.to} {climb!.from - climb!.to === 1 ? "place" : "places"}</span>}
                               {form.length > 0 && (
                                 <span className="wcf-pl-form">
                                   {form.map((pts, fi) => (
@@ -1121,7 +1213,14 @@ export function LineupTab({
                               )}
                             </div>
                           </div>
-                          <span className="wcf-lb-pts">{row.points}</span>
+                          {climbing && climbPhase === "points" && (
+                            <span className="wcf-climb-plus">
+                              +{climb!.gained} {climb!.gained === 3 ? "exact score" : "right result"}
+                            </span>
+                          )}
+                          <span className={"wcf-lb-pts" + (climbing && climbPhase === "points" ? " tick" : "")} key={climbing && climbPhase === "before" ? "b" : "a"}>
+                            {climbing && climbPhase === "before" ? climb!.prevPts : row.points}
+                          </span>
                         </div>
                         {open && (
                           <div className="wcf-pl-detail">

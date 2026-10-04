@@ -1,3 +1,4 @@
+import { SeasonPitch, type SeasonGame } from "./celebrate";
 import { useEffect, useState } from "react";
 import { nowInLondon } from "../../lib/time";
 import { EmptyScene } from "./EmptyScene";
@@ -70,6 +71,8 @@ export function AccountPanel({
   ratingPlayerId,
   onToggleRatingPlayer,
   myRecord,
+  mySeasonGames,
+  seasonYear,
   myGoals,
   onOpenMyCard,
   myUpcomingBookings,
@@ -89,6 +92,8 @@ export function AccountPanel({
   isOwner: boolean;
   profiles: Profile[];
   myRecord: { played: number; won: number; drawn: number; lost: number; winPct: number | null };
+  mySeasonGames: SeasonGame[];
+  seasonYear: string;
   myGoals: number;
   onOpenMyCard: () => void;
   myUpcomingBookings: { game: GameRow; booking: BookingRow }[];
@@ -300,6 +305,7 @@ export function AccountPanel({
           <p className="wcf-me-empty">Your record starts after your first game.</p>
         )}
       </div>
+      {mySeasonGames.length > 0 && <SeasonPitch year={seasonYear} games={mySeasonGames} />}
 
       {myMessages.length > 0 && (
         <>

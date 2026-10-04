@@ -1,5 +1,6 @@
 import { Avatar, POT_CATEGORY_LABEL, PillChoice, avatarFor, fmtDate, fmtDateTime, type PotCategory } from "./shared";
-import { CountUp, MotmMedal, MotmReveal, PointsPill, PotAmountJar } from "./motion";
+import { CountUp, MotmReveal, PointsPill, PotAmountJar } from "./motion";
+import { VoteMedal } from "./celebrate";
 import { Icon } from "./icons";
 import { EmptyScene } from "./EmptyScene";
 import { MOTM_TAGS } from "../motmTags";
@@ -1127,7 +1128,11 @@ export function ResultsTab({
                             <div className="wcf-vote-head">
                               <div className="wcf-vote-k">Vote Man of the Match</div>
                               <div className="wcf-vote-meta">
-                                Closes <b>{closes}</b> · {motmTimeLeft(g)} left · <b>{motmBallotCounts[g.id] ?? totalVotes}</b> of {candidates.length} voted
+                                Closes <b>{closes}</b> · {motmTimeLeft(g)} left ·{" "}
+                                <b className={"wcf-vote-count" + (justVoted?.gameId === g.id ? " tick" : "")} key={motmBallotCounts[g.id] ?? totalVotes}>
+                                  {motmBallotCounts[g.id] ?? totalVotes}
+                                </b>{" "}
+                                of {candidates.length} voted
                               </div>
                             </div>
                             <div className="wcf-vote-teams">
@@ -1144,7 +1149,12 @@ export function ResultsTab({
                                     return (
                                       <button
                                         key={c.id}
-                                        className={"wcf-vote-pick" + (picked ? " picked" : "") + (isMe ? " me" : "")}
+                                        className={
+                                          "wcf-vote-pick" +
+                                          (picked ? " picked" : "") +
+                                          (picked && justVoted?.gameId === g.id && justVoted.candidateId === c.player_id ? " fresh" : "") +
+                                          (isMe ? " me" : "")
+                                        }
                                         disabled={isMe}
                                         onClick={() => castMotmVote(g.id, c.player_id, c.player.display_name)}
                                       >
@@ -1161,14 +1171,13 @@ export function ResultsTab({
                                               {goals} {goals === 1 ? "goal" : "goals"}
                                             </span>
                                           )}
+                                          {picked && <span className="wcf-vote-yours">✓ Your vote</span>}
                                         </span>
-                                        {picked && justVoted?.gameId === g.id && justVoted.candidateId === c.player_id && (
-                                          <MotmMedal key={justVoted.n} className="wcf-vote-medal" />
-                                        )}
                                         {picked && (
-                                          <span className="wcf-vote-tick" aria-label="Your vote">
-                                            ✓
-                                          </span>
+                                          <>
+                                            <span className="wcf-vote-shine" aria-hidden="true" />
+                                            <VoteMedal gameId={g.id} anim={justVoted?.gameId === g.id && justVoted.candidateId === c.player_id ? justVoted.n : 0} />
+                                          </>
                                         )}
                                       </button>
                                     );

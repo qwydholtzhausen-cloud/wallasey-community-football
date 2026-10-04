@@ -48,6 +48,7 @@ import { EmptyScene } from "./ui/EmptyScene";
 import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
 import { ResultsTab } from "./ui/results";
 import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
+import { WinMoment, type SeasonGame } from "./ui/celebrate";
 import { MatchDayClock, MatchDayTeam, isMatchDay } from "./ui/matchday";
 import { GameStory, StoryRings, type StoryGame } from "./ui/stories";
 import { OweBar, PaySheet, PAY_SOON_MS, untilLabel, type DueGame } from "./ui/pay";
@@ -4358,6 +4359,47 @@ function App({ session }: { session: Session }) {
       const key = `wcf-moment-debut-${myId}`;
       if (!seen(key)) out.push({ kind: "debut", key, first, dateLabel: new Date(mine[0].date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }), result: scoreLine(mine[0]) });
     }
+    // Your side won: the first open within 2 days of the game.
+    const last = mine[mine.length - 1];
+    const lastTeam = last?.bookings.find((b) => b.player_id === myId && !b.waiting)?.team;
+    const sideScore = (g: GameRow, t: Team) => (t === "white" ? [g.team_white_score!, g.team_red_score!] : [g.team_red_score!, g.team_white_score!]);
+    if (last && lastTeam && kickoffCutoff(last.date, last.kickoff, 2 * 24 * 60) > nowUk) {
+      const [us, them] = sideScore(last, lastTeam);
+      const key = `wcf-moment-win-${myId}-${last.id}`;
+      if (us > them && !seen(key)) {
+        let streak = 0;
+        for (let i = mine.length - 1; i >= 0; i--) {
+          const t = mine[i].bookings.find((b) => b.player_id === myId && !b.waiting)?.team;
+          if (!t) break;
+          const [a, b] = sideScore(mine[i], t);
+          if (a > b) streak++;
+          else break;
+        }
+        const goals = goalRows.reduce((n, r) => (r.game_id === last.id && r.player_id === myId ? n + r.goals : n), 0);
+        const lines: { label: string; value: string }[] = [];
+        if (goals > 0) lines.push({ label: "Your night:", value: `${goals} ${goals === 1 ? "goal" : "goals"}` });
+        if (streak >= 2) lines.push({ label: "Wins in a row:", value: String(streak) });
+        const winsThisYear = mine.filter((g) => {
+          const t = g.bookings.find((b) => b.player_id === myId && !b.waiting)?.team;
+          if (!t || g.date.slice(0, 4) !== last.date.slice(0, 4)) return false;
+          const [a, b] = sideScore(g, t);
+          return a > b;
+        }).length;
+        lines.push({ label: "Wins this season:", value: String(winsThisYear) });
+        out.push({
+          kind: "win",
+          key,
+          gameId: last.id,
+          us,
+          them,
+          teamName: lastTeam === "white" ? cs.team_white_name : cs.team_red_name,
+          teamColor: lastTeam === "white" ? cs.team_white_color : cs.team_red_color,
+          otherName: lastTeam === "white" ? cs.team_red_name : cs.team_white_name,
+          dateLabel: new Date(last.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase(),
+          lines,
+        });
+      }
+    }
     for (const n of [10, 25, 50, 100, 150, 200]) {
       const g = mine[n - 1];
       if (!g || !recent(g)) continue;
@@ -4384,7 +4426,7 @@ function App({ session }: { session: Session }) {
     });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastGames, myId, loading, profiles]);
+  }, [pastGames, myId, loading, profiles, goalRows]);
   const nextBigMoment = motionOk() ? bigMoments.find((m) => !momentsDone.includes(m.key)) ?? null : null;
   function bigMomentDone(m: BigMoment) {
     try {
@@ -4816,6 +4858,7 @@ function App({ session }: { session: Session }) {
       scoredPastGames.find((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting) && nowUk < endOfNextDay(g.date)) ?? null
     );
   }, [scoredPastGames, myId, nowUk]);
+  const winCardWaiting = nextBigMoment?.kind === "win";
   const rateDismissKey = rateGame ? `wcf-rate-dismissed-${myId}-${rateGame.id}` : "";
   useEffect(() => {
     if (!rateGame || !ratingsLoaded) return;
@@ -4824,10 +4867,11 @@ function App({ session }: { session: Session }) {
       dismissed = localStorage.getItem(rateDismissKey) === "true";
     } catch {}
     setRateDismissed((cur) => ({ ...cur, [rateGame.id]: dismissed }));
-    // Pops up once, the first time you're in the app with it to rate.
-    if (!dismissed && !myRatings[rateGame.id]) setRateSheetFor(rateGame.id);
+    // Pops up once, the first time you're in the app with it to rate -
+    // after the "you won" card when there is one, never on top of it.
+    if (!dismissed && !myRatings[rateGame.id] && !winCardWaiting) setRateSheetFor(rateGame.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rateGame?.id, ratingsLoaded]);
+  }, [rateGame?.id, ratingsLoaded, winCardWaiting]);
   function closeRateSheet() {
     if (rateGame) {
       try {
@@ -4994,6 +5038,23 @@ function App({ session }: { session: Session }) {
     });
     return { played, won, drawn, lost, winPct: played > 0 ? Math.round((won / played) * 100) : null };
   }, [pastGames, myId]);
+
+  // Your season, one entry per game you played, oldest first - the
+  // pitch under your record card on Account.
+  const mySeasonGames = useMemo<SeasonGame[]>(() => {
+    const year = String(currentSeasonYear);
+    return pastGames
+      .filter((g) => g.date.slice(0, 4) === year && g.team_white_score != null && g.team_red_score != null)
+      .flatMap((g) => {
+        const b = g.bookings.find((x) => x.player_id === myId && !x.waiting);
+        if (!b || !b.team) return [];
+        const diff = b.team === "white" ? g.team_white_score! - g.team_red_score! : g.team_red_score! - g.team_white_score!;
+        const goals = goalRows.reduce((n, r) => (r.game_id === g.id && r.player_id === myId ? n + r.goals : n), 0);
+        return [{ id: g.id, date: g.date + g.kickoff, r: (diff > 0 ? "W" : diff < 0 ? "L" : "D") as SeasonGame["r"], goals, motm: !!motmWinnerIdsByGame[g.id]?.includes(myId) }];
+      })
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(({ date: _d, ...g }) => g);
+  }, [pastGames, goalRows, motmWinnerIdsByGame, myId, currentSeasonYear]);
 
   const myGoalsAllTime = useMemo(
     () => goalRows.reduce((sum, r) => (r.player_id === myId ? sum + r.goals : sum), 0),
@@ -5695,6 +5756,8 @@ function App({ session }: { session: Session }) {
             ratingPlayerId={ratingPlayerId}
             onToggleRatingPlayer={(id) => setRatingPlayerId((cur) => (cur === id ? null : id))}
             myRecord={myRecord}
+            mySeasonGames={mySeasonGames}
+            seasonYear={String(currentSeasonYear)}
             myGoals={myGoalsAllTime}
             onOpenMyCard={() => openPlayerCard(myId)}
             myUpcomingBookings={myUpcomingBookings}
@@ -5826,7 +5889,22 @@ function App({ session }: { session: Session }) {
         />
       )}
       {nextBigMoment && showMoment("big") && (
-        <BigMomentView key={nextBigMoment.key} m={nextBigMoment} onDone={() => bigMomentDone(nextBigMoment)} />
+        nextBigMoment.kind === "win" ? (
+          <WinMoment
+            key={nextBigMoment.key}
+            teamName={nextBigMoment.teamName}
+            teamColor={nextBigMoment.teamColor}
+            otherName={nextBigMoment.otherName}
+            us={nextBigMoment.us}
+            them={nextBigMoment.them}
+            dateLabel={nextBigMoment.dateLabel}
+            lines={nextBigMoment.lines}
+            onOpen={() => goToResult(nextBigMoment.gameId)}
+            onDone={() => bigMomentDone(nextBigMoment)}
+          />
+        ) : (
+          <BigMomentView key={nextBigMoment.key} m={nextBigMoment} onDone={() => bigMomentDone(nextBigMoment)} />
+        )
       )}
       {myRecordMoment && showMoment("record") && (
         <RecordMoment
@@ -6755,7 +6833,19 @@ function SubBoard({ number, label, onDone }: { number: number; label: string; on
 type BigMoment =
   | { kind: "debut"; key: string; first: string; dateLabel: string; result: string }
   | { kind: "apps"; key: string; n: number; first: string; back: string; since: string }
-  | { kind: "club"; key: string; n: number; unit: "goals" | "games"; detail: string };
+  | { kind: "club"; key: string; n: number; unit: "goals" | "games"; detail: string }
+  | {
+      kind: "win";
+      key: string;
+      gameId: string;
+      us: number;
+      them: number;
+      teamName: string;
+      teamColor: string;
+      otherName: string;
+      dateLabel: string;
+      lines: { label: string; value: string }[];
+    };
 function BigMomentView({ m, onDone }: { m: BigMoment; onDone: () => void }) {
   const [leaving, setLeaving] = useState(false);
   const [count, setCount] = useState(m.kind === "club" ? Math.max(0, m.n - 14) : 0);
@@ -12705,6 +12795,85 @@ a.wcf-set-link{text-decoration:none}
 .wcf-won-btn{margin-top:22px;border:0;border-radius:14px;padding:13px 22px;background:linear-gradient(90deg,#eab308,#f5d97a 60%,#eab308);color:#1a1405;font-weight:800;font-size:14px;cursor:pointer;animation:wcfRvIn .4s 1.5s both}
 .wcf-won-close{margin-top:10px;background:none;border:0;color:var(--dim);font-weight:700;font-size:13px;cursor:pointer;animation:wcfRvIn .4s 1.6s both}
 @media (prefers-reduced-motion:reduce){.wcf-vote-medal,.wcf-won,.wcf-won *,.wcf-mr-reveal *{animation:none!important}}
+/* "Your side won" card (app/ui/celebrate.tsx), Player of the Month family */
+.wcf-win{position:fixed;inset:0;z-index:146;display:flex;align-items:center;justify-content:center;padding:16px}
+.wcf-win-dim{position:absolute;inset:0;background:rgba(4,6,12,.72);-webkit-backdrop-filter:blur(6px) saturate(.8);backdrop-filter:blur(6px) saturate(.8);animation:wcfCFade .4s both}
+.wcf-win-cf{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.wcf-win.out .wcf-win-dim,.wcf-win.out .wcf-win-card{animation:wcfCOut .38s ease-in forwards}
+.wcf-win-card{position:relative;width:100%;max-width:380px;border-radius:24px;overflow:hidden;border:1px solid rgba(245,217,122,.55);box-shadow:0 30px 70px -20px #000,0 0 60px -10px color-mix(in srgb,var(--team) 50%,transparent);background:linear-gradient(180deg,rgba(10,10,18,.2) 0%,rgba(10,10,18,.55) 45%,rgba(8,8,14,.96) 100%),url('/results-bg.jpg') center 30%/cover;padding:26px 22px 20px;color:#fff;text-align:left;animation:wcfCUp .6s .1s cubic-bezier(.2,1.1,.3,1) both}
+.wcf-win-card::after{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 35%,rgba(255,240,200,.28) 50%,transparent 65%);transform:translateX(-120%);animation:wcfCSheen 1.6s .9s ease-in-out forwards;pointer-events:none}
+.wcf-win-sweep{position:absolute;left:-40%;top:0;bottom:0;width:60%;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--team) 55%,transparent),transparent);filter:blur(10px);animation:wcfCSweep 1.1s .35s ease-out both;pointer-events:none}
+.wcf-win-k{position:relative;font:800 10.5px var(--sans);letter-spacing:.22em;color:#f5d97a}
+.wcf-win-h{position:relative;margin-top:10px;font:800 46px/.95 var(--display);letter-spacing:-.03em;background:linear-gradient(180deg,#fff 30%,color-mix(in srgb,var(--team) 30%,#fff));-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 6px 18px color-mix(in srgb,var(--team) 60%,transparent));animation:wcfCStamp .6s .45s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-win-sc{position:relative;display:flex;align-items:flex-start;gap:14px;margin-top:14px;animation:wcfCFade .4s .8s both}
+.wcf-win-sc>span{display:flex;flex-direction:column}
+.wcf-win-sc b{font:800 50px/1 var(--display);font-variant-numeric:tabular-nums}
+.wcf-win-sc small{margin-top:4px;font:800 10.5px var(--sans);letter-spacing:.16em;color:#cbd5e1}
+.wcf-win-sc .dash{color:#64748b;font:700 28px/50px var(--display)}
+.wcf-win-night{position:relative;margin-top:16px;padding-top:14px;border-top:1px solid rgba(245,217,122,.25);display:flex;flex-wrap:wrap;gap:6px 16px;font:600 13px var(--sans);color:#e2e8f0;animation:wcfCFade .5s 1.4s both}
+.wcf-win-night b{color:#f5d97a}
+.wcf-win-cta{position:relative;display:flex;gap:8px;margin-top:18px;animation:wcfCFade .5s 1.7s both}
+.wcf-win-cta button{flex:1;min-height:44px;border-radius:999px;font:800 13px var(--display);cursor:pointer}
+.wcf-win-cta .go{border:0;background:#f5d97a;color:#1a1405}
+.wcf-win-cta .no{border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.06);color:#fff}
+@keyframes wcfCFade{from{opacity:0}}
+@keyframes wcfCOut{to{opacity:0}}
+@keyframes wcfCUp{from{opacity:0;transform:translateY(10%) scale(.9)}}
+@keyframes wcfCSheen{to{transform:translateX(120%)}}
+@keyframes wcfCSweep{from{transform:translateX(-60%);opacity:0}30%{opacity:1}to{transform:translateX(260%);opacity:0}}
+@keyframes wcfCStamp{from{opacity:0;transform:scale(1.8) rotate(-4deg)}}
+@keyframes wcfCTick{from{transform:translateY(70%);opacity:0}}
+/* Leaderboard climb (Predict) */
+.wcf-climbing{position:relative;z-index:3}
+.wcf-climbing .wcf-pl-row{background:var(--panel);border-radius:12px;box-shadow:0 16px 34px -10px rgba(0,0,0,.95),0 0 0 1.5px rgba(245,217,122,.85)}
+.wcf-climb-plus{flex:none;font:800 11px var(--sans);color:#4ade80;white-space:nowrap;animation:wcfCPlus 1.1s ease-out both}
+@keyframes wcfCPlus{0%{opacity:0;transform:translateY(40%)}25%{opacity:1;transform:none}100%{opacity:1}}
+.wcf-lb-pts.tick{display:inline-block;animation:wcfCTick .45s cubic-bezier(.3,1.4,.5,1)}
+.wcf-climb-up{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;background:#22c55e;color:#052e14;font:800 10px var(--sans);letter-spacing:.04em;white-space:nowrap;animation:wcfCStamp .45s cubic-bezier(.3,1.6,.5,1) both}
+/* Season pitch (Account) */
+.wcf-season-pitch{margin-top:12px}
+.wcf-szn-k{font:800 10.5px var(--sans);letter-spacing:.18em;color:#f5d97a}
+.wcf-szn-t{margin-top:4px;font:800 18px var(--display);color:#fff}
+.wcf-szn-pitch{margin-top:12px;border-radius:12px;overflow:hidden;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.55),0 10px 24px -14px #000}
+.wcf-szn-pitch svg{display:block;width:100%;height:auto}
+.wcf-szn-stripe{transform-box:fill-box;transform-origin:50% 0;transform:scaleY(0);transition:transform .3s cubic-bezier(.4,0,.2,1)}
+.wcf-szn-stripe.on{transform:none}
+.wcf-szn-mower{transition:transform .25s linear}
+.wcf-szn-ball{transform-box:fill-box;animation:wcfCBall .5s cubic-bezier(.3,1.6,.5,1) both}
+@keyframes wcfCBall{from{opacity:0;transform:translateY(-30px)}}
+.wcf-szn-legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;font:600 11px var(--sans);color:#cbd5e1}
+.wcf-szn-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+/* Birthday bunting (team sheet) */
+.wcf-lineup-head.bday{padding-top:56px}
+.wcf-bunting{position:absolute;left:0;right:0;top:0;height:64px;pointer-events:none;z-index:2}
+.wcf-bunting svg{display:block;width:100%;height:100%;overflow:visible}
+.wcf-flag{transform-box:fill-box;transform-origin:50% 0;animation:wcfCFlag .5s var(--d) cubic-bezier(.3,1.6,.5,1) both,wcfCFlutter 2.4s calc(var(--d) + .5s) ease-in-out infinite alternate}
+@keyframes wcfCFlag{from{transform:translateY(-40px) rotate(-20deg);opacity:0}}
+@keyframes wcfCFlutter{from{transform:rotate(-5deg)}to{transform:rotate(5deg)}}
+.wcf-bday-tag{position:relative;z-index:3;margin-top:12px;display:inline-flex;align-items:center;gap:7px;padding:6px 12px 6px 7px;border-radius:999px;background:rgba(20,16,4,.7);border:1px solid rgba(245,217,122,.55);font:700 12px var(--sans);color:#fde68a;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);animation:wcfCStamp .5s 1s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-bday-tag img{width:22px;height:22px;border-radius:50%;object-fit:cover}
+.wcf-lineup-chip.bday{position:relative;overflow:visible;box-shadow:0 0 0 2px #f5d97a,0 0 22px -4px rgba(245,217,122,.7);animation:wcfCBday 2s 1.4s ease-in-out infinite alternate}
+@keyframes wcfCBday{to{box-shadow:0 0 0 2px #f5d97a,0 0 30px 0 rgba(245,217,122,.9)}}
+.wcf-bday-hat{position:absolute;top:-12px;left:50%;width:26px;height:30px;margin-left:-4px;z-index:2;transform:rotate(18deg);animation:wcfCHat .6s 1.3s cubic-bezier(.3,1.6,.5,1) both}
+@keyframes wcfCHat{from{transform:translateY(-40px) rotate(-30deg);opacity:0}}
+/* MOTM medal on the ballot (app/ui/celebrate.tsx VoteMedal) */
+.wcf-vote{position:relative}
+.wcf-vote-pick.picked .wcf-vote-who{min-width:0;padding-right:30px}
+.wcf-vote-pick.fresh{z-index:2;box-shadow:0 0 0 2px #f5d97a,0 12px 28px -10px rgba(245,217,122,.6);animation:wcfCLift .45s cubic-bezier(.3,1.6,.5,1) both}
+@keyframes wcfCLift{0%{transform:scale(.95)}60%{transform:scale(1.05)}100%{transform:scale(1.03)}}
+.wcf-vote-shine{position:absolute;inset:0;border-radius:inherit;overflow:hidden;pointer-events:none}
+.wcf-vote-pick.fresh .wcf-vote-shine::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 30%,rgba(255,236,170,.45) 50%,transparent 70%);transform:translateX(-130%);animation:wcfCSheen .9s .55s ease-out forwards}
+.wcf-vote-yours{display:block;width:fit-content;margin-top:3px;padding:1px 6px;border-radius:4px;background:#f5d97a;color:#1a1405;font:800 9px var(--sans);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+.wcf-vote-pick.fresh .wcf-vote-yours{animation:wcfCStamp .4s .9s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-vote-medal2{position:absolute;right:5px;bottom:22px;width:30px;height:65px;transform-origin:15px 0;pointer-events:none;z-index:3}
+.wcf-vote-medal2 svg{display:block;width:100%;height:100%;overflow:visible;filter:drop-shadow(0 6px 8px rgba(0,0,0,.55))}
+.wcf-vote-medal2.drop{animation:wcfCDrop 1.6s cubic-bezier(.3,0,.3,1) both}
+.wcf-vote-medal2.drop .disc{transform-box:fill-box;transform-origin:center;animation:wcfCSpin 1.2s .35s ease-out both}
+@keyframes wcfCDrop{0%{transform:translateY(-200px);opacity:0}10%{opacity:1}34%{transform:translateY(0) rotate(14deg)}52%{transform:rotate(-9deg)}68%{transform:rotate(5deg)}84%{transform:rotate(-2deg)}100%{transform:none}}
+@keyframes wcfCSpin{from{transform:rotateY(540deg)}}
+.wcf-vote-count.tick{display:inline-block;color:#f5d97a;animation:wcfCTick .45s cubic-bezier(.3,1.4,.5,1)}
+.wcf-vote-slip{position:absolute;z-index:5;width:18px;height:12px;border-radius:2px;background:#f3ead2;box-shadow:0 2px 6px rgba(0,0,0,.5);pointer-events:none}
+@media (prefers-reduced-motion:reduce){.wcf-win *,.wcf-climb-plus,.wcf-lb-pts.tick,.wcf-climb-up,.wcf-szn-ball,.wcf-flag,.wcf-bday-tag,.wcf-lineup-chip.bday,.wcf-bday-hat,.wcf-vote-pick.fresh,.wcf-vote-pick.fresh *,.wcf-vote-medal2,.wcf-vote-count.tick{animation:none!important}.wcf-szn-stripe{transition:none}}
 /* Subtle touches */
 .wcf-book:active:not(:disabled){transform:scale(.96)}
 .wcf-hero-bar-fill,.wcf-fx-bar-fill{transition:width .7s cubic-bezier(.3,.8,.3,1)}
