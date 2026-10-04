@@ -125,6 +125,18 @@ for (const sub of ["Team Sheet", "Predict"]) {
     await page.evaluate(() => document.querySelector(".wcf-main")?.scrollTo(0, 0));
   });
 }
+// Two-game nights: switch Line-up to the other game and check it follows.
+await step("Line-up: second game", async () => {
+  await tab("Line-up", "Next game line-up");
+  const picks = page.locator(".wcf-gamepick button");
+  if ((await picks.count()) < 2) return;
+  await page.locator(".wcf-subtabs button", { hasText: "Team Sheet" }).first().dispatchEvent("click");
+  const before = await page.locator(".wcf-main").innerText();
+  await picks.nth(1).dispatchEvent("click");
+  await page.waitForFunction(() => document.querySelectorAll(".wcf-gamepick button")[1]?.classList.contains("active"), null, { timeout: 8000 });
+  await page.waitForTimeout(900);
+  if ((await page.locator(".wcf-main").innerText()) === before) throw new Error("Switching game didn't change the Line-up");
+});
 await step("Results", async () => tab("Results", "Results"));
 for (const sub of ["Season", "Stats", "Records", "Scores", "Pot"]) {
   await step(`Results: ${sub}`, async () => {
@@ -184,6 +196,13 @@ if (process.env.SMOKE_ADMIN !== "0" && serviceKey) {
       await tab("Line-up", "Next game line-up");
       await page.locator(".wcf-subtabs button", { hasText: "Teams" }).first().dispatchEvent("click");
       await page.waitForFunction(() => document.querySelector(".wcf-subtabs button.active")?.textContent?.trim() === "Teams", null, { timeout: 8000 });
+      await page.waitForTimeout(900);
+    });
+    await step("Admin: Teams for the second game", async () => {
+      const picks = page.locator(".wcf-gamepick button");
+      if ((await picks.count()) < 2) return;
+      await picks.nth(1).dispatchEvent("click");
+      await page.waitForFunction(() => document.querySelectorAll(".wcf-gamepick button")[1]?.classList.contains("active"), null, { timeout: 8000 });
       await page.waitForTimeout(900);
     });
     // Random split, so its screenshot differs run to run; compare ignores it.

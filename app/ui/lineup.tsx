@@ -39,6 +39,8 @@ export type LineupTabProps = {
   generateBalancedTeams: () => { white: string[]; red: string[] };
   isAdmin: boolean;
   lineupDisplayView: "pitch" | "list";
+  lineupGames: GameRow[];
+  setLineupGameId: (id: string) => void;
   lineupView: "sheet" | "fairness" | "predict";
   movePlayerTo: (playerId: string, clientX: number, clientY: number) => void;
   myId: string;
@@ -121,6 +123,8 @@ export function LineupTab({
   generateBalancedTeams,
   isAdmin,
   lineupDisplayView,
+  lineupGames,
+  setLineupGameId,
   lineupView,
   movePlayerTo,
   myId,
@@ -177,6 +181,25 @@ export function LineupTab({
           Predict
         </button>
       </div>
+
+      {/* Two (or more) games on the next match day: pick which one. Starts
+          on the one you're booked on. */}
+      {lineupGames.length > 1 && nextGame && (
+        <div className="wcf-gamepick" role="tablist" aria-label="Which game">
+          {lineupGames.map((g) => {
+            const mine = g.bookings.find((b) => b.player_id === myId);
+            const [h, m] = g.kickoff.split(":").map(Number);
+            const time = `${h % 12 === 0 ? 12 : h % 12}${m ? `:${String(m).padStart(2, "0")}` : ""}${h < 12 ? "am" : "pm"}`;
+            return (
+              <button key={g.id} role="tab" aria-selected={g.id === nextGame.id} className={g.id === nextGame.id ? "active" : ""} onClick={() => setLineupGameId(g.id)}>
+                <b>{time}</b>
+                <span>{g.venue}</span>
+                {mine && <i>{mine.waiting ? "Waiting" : "You're in"}</i>}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {lineupView === "fairness" && isAdmin && (
         <>

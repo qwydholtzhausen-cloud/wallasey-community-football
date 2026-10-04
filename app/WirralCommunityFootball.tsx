@@ -3043,16 +3043,20 @@ function App({ session }: { session: Session }) {
   // previewing one), and only down to the minute - the existing "kickoff
   // in 1 hour" push already owns second-by-second urgency.
   const nextFixtureForCountdown = upcomingGames.find((g) => g.published);
-  const fixtureCountdown = useMemo(() => {
-    if (!nextFixtureForCountdown) return null;
-    const diffMs = toMs(kickoffCutoff(nextFixtureForCountdown.date, nextFixtureForCountdown.kickoff, 0)) - toMs(nowUk);
+  const countdownFor = (g: GameRow) => {
+    const diffMs = toMs(kickoffCutoff(g.date, g.kickoff, 0)) - toMs(nowUk);
     if (diffMs <= 0) return { text: "Kicking off now ⚽", soon: true };
     const totalMin = Math.floor(diffMs / 60000);
     const d = Math.floor(totalMin / 1440);
     const h = Math.floor((totalMin % 1440) / 60);
     const m = totalMin % 60;
     return { text: d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`, soon: totalMin < 60 };
-  }, [nextFixtureForCountdown, nowUk]);
+  };
+  // Every published game on that same day gets a "Next match" card (some
+  // nights have two); the second one wears a different photo so the two
+  // are easy to tell apart.
+  const nextMatchGames = nextFixtureForCountdown ? upcomingGames.filter((g) => g.published && g.date === nextFixtureForCountdown.date) : [];
+  const nextMatchIds = new Set(nextMatchGames.map((g) => g.id));
   const pastGames = useMemo(
     () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
     [games, nowUk]
@@ -4303,12 +4307,23 @@ function App({ session }: { session: Session }) {
     return out;
   }, [isAdmin, birthdays, upcomingGames, nowUk]);
 
-  const nextGame = upcomingGames[0];
+  // Line-up shows one game at a time. Usually that's simply the next one,
+  // but some nights have two (e.g. 8pm and 8:30 on different pitches), so
+  // every game on the next match day is pickable. You start on the game
+  // you're booked on; everything in Line-up (team sheet, teams, positions,
+  // predictions, Copy for WhatsApp) follows the picked game.
+  const [lineupGameId, setLineupGameId] = useState<string | null>(null);
+  const lineupGames = useMemo(() => upcomingGames.filter((g) => g.date === upcomingGames[0]?.date), [upcomingGames]);
+  const nextGame =
+    lineupGames.find((g) => g.id === lineupGameId) ??
+    lineupGames.find((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting)) ??
+    lineupGames.find((g) => g.bookings.some((b) => b.player_id === myId)) ??
+    lineupGames[0];
   const nextConfirmed = useMemo(
     () => (nextGame ? nextGame.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at)) : []),
     [nextGame]
   );
-  useEffect(() => { setEditingLineup(false); setSelectedLineupPlayerId(null); }, [nextGame?.id]);
+  useEffect(() => { setEditingLineup(false); setSelectedLineupPlayerId(null); setEditingPositions(false); }, [nextGame?.id]);
   useEffect(() => setSuggestedTeams(null), [nextGame?.id]);
   const nextGrouped = useMemo(
     () => ({
@@ -5162,28 +5177,32 @@ function App({ session }: { session: Session }) {
               />
             ) : (
               <>
-                {nextFixtureForCountdown && (
+                {nextMatchGames.length > 0 && (
                   <>
-                    <div className="wcf-eyebrow">Next match</div>
-                    <GameCard
-                      featured
-                      countdownText={fixtureCountdown?.text}
-                      game={nextFixtureForCountdown}
-                      myId={myId}
-                      isAdmin={isAdmin}
-                      overdue={iAmOverdue}
-                      editing={false}
-                      onBook={() => book(nextFixtureForCountdown.id)}
-                      onCancel={(bookingId) => cancel(bookingId)}
-                      onMarkPaid={(bookingId) => markPaid(bookingId)}
-                      onEdit={() => setFixtureSheet({ mode: "edit", id: nextFixtureForCountdown.id })}
-                      onSave={(patch) => saveGame(nextFixtureForCountdown.id, patch)}
-                      onDelete={() => deleteGame(nextFixtureForCountdown.id)}
-                      onOpenPlayerCard={openPlayerCard}
-                      onSetStatus={setBookingStatus}
-                      weather={weatherFor(nextFixtureForCountdown.date, nextFixtureForCountdown.kickoff)}
-                      askConfirm={askConfirm}
-                    />
+                    <div className="wcf-eyebrow">{nextMatchGames.length > 1 ? `Next match · ${nextMatchGames.length} games` : "Next match"}</div>
+                    {nextMatchGames.map((g, i) => (
+                      <GameCard
+                        key={g.id}
+                        featured
+                        alt={i % 2 === 1}
+                        countdownText={countdownFor(g).text}
+                        game={g}
+                        myId={myId}
+                        isAdmin={isAdmin}
+                        overdue={iAmOverdue}
+                        editing={false}
+                        onBook={() => book(g.id)}
+                        onCancel={(bookingId) => cancel(bookingId)}
+                        onMarkPaid={(bookingId) => markPaid(bookingId)}
+                        onEdit={() => setFixtureSheet({ mode: "edit", id: g.id })}
+                        onSave={(patch) => saveGame(g.id, patch)}
+                        onDelete={() => deleteGame(g.id)}
+                        onOpenPlayerCard={openPlayerCard}
+                        onSetStatus={setBookingStatus}
+                        weather={weatherFor(g.date, g.kickoff)}
+                        askConfirm={askConfirm}
+                      />
+                    ))}
                   </>
                 )}
 
@@ -5196,12 +5215,12 @@ function App({ session }: { session: Session }) {
                   cut.setUTCDate(cut.getUTCDate() + 28);
                   const laterFrom = cut.toISOString().slice(0, 10);
                   const shown = (g: GameRow) => showLaterFixtures || g.date <= laterFrom;
-                  const laterCount = upcomingGames.filter((g) => g.id !== nextFixtureForCountdown?.id && !shown(g)).length;
-                  const visibleMonths = upcomingByMonth.filter((grp) => grp.games.some((g) => g.id !== nextFixtureForCountdown?.id && shown(g)));
+                  const laterCount = upcomingGames.filter((g) => !nextMatchIds.has(g.id) && !shown(g)).length;
+                  const visibleMonths = upcomingByMonth.filter((grp) => grp.games.some((g) => !nextMatchIds.has(g.id) && shown(g)));
                   return (
                     <>
                 {visibleMonths.map((group) => {
-                  const games = group.games.filter((g) => g.id !== nextFixtureForCountdown?.id && shown(g));
+                  const games = group.games.filter((g) => !nextMatchIds.has(g.id) && shown(g));
                   if (games.length === 0) return null;
                   return (
                     <div key={group.key}>
@@ -5265,7 +5284,7 @@ function App({ session }: { session: Session }) {
             onSaveResult={saveResult}
             onAddBooking={addBooking}
             onSetPotExempt={setPotExempt}
-            onGoToLineup={() => { setTab("lineup"); setLineupView("fairness"); }}
+            onGoToLineup={(gameId?: string) => { if (gameId) setLineupGameId(gameId); setTab("lineup"); setLineupView("fairness"); }}
             messages={adminMessages}
             onSendMessage={sendAdminMessage}
             onShareResult={(id) => {
@@ -5335,6 +5354,8 @@ function App({ session }: { session: Session }) {
             generateBalancedTeams={generateBalancedTeams}
             isAdmin={isAdmin}
             lineupDisplayView={lineupDisplayView}
+            lineupGames={lineupGames}
+            setLineupGameId={setLineupGameId}
             lineupView={lineupView}
             movePlayerTo={movePlayerTo}
             myId={myId}
@@ -8575,7 +8596,7 @@ function AdminConsole({
   onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
-  onGoToLineup: () => void;
+  onGoToLineup: (gameId?: string) => void;
   messages: AdminMessage[];
   onSendMessage: (recipientId: string, message: string) => Promise<void>;
   onShareResult: (gameId: string) => void;
@@ -8616,15 +8637,22 @@ function AdminConsole({
   const notPaidYet = upcoming.flatMap((g) =>
     g.bookings.filter((b) => !b.waiting && b.status === "unpaid").map((b) => ({ booking: b, game: g }))
   );
+  // Every game on the next match day (usually one; some nights two).
+  const nextDayGames = upcoming.filter((g) => g.date === upcoming[0]?.date);
+  const gameState = (g: GameRow) => {
+    const confirmed = g.bookings.filter((b) => !b.waiting);
+    const unassigned = confirmed.filter((b) => !b.team).length;
+    // Zero bookings is not the same as "teams set" - there's trivially
+    // nothing unassigned on an empty fixture, but showing a green checkmark
+    // for a game nobody's even booked into yet reads as done when there's
+    // nothing to be done.
+    const noBookingsYet = confirmed.length === 0;
+    const teamsSet = !noBookingsYet && unassigned === 0;
+    const teamsDueSoon = !teamsSet && !noBookingsYet && toMs(kickoffCutoff(g.date, g.kickoff, 0)) - toMs(nowInLondon()) <= 48 * 3600000;
+    return { confirmed, unassigned, noBookingsYet, teamsSet, teamsDueSoon };
+  };
   const nextGame = upcoming[0];
   const nextConfirmed = nextGame ? nextGame.bookings.filter((b) => !b.waiting) : [];
-  const nextUnassigned = nextConfirmed.filter((b) => !b.team).length;
-  // Zero bookings is not the same as "teams set" - there's trivially
-  // nothing unassigned on an empty fixture, but showing a green checkmark
-  // for a game nobody's even booked into yet reads as done when there's
-  // nothing to be done.
-  const noBookingsYet = !!nextGame && nextConfirmed.length === 0;
-  const teamsSet = !nextGame || (!noBookingsYet && nextUnassigned === 0);
 
   const namesList = (items: string[], max = 3) =>
     items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} +${items.length - max} more`;
@@ -8717,7 +8745,6 @@ function AdminConsole({
   const in28 = new Date(Date.UTC(+nowDay.slice(0, 4), +nowDay.slice(5, 7) - 1, +nowDay.slice(8, 10) + 28)).toISOString().slice(0, 10);
   const soonUpcoming = upcoming.filter((g) => g.date <= in28);
   const laterUpcoming = upcoming.filter((g) => g.date > in28);
-  const teamsDueSoon = !!nextGame && !teamsSet && !noBookingsYet && toMs(kickoffCutoff(nextGame.date, nextGame.kickoff, 0)) - toMs(nowInLondon()) <= 48 * 3600000;
 
   // Needs-you items, each with the one button that deals with it.
   type Todo = { key: string; tone: "gold" | "red" | "blue"; icon: string; title: string; sub: string; label: string; act: () => void };
@@ -8737,8 +8764,12 @@ function AdminConsole({
   unscored.forEach((g) =>
     todos.push({ key: "score-" + g.id, tone: "blue", icon: "⚽", title: `Enter the score for ${fmtDate(g.date)}`, sub: `${g.bookings.filter((b) => !b.waiting).length} played`, label: "Enter", act: () => setResultFor(g.id) })
   );
-  if (teamsDueSoon && nextGame)
-    todos.push({ key: "teams", tone: "blue", icon: "⇄", title: `Pick teams for ${fmtDate(nextGame.date)}`, sub: `${nextConfirmed.length} booked, ${nextUnassigned} not on a team`, label: "Pick", act: onGoToLineup });
+  nextDayGames.forEach((g) => {
+    const st = gameState(g);
+    if (!st.teamsDueSoon) return;
+    const which = nextDayGames.length > 1 ? `${fmtDate(g.date)}, ${g.kickoff}${g.venue !== mainVenue ? ` · ${g.venue}` : ""}` : fmtDate(g.date);
+    todos.push({ key: "teams-" + g.id, tone: "blue", icon: "⇄", title: `Pick teams for ${which}`, sub: `${st.confirmed.length} booked, ${st.unassigned} not on a team`, label: "Pick", act: () => onGoToLineup(g.id) });
+  });
   if (owingTabs.length > 0)
     todos.push({
       key: "owing",
@@ -8791,24 +8822,27 @@ function AdminConsole({
             ))}
           </div>
 
-          {nextGame && (
-            <div className="wcf-admin-next">
-              <div className="wcf-admin-next-k">Next game</div>
-              <div className="wcf-admin-next-t">{fmtDate(nextGame.date)} · {nextGame.kickoff}{nextGame.venue !== mainVenue ? ` · ${nextGame.venue}` : ""}</div>
-              <div className="wcf-admin-next-chips">
-                <span className="wcf-chip g">{nextConfirmed.length}/{nextGame.max_players} booked</span>
-                {nextGame.bookings.some((b) => b.waiting) && <span className="wcf-chip w">{nextGame.bookings.filter((b) => b.waiting).length} waiting</span>}
-                <span className={"wcf-chip" + (teamsSet ? " g" : teamsDueSoon ? " r" : "")}>{noBookingsYet ? "No one booked" : teamsSet ? "Teams set" : "Teams not set"}</span>
-                {nextConfirmed.filter((b) => b.status !== "confirmed" && !b.pot_exempt_reason).length > 0 && (
-                  <span className="wcf-chip">{nextConfirmed.filter((b) => b.status !== "confirmed" && !b.pot_exempt_reason).length} not paid</span>
-                )}
+          {nextDayGames.map((g) => {
+            const st = gameState(g);
+            return (
+              <div key={g.id} className="wcf-admin-next">
+                <div className="wcf-admin-next-k">Next game</div>
+                <div className="wcf-admin-next-t">{fmtDate(g.date)} · {g.kickoff}{g.venue !== mainVenue ? ` · ${g.venue}` : ""}</div>
+                <div className="wcf-admin-next-chips">
+                  <span className="wcf-chip g">{st.confirmed.length}/{g.max_players} booked</span>
+                  {g.bookings.some((b) => b.waiting) && <span className="wcf-chip w">{g.bookings.filter((b) => b.waiting).length} waiting</span>}
+                  <span className={"wcf-chip" + (st.teamsSet ? " g" : st.teamsDueSoon ? " r" : "")}>{st.noBookingsYet ? "No one booked" : st.teamsSet ? "Teams set" : "Teams not set"}</span>
+                  {st.confirmed.filter((b) => b.status !== "confirmed" && !b.pot_exempt_reason).length > 0 && (
+                    <span className="wcf-chip">{st.confirmed.filter((b) => b.status !== "confirmed" && !b.pot_exempt_reason).length} not paid</span>
+                  )}
+                </div>
+                <div className="wcf-admin-next-acts">
+                  <button className="wcf-pill-btn ghost" onClick={() => openFixture(g.id)}>Open fixture</button>
+                  {!st.teamsSet && !st.noBookingsYet && <button className="wcf-pill-btn ghost" onClick={() => onGoToLineup(g.id)}>Pick teams</button>}
+                </div>
               </div>
-              <div className="wcf-admin-next-acts">
-                <button className="wcf-pill-btn ghost" onClick={() => openFixture(nextGame.id)}>Open fixture</button>
-                {!teamsSet && !noBookingsYet && <button className="wcf-pill-btn ghost" onClick={onGoToLineup}>Pick teams</button>}
-              </div>
-            </div>
-          )}
+            );
+          })}
 
           <div className="wcf-admin-calm">
             <div><b>{unscored.length === 0 ? "✓" : unscored.length}</b><span>{unscored.length === 0 ? "All scores entered" : "Scores to enter"}</span></div>
@@ -9764,6 +9798,7 @@ function GameCard({
   weather,
   askConfirm,
   featured,
+  alt,
   countdownText,
   isNew,
   cascadeIndex,
@@ -9786,6 +9821,8 @@ function GameCard({
   weather: { code: number; temp: number } | null;
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
   featured?: boolean;
+  // The second "Next match" card on a two-game night: a different photo.
+  alt?: boolean;
   countdownText?: string | null;
 }) {
   const [form, setForm] = useState<GameRow>(game);
@@ -9913,7 +9950,7 @@ function GameCard({
   return (
     <article
       id={"fx-" + game.id}
-      className={featured ? "wcf-card featured " + (game.special ? "special" : bookedClass) : cascadeIndex !== undefined ? "wcf-fx-cascade" : ""}
+      className={featured ? "wcf-card featured " + (alt ? "alt " : "") + (game.special ? "special" : bookedClass) : cascadeIndex !== undefined ? "wcf-fx-cascade" : ""}
       style={featured ? undefined : { marginBottom: 18, ...(cascadeIndex !== undefined ? { animationDelay: `${cascadeIndex * 200}ms` } : {}) }}
     >
       {featured ? (
@@ -10363,6 +10400,13 @@ const css = `
   background-image:linear-gradient(180deg,rgba(8,10,14,.15) 0%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/pitch-night.jpg');
   background-size:cover;background-position:center 30%;border-radius:24px;padding:24px;margin-bottom:22px;
 }
+/* The second game on a two-game night. Until it has its own photo, the
+   same pitch mirrored with a cooler tint, so the two cards don't look
+   like the same game twice. */
+.wcf-card.featured.alt{position:relative;isolation:isolate;background-image:none;background-color:#0b1424}
+.wcf-card.featured.alt::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;
+  background-image:linear-gradient(180deg,rgba(20,60,140,.28) 0%,rgba(8,16,40,.55) 55%,rgba(6,8,18,.92) 100%),url('/pitch-night.jpg');
+  background-size:auto 190%;background-position:25% 12%;transform:scaleX(-1);filter:hue-rotate(20deg) saturate(1.2) brightness(1.15)}
 /* Payment-status glow (own booking only): red=unpaid, amber=pending,
    green=confirmed. Box-shadow, not an inner gradient div, since the
    card's own overflow:hidden (for the photo's rounded corners) would
@@ -12433,6 +12477,13 @@ a.wcf-set-link{text-decoration:none}
 .wcf-hero-bar-fill,.wcf-fx-bar-fill{transition:width .7s cubic-bezier(.3,.8,.3,1)}
 .wcf-tick{display:inline-block}
 .wcf-tick.roll{animation:wcfTickRoll .45s cubic-bezier(.3,1.4,.5,1)}
+/* Line-up: pick between games on the same night */
+.wcf-gamepick{display:flex;gap:8px;margin:-4px 2px 16px}
+.wcf-gamepick button{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);color:var(--dim);cursor:pointer;text-align:left}
+.wcf-gamepick button b{font-family:var(--display);font-weight:800;font-size:15px;color:var(--white)}
+.wcf-gamepick button span{font-size:11px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-gamepick button i{font-style:normal;font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#f5d97a}
+.wcf-gamepick button.active{border-color:rgba(230,57,70,.7);background:rgba(230,57,70,.12);box-shadow:0 0 0 1px rgba(230,57,70,.35)}
 /* Feed: what's new since you last looked */
 .wcf-feed-section-label.fresh{color:#f5d97a}
 .wcf-feed-section-label.fresh:after{background:linear-gradient(90deg,#f5d97a,transparent);transform-origin:left;animation:wcfLineDraw .8s .1s ease-out both}
