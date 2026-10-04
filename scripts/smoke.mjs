@@ -110,6 +110,17 @@ await step("Feed", async () => {
   const testPost = await page.locator(".wcf-feed-item", { hasText: "Qwyd Test Account" }).count();
   if (testPost) throw new Error("The test account is showing on the Feed");
 });
+await step("Game Stories", async () => {
+  const ring = page.locator(".wcf-story-ring").first();
+  if (!(await ring.count())) return; // a new month with no games yet
+  await ring.dispatchEvent("click");
+  await page.locator(".wcf-story .card").waitFor({ timeout: 8000 });
+  for (let i = 0; i < 10 && (await page.locator(".wcf-story").count()); i++) {
+    await page.locator(".wcf-story .tapzones button[aria-label='Next']").dispatchEvent("click");
+    await page.waitForTimeout(250);
+  }
+  if (await page.locator(".wcf-story").count()) throw new Error("The story didn't close after its last card");
+});
 await step("Boot Room", async () => {
   await page.locator(".wcf-feed-hero-tabs button", { hasText: "Boot Room" }).first().dispatchEvent("click");
   await page.waitForSelector("[class^='wcf-br-'], [class*=' wcf-br-']", { timeout: 8000 });

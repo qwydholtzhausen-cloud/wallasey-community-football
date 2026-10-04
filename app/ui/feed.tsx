@@ -280,6 +280,7 @@ export function PullNet({ onRefresh }: { onRefresh: () => Promise<unknown> }) {
 // themselves are worked out in the main app (feedItems) because they draw
 // on games, goals and the pot; this draws them.
 export function FeedTab({
+  stories,
   isAdmin,
   myId,
   profiles,
@@ -302,6 +303,8 @@ export function FeedTab({
   feedFresh,
   feedFreshLabel,
 }: {
+  // Game Stories rings, shown at the top of the Feed.
+  stories?: React.ReactNode;
   isAdmin: boolean;
   myId: string;
   profiles: { id: string; display_name: string; avatar_url?: string | null }[];
@@ -357,6 +360,7 @@ export function FeedTab({
   return (
     <>
       {feedView === "feed" && !showArchived && <PullNet onRefresh={onRefresh} />}
+      {feedView === "feed" && !showArchived && stories}
       {!showArchived && (
         <div className={"wcf-feed-hero" + (feedView === "bootroom" ? " compact" : "")}>
           <div className="wcf-feed-hero-eyebrow">Community Feed</div>

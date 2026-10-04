@@ -49,6 +49,7 @@ import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
 import { ResultsTab } from "./ui/results";
 import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
 import { MatchDayClock, MatchDayTeam, isMatchDay } from "./ui/matchday";
+import { GameStory, StoryRings, type StoryGame } from "./ui/stories";
 import { OweBar, PaySheet, PAY_SOON_MS, untilLabel, type DueGame } from "./ui/pay";
 import { LineupTab } from "./ui/lineup";
 import { AccountPanel } from "./ui/account";
@@ -3200,6 +3201,92 @@ function App({ session }: { session: Session }) {
     for (const [gameId, tally] of Object.entries(motmTallyByGame)) map[gameId] = motmWinners(tally, goalsIn(gameId));
     return map;
   }, [motmTallyByGame, goalRows]);
+
+  // ── Game Stories ──
+  // The month's scored games as story rings at the top of the Feed (or the
+  // previous month's, with a button to switch). Seen ones go grey - kept on
+  // this phone.
+  const storyMonthNow = nowUk.slice(0, 7);
+  const [storyMonth, setStoryMonth] = useState<string | null>(null);
+  const [storyOpen, setStoryOpen] = useState<string | null>(null);
+  const storySeenKey = `wcf-story-seen-${myId}`;
+  const [storySeen, setStorySeen] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(`wcf-story-seen-${myId}`) || "[]"));
+    } catch {
+      return new Set();
+    }
+  });
+  const storyScored = useMemo(
+    () => games.filter((g) => g.team_white_score != null && g.team_red_score != null && kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk),
+    [games, nowUk]
+  );
+  const prevMonthKey = (() => {
+    const [y, m] = storyMonthNow.split("-").map(Number);
+    return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+  })();
+  const showingMonth = storyMonth ?? storyMonthNow;
+  const storyRingGames = storyScored.filter((g) => g.date.slice(0, 7) === showingMonth).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff));
+  const monthName = (key: string) => new Date(key + "-15T12:00:00").toLocaleDateString("en-GB", { month: "long" });
+  const otherMonth = showingMonth === storyMonthNow ? (storyScored.some((g) => g.date.slice(0, 7) === prevMonthKey) ? prevMonthKey : null) : storyMonthNow;
+  const buildStory = (g: GameRow): StoryGame => {
+    const w = g.team_white_score ?? 0, r = g.team_red_score ?? 0;
+    const margin = Math.abs(w - r);
+    const winnerName = w > r ? cs.team_white_name : cs.team_red_name;
+    // Margin context from the season so far (this game and earlier ones).
+    const season = storyScored.filter((x) => x.date.slice(0, 4) === g.date.slice(0, 4) && (x.date < g.date || (x.date === g.date && x.kickoff <= g.kickoff)));
+    const mOf = (x: GameRow) => Math.abs((x.team_white_score ?? 0) - (x.team_red_score ?? 0));
+    const bigger = season.filter((x) => mOf(x) > margin);
+    const same = season.filter((x) => x.id !== g.id && mOf(x) === margin);
+    const rank = bigger.length + 1;
+    const ord = ["", "", "second-", "third-"][rank] ?? "";
+    const biggest = [...season].sort((a, b) => mOf(b) - mOf(a))[0];
+    let marginLine = margin === 0 ? `A ${w}–${r} draw.` : `${winnerName} by ${margin}`;
+    if (margin > 0 && season.length >= 3 && rank <= 3) {
+      marginLine += `, the ${same.length ? "joint " : ""}${ord}biggest win of the season${rank > 1 && biggest ? ` (${new Date(biggest.date + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })} was by ${mOf(biggest)})` : " so far"}.`;
+    } else if (margin > 0) marginLine += ".";
+    const side = (pid: string) => g.bookings.find((b) => b.player_id === pid && !b.waiting)?.team;
+    const rows = goalRows.filter((x) => x.game_id === g.id);
+    const scorers = rows
+      .filter((x) => x.goals > 0 && side(x.player_id))
+      .map((x) => ({ name: x.player.display_name, avatarUrl: x.player.avatar_url ?? null, goals: x.goals, side: side(x.player_id) as "white" | "red" }));
+    const preds = scorePredictions.filter((p) => p.game_id === g.id);
+    const tally = motmTallyByGame[g.id] ?? {};
+    const nameOf = (pid: string) => g.bookings.find((b) => b.player_id === pid)?.player.display_name ?? "";
+    const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([pid, v]) => ({ name: nameOf(pid), votes: v })).filter((t) => t.name);
+    return {
+      id: g.id,
+      date: g.date,
+      kickoff: g.kickoff,
+      venue: g.venue,
+      pitch: g.pitch,
+      white: { name: cs.team_white_name, color: cs.team_white_color, score: w },
+      red: { name: cs.team_red_name, color: cs.team_red_color, score: r },
+      played: g.bookings.filter((b) => !b.waiting).length,
+      waiting: g.bookings.filter((b) => b.waiting).length,
+      marginLine,
+      scorers,
+      ownGoals: rows.reduce((s2, x) => s2 + (x.own_goals ?? 0), 0),
+      predictions: {
+        white: preds.filter((p) => p.predicted_white > p.predicted_red).length,
+        red: preds.filter((p) => p.predicted_red > p.predicted_white).length,
+        draw: preds.filter((p) => p.predicted_red === p.predicted_white).length,
+        exact: preds.filter((p) => p.predicted_white === w && p.predicted_red === r).length,
+      },
+      motm: top.length ? { winners: (motmWinnerIdsByGame[g.id] ?? []).map(nameOf).filter(Boolean), votes: Object.values(tally).reduce((a, b) => a + b, 0), top } : null,
+    };
+  };
+  const openStory = (id: string) => {
+    setStoryOpen(id);
+    setStorySeen((cur) => {
+      const next = new Set(cur);
+      next.add(id);
+      try {
+        localStorage.setItem(storySeenKey, JSON.stringify([...next].slice(-60)));
+      } catch {}
+      return next;
+    });
+  };
   // Your own Man of the Match moment: a game whose vote closed in the last
   // 3 days that you won, not yet shown on this phone. Marked shown as soon
   // as it's picked, so it only ever appears once.
@@ -4945,7 +5032,7 @@ function App({ session }: { session: Session }) {
   if (ticketShow && ticketShow.mode !== "booked" && ticketGames.length > 0) momentCandidates.push("ticket:" + ticketShow.mode + ticketShow.gameIds.join(","));
   if (specialGame) momentCandidates.push("special:" + specialGame.id);
   if (fxCalendar && tab === "fixtures") momentCandidates.push("fx:" + fxCalendar.ids.join(","));
-  const momentsPaused = !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || !!queueTicket;
+  const momentsPaused = !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || !!queueTicket || !!storyOpen;
   const [momentNow, setMomentNow] = useState<string | null>(null);
   const [momentsPlayed, setMomentsPlayed] = useState(0);
   const momentKey = momentCandidates.join("|");
@@ -5364,6 +5451,16 @@ function App({ session }: { session: Session }) {
 
         {tab === "feed" && (
           <FeedTab
+            stories={
+              <StoryRings
+                games={storyRingGames}
+                seen={storySeen}
+                monthLabel={monthName(showingMonth)}
+                otherMonthLabel={otherMonth ? (otherMonth < showingMonth ? `← ${monthName(otherMonth)}` : `${monthName(otherMonth)} →`) : null}
+                onOtherMonth={() => setStoryMonth(otherMonth)}
+                onOpen={openStory}
+              />
+            }
             isAdmin={isAdmin}
             myId={myId}
             profiles={profiles}
@@ -5777,6 +5874,11 @@ function App({ session }: { session: Session }) {
           onDone={() => specialDone(specialGame.id)}
         />
       )}
+      {storyOpen && (() => {
+        const g = games.find((x) => x.id === storyOpen);
+        if (!g) return null;
+        return <GameStory game={buildStory(g)} motmClosed={kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) <= nowUk} onClose={() => setStoryOpen(null)} />;
+      })()}
       {paySheetOpen && <PaySheet due={myDue} paymentLink={PAYMENT_LINK} onMarkPaid={markPaid} onClose={() => setPaySheetOpen(false)} />}
       {queueTicket && (() => {
         const g = games.find((x) => x.id === queueTicket.gameId);
@@ -12727,6 +12829,67 @@ a.wcf-set-link{text-decoration:none}
 .wcf-md-team .mates{display:flex;margin-top:6px;padding-left:5px}
 .wcf-md-team .mates .wcf-avatar-chip{width:22px;height:22px;font-size:9px;margin-left:-5px;border:2px solid #0d0d1a}
 @media (prefers-reduced-motion:reduce){.wcf-md-badge,.wcf-md-count.hot,.wcf-md-live i{animation:none}}
+/* Game Stories */
+.wcf-stories{margin:0 2px 12px}
+.wcf-stories-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.wcf-stories-head b{font-weight:800;font-size:10.5px;letter-spacing:.18em;color:var(--dim);text-transform:uppercase}
+.wcf-stories-head button{background:none;border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:6px 11px;min-height:32px;font-weight:700;font-size:11px;cursor:pointer}
+.wcf-stories-row{display:flex;gap:12px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none}
+.wcf-stories-row::-webkit-scrollbar{display:none}
+.wcf-stories-none{font-size:12px;color:var(--dim);padding:8px 0}
+.wcf-story-ring{flex:none;display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:0;color:var(--dim);font-weight:700;font-size:10.5px;cursor:pointer;padding:0}
+.wcf-story-ring .r{width:62px;height:62px;border-radius:50%;padding:3px;background:conic-gradient(#f5d97a,#e63946,#f5d97a)}
+.wcf-story-ring.seen .r{background:rgba(148,163,184,.35)}
+.wcf-story-ring .r>span{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;border:3px solid var(--bg);background:linear-gradient(rgba(6,8,14,.35),rgba(6,8,14,.55)),url('/results-bg.jpg') center/cover;font-family:var(--display);font-weight:800;font-size:17px;color:#fff;line-height:1;text-align:center}
+.wcf-story-ring .r small{display:block;font-family:var(--sans);font-weight:800;font-size:8px;letter-spacing:.1em;margin-bottom:2px}
+.wcf-story{position:fixed;inset:0;z-index:1500;background:#05060c;color:#fff;display:flex;flex-direction:column;animation:wcfStoryIn .35s cubic-bezier(.3,1.1,.5,1) both;max-width:520px;margin:0 auto}
+@keyframes wcfStoryIn{from{transform:scale(.88);opacity:0}to{transform:none;opacity:1}}
+.wcf-story .bars{display:flex;gap:4px;padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 0;position:relative;z-index:3}
+.wcf-story .bars i{flex:1;height:3px;border-radius:2px;background:rgba(255,255,255,.25);overflow:hidden}
+.wcf-story .bars i b{display:block;height:100%;width:0;background:#fff}
+.wcf-story .bars i.done b{width:100%}
+.wcf-story .bars i.run b{animation:wcfStoryBar var(--dur,4.5s) linear forwards}
+.wcf-story .bars i.run.paused b{animation-play-state:paused}
+@keyframes wcfStoryBar{to{width:100%}}
+.wcf-story .top{display:flex;align-items:center;gap:8px;padding:10px 14px;position:relative;z-index:3;font-weight:700;font-size:12px}
+.wcf-story .top img{width:26px;height:26px}
+.wcf-story .top button{margin-left:auto;background:none;border:0;color:#fff;font-size:18px;cursor:pointer;min-width:44px;min-height:44px;position:relative;z-index:4}
+.wcf-story .card{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:26px 22px calc(env(safe-area-inset-bottom,0px) + 56px);background:center/cover;animation:wcfStoryCard .45s ease-out both}
+.wcf-story .card::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(5,6,12,.4),rgba(5,6,12,.2) 35%,rgba(5,6,12,.93) 75%)}
+.wcf-story .card>*{position:relative}
+@keyframes wcfStoryCard{from{opacity:0;transform:scale(1.05)}to{opacity:1;transform:none}}
+.wcf-story .k{font-weight:800;font-size:11px;letter-spacing:.22em;color:#f5d97a}
+.wcf-story .h{font-family:var(--display);font-weight:800;font-size:32px;line-height:1.05;margin-top:8px;letter-spacing:-.02em}
+.wcf-story .s{font-size:13.5px;color:#cbd5e1;margin-top:10px;line-height:1.45}
+.wcf-story .bigsc{display:flex;align-items:baseline;gap:12px;font-family:var(--display);font-weight:800;font-size:72px;line-height:1;margin-top:6px}
+.wcf-story .bigsc small{font-family:var(--sans);font-weight:800;font-size:12px;letter-spacing:.14em;color:#cbd5e1}
+.wcf-story .meta{margin-top:14px;display:grid;gap:8px}
+.wcf-story .meta div{display:flex;align-items:center;gap:10px;font-weight:600;font-size:14px;animation:wcfRise .35s both}
+.wcf-story .meta i{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:rgba(255,255,255,.1);font-style:normal}
+.wcf-story .sclist{margin-top:12px;display:grid;gap:8px}
+.wcf-story .sclist>div{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;animation:wcfRise .35s both}
+.wcf-story .sclist .wcf-avatar-chip{width:30px;height:30px;font-size:12px;margin:0}
+.wcf-story .sclist .side{width:8px;height:8px;border-radius:50%}
+.wcf-story .sclist em{margin-left:auto;font-style:normal;font-family:var(--display);font-weight:800;font-size:16px;color:#f5d97a}
+.wcf-story .sclist .more{font-size:13px;color:#cbd5e1;font-weight:600}
+.wcf-story .split{display:flex;height:44px;border-radius:12px;overflow:hidden;margin-top:16px;font-family:var(--display);font-weight:800;font-size:14px}
+.wcf-story .split div{display:grid;place-items:center;width:0;animation:wcfStoryGrow 1s cubic-bezier(.3,1.1,.5,1) forwards}
+@keyframes wcfStoryGrow{to{width:var(--w)}}
+.wcf-story .vbars{margin-top:14px;display:grid;gap:9px}
+.wcf-story .vb{display:grid;grid-template-columns:120px 1fr 22px;align-items:center;gap:8px;font-weight:700;font-size:12.5px}
+.wcf-story .vb>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-story .vb .t{height:10px;border-radius:5px;background:rgba(255,255,255,.12);overflow:hidden}
+.wcf-story .vb .t i{display:block;height:100%;width:0;border-radius:5px;background:rgba(245,217,122,.5);animation:wcfStoryGrow .9s cubic-bezier(.3,1.1,.5,1) forwards}
+.wcf-story .vb.win .t i{background:#f5d97a}
+.wcf-story .bignum{font-family:var(--display);font-weight:800;font-size:64px;line-height:1;letter-spacing:-.03em;margin-top:8px}
+.wcf-story .bignum small{font-family:var(--sans);font-weight:800;font-size:16px;color:#cbd5e1;margin-left:6px}
+.wcf-story .heat{margin-top:16px;display:flex;gap:6px}
+.wcf-story .heat i{flex:1;height:14px;border-radius:4px;background:rgba(255,255,255,.12)}
+.wcf-story .heat i.on{background:linear-gradient(90deg,#f59e0b,#ef4444)}
+.wcf-story .heat-ends{display:flex;justify-content:space-between;margin-top:6px;font-weight:700;font-size:11px;color:#cbd5e1}
+.wcf-story .tapzones{position:absolute;inset:70px 0 0;display:grid;grid-template-columns:1fr 2fr;z-index:2;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.wcf-story .tapzones button{background:none;border:0;cursor:pointer}
+@media (prefers-reduced-motion:reduce){.wcf-story,.wcf-story .card,.wcf-story .meta div,.wcf-story .sclist>div{animation:none}.wcf-story .split div,.wcf-story .vb .t i{animation:none;width:var(--w)}}
 /* Line-up: pick between games on the same night */
 .wcf-gamepick{display:flex;gap:8px;margin:-4px 2px 16px}
 .wcf-gamepick button{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);color:var(--dim);cursor:pointer;text-align:left}
