@@ -10397,14 +10397,14 @@ const css = `
 
 .wcf-card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px;margin-bottom:18px;position:relative;overflow:hidden}
 .wcf-card.featured{
-  background-image:linear-gradient(180deg,rgba(8,10,14,.15) 0%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/pitch-night.jpg');
-  background-size:cover;background-position:center 30%;border-radius:24px;padding:24px;margin-bottom:22px;
-}
-/* The second game on a two-game night: its own photo (a goal under the
-   floodlights), so the two cards are easy to tell apart. */
-.wcf-card.featured.alt{
   background-image:linear-gradient(180deg,rgba(8,10,14,.5) 0%,rgba(8,10,14,.45) 30%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/pitch-goal-night.jpg');
-  background-position:42% 40%;
+  background-size:cover;background-position:42% 40%;border-radius:24px;padding:24px;margin-bottom:22px;
+}
+/* The second game on a two-game night: a different photo (the night
+   pitch), so the two cards are easy to tell apart. */
+.wcf-card.featured.alt{
+  background-image:linear-gradient(180deg,rgba(8,10,14,.15) 0%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/pitch-night.jpg');
+  background-position:center 30%;
 }
 /* Payment-status glow (own booking only): red=unpaid, amber=pending,
    green=confirmed. Box-shadow, not an inner gradient div, since the
