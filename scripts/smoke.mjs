@@ -213,6 +213,24 @@ if (process.env.SMOKE_ADMIN !== "0" && serviceKey) {
       await page.locator("button", { hasText: "Use these teams" }).first().waitFor({ timeout: 8000 });
       await page.waitForTimeout(600);
     });
+    // GaffAI's "thinking" board shows while it works. The reply is held
+    // and faked here, so nothing reaches the AI (no cost, no chat saved).
+    await step("Admin: GaffAI thinking board", async () => {
+      await adminCtx.route("**/api/admin/gaffai", async (route) => {
+        const body = JSON.parse(route.request().postData() || "{}");
+        if (body.type === "message") { await new Promise((r) => setTimeout(r, 2500)); return route.fulfill({ json: { reply: "Smoke test reply.", history: [] } }); }
+        return route.continue();
+      });
+      await page.locator(".gaffai-fab").dispatchEvent("click");
+      await page.locator(".gaffai-composer input").waitFor({ timeout: 8000 });
+      await page.locator(".gaffai-composer input").fill("Smoke test");
+      await page.locator(".gaffai-send").dispatchEvent("click");
+      await page.waitForTimeout(900);
+      const h = await page.evaluate(() => document.querySelector(".gaffai-tiki, .gaffai-typing")?.getBoundingClientRect().height ?? 0);
+      if (h < 20) throw new Error(`GaffAI's thinking board isn't visible (height ${h})`);
+      await page.waitForTimeout(2400);
+      await page.locator(".gaffai-sheet-close").first().dispatchEvent("click", undefined, { timeout: 3000 }).catch(() => {});
+    });
     await step("Admin: Account", async () => {
       await page.locator(".wcf-role").first().dispatchEvent("click");
       await page.waitForFunction(() => document.querySelector(".wcf-heading h2")?.textContent?.startsWith("Your account"), null, { timeout: 10000 });

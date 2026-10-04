@@ -12963,7 +12963,9 @@ a.wcf-set-link{text-decoration:none}
 @keyframes wcfHeat{0%{transform:scaleY(.6);filter:brightness(1.6)}100%{transform:none;filter:none}}
 .wcf-rate-verdict.pop{animation:wcfStampIn .4s cubic-bezier(.3,1.6,.5,1) both}
 @keyframes wcfStampIn{from{transform:scale(1.8);opacity:0}to{transform:none;opacity:1}}
-.gaffai-tiki{position:relative;width:210px;max-width:100%;aspect-ratio:210/128;border-radius:10px;background:#1d4d32;box-shadow:inset 0 0 0 2px rgba(255,255,255,.55);overflow:hidden;margin:4px 0}
+/* Fixed size, and never shrunk: the chat list is a flex column, and an
+   aspect-ratio-only height was being squashed to 0 there (board invisible). */
+.gaffai-tiki{position:relative;flex:none;width:210px;height:128px;border-radius:10px;background:#1d4d32;box-shadow:inset 0 0 0 2px rgba(255,255,255,.55);overflow:hidden;margin:4px 0}
 .gaffai-tiki::before{content:"";position:absolute;left:50%;top:0;bottom:0;border-left:2px solid rgba(255,255,255,.5)}
 .gaffai-tiki::after{content:"";position:absolute;left:50%;top:50%;width:19%;aspect-ratio:1;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(255,255,255,.5)}
 .gaffai-tiki svg{position:absolute;inset:0;width:100%;height:100%;z-index:1}
