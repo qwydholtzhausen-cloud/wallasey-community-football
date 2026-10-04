@@ -80,7 +80,13 @@ export function GameStory({ game, motmClosed, onClose }: { game: StoryGame; motm
   // A press longer than this pauses the story (like holding a finger on
   // it) and doesn't count as a tap to skip.
   const pressAt = useRef(0);
-  const held = () => Date.now() - pressAt.current > 300;
+  // Only a real press-and-hold counts; a tap from a keyboard or screen
+  // reader (no press at all) always moves on.
+  const held = () => {
+    const was = pressAt.current > 0 && Date.now() - pressAt.current > 300;
+    pressAt.current = 0;
+    return was;
+  };
   useEffect(() => {
     let off = false;
     (async () => {
