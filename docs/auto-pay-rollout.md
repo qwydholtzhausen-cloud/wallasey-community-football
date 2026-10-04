@@ -2,6 +2,8 @@
 
 Everything is built on the `auto-pay` branch and switched off. To turn it on:
 
+> **Order matters:** run the SQL (step 3) **before** `MONZO_MATCHING_LIVE` goes to `true`. With the switch on and the columns missing, the app can't load games and sits on the loading screen.
+
 1. **Monzo developer client.** At developers.monzo.com, sign in as the club's Monzo account holder and create a confidential OAuth client with redirect URL `https://www.wirral-community-football.com/api/monzo/callback`.
 2. **Vercel environment variables** (Production): `MONZO_CLIENT_ID` and `MONZO_CLIENT_SECRET` from that client.
 3. **Database.** Run `supabase/auto-pay-rollout.sql` in the Supabase SQL editor. The last query should list members with 5-character codes.
