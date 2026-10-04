@@ -1,5 +1,6 @@
 "use client";
 
+import { createPortal } from "react-dom";
 import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
@@ -30,6 +31,7 @@ import {
   readableTextColor,
   teamGradient,
   useChanged,
+  motionAllowed,
   AccordionSection,
   SetIcon,
   StatusBadge,
@@ -45,6 +47,7 @@ import { Icon } from "./ui/icons";
 import { EmptyScene } from "./ui/EmptyScene";
 import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
 import { ResultsTab } from "./ui/results";
+import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
 import { LineupTab } from "./ui/lineup";
 import { AccountPanel } from "./ui/account";
 import { wrappedThemeFor } from "../lib/wrappedThemes";
@@ -1607,6 +1610,8 @@ function App({ session }: { session: Session }) {
   const [justVoted, setJustVoted] = useState<{ gameId: string; candidateId: string; n: number } | null>(null);
   const [motmMomentClosed, setMotmMomentClosed] = useState<string | null>(null);
   const [ticketShow, setTicketShow] = useState<{ mode: "booked" | "paid" | "birthday"; gameIds: string[] } | null>(null);
+  // "Take a ticket": the moment after you join a waiting list.
+  const [queueTicket, setQueueTicket] = useState<{ gameId: string; pos: number } | null>(null);
   const [specialShow, setSpecialShow] = useState<string | null>(null);
   const [fxCalendar, setFxCalendar] = useState<{ month: string; dates: string[]; ids: string[] } | null>(null);
   const [fxCascade, setFxCascade] = useState<string[]>([]);
@@ -2186,6 +2191,11 @@ function App({ session }: { session: Session }) {
     if (data && !data.waiting) {
       pushNotify("notify-last-spot", { gameId });
       if (motionOk()) setTicketShow({ mode: "booked", gameIds: [gameId] });
+    }
+    if (data?.waiting && motionOk()) {
+      const { data: queue } = await supabase.from("bookings").select("player_id").eq("game_id", gameId).eq("waiting", true).order("created_at");
+      const pos = (queue ?? []).findIndex((b) => b.player_id === myId) + 1;
+      if (pos > 0) setQueueTicket({ gameId, pos });
     }
   }
   // Same insert as book(), just every selected game in one round trip
@@ -3057,6 +3067,29 @@ function App({ session }: { session: Session }) {
   // are easy to tell apart.
   const nextMatchGames = nextFixtureForCountdown ? upcomingGames.filter((g) => g.published && g.date === nextFixtureForCountdown.date) : [];
   const nextMatchIds = new Set(nextMatchGames.map((g) => g.id));
+  // How often each waiting-list place has got in: everyone who joined a
+  // past game's waiting list, by their place in the queue when they joined
+  // (people still waiting ahead of them), and whether they were moved into
+  // the game. Shown on the "Take a ticket" moment once a place has 5+.
+  const queueOdds = useMemo(() => {
+    const byPos: Record<number, { date: string; got: boolean }[]> = {};
+    const past = games
+      .filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff));
+    for (const g of past) {
+      const joined = g.bookings.filter((b) => b.waiting || b.promoted_at).sort((a, b) => a.created_at.localeCompare(b.created_at));
+      for (const b of joined) {
+        const pos = 1 + joined.filter((o) => o.created_at < b.created_at && (!o.promoted_at || o.promoted_at > b.created_at)).length;
+        (byPos[pos] ??= []).push({ date: g.date, got: !!b.promoted_at });
+      }
+    }
+    const out: Record<number, QueueOdds> = {};
+    for (const [pos, list] of Object.entries(byPos)) {
+      if (list.length < 5) continue;
+      out[+pos] = { got: list.filter((x) => x.got).length, total: list.length, recent: list.slice(-5) };
+    }
+    return out;
+  }, [games, nowUk]);
   const pastGames = useMemo(
     () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
     [games, nowUk]
@@ -4883,7 +4916,7 @@ function App({ session }: { session: Session }) {
   if (ticketShow && ticketShow.mode !== "booked" && ticketGames.length > 0) momentCandidates.push("ticket:" + ticketShow.mode + ticketShow.gameIds.join(","));
   if (specialGame) momentCandidates.push("special:" + specialGame.id);
   if (fxCalendar && tab === "fixtures") momentCandidates.push("fx:" + fxCalendar.ids.join(","));
-  const momentsPaused = !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked";
+  const momentsPaused = !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || !!queueTicket;
   const [momentNow, setMomentNow] = useState<string | null>(null);
   const [momentsPlayed, setMomentsPlayed] = useState(0);
   const momentKey = momentCandidates.join("|");
@@ -5713,6 +5746,21 @@ function App({ session }: { session: Session }) {
           onDone={() => specialDone(specialGame.id)}
         />
       )}
+      {queueTicket && (() => {
+        const g = games.find((x) => x.id === queueTicket.gameId);
+        if (!g) return null;
+        const when = `${new Date(g.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} · ${g.kickoff}`;
+        return (
+          <QueueTicket
+            pos={queueTicket.pos}
+            booked={g.bookings.filter((b) => !b.waiting).length}
+            max={g.max_players}
+            when={when}
+            odds={queueOdds[queueTicket.pos] ?? null}
+            onDone={() => setQueueTicket(null)}
+          />
+        );
+      })()}
       {ticketShow && ticketGames.length > 0 && (ticketShow.mode === "booked" || showMoment("ticket")) && <MatchTickets key={ticketShow.mode + ticketShow.gameIds.join(",")} mode={ticketShow.mode} games={ticketGames} onDone={() => setTicketShow(null)} />}
       {potmShow === "everyone" && playerOfMonth && showMoment("potm") && (
         <PotmIntro
@@ -9834,6 +9882,9 @@ function GameCard({
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const waitingList = game.bookings.filter((b) => b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const myBooking = game.bookings.find((b) => b.player_id === myId);
+  // Captured when it opens: once the spot's given up the booking is gone,
+  // and the handover still has its substitution board to show.
+  const [handover, setHandover] = useState<{ bookingId: string; day: string; nextName: string | null; shirtColor: string; initial: string } | null>(null);
   const full = confirmed.length >= game.max_players;
   const spotsLeft = Math.max(0, game.max_players - confirmed.length);
   const fillPct = Math.min(100, (confirmed.length / game.max_players) * 100);
@@ -9910,6 +9961,14 @@ function GameCard({
           disabled={!myBooking && full && waitingList.length >= 10}
           onClick={async () => {
             if (!myBooking) return onBook();
+            if (!myBooking.waiting && motionAllowed())
+              return setHandover({
+                bookingId: myBooking.id,
+                day: new Date(game.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long" }),
+                nextName: waitingList[0]?.player.display_name.split(" ")[0] ?? null,
+                shirtColor: myBooking.team === "white" ? "#F5F6F8" : "#e63946",
+                initial: (myBooking.player.display_name.trim()[0] || "?").toUpperCase(),
+              });
             const ok = myBooking.waiting
               ? await askConfirm("Leave the waiting list?", "You'll lose your place in the queue.", "Leave")
               : await askConfirm("Give up your spot?", `${game.venue} · ${fmtDate(game.date)}. Someone from the waiting list will be offered it.`, "Give up spot");
@@ -9921,6 +9980,18 @@ function GameCard({
             : full ? (waitingList.length >= 10 ? "Waiting list full" : "Join waiting list") : "Grab a spot"}
         </button>
       )}
+      {handover && typeof document !== "undefined" &&
+        createPortal(
+          <ShirtHandover
+            day={handover.day}
+            nextName={handover.nextName}
+            shirtColor={handover.shirtColor}
+            initial={handover.initial}
+            onConfirm={() => onCancel(handover.bookingId)}
+            onClose={() => setHandover(null)}
+          />,
+          document.querySelector(".wcf-root") ?? document.body
+        )}
       {/* Once you've got a spot. People book about a month ahead, so a
           calendar entry is what stops the "forgot I was playing" no-shows.
           Android gets Google Calendar (where Android calendars live);
@@ -12476,6 +12547,60 @@ a.wcf-set-link{text-decoration:none}
 .wcf-hero-bar-fill,.wcf-fx-bar-fill{transition:width .7s cubic-bezier(.3,.8,.3,1)}
 .wcf-tick{display:inline-block}
 .wcf-tick.roll{animation:wcfTickRoll .45s cubic-bezier(.3,1.4,.5,1)}
+/* Full-screen "you just did this" moments: waiting-list ticket, shirt handover */
+.wcf-qt,.wcf-sh{position:fixed;inset:0;z-index:1500;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;color:#fff;overflow:hidden;
+  background:radial-gradient(ellipse at 50% 30%,rgba(30,41,59,.97),rgba(4,6,12,.98) 70%);animation:wcfQtIn .3s both}
+.wcf-qt.out{animation:wcfQtOut .5s .15s ease-in both}
+.wcf-sh.out{animation:wcfQtOut .38s ease-in both}
+@keyframes wcfQtIn{from{opacity:0}to{opacity:1}}
+@keyframes wcfQtOut{to{opacity:0}}
+.wcf-led-board{padding:10px 16px;border-radius:10px;background:#050505;border:2px solid #1f2937;box-shadow:inset 0 0 0 3px #0b0b0b,0 10px 30px -10px #000;background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1.2px);background-size:4px 4px;min-width:230px}
+.wcf-led-row{display:flex;justify-content:space-between;gap:18px;font-family:var(--mono);font-weight:800;font-size:12px;letter-spacing:.14em;color:#fbbf24;text-shadow:0 0 8px rgba(251,191,36,.8),0 0 18px rgba(251,191,36,.4)}
+.wcf-led-row+.wcf-led-row{margin-top:4px}
+.wcf-led-row .red,.wcf-led-row.red{color:#f87171;text-shadow:0 0 8px rgba(248,113,113,.8)}
+.wcf-led-row.green{color:#4ade80;text-shadow:0 0 8px rgba(74,222,128,.8)}
+.wcf-qt-machine{position:relative;width:170px;height:150px;margin-top:24px;animation:wcfQtDrop .55s cubic-bezier(.3,1.3,.5,1) both}
+.wcf-qt-machine .body{position:absolute;inset:0;border-radius:26px 26px 16px 16px;background:linear-gradient(180deg,#ef4444,#991b1b);box-shadow:inset 0 -10px 0 rgba(0,0,0,.25),0 24px 50px -12px #000}
+.wcf-qt-machine .dome{position:absolute;left:50%;top:-18px;width:70px;height:36px;margin-left:-35px;border-radius:36px 36px 0 0;background:#fca5a5;box-shadow:inset 0 -6px 0 rgba(0,0,0,.15)}
+.wcf-qt-machine .label{position:absolute;left:0;right:0;top:34px;font-family:var(--sans);font-weight:800;font-size:12px;letter-spacing:.26em}
+.wcf-qt-machine .mouth{position:absolute;left:34px;right:34px;bottom:22px;height:8px;border-radius:4px;background:#450a0a}
+@keyframes wcfQtDrop{from{transform:translateY(-160px)}to{transform:none}}
+.wcf-qt-ticket{position:relative;width:150px;margin-top:-26px;padding:18px 10px 14px;color:#1d1a14;background:#f3ead2;border-radius:3px;box-shadow:0 16px 30px -10px #000;clip-path:inset(0 0 100% 0);animation:wcfQtPrint 1s .6s steps(14) forwards;transition:transform .6s cubic-bezier(.6,0,.3,1),opacity .6s}
+.wcf-qt-ticket .k{font-family:var(--sans);font-weight:800;font-size:9px;letter-spacing:.24em;color:#8a7a55}
+.wcf-qt-ticket .n{font-family:var(--display);font-weight:800;font-size:74px;line-height:1;letter-spacing:-.04em;margin:4px 0 2px;animation:wcfQtRoll .12s linear}
+.wcf-qt-ticket .s{font-family:var(--sans);font-weight:700;font-size:11px;color:#4b4330}
+.wcf-qt-ticket.fly{transform:translateY(420px) scale(.25) rotate(20deg);opacity:0}
+@keyframes wcfQtPrint{to{clip-path:inset(0 0 0 0)}}
+@keyframes wcfQtRoll{from{transform:translateY(-40%);opacity:.4}to{transform:none;opacity:1}}
+.wcf-qt-odds{margin-top:20px;animation:wcfRise .4s both}
+.wcf-qt-odds .t{font-family:var(--display);font-weight:800;font-size:16px}
+.wcf-qt-odds .t b{color:#4ade80}
+.wcf-qt-form{display:flex;justify-content:center;gap:10px;margin-top:12px}
+.wcf-qt-form .f{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:9.5px;font-weight:700;color:var(--dim)}
+.wcf-qt-form i{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-weight:900;font-size:13px;background:rgba(148,163,184,.12);border:2px solid rgba(148,163,184,.3)}
+.wcf-qt-form i.y{background:#16a34a;border-color:#4ade80;color:#fff;animation:wcfStamp .35s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-qt-form i.n{background:#3f1d22;border-color:#f87171;color:#fca5a5;animation:wcfStamp .35s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-qt-sub{margin-top:18px;font-size:13px;color:var(--dim);max-width:30ch;line-height:1.45;animation:wcfRise .4s 1.4s both}
+.wcf-sh-t{font-family:var(--display);font-weight:800;font-size:22px}
+.wcf-sh-s{margin-top:6px;font-size:13px;color:var(--dim)}
+.wcf-sh-room{position:relative;width:250px;height:210px;margin-top:8px}
+.wcf-sh-room .rail{position:absolute;left:10px;right:10px;top:26px;height:10px;border-radius:5px;background:linear-gradient(180deg,#a16207,#713f12)}
+.wcf-sh-room .peg{position:absolute;left:121px;top:30px;width:8px;height:18px;border-radius:3px;background:#cbd5e1}
+.wcf-sh-room .ring{position:absolute;left:50%;top:22px;width:170px;height:170px;margin-left:-85px;pointer-events:none}
+.wcf-sh-room .ring circle{fill:none;stroke-width:6}
+.wcf-sh-room .ring .bg{stroke:rgba(148,163,184,.2)}
+.wcf-sh-room .ring .fg{stroke:#f5d97a;stroke-linecap:round;stroke-dasharray:490}
+.wcf-sh-shirt{position:absolute;left:50%;top:40px;width:120px;height:130px;margin-left:-60px;padding:0;border:0;background:none;cursor:pointer;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;transform-origin:50% 6px;animation:wcfShHang 2.4s ease-in-out infinite alternate}
+.wcf-sh-shirt svg{width:100%;height:100%;pointer-events:none}
+.wcf-sh-shirt:focus-visible{outline:2px solid #f5d97a;outline-offset:6px;border-radius:12px}
+.wcf-sh-shirt.gone{animation:none;transition:transform .7s cubic-bezier(.5,0,.3,1),opacity .7s;transform:translate(240px,-160px) rotate(40deg) scale(.4);opacity:0}
+@keyframes wcfShHang{from{transform:rotate(-3deg)}to{transform:rotate(3deg)}}
+.wcf-sh-board{display:grid;gap:8px;margin-top:22px;animation:wcfQtDrop .5s cubic-bezier(.3,1.3,.5,1) both}
+.wcf-sh-board .wcf-led-row{font-size:18px;letter-spacing:.1em}
+.wcf-sh-board .wcf-led-row span:first-child{font-size:11px;align-self:center}
+.wcf-sh-who{margin-top:16px;font-size:13px;color:var(--dim);max-width:30ch;line-height:1.45}
+.wcf-sh-who b{color:#fff}
+.wcf-sh-keep{margin-top:14px;min-height:44px;padding:0 22px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--white);font-weight:700;font-size:13.5px;cursor:pointer}
 /* Line-up: pick between games on the same night */
 .wcf-gamepick{display:flex;gap:8px;margin:-4px 2px 16px}
 .wcf-gamepick button{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);color:var(--dim);cursor:pointer;text-align:left}
