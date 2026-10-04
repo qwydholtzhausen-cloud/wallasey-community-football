@@ -1,14 +1,53 @@
-# Auto-payments rollout
+# Auto-payments (Monzo): set-up guide
 
-Everything is built on the `auto-pay` branch and switched off. To turn it on:
+Everything is built on the `auto-pay` branch and switched off. This is the order to switch it on. Allow about 30 minutes. You need: the person who holds the club's Monzo account (with their phone), Vercel access, and Supabase access.
 
-> **Order matters:** run the SQL (step 3) **before** `MONZO_MATCHING_LIVE` goes to `true`. With the switch on and the columns missing, the app can't load games and sits on the loading screen.
+> **Two rules.** Always use **`https://www.wirral-community-football.com`** (with `www`), never the `vercel.app` address. And run the SQL (step 3) **before** the switch goes on (step 4), or the app gets stuck on the loading screen.
 
-1. **Monzo developer client.** At developers.monzo.com, sign in as the club's Monzo account holder and create a confidential OAuth client with redirect URL `https://www.wirral-community-football.com/api/monzo/callback`.
-2. **Vercel environment variables** (Production): `MONZO_CLIENT_ID` and `MONZO_CLIENT_SECRET` from that client.
-3. **Database.** Run `supabase/auto-pay-rollout.sql` in the Supabase SQL editor. The last query should list members with 5-character codes.
-4. **Merge and deploy** the `auto-pay` branch, then flip `MONZO_MATCHING_LIVE` to `true` in `lib/clubPolicy.ts` and deploy again (or flip it on the branch before merging).
-5. **Connect Monzo.** Open `https://www.wirral-community-football.com/api/monzo/authorize` as the account holder, approve, then **also approve the access request in the Monzo app** (Monzo asks for in-app approval). Within about 5 minutes the scheduled job finds the account and registers for payment notifications (GaffAI's health check shows whether it's connected).
-6. **Test with a real £5.** From another account, pay the club with one player's reference. Within a minute that player's oldest unpaid game should show "paid via Monzo" in Admin and they get "Payment received ✅".
+## 0. Check the account type first
+The connection looks for a **personal or joint** Monzo current account. If the club's money goes into a **Monzo Business** account, stop here and tell Claude: Monzo's developer access is for personal accounts, so this needs a different plan.
 
-What players get once it's on: their reference and "Copy" on the pay sheet, a choice of "This week" or "All", "Pay £X with ref …", a "Waiting for your £X" bar until it lands, then a receipt listing the games it covered and the existing paid tickets. Part payments cover the soonest games first. Payments without a reference or with an amount that doesn't fit go to admins as today.
+## 1. Create the Monzo developer client (account holder)
+1. Go to **developers.monzo.com** and sign in with the account holder's email. Monzo emails a link, then asks for approval in the Monzo app.
+2. **Clients → New OAuth Client.**
+   - Name: `Wirral Community Football`
+   - Redirect URLs: **`https://www.wirral-community-football.com/api/monzo/callback`** (exactly this)
+   - Confidentiality: **Confidential**
+3. Submit, then copy the **Client ID** and **Client secret**.
+
+## 2. Add them to Vercel
+Vercel → the project → **Settings → Environment Variables**, Production:
+- `MONZO_CLIENT_ID` = the Client ID
+- `MONZO_CLIENT_SECRET` = the Client secret
+
+They take effect on the next deploy (step 4 does one).
+
+## 3. Run the SQL in Supabase
+Ask Claude to re-check it against the live database first, then run `supabase/auto-pay-rollout.sql` in the Supabase **SQL Editor**. The last query should list members, each with a 5-character code.
+
+## 4. Switch it on (Claude)
+Merge `auto-pay`, set `MONZO_MATCHING_LIVE = true` in `lib/clubPolicy.ts`, deploy, run the smoke test.
+
+## 5. Connect Monzo (account holder)
+1. Open **`https://www.wirral-community-football.com/api/monzo/authorize`**.
+2. Sign in to Monzo (email link) and approve **Wirral Community Football**.
+3. The page says **"Connected!"**.
+4. Open the **Monzo app** and approve the access request there too. Without this, Monzo won't share the account.
+5. Within about **5 minutes** the app finds the account and starts receiving payments. Ask GaffAI "how's the app's health?": it should say **"Monzo connected and receiving payments"**.
+
+## 6. Test with a real £5
+From a different bank account, pay the club account **£5** with a player's reference in the payment reference (it's in their app). Within a minute:
+- that player's soonest unpaid game shows as paid ("paid via Monzo" in Admin)
+- they get **"Payment received ✅"**
+
+## If something goes wrong
+| You see | What it means |
+|---|---|
+| Monzo says the redirect URL doesn't match | The client's redirect URL isn't exactly `https://www.wirral-community-football.com/api/monzo/callback` |
+| "Not set up yet" | The Vercel variables are missing, or there hasn't been a deploy since adding them |
+| "Connected!" but GaffAI says the webhook isn't registered | The Monzo app approval (step 5.4) hasn't been done yet |
+| A payment shows under Payments → "Couldn't be confirmed automatically" | No reference, a wrong reference, or an amount that doesn't fit their games. Confirm it by hand as today |
+| GaffAI says the connection expired | Repeat step 5 to reconnect |
+
+## How matching works
+Each member has a 5-character reference. When money arrives, the app finds the player from the reference and confirms the set of their unpaid games that adds up to the amount. If more than one set fits (most games cost the same), **part payments cover the soonest games first**. Anything it can't match goes to the admins. "I've paid" still works for cash.

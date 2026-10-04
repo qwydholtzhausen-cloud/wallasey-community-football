@@ -141,7 +141,7 @@ export async function checkAppHealth(admin: SupabaseClient) {
   const { data: monzo } = await admin.from("monzo_tokens").select("expires_at, webhook_registered, updated_at").eq("id", true).maybeSingle();
   if (monzo) {
     if (new Date(monzo.expires_at).getTime() < Date.now()) {
-      problems.push({ key: `health-monzo-expired-${monzo.expires_at}`, text: `The Monzo connection expired on ${fmtWhen(monzo.expires_at)} and didn't refresh, so payments aren't being matched automatically. Reconnect Monzo from Club settings.` });
+      problems.push({ key: `health-monzo-expired-${monzo.expires_at}`, text: `The Monzo connection expired on ${fmtWhen(monzo.expires_at)} and didn't refresh, so payments aren't being matched automatically. Reconnect it: the Monzo account holder opens https://www.wirral-community-football.com/api/monzo/authorize and approves again (also in the Monzo app).` });
     } else if (!monzo.webhook_registered) {
       problems.push({ key: "health-monzo-webhook", text: "Monzo is connected but its payment webhook isn't registered, so new payments aren't coming in. The 5-minute job retries it; if this stays, reconnect Monzo." });
     } else fine.push("Monzo connected and receiving payments");
