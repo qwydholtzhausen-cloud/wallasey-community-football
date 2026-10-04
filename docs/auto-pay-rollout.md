@@ -4,8 +4,8 @@ Everything is built on the `auto-pay` branch and switched off. This is the order
 
 > **Two rules.** Always use **`https://www.wirral-community-football.com`** (with `www`), never the `vercel.app` address. And run the SQL (step 3) **before** the switch goes on (step 4), or the app gets stuck on the loading screen.
 
-## 0. Check the account type first
-The connection looks for a **personal or joint** Monzo current account. If the club's money goes into a **Monzo Business** account, stop here and tell Claude: Monzo's developer access is for personal accounts, so this needs a different plan.
+## 0. The club account is Monzo Business
+The connection picks the **business account** first (a personal or joint account is only a fallback). Monzo's developer access is reported to work for business accounts, but it isn't officially documented, so step 6's £5 test is what proves it. If GaffAI still says no account is connected 10 minutes after step 5, tell Claude: the fallback is an Open Banking provider.
 
 ## 1. Create the Monzo developer client (account holder)
 1. Go to **developers.monzo.com** and sign in with the account holder's email. Monzo emails a link, then asks for approval in the Monzo app.

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { registerMonzoWebhook } from "../../../../lib/monzo";
+import { findMonzoAccount, registerMonzoWebhook } from "../../../../lib/monzo";
 
 // Where Monzo redirects back to after the account holder approves access
 // in their Monzo app. Exchanges the one-time authorization code for a
@@ -60,11 +60,7 @@ export async function GET(req: NextRequest) {
 
   // Find the actual account to watch for payments - the everyday spending
   // account, not a savings Pot, and not a closed/old one.
-  const accountsRes = await fetch("https://api.monzo.com/accounts", {
-    headers: { Authorization: `Bearer ${tokens.access_token}` },
-  });
-  const accountsBody = accountsRes.ok ? ((await accountsRes.json()) as { accounts: { id: string; closed: boolean; type: string }[] }) : null;
-  const account = accountsBody?.accounts.find((a) => !a.closed && (a.type === "uk_retail" || a.type === "uk_retail_joint"));
+  const account = await findMonzoAccount(tokens.access_token);
 
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const { error } = await supabase.from("monzo_tokens").upsert({

@@ -64,3 +64,20 @@ export async function registerMonzoWebhook(admin: SupabaseClient, accessToken: s
   await admin.from("monzo_tokens").update({ webhook_registered: true }).eq("id", true);
   return true;
 }
+
+// The account to watch for payments. The club banks with Monzo Business,
+// so a business account wins; a personal or joint account is the fallback.
+// Asks for business accounts by name too, in case the plain list leaves
+// them out. Null until Monzo shares the account (the holder also has to
+// approve access in the Monzo app).
+export async function findMonzoAccount(accessToken: string): Promise<{ id: string; type: string } | null> {
+  type Acc = { id: string; closed: boolean; type: string };
+  const get = async (q: string) => {
+    const res = await fetch(`https://api.monzo.com/accounts${q}`, { headers: { Authorization: `Bearer ${accessToken}` } }).catch(() => null);
+    return res?.ok ? (((await res.json()) as { accounts: Acc[] }).accounts ?? []).filter((a) => !a.closed) : [];
+  };
+  const all = await get("");
+  const business = all.find((a) => a.type === "uk_business") ?? (await get("?account_type=uk_business"))[0];
+  const pick = business ?? all.find((a) => a.type === "uk_retail" || a.type === "uk_retail_joint");
+  return pick ? { id: pick.id, type: pick.type } : null;
+}

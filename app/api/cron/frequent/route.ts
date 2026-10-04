@@ -3,7 +3,7 @@ import { wrappedThemeFor } from "../../../../lib/wrappedThemes";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
 import { kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, nextMonthStart, MONTH_RELEASE_HOUR, MATCH_DURATION_MINUTES, MOTM_VOTE_WINDOW_MINUTES } from "../../../../lib/time";
-import { ensureFreshMonzoToken, registerMonzoWebhook } from "../../../../lib/monzo";
+import { ensureFreshMonzoToken, findMonzoAccount, registerMonzoWebhook } from "../../../../lib/monzo";
 import { AUTO_REMOVE_UNPAID_BOOKINGS, WRAPPED_OPEN_TO_ALL_FROM, WRAPPED_FIRST_MONTH_FOR_ALL } from "../../../../lib/clubPolicy";
 import { nextOpenGame, fmtJourneyDate, type JourneyGame } from "../../../../lib/memberJourney";
 import { announcePlayerOfMonth } from "../../../../lib/potmAnnounce";
@@ -630,9 +630,7 @@ export async function GET(req: Request) {
   // OAuth callback - so if the callback couldn't find the account, look
   // again here until it can.
   if (monzoToken && !monzoToken.account_id) {
-    const res = await fetch("https://api.monzo.com/accounts", { headers: { Authorization: `Bearer ${monzoToken.access_token}` } }).catch(() => null);
-    const body = res?.ok ? ((await res.json()) as { accounts: { id: string; closed: boolean; type: string }[] }) : null;
-    const account = body?.accounts.find((a) => !a.closed && (a.type === "uk_retail" || a.type === "uk_retail_joint"));
+    const account = await findMonzoAccount(monzoToken.access_token);
     if (account) {
       await admin.from("monzo_tokens").update({ account_id: account.id }).eq("id", true);
       monzoToken.account_id = account.id;
