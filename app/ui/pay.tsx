@@ -66,7 +66,7 @@ export function PaySheet({ due, paymentLink, onMarkPaid, onClose }: { due: DueGa
         {d.status === "pending"
           ? "You said you'd paid"
           : d.msToKickoff <= PAY_SOON_MS
-            ? `Pay before kick-off · ${untilLabel(d.msToKickoff)}`
+            ? d.msToKickoff > 0 ? `Pay before kick-off · ${untilLabel(d.msToKickoff)}` : "Pay tonight"
             : `${dayLabel(d.date, { month: "long" })} · ${d.kickoff}`}
       </span>
       {d.status === "pending" ? <span className="chkpill">CHECKING</span> : <button type="button" className="paid-btn" onClick={() => onMarkPaid(d.bookingId)}>I&apos;ve paid</button>}

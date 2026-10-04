@@ -48,6 +48,7 @@ import { EmptyScene } from "./ui/EmptyScene";
 import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
 import { ResultsTab } from "./ui/results";
 import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
+import { MatchDayClock, MatchDayTeam, isMatchDay } from "./ui/matchday";
 import { OweBar, PaySheet, PAY_SOON_MS, untilLabel, type DueGame } from "./ui/pay";
 import { LineupTab } from "./ui/lineup";
 import { AccountPanel } from "./ui/account";
@@ -4764,6 +4765,20 @@ function App({ session }: { session: Session }) {
       ) ?? null,
     [scoredPastGames, nowUk, myId]
   );
+  // App icon badge: what needs you - unread messages, games to pay for in
+  // the next 7 days, and a Man of the Match vote you haven't cast. The
+  // service worker bumps it by one when a push lands with the app closed;
+  // opening the app sets the exact number again.
+  const badgeCount =
+    myUnreadMessages.length +
+    myDue.filter((d) => d.status === "unpaid" && d.msToKickoff <= PAY_SOON_MS).length +
+    (motmVoteGame && !myMotmVoteByGame[motmVoteGame.id] ? 1 : 0);
+  useEffect(() => {
+    if (loading || typeof navigator === "undefined" || !("setAppBadge" in navigator)) return;
+    const nav = navigator as Navigator & { setAppBadge: (n?: number) => Promise<void>; clearAppBadge: () => Promise<void> };
+    (badgeCount > 0 ? nav.setAppBadge(badgeCount) : nav.clearAppBadge()).catch(() => {});
+    if (typeof caches !== "undefined") caches.open("wcf-badge").then((c) => c.put("/badge-count", new Response(String(badgeCount)))).catch(() => {});
+  }, [badgeCount, loading]);
 
   // Flattens every prediction on a scored game into the shape lib/predictions.ts
   // expects - the actual scoring/aggregation logic lives there, kept pure and
@@ -5233,6 +5248,7 @@ function App({ session }: { session: Session }) {
                         key={g.id}
                         featured
                         alt={i % 2 === 1}
+                        teams={{ white: { name: cs.team_white_name, color: cs.team_white_color }, red: { name: cs.team_red_name, color: cs.team_red_color } }}
                         countdownText={countdownFor(g).text}
                         game={g}
                         myId={myId}
@@ -9863,6 +9879,7 @@ function GameCard({
   askConfirm,
   featured,
   alt,
+  teams,
   countdownText,
   isNew,
   cascadeIndex,
@@ -9887,6 +9904,8 @@ function GameCard({
   featured?: boolean;
   // The second "Next match" card on a two-game night: a different photo.
   alt?: boolean;
+  // Team names and colours, for match-day mode's "You're in ... tonight".
+  teams?: { white: { name: string; color: string }; red: { name: string; color: string } };
   countdownText?: string | null;
 }) {
   const [form, setForm] = useState<GameRow>(game);
@@ -9926,11 +9945,13 @@ function GameCard({
   // kick-off" countdown (red in the last 24h); games further off just say so
   // quietly - the "you owe" bar at the top covers paying for those.
   const msToKickoff = toMs(kickoffCutoff(game.date, game.kickoff, 0)) - toMs(nowInLondon());
+  // Match-day mode: today's game you're playing in (not the waiting list).
+  const matchDay = !!featured && !!myBooking && !myBooking.waiting && !game.special && isMatchDay(game.date, game.kickoff);
   const payStrip =
     myBooking && !myBooking.waiting && myBooking.status === "unpaid" && !myBooking.pot_exempt_reason ? (
       msToKickoff <= PAY_SOON_MS ? (
         <div className="wcf-payby-wrap">
-          <span className={"wcf-payby" + (msToKickoff <= 86400000 ? " red" : "")}>⏱ Pay before kick-off · {untilLabel(msToKickoff)}</span>
+          <span className={"wcf-payby" + (msToKickoff <= 86400000 ? " red" : "")}>⏱ {msToKickoff > 0 ? `Pay before kick-off · ${untilLabel(msToKickoff)}` : "Pay tonight"}</span>
           <div className="wcf-pay-strip">
             <span className="wcf-pay-strip-text">£{game.price} due</span>
             {PAYMENT_LINK && (
@@ -10056,7 +10077,11 @@ function GameCard({
         <>
           {game.special && <span className="wcf-special-ribbon">★ {fmtDate(game.date).split(",")[0]} {game.pitch}</span>}
           <div className="wcf-hero-top">
-            <span className="wcf-hero-date mono">{fmtDate(game.date).replace(",", "").toUpperCase()}</span>
+            {matchDay ? (
+              <span className="wcf-md-badge">⚽ MATCHDAY</span>
+            ) : (
+              <span className="wcf-hero-date mono">{fmtDate(game.date).replace(",", "").toUpperCase()}</span>
+            )}
             <span className="wcf-hero-top-right">
               {isAdmin && (
                 <button className="wcf-hero-edit-btn" onClick={onEdit} aria-label="Edit fixture">
@@ -10066,7 +10091,7 @@ function GameCard({
               <span className={"wcf-status-pill " + (full ? "full" : "open")}>{full ? "Full" : "Open"}</span>
             </span>
           </div>
-          <div className="wcf-hero-time">{game.kickoff}</div>
+          {matchDay ? <MatchDayClock date={game.date} kickoff={game.kickoff} /> : <div className="wcf-hero-time">{game.kickoff}</div>}
           <div className="wcf-hero-venue-row">
             <span className="wcf-hero-venue combo">
               <span className="wcf-hero-pin">
@@ -10075,12 +10100,19 @@ function GameCard({
               {game.venue}
               {!game.published && <span className="wcf-draft-badge">Draft</span>}
             </span>
-            {countdownText && <LiveCountdown date={game.date} kickoff={game.kickoff} fallback={countdownText} />}
+            {countdownText && !matchDay && <LiveCountdown date={game.date} kickoff={game.kickoff} fallback={countdownText} />}
           </div>
           <div className="wcf-hero-meta">
             <span>{game.pitch}</span><span className="wcf-hero-dot" /><span>£{game.price}</span>
             {weather && <><span className="wcf-hero-dot" /><span>{weatherIcon(weather.code)} {weather.temp}°C</span></>}
           </div>
+          {matchDay && myBooking?.team && teams && (
+            <MatchDayTeam
+              name={teams[myBooking.team].name}
+              color={teams[myBooking.team].color}
+              mates={confirmed.filter((b) => b.team === myBooking.team && b.player_id !== myId).map((b) => b.player)}
+            />
+          )}
           <div className="wcf-hero-divider" />
           <button className="wcf-hero-roster combo tappable" onClick={openSheet} aria-label="View squad">
             <div className="wcf-hero-roster-icon">
@@ -12673,6 +12705,28 @@ a.wcf-set-link{text-decoration:none}
 .wcf-paysheet .ft .tot span:last-child{font-size:20px}
 .wcf-paysheet .ft .pn{display:grid;place-items:center;min-height:48px;border-radius:14px;background:var(--red);color:#fff;font-family:var(--display);font-weight:800;font-size:14px;text-decoration:none}
 .wcf-paysheet .ft small{text-align:center;color:var(--dim);font-size:11px}
+/* Match-day mode */
+.wcf-md-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-weight:800;font-size:10.5px;letter-spacing:.18em;color:#1a1405;background:linear-gradient(90deg,#f5d97a,#fde68a,#f5d97a);background-size:200% 100%;animation:wcfMdShimmer 2.4s linear infinite}
+@keyframes wcfMdShimmer{to{background-position:-200% 0}}
+.wcf-md-count{font-family:var(--display);font-weight:800;font-size:46px;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums;margin:12px 0 10px}
+.wcf-md-count small{display:block;font-family:var(--sans);font-weight:700;font-size:11px;letter-spacing:.14em;color:var(--dim);margin-top:6px}
+.wcf-md-count.hot{color:#fbbf24;animation:wcfMdHot 1.6s ease-in-out infinite}
+@keyframes wcfMdHot{50%{text-shadow:0 0 18px rgba(251,191,36,.6)}}
+.wcf-md-livebox{margin:12px 0 10px}
+.wcf-md-live{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;background:rgba(34,197,94,.16);border:1px solid rgba(34,197,94,.5);color:#86efac;font-weight:800;font-size:11px;letter-spacing:.16em}
+.wcf-md-live i{width:8px;height:8px;border-radius:50%;background:#22c55e;animation:wcfMdPulse 1.2s ease-in-out infinite}
+@keyframes wcfMdPulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.7)}100%{box-shadow:0 0 0 7px rgba(34,197,94,0)}}
+.wcf-md-min{font-family:var(--display);font-weight:800;font-size:40px;font-variant-numeric:tabular-nums;margin-top:8px}
+.wcf-md-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:6px}
+.wcf-md-bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#86efac);transition:width 1s linear}
+.wcf-md-team{display:flex;align-items:center;gap:12px;margin:14px 0 0;padding:12px;border-radius:14px;border:1px solid;animation:wcfRise .45s both}
+.wcf-md-team .bib{width:40px;height:44px;flex:none}
+.wcf-md-team .tx{min-width:0}
+.wcf-md-team b{display:block;font-family:var(--display);font-weight:800;font-size:16px}
+.wcf-md-team span{font-size:11.5px;color:var(--dim)}
+.wcf-md-team .mates{display:flex;margin-top:6px;padding-left:5px}
+.wcf-md-team .mates .wcf-avatar-chip{width:22px;height:22px;font-size:9px;margin-left:-5px;border:2px solid #0d0d1a}
+@media (prefers-reduced-motion:reduce){.wcf-md-badge,.wcf-md-count.hot,.wcf-md-live i{animation:none}}
 /* Line-up: pick between games on the same night */
 .wcf-gamepick{display:flex;gap:8px;margin:-4px 2px 16px}
 .wcf-gamepick button{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);color:var(--dim);cursor:pointer;text-align:left}

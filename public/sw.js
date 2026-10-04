@@ -15,14 +15,33 @@ self.addEventListener("push", (event) => {
 
   const { title, body, url, sid } = payload;
   event.waitUntil(
-    self.registration.showNotification(title || "Wirral Community Football", {
-      body,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/icon-192.png",
-      data: { url: url || "/", sid: sid || null },
-    })
+    Promise.all([
+      self.registration.showNotification(title || "Wirral Community Football", {
+        body,
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-192.png",
+        data: { url: url || "/", sid: sid || null },
+      }),
+      bumpAppBadge(),
+    ])
   );
 });
+
+// The number on the home-screen icon. The app sets the exact count (unread
+// messages, games to pay for this week, a MOTM vote to cast) whenever it's
+// open and keeps it here; a push that lands while it's closed adds one, and
+// the next open puts the exact number back. Phones without app badges
+// (or without permission) just skip this.
+async function bumpAppBadge() {
+  try {
+    if (!("setAppBadge" in self.navigator)) return;
+    const cache = await caches.open("wcf-badge");
+    const res = await cache.match("/badge-count");
+    const n = (res ? parseInt(await res.text(), 10) || 0 : 0) + 1;
+    await cache.put("/badge-count", new Response(String(n)));
+    await self.navigator.setAppBadge(n);
+  } catch {}
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
