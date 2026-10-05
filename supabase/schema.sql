@@ -2079,3 +2079,14 @@ drop policy if exists "members_only_boot_room_listings_insert" on public.boot_ro
 create policy "members_only_boot_room_listings_insert" on public.boot_room_listings as restrictive for insert with check (public.is_active_member());
 drop policy if exists "members_only_boot_room_endorsements_insert" on public.boot_room_endorsements;
 create policy "members_only_boot_room_endorsements_insert" on public.boot_room_endorsements as restrictive for insert with check (public.is_active_member());
+
+-- ─────────────────────────────────────────────────────────────────
+-- Scoring for both sides (mid-match swap). `goals` stays the player's
+-- total for the game, so every total and record is unchanged; this says
+-- how many of those went in for the side they didn't finish on (the side
+-- on their booking). Only per-team scorer lists read it (lib/goalSides).
+-- default 0 backfills every existing row.
+-- ─────────────────────────────────────────────────────────────────
+
+alter table public.game_stats add column if not exists goals_other_side int not null default 0
+  check (goals_other_side >= 0 and goals_other_side <= goals);

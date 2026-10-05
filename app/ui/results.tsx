@@ -8,6 +8,7 @@ import { MOTM_TAGS } from "../motmTags";
 import { MOTM_VOTE_WINDOW_MINUTES, kickoffCutoff } from "../../lib/time";
 import { predictionPoints, type ScoredPrediction } from "../../lib/predictions";
 import type { ClubRecords, Holder, PersonalBests } from "../../lib/records";
+import { scorersForSide } from "../../lib/goalSides";
 import type { AwardRow, BookingRow, ClubSettings, GameRow, GoalRow, MonzoUnmatchedRow, MotmVote, PotEntry, Profile, Team } from "../WirralCommunityFootball";
 
 // ── The Results tab ──
@@ -1059,8 +1060,8 @@ export function ResultsTab({
           {filteredResults.map((g, resultIndex) => {
             const scorers = goalRows.filter((r) => r.game_id === g.id && r.goals > 0).sort((a, b) => b.goals - a.goals);
             const teamOf = (playerId: string) => g.bookings.find((b) => b.player_id === playerId)?.team;
-            const whiteScorers = scorers.filter((s) => teamOf(s.player_id) === "white");
-            const redScorers = scorers.filter((s) => teamOf(s.player_id) === "red");
+            const whiteScorers = scorersForSide(scorers, "white", teamOf);
+            const redScorers = scorersForSide(scorers, "red", teamOf);
             // Not split by team - which side an own goal benefited isn't
             // reliably knowable if the scorer switched teams mid-match.
             const ownGoalScorers = goalRows.filter((r) => r.game_id === g.id && r.own_goals > 0);

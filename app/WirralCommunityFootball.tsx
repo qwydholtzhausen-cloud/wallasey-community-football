@@ -51,6 +51,7 @@ import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
 import { WinMoment, type SeasonGame } from "./ui/celebrate";
 import { ClubOdometer, DebutCard, MilestoneShirt, MotmWinCard, PotmMine, PotmNight, RecordCard } from "./ui/premium";
 import { MatchDayClock, MatchDayTeam, isMatchDay } from "./ui/matchday";
+import { scorersForSide } from "../lib/goalSides";
 import { GameStory, StoryRings, type StoryGame } from "./ui/stories";
 import { OweBar, PaySheet, PAY_SOON_MS, untilLabel, type DueGame } from "./ui/pay";
 import { LineupTab } from "./ui/lineup";
@@ -278,6 +279,9 @@ export interface GoalRow {
   player_id: string;
   goals: number;
   own_goals: number;
+  // Of `goals`, how many were for the side they didn't finish on (a
+  // mid-match swap). Missing until the column exists - see lib/goalSides.
+  goals_other_side?: number | null;
   player: Profile;
 }
 
@@ -1801,7 +1805,7 @@ function App({ session }: { session: Session }) {
   const loadGoals = useCallback(async () => {
     const { data } = await supabase
       .from("game_stats")
-      .select("id, game_id, player_id, goals, own_goals, player:profiles(id, display_name, role)")
+      .select("*, player:profiles(id, display_name, role)")
       .order("goals", { ascending: false });
     if (data) setGoalRows(data as unknown as GoalRow[]);
   }, []);
@@ -2412,7 +2416,8 @@ function App({ session }: { session: Session }) {
     redScore: number | null,
     goals: Record<string, number>,
     ownGoals: Record<string, number>,
-    teams: Record<string, Team> = {}
+    teams: Record<string, Team> = {},
+    otherSide: Record<string, number> = {}
   ) {
     // Team fixes from the result sheet (a mid-match swap, or a late arrival
     // who never got put on a side), keyed by booking id.
@@ -2426,12 +2431,16 @@ function App({ session }: { session: Session }) {
       .eq("id", gameId);
     if (scoreErr) return notifyError(scoreErr.message);
 
-    const playerIds = new Set([...Object.keys(goals), ...Object.keys(ownGoals)]);
+    const playerIds = new Set([...Object.keys(goals), ...Object.keys(ownGoals), ...Object.keys(otherSide)]);
+    // goals_other_side only goes out when this game uses it, so saving a
+    // normal result never depends on that column.
+    const withOther = Object.keys(otherSide).length > 0;
     const rows = Array.from(playerIds).map((player_id) => ({
       game_id: gameId,
       player_id,
       goals: goals[player_id] ?? 0,
       own_goals: ownGoals[player_id] ?? 0,
+      ...(withOther ? { goals_other_side: otherSide[player_id] ?? 0 } : {}),
     }));
     if (rows.length) {
       const { error: goalsErr } = await supabase.from("game_stats").upsert(rows, { onConflict: "game_id,player_id" });
@@ -2748,8 +2757,8 @@ function App({ session }: { session: Session }) {
   async function shareResult(game: GameRow) {
     const scorers = goalRows.filter((r) => r.game_id === game.id && r.goals > 0);
     const teamOf = (playerId: string) => game.bookings.find((b) => b.player_id === playerId)?.team;
-    const whiteScorers = scorers.filter((r) => teamOf(r.player_id) === "white").map((r) => ({ name: r.player.display_name, goals: r.goals }));
-    const redScorers = scorers.filter((r) => teamOf(r.player_id) === "red").map((r) => ({ name: r.player.display_name, goals: r.goals }));
+    const whiteScorers = scorersForSide(scorers, "white", teamOf).map((r) => ({ name: r.player.display_name, goals: r.goals }));
+    const redScorers = scorersForSide(scorers, "red", teamOf).map((r) => ({ name: r.player.display_name, goals: r.goals }));
     const ownGoals = goalRows
       .filter((r) => r.game_id === game.id && r.own_goals > 0)
       .map((r) => ({ name: r.player.display_name, goals: r.own_goals }));
@@ -3260,9 +3269,9 @@ function App({ session }: { session: Session }) {
     } else if (margin > 0) marginLine += ".";
     const side = (pid: string) => g.bookings.find((b) => b.player_id === pid && !b.waiting)?.team;
     const rows = goalRows.filter((x) => x.game_id === g.id);
-    const scorers = rows
-      .filter((x) => x.goals > 0 && side(x.player_id))
-      .map((x) => ({ name: x.player.display_name, avatarUrl: x.player.avatar_url ?? null, goals: x.goals, side: side(x.player_id) as "white" | "red" }));
+    const scorers = (["white", "red"] as const).flatMap((t) =>
+      scorersForSide(rows.filter((x) => x.goals > 0), t, side).map((x) => ({ name: x.player.display_name, avatarUrl: x.player.avatar_url ?? null, goals: x.goals, side: t }))
+    );
     const preds = scorePredictions.filter((p) => p.game_id === g.id);
     const tally = motmTallyByGame[g.id] ?? {};
     const nameOf = (pid: string) => g.bookings.find((b) => b.player_id === pid)?.player.display_name ?? "";
@@ -8819,7 +8828,7 @@ function AdminConsole({
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
-  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>) => Promise<void>;
+  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>, otherSide: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
   onGoToLineup: (gameId?: string) => void;
@@ -9345,7 +9354,7 @@ function AdminGameRow({
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
-  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>) => Promise<void>;
+  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>, otherSide: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
@@ -9712,7 +9721,7 @@ function ResultSheet({
   game: GameRow;
   goalRows: GoalRow[];
   cs: ClubSettings;
-  onSave: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>) => Promise<void>;
+  onSave: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>, otherSide: Record<string, number>) => Promise<void>;
   onShare: (gameId: string) => void;
   onClose: () => void;
 }) {
@@ -9725,13 +9734,18 @@ function ResultSheet({
     game.bookings.filter((b) => !b.waiting && teamOf[b.id] && teamOf[b.id] !== b.team).map((b) => [b.id, teamOf[b.id] as Team])
   );
   const [teamMode, setTeamMode] = useState(false);
+  // `goals` here is just the side they finished on; `other` is goals for
+  // the other side before a swap. Saved as total + other (lib/goalSides).
   const initialGoals: Record<string, number> = {};
   const initialOwn: Record<string, number> = {};
+  const initialOther: Record<string, number> = {};
   goalRows
     .filter((r) => r.game_id === game.id)
     .forEach((r) => {
-      initialGoals[r.player_id] = r.goals;
+      const o = Math.min(r.goals, r.goals_other_side ?? 0);
+      initialGoals[r.player_id] = r.goals - o;
       initialOwn[r.player_id] = r.own_goals;
+      if (o > 0) initialOther[r.player_id] = o;
     });
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [white, setWhite] = useState(game.team_white_score ?? 0);
@@ -9739,6 +9753,8 @@ function ResultSheet({
   const [goals, setGoals] = useState<Record<string, number>>(initialGoals);
   const [own, setOwn] = useState<Record<string, number>>(initialOwn);
   const [ogMode, setOgMode] = useState(false);
+  const [other, setOther] = useState<Record<string, number>>(initialOther);
+  const [otherMode, setOtherMode] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const groups = ([
@@ -9747,25 +9763,33 @@ function ResultSheet({
     ["none", players.filter((b) => !b.team), "Not on a team", "#94a3b8", null],
   ] as const).filter(([, g]) => g.length > 0);
   const sum = (ids: BookingRow[], m: Record<string, number>) => ids.reduce((n, b) => n + (m[b.player_id] ?? 0), 0);
-  const totalAssigned = sum(players, goals) + sum(players, own);
+  const totalAssigned = sum(players, goals) + sum(players, own) + sum(players, other);
   const totalScore = white + red;
   const ownTotal = sum(players, own);
 
   const moveSide = (bookingId: string) => setTeamOf((m) => ({ ...m, [bookingId]: m[bookingId] === "white" ? "red" : "white" }));
   const bump = (id: string, by: number) => {
-    const set = ogMode ? setOwn : setGoals;
+    const set = ogMode ? setOwn : otherMode ? setOther : setGoals;
     set((m) => ({ ...m, [id]: Math.max(0, (m[id] ?? 0) + by) }));
   };
-  const scorerLine = (group: BookingRow[]) =>
-    group
-      .filter((b) => (goals[b.player_id] ?? 0) > 0)
-      .sort((a, b) => (goals[b.player_id] ?? 0) - (goals[a.player_id] ?? 0))
-      .map((b) => `${b.player.display_name} ${goals[b.player_id]}`)
+  // A side's scorers: its own players, plus anyone now on the other side
+  // who scored for this one before swapping.
+  const sideScorers = (side: Team) => [
+    ...players.filter((b) => b.team === side && (goals[b.player_id] ?? 0) > 0).map((b) => ({ b, n: goals[b.player_id], swapped: false })),
+    ...players.filter((b) => b.team && b.team !== side && (other[b.player_id] ?? 0) > 0).map((b) => ({ b, n: other[b.player_id], swapped: true })),
+  ];
+  const scorerLine = (side: Team) =>
+    sideScorers(side)
+      .sort((x, y) => y.n - x.n)
+      .map(({ b, n, swapped }) => `${b.player.display_name} ${n}${swapped ? " (before swapping)" : ""}`)
       .join(", ") || "No scorers entered";
 
   async function save() {
     setSaving(true);
-    await onSave(game.id, white, red, goals, own, teamChanges);
+    const totals = Object.fromEntries([...new Set([...Object.keys(goals), ...Object.keys(other)])].map((id) => [id, (goals[id] ?? 0) + (other[id] ?? 0)]));
+    // Only send the other-side column when this game uses it.
+    const usesOther = Object.values(initialOther).some((n) => n > 0) || Object.values(other).some((n) => n > 0);
+    await onSave(game.id, white, red, totals, own, teamChanges, usesOther ? other : {});
     setSaving(false);
     setStep(4);
   }
@@ -9807,9 +9831,10 @@ function ResultSheet({
         {step === 2 && (
           <>
             {ogMode && <div className="wcf-rs-og">Own-goal mode: tap whoever put it in their own net. <button onClick={() => setOgMode(false)}>Done</button></div>}
+            {otherMode && <div className="wcf-rs-og wcf-rs-teammode">Scored for both sides: tap a player once for each goal they scored for the <b>other</b> team before they swapped. <button onClick={() => setOtherMode(false)}>Done</button></div>}
             {teamMode && <div className="wcf-rs-og wcf-rs-teammode">Fix teams: tap a player to move them to the other side. Their goals go with them. <button onClick={() => setTeamMode(false)}>Done</button></div>}
             {groups.map(([key, group, name, color, target]) => {
-              const assigned = sum([...group], goals);
+              const assigned = key === "none" ? 0 : sideScorers(key).reduce((n, x) => n + x.n, 0);
               return (
                 <div key={key}>
                   <div className="wcf-rs-teamhead">
@@ -9820,14 +9845,16 @@ function ResultSheet({
                   </div>
                   <div className="wcf-rs-chips">
                     {group.map((b) => {
-                      const n = (ogMode ? own : goals)[b.player_id] ?? 0;
+                      const n = (ogMode ? own : otherMode ? other : goals)[b.player_id] ?? 0;
                       const og = own[b.player_id] ?? 0;
+                      const sw = other[b.player_id] ?? 0;
                       return (
                         <span key={b.id} className={"wcf-rs-chip" + (n > 0 ? " has" : "") + (ogMode ? " og" : "")}>
                           <button className="wcf-rs-chip-main" onClick={() => (teamMode ? moveSide(b.id) : bump(b.player_id, 1))}>
                             <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-rs-chip-av" background={avatarFor(b.player.display_name).gradient} />
                             {b.player.display_name.split(" ")[0]}
                             {!ogMode && og > 0 && <em>OG</em>}
+                            {!otherMode && sw > 0 && <em className="sw">+{sw} ⇄</em>}
                           </button>
                           {teamMode ? (
                             <span className="wcf-rs-move" aria-hidden="true">⇄</span>
@@ -9853,17 +9880,18 @@ function ResultSheet({
                   : `That's ${totalAssigned - totalScore} more than the score. Check the numbers.`}
               {ownTotal > 0 ? ` Own goals: ${ownTotal}.` : ""}
             </p>
-            {!ogMode && !teamMode && (
+            {!ogMode && !teamMode && !otherMode && (
               <div className="wcf-rs-links">
                 <button className="wcf-rs-oglink" onClick={() => setOgMode(true)}>Was one an own goal?</button>
                 <button className="wcf-rs-oglink" onClick={() => setTeamMode(true)}>
                   {players.some((b) => !b.team) ? "Put someone on a team" : "Someone swapped sides?"}
                 </button>
+                <button className="wcf-rs-oglink" onClick={() => setOtherMode(true)}>Scored for both sides?</button>
               </div>
             )}
             <div className="wcf-rs-row">
-              <button className="wcf-rs-ghost" onClick={() => { setOgMode(false); setTeamMode(false); setStep(1); }}>Back</button>
-              <button className="wcf-rs-cta" onClick={() => { setOgMode(false); setTeamMode(false); setStep(3); }}>Next: check</button>
+              <button className="wcf-rs-ghost" onClick={() => { setOgMode(false); setTeamMode(false); setOtherMode(false); setStep(1); }}>Back</button>
+              <button className="wcf-rs-cta" onClick={() => { setOgMode(false); setTeamMode(false); setOtherMode(false); setStep(3); }}>Next: check</button>
             </div>
           </>
         )}
@@ -9880,8 +9908,8 @@ function ResultSheet({
                 <span>{cs.team_red_name.toUpperCase()}</span>
               </div>
               <div className="who">
-                <div><b>{cs.team_white_name}:</b> {scorerLine(players.filter((b) => b.team === "white"))}</div>
-                <div><b>{cs.team_red_name}:</b> {scorerLine(players.filter((b) => b.team === "red"))}</div>
+                <div><b>{cs.team_white_name}:</b> {scorerLine("white")}</div>
+                <div><b>{cs.team_red_name}:</b> {scorerLine("red")}</div>
                 {ownTotal > 0 && <div><b>Own goals:</b> {players.filter((b) => (own[b.player_id] ?? 0) > 0).map((b) => `${b.player.display_name} ${own[b.player_id]}`).join(", ")}</div>}
                 {Object.keys(teamChanges).length > 0 && (
                   <div><b>Team changes:</b> {players.filter((b) => teamChanges[b.id]).map((b) => `${b.player.display_name} → ${b.team === "white" ? cs.team_white_name : cs.team_red_name}`).join(", ")}</div>
@@ -12362,6 +12390,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rs-minus{width:30px;height:30px;margin-right:6px;border-radius:50%;border:1px solid var(--line);background:rgba(0,0,0,.25);color:var(--white);font-size:16px;line-height:1;cursor:pointer}
 .wcf-rs-hint{font-size:12.5px;color:var(--dim);line-height:1.5;margin:14px 2px 0}
 .wcf-rs-links{display:flex;flex-wrap:wrap;gap:6px 18px}
+.wcf-rs-chip-main em.sw{color:#93c5fd;border-color:rgba(147,197,253,.5)}
 .wcf-rs-move{margin-right:12px;color:#93c5fd;font-weight:800}
 .wcf-rs-oglink{margin-top:8px;background:none;border:0;padding:0;color:var(--dim);font-size:12.5px;font-weight:700;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 .wcf-rs-og{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);font-size:12.5px;color:#f5d97a;font-weight:600}
