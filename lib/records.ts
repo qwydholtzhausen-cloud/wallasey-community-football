@@ -136,6 +136,8 @@ export function computeRecords(input: RecordsInput): ClubRecords {
   const bestInARow: Record<string, number> = {};
   const promotions: Record<string, number> = {};
   const everyone = new Set<string>();
+  // Two-game nights: playing either game that night keeps your run going.
+  const playedOn = playedByDate(games);
   for (const g of games) {
     const w = g.team_white_score!;
     const r = g.team_red_score!;
@@ -149,7 +151,7 @@ export function computeRecords(input: RecordsInput): ClubRecords {
     for (const id of everyone) {
       const team = played.get(id);
       if (!team) {
-        inARow[id] = 0;
+        if (!playedOn.get(g.date)?.has(id)) inARow[id] = 0;
         continue;
       }
       inARow[id] = (inARow[id] ?? 0) + 1;
@@ -217,13 +219,14 @@ export function computePersonalBests(input: RecordsInput, playerId: string): Per
     if (r.goals >= 3) hatTricks++;
   }
 
+  const playedOn = playedByDate(games);
   let played = 0;
   let win = 0, bestWin = 0, unb = 0, bestUnb = 0, row = 0, bestRow = 0;
   let motmWins = 0, motmVotes = 0;
   for (const g of games) {
     const b = g.bookings.find((x) => x.player_id === playerId && !x.waiting && x.team);
     if (!b) {
-      row = 0;
+      if (!playedOn.get(g.date)?.has(playerId)) row = 0;
       continue;
     }
     played++;
@@ -244,4 +247,18 @@ export function computePersonalBests(input: RecordsInput, playerId: string): Per
     }
   }
   return { games: played, mostGoals, hatTricks, winStreak: bestWin, unbeaten: bestUnb, gamesInARow: bestRow, motmWins, motmVotes };
+}
+
+// Who played (on a team, not waiting) on each date - a night can have two
+// games, and turning up for either one counts as not missing that night.
+export function playedByDate(games: { date: string; bookings: { player_id: string; waiting?: boolean | null; team?: string | null }[] }[]) {
+  const m = new Map<string, Set<string>>();
+  for (const g of games) {
+    for (const b of g.bookings) {
+      if (b.waiting || !b.team) continue;
+      if (!m.has(g.date)) m.set(g.date, new Set());
+      m.get(g.date)!.add(b.player_id);
+    }
+  }
+  return m;
 }

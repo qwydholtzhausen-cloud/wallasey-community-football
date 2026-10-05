@@ -74,7 +74,7 @@ export function FlapNum({ itemKey, value, color }: { itemKey: string; value: num
   }, [play, value, flapDelay]);
   if (!play) return <b style={{ color }}>{value}</b>;
   return (
-    <span className="wcf-flap">
+    <span className="wcf-feed-flap">
       <b key={n} style={{ color }}>
         {n}
       </b>

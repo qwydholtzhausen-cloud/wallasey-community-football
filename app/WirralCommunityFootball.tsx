@@ -8633,9 +8633,9 @@ function RateGameSheet({
             </svg>
           )}
           <div className="wcf-rate-score">
-            <span key={"w" + shownW} className={motion && shownW > 0 ? "wcf-flap" : undefined}>{shownW}</span>
+            <span key={"w" + shownW} className={motion && shownW > 0 ? "wcf-rate-flap" : undefined}>{shownW}</span>
             <small>{cs.team_white_name.toUpperCase()} · {cs.team_red_name.toUpperCase()}</small>
-            <span key={"r" + shownR} className={motion && shownR > 0 ? "wcf-flap" : undefined}>{shownR}</span>
+            <span key={"r" + shownR} className={motion && shownR > 0 ? "wcf-rate-flap" : undefined}>{shownR}</span>
           </div>
         </div>
         <div className="wcf-rate-body">
@@ -12819,16 +12819,16 @@ a.wcf-set-link{text-decoration:none}
 @keyframes wcfCOld{to{opacity:.35;transform:translateY(6px) scale(.97)}}
 .wcf-rec-board .strike{position:absolute;left:0;top:50%;width:0;height:2px;background:#e63946;box-shadow:0 0 8px rgba(230,57,70,.8);animation:wcfCStrike .45s 1.6s cubic-bezier(.4,0,.2,1) forwards}
 @keyframes wcfCStrike{to{width:100%}}
-.wcf-flap{position:relative;flex:none;min-width:44px;height:54px;padding-inline:4px;font:800 38px/54px var(--display);text-align:center;color:#f5d97a;perspective:300px}
-.wcf-flap.still{color:#94a3b8}
-.wcf-flap .h{position:absolute;left:0;right:0;height:50%;overflow:hidden;background:linear-gradient(180deg,#1d2036,#15172a);border-radius:6px 6px 0 0}
-.wcf-flap .h span,.wcf-flap .fl span{display:block;height:54px}
-.wcf-flap .b{top:50%;border-radius:0 0 6px 6px;background:linear-gradient(180deg,#15172a,#10121f)}
-.wcf-flap .b span,.wcf-flap .fl.bot span{margin-top:-27px}
-.wcf-flap::after{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:#05060c;z-index:3}
-.wcf-flap .fl{position:absolute;left:0;right:0;height:50%;overflow:hidden;z-index:2}
-.wcf-flap .fl.top{top:0;transform-origin:50% 100%;background:linear-gradient(180deg,#1d2036,#15172a);border-radius:6px 6px 0 0;animation:wcfCFlapT .32s var(--fd) ease-in both}
-.wcf-flap .fl.bot{top:50%;transform-origin:50% 0;background:linear-gradient(180deg,#15172a,#10121f);border-radius:0 0 6px 6px;animation:wcfCFlapB .32s calc(var(--fd) + .32s) ease-out both}
+.wcf-pm-flap{position:relative;flex:none;min-width:44px;height:54px;padding-inline:4px;font:800 38px/54px var(--display);text-align:center;color:#f5d97a;perspective:300px}
+.wcf-pm-flap.still{color:#94a3b8}
+.wcf-pm-flap .h{position:absolute;left:0;right:0;height:50%;overflow:hidden;background:linear-gradient(180deg,#1d2036,#15172a);border-radius:6px 6px 0 0}
+.wcf-pm-flap .h span,.wcf-pm-flap .fl span{display:block;height:54px}
+.wcf-pm-flap .b{top:50%;border-radius:0 0 6px 6px;background:linear-gradient(180deg,#15172a,#10121f)}
+.wcf-pm-flap .b span,.wcf-pm-flap .fl.bot span{margin-top:-27px}
+.wcf-pm-flap::after{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:#05060c;z-index:3}
+.wcf-pm-flap .fl{position:absolute;left:0;right:0;height:50%;overflow:hidden;z-index:2}
+.wcf-pm-flap .fl.top{top:0;transform-origin:50% 100%;background:linear-gradient(180deg,#1d2036,#15172a);border-radius:6px 6px 0 0;animation:wcfCFlapT .32s var(--fd) ease-in both}
+.wcf-pm-flap .fl.bot{top:50%;transform-origin:50% 0;background:linear-gradient(180deg,#15172a,#10121f);border-radius:0 0 6px 6px;animation:wcfCFlapB .32s calc(var(--fd) + .32s) ease-out both}
 @keyframes wcfCFlapT{to{transform:rotateX(-90deg)}}
 @keyframes wcfCFlapB{from{transform:rotateX(90deg)}}
 .wcf-mc-badge{position:absolute!important;right:16px;top:16px;z-index:3;width:66px;height:66px;border-radius:50%;display:grid;place-items:center;text-align:center;color:#1a1405;background:radial-gradient(circle at 35% 30%,#fff6c9,#f5d97a 45%,#a87a14);box-shadow:0 8px 18px -6px #000,inset 0 0 0 3px rgba(122,84,8,.5);animation:wcfCBadge .5s 3.1s cubic-bezier(.3,1.6,.5,1) both}
@@ -13161,9 +13161,9 @@ a.wcf-set-link{text-decoration:none}
 @keyframes wcfBandIn{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
 @keyframes wcfBandOut{from{clip-path:inset(0 0 0 0)}to{clip-path:inset(0 0 0 100%)}}
 @keyframes wcfBlow{to{transform:rotate(-14deg) scale(1.12)}}
-.wcf-flap{position:relative;display:inline-grid;place-items:center;min-width:30px;height:34px;border-radius:6px;background:#0b1220;box-shadow:inset 0 0 0 1px rgba(148,163,184,.18);overflow:hidden;align-self:center}
-.wcf-flap:after{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(0,0,0,.6)}
-.wcf-flap b{animation:wcfFlip .1s linear}
+.wcf-feed-flap{position:relative;display:inline-grid;place-items:center;min-width:30px;height:34px;border-radius:6px;background:#0b1220;box-shadow:inset 0 0 0 1px rgba(148,163,184,.18);overflow:hidden;align-self:center}
+.wcf-feed-flap:after{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(0,0,0,.6)}
+.wcf-feed-flap b{animation:wcfFlip .1s linear}
 @keyframes wcfFlip{from{transform:rotateX(80deg);opacity:.4}to{transform:none;opacity:1}}
 .wcf-feed-item.fresh .wcf-ft-head .wcf-res-pill{animation:wcfStamp .45s calc(var(--ftd,.7s) + 1.3s) cubic-bezier(.3,1.6,.5,1) both;display:inline-block}
 .wcf-feed-item.fresh .wcf-ft-scorers{animation:wcfRise .4s calc(var(--ftd,.7s) + 1.6s) both}
@@ -13422,7 +13422,7 @@ a.wcf-set-link{text-decoration:none}
 .wcf-rate-whistle .wave:nth-of-type(2){animation-delay:.45s}.wcf-rate-whistle .wave:nth-of-type(3){animation-delay:.9s}
 @keyframes wcfWhIn{0%{opacity:0;transform:scale(.6)}12%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
 @keyframes wcfToot{0%{opacity:0;transform:translateX(-3px)}40%{opacity:1}100%{opacity:0;transform:translateX(3px)}}
-.wcf-flap{display:inline-block;animation:wcfFlap .07s linear}
+.wcf-rate-flap{display:inline-block;animation:wcfFlap .07s linear}
 @keyframes wcfFlap{50%{transform:scaleY(.78)}}
 .wcf-rate-meter button.on{animation:wcfHeat .35s cubic-bezier(.3,1.6,.5,1) both;animation-delay:calc(var(--i,0) * 60ms)}
 @keyframes wcfHeat{0%{transform:scaleY(.6);filter:brightness(1.6)}100%{transform:none;filter:none}}

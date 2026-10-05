@@ -348,7 +348,7 @@ export function PotmMine({
 // number flips in beside your photo and a RECORD stamp lands.
 function Flap({ from, to, delay }: { from: number; to: number; delay: number }) {
   return (
-    <div className="wcf-flap" style={{ ["--fd" as string]: `${delay}s` }} aria-hidden="true">
+    <div className="wcf-pm-flap" style={{ ["--fd" as string]: `${delay}s` }} aria-hidden="true">
       <div className="h">
         <span>{to}</span>
       </div>
@@ -424,7 +424,7 @@ export function RecordCard({
           </div>
         </div>
         <div className="row old">
-          <div className="wcf-flap still" aria-hidden="true">
+          <div className="wcf-pm-flap still" aria-hidden="true">
             <div className="h">
               <span>{prevValue}</span>
             </div>
