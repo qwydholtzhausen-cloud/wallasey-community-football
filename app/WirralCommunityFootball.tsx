@@ -10084,8 +10084,10 @@ function GameCard({
   // kick-off" countdown (red in the last 24h); games further off just say so
   // quietly - the "you owe" bar at the top covers paying for those.
   const msToKickoff = toMs(kickoffCutoff(game.date, game.kickoff, 0)) - toMs(nowInLondon());
-  // Match-day mode: today's game you're playing in (not the waiting list).
-  const matchDay = !!featured && !!myBooking && !myBooking.waiting && !game.special && isMatchDay(game.date, game.kickoff);
+  // Match-day mode: every game on today's card gets the badge and live
+  // clock (two-game nights included); the "your team" block below still
+  // needs you booked in on a team.
+  const matchDay = !!featured && !game.special && isMatchDay(game.date, game.kickoff);
   const payStrip =
     myBooking && !myBooking.waiting && myBooking.status === "unpaid" && !myBooking.pot_exempt_reason ? (
       msToKickoff <= PAY_SOON_MS ? (
@@ -10245,7 +10247,7 @@ function GameCard({
             <span>{game.pitch}</span><span className="wcf-hero-dot" /><span>£{game.price}</span>
             {weather && <><span className="wcf-hero-dot" /><span>{weatherIcon(weather.code)} {weather.temp}°C</span></>}
           </div>
-          {matchDay && myBooking?.team && teams && (
+          {matchDay && myBooking && !myBooking.waiting && myBooking.team && teams && (
             <MatchDayTeam
               name={teams[myBooking.team].name}
               color={teams[myBooking.team].color}
