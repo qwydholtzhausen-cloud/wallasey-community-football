@@ -1,4 +1,5 @@
-import { Avatar, POT_CATEGORY_LABEL, PillChoice, avatarFor, fmtDate, fmtDateTime, type PotCategory } from "./shared";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Avatar, POT_CATEGORY_LABEL, PillChoice, avatarFor, fmtDate, fmtDateTime, motionAllowed, type PotCategory } from "./shared";
 import { CountUp, MotmReveal, PointsPill, PotAmountJar } from "./motion";
 import { VoteMedal } from "./celebrate";
 import { Icon } from "./icons";
@@ -83,6 +84,7 @@ export type ResultsTabProps = {
   resultsMonth: string;
   resultsMonths: string[];
   resultsView: "fixtures" | "season" | "table" | "records" | "pot";
+  statsLastGame: { gameId: string; delta: Record<string, { apps: number; goals: number }> } | null;
   rivalryStreak: { winner: Team; count: number; otherLastWon: string | null } | null;
   scoredPastGames: GameRow[];
   scoredPredictionInputs: ScoredPrediction[];
@@ -163,6 +165,7 @@ export function ResultsTab({
   resultsMonth,
   resultsMonths,
   resultsView,
+  statsLastGame,
   rivalryStreak,
   scoredPastGames,
   scoredPredictionInputs,
@@ -189,6 +192,75 @@ export function ResultsTab({
   statsOpenId,
   statsSort,
 }: ResultsTabProps) {
+  // ── Climbing the Stats table ──
+  // The first open of Stats (this season, within a week) after a game that
+  // moved you up the table that's open: the rank card ticks, then your row
+  // overtakes the players you passed. Once per game per table.
+  const statsSortFn = (a: { goals: number; apps: number }, b: { goals: number; apps: number }) =>
+    statsSort === "goals" ? b.goals - a.goals || a.apps - b.apps : b.apps - a.apps || b.goals - a.goals;
+  const statsClimb = useMemo(() => {
+    if (!statsLastGame || activeStatsYear !== currentSeasonYear) return null;
+    const mine = statsLastGame.delta[myId];
+    const gained = mine ? (statsSort === "goals" ? mine.goals : mine.apps) : 0;
+    if (!gained) return null;
+    const now = [...playerStats].sort(statsSortFn);
+    const before = playerStats
+      .map((r) => {
+        const d = statsLastGame.delta[r.id];
+        return d ? { ...r, apps: r.apps - d.apps, goals: r.goals - d.goals } : r;
+      })
+      .filter((r) => r.apps > 0 || r.goals > 0)
+      .sort(statsSortFn);
+    const from = before.findIndex((r) => r.id === myId);
+    const to = now.findIndex((r) => r.id === myId);
+    if (from < 0 || to < 0 || from <= to) return null;
+    return { key: `wcf-stats-climb-${myId}-${statsLastGame.gameId}-${statsSort}`, from, to, gained, before: before[from] };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statsLastGame, playerStats, statsSort, myId, activeStatsYear, currentSeasonYear]);
+  const [sPhase, setSPhase] = useState<"before" | "rank" | "points" | "move" | "done" | null>(null);
+  const sRows = useRef(new Map<string, HTMLDivElement>());
+  const sTops = useRef(new Map<string, number>());
+  useEffect(() => {
+    if (!statsClimb || resultsView !== "table" || !motionAllowed()) return;
+    try {
+      if (localStorage.getItem(statsClimb.key)) return;
+      localStorage.setItem(statsClimb.key, "1");
+    } catch {
+      return;
+    }
+    setSPhase("before");
+    const timers = [
+      setTimeout(() => setSPhase("rank"), 900),
+      setTimeout(() => sRows.current.get(myId)?.scrollIntoView({ block: "center", behavior: "smooth" }), 1700),
+      setTimeout(() => setSPhase("points"), 2500),
+      setTimeout(() => {
+        sTops.current = new Map([...sRows.current].map(([id, el]) => [id, el.getBoundingClientRect().top]));
+        setSPhase("move");
+      }, 3400),
+      setTimeout(() => setSPhase("done"), 4600),
+    ];
+    return () => {
+      timers.forEach(clearTimeout);
+      setSPhase((p) => (p ? "done" : p));
+    };
+  }, [statsClimb, resultsView, myId]);
+  useLayoutEffect(() => {
+    if (sPhase !== "move") return;
+    const ease = "cubic-bezier(.5,0,.2,1)";
+    sRows.current.forEach((el, id) => {
+      const before = sTops.current.get(id);
+      if (before == null) return;
+      const d = before - el.getBoundingClientRect().top;
+      if (!d) return;
+      if (id === myId) el.animate([{ transform: `translateY(${d}px)` }, { transform: `translateY(${d / 2}px) scale(1.04)`, offset: 0.5 }, { transform: "none" }], { duration: 1150, easing: ease });
+      else {
+        el.animate([{ transform: `translateY(${d}px)` }, { transform: "none" }], { duration: 1150, easing: ease });
+        el.firstElementChild?.animate([{ filter: "none" }, { filter: "brightness(.65)", transform: "translateX(4px)", offset: 0.4 }, { filter: "none" }], { duration: 650, delay: 250, easing: "ease-out" });
+      }
+    });
+  }, [sPhase, myId]);
+  const sBefore = !!statsClimb && (sPhase === "before" || sPhase === "rank" || sPhase === "points");
+
   return (
     <>
       <div className="wcf-subtabs">
@@ -497,6 +569,13 @@ export function ResultsTab({
           const podiumRing = ["#eab308", "#cbd5e1", "#e63946"];
           const myIdx = sorted.findIndex((r) => r.id === myId);
           const me = sorted[myIdx];
+          // Mid-climb: you're still where you were before the last game.
+          const shown =
+            statsClimb && sBefore
+              ? [...sorted.slice(0, statsClimb.to), ...sorted.slice(statsClimb.to + 1, statsClimb.from + 1), sorted[statsClimb.to], ...sorted.slice(statsClimb.from + 1)]
+              : sorted;
+          const oldMe = statsClimb && (sPhase === "before" || sPhase === "points" || sPhase === "rank") ? statsClimb.before : null;
+          const cardOld = statsClimb && sPhase === "before" ? statsClimb.before : null;
 
           return (
             <div className="wcf-board">
@@ -548,17 +627,25 @@ export function ResultsTab({
 
                   {me && (
                     <div className="wcf-lb-me-card">
-                      <div className="wcf-lb-me-rank">{myIdx + 1}</div>
+                      <div className="wcf-lb-me-rank">
+                        <span className={sPhase === "rank" ? "wcf-tick" : undefined} key={cardOld ? "o" : "n"}>
+                          {cardOld ? statsClimb!.from + 1 : myIdx + 1}
+                        </span>
+                      </div>
                       <div className="wcf-lb-me-body">
                         <div className="wcf-lb-me-label">Your rank</div>
                         <div className="wcf-lb-me-name">{me.name}</div>
                       </div>
                       <div className="wcf-lb-me-stat">
-                        <div>{me.apps}</div>
+                        <div className={sPhase === "rank" ? "wcf-tick" : undefined} key={cardOld ? "oa" : "na"}>
+                          {cardOld ? cardOld.apps : me.apps}
+                        </div>
                         <span>apps</span>
                       </div>
                       <div className="wcf-lb-me-stat">
-                        <div>{me.goals}</div>
+                        <div className={sPhase === "rank" ? "wcf-tick" : undefined} key={cardOld ? "og" : "ng"}>
+                          {cardOld ? cardOld.goals : me.goals}
+                        </div>
                         <span>goals</span>
                       </div>
                     </div>
@@ -602,15 +689,25 @@ export function ResultsTab({
                   <span className={"wcf-board-count" + (statsSort === "apps" ? " on" : "")}>Apps</span>
                   <span className={"wcf-board-count" + (statsSort === "goals" ? " on" : "")}>Goals</span>
                 </div>
-                {sorted.map((row, i) => {
+                {shown.map((row, i) => {
                   const isLead = i === 0;
                   const isMe = row.id === myId;
+                  const climbing = isMe && !!statsClimb && !!sPhase;
+                  const pre = climbing && oldMe && sPhase !== "points" ? oldMe : null;
                   const a = avatarFor(row.name);
                   const open = statsOpenId === row.id;
                   return (
-                    <div key={row.id}>
+                    <div
+                      key={row.id}
+                      className={climbing && sPhase !== "done" ? "wcf-sclimb" : undefined}
+                      ref={(el) => {
+                        if (el) sRows.current.set(row.id, el);
+                        else sRows.current.delete(row.id);
+                      }}
+                    >
                       <div
                         className={"wcf-board-row " + (isLead ? "lead " : "") + (isMe ? "me" : "")}
+                        style={climbing ? { position: "relative" } : undefined}
                         onClick={() => setStatsOpenId((v) => (v === row.id ? null : row.id))}
                       >
                         <span className="wcf-rank">{isLead ? <span className="wcf-rank-star">{Icon.star}</span> : i + 1}</span>
@@ -631,11 +728,29 @@ export function ResultsTab({
                           {isMe && (
                             <span className="wcf-board-badges">
                               <span className="wcf-lb-you-badge">you</span>
+                              {climbing && sPhase === "done" && (
+                                <span className="wcf-climb-up">
+                                  ▲ {statsClimb!.from - statsClimb!.to} {statsClimb!.from - statsClimb!.to === 1 ? "place" : "places"}
+                                </span>
+                              )}
                             </span>
                           )}
                         </span>
-                        <span className={"wcf-board-count" + (statsSort === "apps" ? " on" : "")}>{row.apps}</span>
-                        <span className={"wcf-board-count" + (statsSort === "goals" ? " on" : "")}>{row.goals || "—"}</span>
+                        {climbing && sPhase === "points" && (
+                          <span className="wcf-sclimb-plus">
+                            +{statsClimb!.gained} {statsSort === "goals" ? (statsClimb!.gained === 1 ? "goal" : "goals") : "app"}
+                          </span>
+                        )}
+                        <span className={"wcf-board-count" + (statsSort === "apps" ? " on" : "")}>
+                          <span className={climbing && sPhase === "points" ? "wcf-tick" : undefined} key={pre ? "o" : "n"}>
+                            {pre ? pre.apps : row.apps}
+                          </span>
+                        </span>
+                        <span className={"wcf-board-count" + (statsSort === "goals" ? " on" : "")}>
+                          <span className={climbing && sPhase === "points" ? "wcf-tick" : undefined} key={pre ? "o" : "n"}>
+                            {(pre ? pre.goals : row.goals) || "—"}
+                          </span>
+                        </span>
                       </div>
                       {open && (
                         <div className="wcf-lb-row-detail">

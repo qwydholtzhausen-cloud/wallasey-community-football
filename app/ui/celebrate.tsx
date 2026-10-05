@@ -43,52 +43,10 @@ export function WinMoment({
       if (p < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    const c = canvas.current;
-    let cRaf = 0;
-    const start = setTimeout(() => {
-      const ctx = c?.getContext("2d");
-      if (!c || !ctx) return;
-      const W = (c.width = c.offsetWidth * 2);
-      const H = (c.height = c.offsetHeight * 2);
-      const colors = [teamColor, "#f5d97a", "#ffffff", "#f5d97a"];
-      const ps = Array.from({ length: 150 }, () => ({
-        x: W / 2 + (Math.random() - 0.5) * W * 0.3,
-        y: H * 0.45,
-        vx: (Math.random() - 0.5) * 28,
-        vy: -Math.random() * 32 - 8,
-        r: Math.random() * 6.28,
-        vr: (Math.random() - 0.5) * 0.4,
-        w: 8 + Math.random() * 10,
-        h: 5 + Math.random() * 6,
-        c: colors[Math.floor(Math.random() * colors.length)],
-      }));
-      const s0 = performance.now();
-      const f = (n: number) => {
-        const age = n - s0;
-        ctx.clearRect(0, 0, W, H);
-        for (const p of ps) {
-          p.vy += 0.9;
-          p.vx *= 0.985;
-          p.x += p.vx;
-          p.y += p.vy;
-          p.r += p.vr;
-          ctx.save();
-          ctx.globalAlpha = Math.max(0, 1 - age / 3400);
-          ctx.translate(p.x, p.y);
-          ctx.rotate(p.r);
-          ctx.fillStyle = p.c;
-          ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.r * 2)));
-          ctx.restore();
-        }
-        if (age < 3400) cRaf = requestAnimationFrame(f);
-        else ctx.clearRect(0, 0, W, H);
-      };
-      cRaf = requestAnimationFrame(f);
-    }, 550);
+    const stopConfetti = fireConfetti(canvas.current, [teamColor, "#f5d97a", "#ffffff", "#f5d97a"], 550);
     return () => {
       cancelAnimationFrame(raf);
-      cancelAnimationFrame(cRaf);
-      clearTimeout(start);
+      stopConfetti();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -143,6 +101,55 @@ export function WinMoment({
       </div>
     </div>
   );
+}
+
+// Confetti burst from the middle of a full-screen canvas, fading out over
+// ~3.4s. Returns a cancel function for the effect cleanup.
+export function fireConfetti(c: HTMLCanvasElement | null, colors: string[], delay = 0, ms = 3400) {
+  let raf = 0;
+  const start = setTimeout(() => {
+    const ctx = c?.getContext("2d");
+    if (!c || !ctx || !motionAllowed()) return;
+    const W = (c.width = c.offsetWidth * 2);
+    const H = (c.height = c.offsetHeight * 2);
+    const ps = Array.from({ length: 150 }, () => ({
+      x: W / 2 + (Math.random() - 0.5) * W * 0.3,
+      y: H * 0.42,
+      vx: (Math.random() - 0.5) * 28,
+      vy: -Math.random() * 32 - 8,
+      r: Math.random() * 6.28,
+      vr: (Math.random() - 0.5) * 0.4,
+      w: 8 + Math.random() * 10,
+      h: 5 + Math.random() * 6,
+      c: colors[Math.floor(Math.random() * colors.length)],
+    }));
+    const s0 = performance.now();
+    const f = (n: number) => {
+      const age = n - s0;
+      ctx.clearRect(0, 0, W, H);
+      for (const p of ps) {
+        p.vy += 0.9;
+        p.vx *= 0.985;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.r += p.vr;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 1 - age / ms);
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.r);
+        ctx.fillStyle = p.c;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.r * 2)));
+        ctx.restore();
+      }
+      if (age < ms) raf = requestAnimationFrame(f);
+      else ctx.clearRect(0, 0, W, H);
+    };
+    raf = requestAnimationFrame(f);
+  }, delay);
+  return () => {
+    clearTimeout(start);
+    cancelAnimationFrame(raf);
+  };
 }
 
 // ── Your season, mowed into a pitch ──
