@@ -1062,6 +1062,8 @@ function urlBase64ToUint8Array(base64String: string) {
 // out into the light). Because the walkout lives at the root it never
 // restarts between steps.
 const SplashHoldCtx = createContext<() => () => void>(() => () => {});
+// False while the tunnel walkout is still on screen: moments wait for it.
+const SplashGoneCtx = createContext(true);
 function SplashScreen() {
   const hold = useContext(SplashHoldCtx);
   useEffect(() => hold(), [hold]);
@@ -1153,6 +1155,7 @@ export default function WirralCommunityFootball() {
     <div className="wcf-root">
       <style>{css}</style>
       <SplashHoldCtx.Provider value={hold}>
+      <SplashGoneCtx.Provider value={splash === "gone"}>
       {session === undefined ? (
         <SplashScreen />
       ) : session ? (
@@ -1160,6 +1163,7 @@ export default function WirralCommunityFootball() {
       ) : (
         <SignIn />
       )}
+      </SplashGoneCtx.Provider>
       </SplashHoldCtx.Provider>
       {splash !== "gone" && <TunnelSplash leaving={splash === "leaving"} />}
     </div>
@@ -5098,7 +5102,11 @@ function App({ session }: { session: Session }) {
   if (ticketShow && ticketShow.mode !== "booked" && ticketGames.length > 0) momentCandidates.push("ticket:" + ticketShow.mode + ticketShow.gameIds.join(","));
   if (specialGame) momentCandidates.push("special:" + specialGame.id);
   if (fxCalendar && tab === "fixtures") momentCandidates.push("fx:" + fxCalendar.ids.join(","));
-  const momentsPaused = !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || !!queueTicket || !!storyOpen;
+  const splashGone = useContext(SplashGoneCtx);
+  const [ftBand, setFtBand] = useState<string | null>(null);
+  // Anything else full-screen on top: nothing new pops up over it.
+  const momentsPaused =
+    !splashGone || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand;
   const [momentNow, setMomentNow] = useState<string | null>(null);
   const [momentsPlayed, setMomentsPlayed] = useState(0);
   const momentKey = momentCandidates.join("|");
@@ -5134,16 +5142,15 @@ function App({ session }: { session: Session }) {
     setRateDismissed((cur) => ({ ...cur, [rateGame.id]: dismissed }));
     // Pops up once, the first time you're in the app with it to rate -
     // only when no moment is on screen (see the queue above).
-    if (!dismissed && !myRatings[rateGame.id] && !momentNow && !winFirst) setRateSheetFor(rateGame.id);
+    if (!dismissed && !myRatings[rateGame.id] && !momentNow && !winFirst && !momentsPaused) setRateSheetFor(rateGame.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rateGame?.id, ratingsLoaded, momentNow, winFirst]);
+  }, [rateGame?.id, ratingsLoaded, momentNow, winFirst, momentsPaused]);
 
   // ── What's new on the Feed ──
   // Each open of Feed compares the posts against the ones you'd already
   // seen (kept on this device). Anything new deals in under a "New since"
   // line, once. The first ever open only records what's there.
   const [feedFresh, setFeedFresh] = useState<{ keys: Set<string>; since: number; band: boolean } | null>(null);
-  const [ftBand, setFtBand] = useState<string | null>(null);
   useEffect(() => {
     if (tab !== "feed") {
       if (feedFresh) setFeedFresh(null);
