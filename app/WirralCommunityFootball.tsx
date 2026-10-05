@@ -2411,8 +2411,15 @@ function App({ session }: { session: Session }) {
     whiteScore: number | null,
     redScore: number | null,
     goals: Record<string, number>,
-    ownGoals: Record<string, number>
+    ownGoals: Record<string, number>,
+    teams: Record<string, Team> = {}
   ) {
+    // Team fixes from the result sheet (a mid-match swap, or a late arrival
+    // who never got put on a side), keyed by booking id.
+    for (const [bookingId, team] of Object.entries(teams)) {
+      const { error } = await supabase.from("bookings").update({ team }).eq("id", bookingId);
+      if (error) return notifyError(error.message);
+    }
     const { error: scoreErr } = await supabase
       .from("games")
       .update({ team_white_score: whiteScore, team_red_score: redScore })
@@ -8812,7 +8819,7 @@ function AdminConsole({
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
-  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>) => Promise<void>;
+  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
   onGoToLineup: (gameId?: string) => void;
@@ -9338,7 +9345,7 @@ function AdminGameRow({
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   onRemoveBooking: (bookingId: string) => void;
   onDeleteGame: (gameId: string) => void;
-  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>) => Promise<void>;
+  onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
@@ -9705,11 +9712,19 @@ function ResultSheet({
   game: GameRow;
   goalRows: GoalRow[];
   cs: ClubSettings;
-  onSave: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>) => Promise<void>;
+  onSave: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>) => Promise<void>;
   onShare: (gameId: string) => void;
   onClose: () => void;
 }) {
-  const players = game.bookings.filter((b) => !b.waiting);
+  // Sides as the sheet sees them: starts from the booked teams, and "Fix
+  // teams" mode can move people (a mid-match swap, a late arrival who was
+  // never put on a side). Their goals move with them.
+  const [teamOf, setTeamOf] = useState<Record<string, Team | null>>(() => Object.fromEntries(game.bookings.map((b) => [b.id, b.team])));
+  const players = game.bookings.filter((b) => !b.waiting).map((b) => ({ ...b, team: teamOf[b.id] ?? null }));
+  const teamChanges = Object.fromEntries(
+    game.bookings.filter((b) => !b.waiting && teamOf[b.id] && teamOf[b.id] !== b.team).map((b) => [b.id, teamOf[b.id] as Team])
+  );
+  const [teamMode, setTeamMode] = useState(false);
   const initialGoals: Record<string, number> = {};
   const initialOwn: Record<string, number> = {};
   goalRows
@@ -9736,6 +9751,7 @@ function ResultSheet({
   const totalScore = white + red;
   const ownTotal = sum(players, own);
 
+  const moveSide = (bookingId: string) => setTeamOf((m) => ({ ...m, [bookingId]: m[bookingId] === "white" ? "red" : "white" }));
   const bump = (id: string, by: number) => {
     const set = ogMode ? setOwn : setGoals;
     set((m) => ({ ...m, [id]: Math.max(0, (m[id] ?? 0) + by) }));
@@ -9749,7 +9765,7 @@ function ResultSheet({
 
   async function save() {
     setSaving(true);
-    await onSave(game.id, white, red, goals, own);
+    await onSave(game.id, white, red, goals, own, teamChanges);
     setSaving(false);
     setStep(4);
   }
@@ -9791,6 +9807,7 @@ function ResultSheet({
         {step === 2 && (
           <>
             {ogMode && <div className="wcf-rs-og">Own-goal mode: tap whoever put it in their own net. <button onClick={() => setOgMode(false)}>Done</button></div>}
+            {teamMode && <div className="wcf-rs-og wcf-rs-teammode">Fix teams: tap a player to move them to the other side. Their goals go with them. <button onClick={() => setTeamMode(false)}>Done</button></div>}
             {groups.map(([key, group, name, color, target]) => {
               const assigned = sum([...group], goals);
               return (
@@ -9807,12 +9824,14 @@ function ResultSheet({
                       const og = own[b.player_id] ?? 0;
                       return (
                         <span key={b.id} className={"wcf-rs-chip" + (n > 0 ? " has" : "") + (ogMode ? " og" : "")}>
-                          <button className="wcf-rs-chip-main" onClick={() => bump(b.player_id, 1)}>
+                          <button className="wcf-rs-chip-main" onClick={() => (teamMode ? moveSide(b.id) : bump(b.player_id, 1))}>
                             <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-rs-chip-av" background={avatarFor(b.player.display_name).gradient} />
                             {b.player.display_name.split(" ")[0]}
                             {!ogMode && og > 0 && <em>OG</em>}
                           </button>
-                          {n > 0 && (
+                          {teamMode ? (
+                            <span className="wcf-rs-move" aria-hidden="true">⇄</span>
+                          ) : n > 0 && (
                             <>
                               <span className="wcf-rs-count">{n}</span>
                               <button className="wcf-rs-minus" onClick={() => bump(b.player_id, -1)} aria-label={`Take one off ${b.player.display_name}`}>−</button>
@@ -9834,10 +9853,17 @@ function ResultSheet({
                   : `That's ${totalAssigned - totalScore} more than the score. Check the numbers.`}
               {ownTotal > 0 ? ` Own goals: ${ownTotal}.` : ""}
             </p>
-            {!ogMode && <button className="wcf-rs-oglink" onClick={() => setOgMode(true)}>Was one an own goal?</button>}
+            {!ogMode && !teamMode && (
+              <div className="wcf-rs-links">
+                <button className="wcf-rs-oglink" onClick={() => setOgMode(true)}>Was one an own goal?</button>
+                <button className="wcf-rs-oglink" onClick={() => setTeamMode(true)}>
+                  {players.some((b) => !b.team) ? "Put someone on a team" : "Someone swapped sides?"}
+                </button>
+              </div>
+            )}
             <div className="wcf-rs-row">
-              <button className="wcf-rs-ghost" onClick={() => { setOgMode(false); setStep(1); }}>Back</button>
-              <button className="wcf-rs-cta" onClick={() => { setOgMode(false); setStep(3); }}>Next: check</button>
+              <button className="wcf-rs-ghost" onClick={() => { setOgMode(false); setTeamMode(false); setStep(1); }}>Back</button>
+              <button className="wcf-rs-cta" onClick={() => { setOgMode(false); setTeamMode(false); setStep(3); }}>Next: check</button>
             </div>
           </>
         )}
@@ -9857,6 +9883,9 @@ function ResultSheet({
                 <div><b>{cs.team_white_name}:</b> {scorerLine(players.filter((b) => b.team === "white"))}</div>
                 <div><b>{cs.team_red_name}:</b> {scorerLine(players.filter((b) => b.team === "red"))}</div>
                 {ownTotal > 0 && <div><b>Own goals:</b> {players.filter((b) => (own[b.player_id] ?? 0) > 0).map((b) => `${b.player.display_name} ${own[b.player_id]}`).join(", ")}</div>}
+                {Object.keys(teamChanges).length > 0 && (
+                  <div><b>Team changes:</b> {players.filter((b) => teamChanges[b.id]).map((b) => `${b.player.display_name} → ${b.team === "white" ? cs.team_white_name : cs.team_red_name}`).join(", ")}</div>
+                )}
               </div>
               <div className="ticks">
                 <div><i>✓</i>Posts &quot;Full time&quot; to the feed, plus any hat-tricks or records</div>
@@ -12332,9 +12361,13 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rs-chip.og .wcf-rs-count{background:#f5d97a}
 .wcf-rs-minus{width:30px;height:30px;margin-right:6px;border-radius:50%;border:1px solid var(--line);background:rgba(0,0,0,.25);color:var(--white);font-size:16px;line-height:1;cursor:pointer}
 .wcf-rs-hint{font-size:12.5px;color:var(--dim);line-height:1.5;margin:14px 2px 0}
+.wcf-rs-links{display:flex;flex-wrap:wrap;gap:6px 18px}
+.wcf-rs-move{margin-right:12px;color:#93c5fd;font-weight:800}
 .wcf-rs-oglink{margin-top:8px;background:none;border:0;padding:0;color:var(--dim);font-size:12.5px;font-weight:700;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 .wcf-rs-og{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);font-size:12.5px;color:#f5d97a;font-weight:600}
+.wcf-rs-og.wcf-rs-teammode{background:rgba(96,165,250,.1);border-color:rgba(96,165,250,.45);color:#93c5fd}
 .wcf-rs-og button{min-height:32px;padding:0 12px;border-radius:999px;border:0;background:#f5d97a;color:#0d0d1a;font-weight:800;font-size:12px;cursor:pointer}
+.wcf-rs-og.wcf-rs-teammode button{background:#93c5fd}
 .wcf-rs-summary{border-radius:20px;padding:16px 14px;text-align:center;border:1px solid rgba(245,217,122,.4);background:radial-gradient(120% 120% at 50% 0%,rgba(245,217,122,.12),transparent 60%),var(--panel)}
 .wcf-rs-summary .k{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#f5d97a}
 .wcf-rs-summary .sc{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px;font-family:var(--display);font-weight:800}
