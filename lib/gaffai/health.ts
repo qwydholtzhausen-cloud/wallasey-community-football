@@ -175,6 +175,7 @@ interface WrappedGameRow {
   venue: string;
   published: boolean;
   max_players: number;
+  special: boolean;
   team_white_score: number | null;
   team_red_score: number | null;
   bookings: { player_id: string; waiting: boolean; team: "white" | "red" | null; created_at: string; promoted_at: string | null; player: { display_name: string } | null }[];
@@ -192,7 +193,7 @@ export async function checkWrapped(admin: SupabaseClient, period?: string) {
   const [{ data: gameData, error: gamesError }, goals, votes, predictions, { data: ratingRows }, { data: wx }] = await Promise.all([
     admin
       .from("games")
-      .select("id, date, kickoff, venue, published, max_players, team_white_score, team_red_score, bookings(player_id, waiting, team, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name))")
+      .select("id, date, kickoff, venue, published, max_players, special, team_white_score, team_red_score, bookings(player_id, waiting, team, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name))")
       .lt("date", end)
       .order("date"),
     fetchAll<{ game_id: string; player_id: string; goals: number }>((f, t) => admin.from("game_stats").select("game_id, player_id, goals").range(f, t)),

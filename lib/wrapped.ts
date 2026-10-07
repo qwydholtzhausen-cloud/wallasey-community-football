@@ -120,10 +120,11 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
   const myGameIds = new Set(mine.map((m) => m.game.id));
   let appsRun = 0;
   let run = 0;
-  // Missing one game of a two-game night you played the other doesn't break it.
+  // Missing one game of a two-game night you played the other, or missing
+  // a special (e.g. a Sunday 11-a-side), doesn't break it.
   const myDates = new Set(mine.map((m) => m.game.date));
   for (const g of games) {
-    run = myGameIds.has(g.id) ? run + 1 : myDates.has(g.date) ? run : 0;
+    run = myGameIds.has(g.id) ? run + 1 : myDates.has(g.date) || g.special ? run : 0;
     appsRun = Math.max(appsRun, run);
   }
   let unbeaten = 0;

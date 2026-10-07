@@ -12,6 +12,9 @@ export interface RecordsGame {
   date: string; // YYYY-MM-DD, UK
   kickoff: string; // HH:MM, UK
   max_players: number;
+  // A one-off special (e.g. Sunday 11-a-side): playing one adds to your
+  // games-in-a-row run, missing one doesn't break it.
+  special?: boolean;
   team_white_score: number | null;
   team_red_score: number | null;
   bookings: {
@@ -151,7 +154,7 @@ export function computeRecords(input: RecordsInput): ClubRecords {
     for (const id of everyone) {
       const team = played.get(id);
       if (!team) {
-        if (!playedOn.get(g.date)?.has(id)) inARow[id] = 0;
+        if (!g.special && !playedOn.get(g.date)?.has(id)) inARow[id] = 0;
         continue;
       }
       inARow[id] = (inARow[id] ?? 0) + 1;
@@ -226,7 +229,7 @@ export function computePersonalBests(input: RecordsInput, playerId: string): Per
   for (const g of games) {
     const b = g.bookings.find((x) => x.player_id === playerId && !x.waiting && x.team);
     if (!b) {
-      if (!playedOn.get(g.date)?.has(playerId)) row = 0;
+      if (!g.special && !playedOn.get(g.date)?.has(playerId)) row = 0;
       continue;
     }
     played++;
