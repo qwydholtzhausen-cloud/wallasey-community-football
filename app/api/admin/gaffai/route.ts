@@ -226,12 +226,14 @@ export async function POST(req: Request) {
       let rounds = 0;
       // Reset every round - only reflects whichever tools were called in
       // the round immediately before the model's final answer, not
-      // anything called earlier in the conversation.
-      let proposalFromLastRound: MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | BookingInviteAction | null = null;
+      // anything called earlier in the conversation. Can hold several
+      // ("message these three players" drafts one per player).
+      let proposalsFromLastRound: (MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | BookingInviteAction)[] = [];
 
       while (response.stop_reason === "tool_use" && rounds < MAX_TOOL_ROUNDS) {
         rounds++;
         const toolUseBlocks = response.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
+        const proposals: typeof proposalsFromLastRound = [];
 
         const toolResults = await Promise.all(
           toolUseBlocks.map(async (block) => {
@@ -251,7 +253,7 @@ export async function POST(req: Request) {
                 block.name === "propose_remove_duplicate_account" ||
                 block.name === "propose_booking_invite"
               ) {
-                proposalFromLastRound = result as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | BookingInviteAction;
+                proposals[toolUseBlocks.indexOf(block)] = result as MarkPaidAction | CreateFixtureAction | SendReminderAction | PublishFixtureAction | MatchdayPushAction | SetPotExemptAction | RemoveDuplicateAction | BookingInviteAction;
               }
               // A broad query can return thousands of rows; past this size
               // it costs more than it helps, so cut it and say so.
@@ -267,6 +269,7 @@ export async function POST(req: Request) {
           })
         );
 
+        proposalsFromLastRound = proposals.filter(Boolean);
         messages.push({ role: "assistant", content: response.content });
         messages.push({ role: "user", content: toolResults });
         response = await callClaude(messages, GAFFAI_TOOLS, systemPrompt);
@@ -297,12 +300,15 @@ export async function POST(req: Request) {
         .map((b) => b.text)
         .join("\n");
 
-      if (proposalFromLastRound) {
+      if (proposalsFromLastRound.length > 0) {
         // Always spell out exactly what Confirm will do, whatever the model
         // wrote, so the admin never has to ask "what am I confirming?".
-        const replyText = `${finalText ? finalText + "\n\n" : ""}${describeAction(proposalFromLastRound)}`;
-        await persistTurn(admin, callerId, text, replyText);
-        return NextResponse.json({ type: "action_proposal", text: replyText, action: proposalFromLastRound });
+        // `actions` gives each proposal its own Confirm card; `text`/`action`
+        // (the last one) stay for an app version cached before that.
+        const actions = proposalsFromLastRound.map((a) => ({ action: a, text: describeAction(a) }));
+        const last = actions[actions.length - 1];
+        await persistTurn(admin, callerId, text, `${finalText ? finalText + "\n\n" : ""}${actions.map((a) => a.text).join("\n\n")}`);
+        return NextResponse.json({ type: "action_proposal", text: `${finalText ? finalText + "\n\n" : ""}${last.text}`, action: last.action, intro: finalText, actions });
       }
       const replyText = finalText || "Not sure how to answer that one — try rephrasing?";
       await persistTurn(admin, callerId, text, replyText);

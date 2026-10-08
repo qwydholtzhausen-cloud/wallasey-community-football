@@ -49,20 +49,22 @@ export interface AnthropicResponse {
   usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
 }
 
-// Sonnet 5.5 (2026-09-30): tested against Opus 5.5 and Haiku 4.5 on the
-// same real admin questions - Opus-level answers at about a third of the
-// cost (~7p a question); Haiku was cheaper but went back to small mistakes
-// and half-finished jobs. Medium effort keeps each round quick.
+// Haiku 5.5 (2026-10-08): the same real admin questions as the Sonnet test,
+// checked against the live data - every answer right, including the weekday
+// and invite jobs Haiku 4.5 got wrong, at ~0.2p a question vs Sonnet's ~7p.
 // GAFFAI_MODEL / GAFFAI_EFFORT (env) switch model without a code change.
-export const MODEL = process.env.GAFFAI_MODEL || "claude-sonnet-5-5";
+export const MODEL = process.env.GAFFAI_MODEL || "claude-haiku-5-5";
 const MAX_TOKENS = 16000;
 const EFFORT = process.env.GAFFAI_EFFORT || "medium";
-const IS_HAIKU = MODEL.startsWith("claude-haiku");
+// Haiku 4.5 takes no effort setting or fallbacks; Haiku 5.5 takes both.
+const IS_HAIKU = MODEL.startsWith("claude-haiku-4");
 
 // $ per million tokens: input, output, cache read, cache write (5 min).
 export const PRICES: Record<string, [number, number, number, number]> = {
   "claude-opus-5-5": [4, 20, 0.2, 5],
-  "claude-sonnet-5-5": [2, 10, 0.2, 2.5],
+  "claude-sonnet-5-5": [2, 10, 0.1, 2.5],
+  // Prompts over 100k tokens cost 5x; GaffAI's stay well under.
+  "claude-haiku-5-5": [0.1, 0.5, 0.01, 0.125],
   "claude-haiku-4-5": [1, 5, 0.1, 1.25],
 };
 const REQUEST_TIMEOUT_MS = 55000;

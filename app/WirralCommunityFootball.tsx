@@ -8351,7 +8351,11 @@ function GaffAIChat({
     setLoading(false);
     if (!data) return;
 
-    if (data.type === "action_proposal") {
+    if (data.type === "action_proposal" && Array.isArray(data.actions)) {
+      // One Confirm card per proposal, after the model's own reply.
+      const cards = data.actions.map((a: { action: GaffAIMessage["action"]; text: string }) => ({ role: "assistant" as const, text: a.text, action: a.action, actionState: "pending" as const }));
+      setMessages((cur) => [...cur, ...(data.intro ? [{ role: "assistant" as const, text: data.intro }] : []), ...cards]);
+    } else if (data.type === "action_proposal") {
       setMessages((cur) => [...cur, { role: "assistant", text: data.text, action: data.action, actionState: "pending" }]);
     } else if (data.type === "answer") {
       setMessages((cur) => [...cur, { role: "assistant", text: data.text }]);
