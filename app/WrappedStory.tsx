@@ -194,10 +194,10 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
   const mainName = mainColour === "red" ? p.redName : p.whiteName;
   const oneColour = Math.max(d.red, d.white) / d.apps >= 0.8;
   const prev = p.prev ?? undefined;
-  const ph = (k: WrappedPhotoKey) => wrappedPhoto(k, p.periodKey);
+  const theme = wrappedThemeFor(p.periodKey);
+  const ph = (k: WrappedPhotoKey) => theme?.photos?.[k] ?? wrappedPhoto(k, p.periodKey);
   const ex = p.extras;
   const topTag = ex?.tags[0] ?? null;
-  const theme = wrappedThemeFor(p.periodKey);
   // A card's label, in the month's theme when it has one, with its pun under it.
   const L = (k: string, dflt: string): ReactNode => {
     const quip = theme?.copy?.quips?.[k];
@@ -608,7 +608,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     };
     cards.push({
       key: "treat",
-      photo: "/wrapped/bank/motm-walk-off.jpg",
+      photo: theme?.photos?.treat ?? "/wrapped/bank/motm-walk-off.jpg",
       accent: theme.accent,
       body: (
         <>
@@ -949,6 +949,26 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
   return cards;
 }
 
+// Halloween over the intro: two layers of fog drifting across the pitch and
+// a few bats flapping past the floodlights. Drawn here, not in the photo, so
+// it moves (and stays still under Reduce Motion).
+function SpookyFx() {
+  const bat = (
+    <svg viewBox="0 0 40 16" aria-hidden="true">
+      <path d="M20 9c-1.6-2.4-3.6-3.2-6-2.6C11 3.6 6.5 2.6 1 5.2c3 .3 5 1.6 5.6 3.6 2-.9 4-.6 5.4 1.1 1.2-1 2.5-1.2 3.6-.5.8-.7 1.6-1 2.4-1 .7 0 1.3.3 2 .7.7-.4 1.3-.7 2-.7.8 0 1.6.3 2.4 1 1.1-.7 2.4-.5 3.6.5 1.4-1.7 3.4-2 5.4-1.1.6-2 2.6-3.3 5.6-3.6-5.5-2.6-10-1.6-13 1.2-2.4-.6-4.4.2-6 2.6z" />
+    </svg>
+  );
+  return (
+    <div className="wr-spooky" aria-hidden="true">
+      <i className="fog a" />
+      <i className="fog b" />
+      <span className="bat b1">{bat}</span>
+      <span className="bat b2">{bat}</span>
+      <span className="bat b3">{bat}</span>
+    </div>
+  );
+}
+
 export default function WrappedStory(props: WrappedStoryProps) {
   const [idx, setIdx] = useState(0);
   // "playing" -> the clip; "flash" -> a white fade into the first card; "done".
@@ -1139,7 +1159,8 @@ export default function WrappedStory(props: WrappedStoryProps) {
       )}
       {intro === "flash" && <div className="wr-flash" />}
       <div key={card.key + (intro === "playing" ? "-wait" : "")} data-card={card.key} className="wr-card" style={{ "--acc": card.accent } as CSSProperties}>
-        {card.photo && <div className={"wr-photo" + (STRONG_PHOTOS.has(card.photo) || card.photo.includes("/bank/") ? " strong" : "")} style={{ backgroundImage: `url(${card.photo})` }} />}
+        {card.photo && <div className={"wr-photo" + (STRONG_PHOTOS.has(card.photo) || card.photo.includes("/bank/") || card.photo.includes("/halloween/") ? " strong" : "")} style={{ backgroundImage: `url(${card.photo})` }} />}
+        {card.key === "intro" && wrappedThemeFor(props.periodKey)?.effect === "fog" && <SpookyFx />}
         <div className="wr-glow" />
         <div className="wr-in">{card.body}</div>
       </div>
@@ -1340,6 +1361,19 @@ const wrappedCss = `
 .wr-photo.strong{opacity:.92}
 .wr-photo::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,8,18,.55) 0%,rgba(8,8,18,.2) 35%,rgba(8,8,18,.92) 78%)}
 .wr-glow{position:absolute;left:-160px;bottom:-200px;width:420px;height:420px;border-radius:50%;filter:blur(60px);opacity:.45;background:var(--acc)}
+.wr-spooky{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.wr-spooky .fog{position:absolute;left:-60%;width:220%;height:34%;background:radial-gradient(ellipse at 30% 50%,rgba(220,225,235,.13),transparent 60%),radial-gradient(ellipse at 70% 60%,rgba(220,225,235,.09),transparent 55%);filter:blur(16px)}
+.wr-spooky .fog.a{bottom:12%;height:24%;animation:wrFog 22s linear infinite}
+.wr-spooky .fog.b{bottom:2%;height:20%;opacity:.75;animation:wrFog 34s linear infinite reverse}
+@keyframes wrFog{from{transform:translateX(0)}to{transform:translateX(27%)}}
+.wr-spooky .bat{position:absolute;width:34px;fill:#07070c;filter:drop-shadow(0 0 1.5px rgba(245,158,75,.9)) drop-shadow(0 0 8px rgba(245,158,75,.45));animation:wrBatFly 9s linear infinite}
+.wr-spooky .bat svg{display:block;width:100%;animation:wrBatFlap .28s ease-in-out infinite alternate;transform-origin:50% 60%}
+.wr-spooky .b1{top:16%;left:-12%;animation-delay:-3s}
+.wr-spooky .b2{top:22%;left:-12%;width:22px;animation-duration:12s;animation-delay:-6s}
+.wr-spooky .b3{top:11%;left:-12%;width:18px;animation-duration:15s;animation-delay:-10s}
+@keyframes wrBatFly{0%{transform:translate(0,0)}25%{transform:translate(35vw,-14px)}50%{transform:translate(70vw,10px)}75%{transform:translate(105vw,-8px)}100%{transform:translate(140vw,0)}}
+@keyframes wrBatFlap{from{transform:scaleY(1)}to{transform:scaleY(.35)}}
+@media (prefers-reduced-motion:reduce){.wr-spooky .fog,.wr-spooky .bat,.wr-spooky .bat svg{animation:none}.wr-spooky .bat{display:none}}
 .wr-in{position:relative;z-index:1;flex:1;display:flex;flex-direction:column;min-height:0;max-width:480px;width:100%;margin:0 auto}
 .wr-top{position:absolute;z-index:3;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top,0px) + 10px) 12px 0;background:linear-gradient(180deg,rgba(0,0,0,.45),transparent)}
 .wr-segs{display:flex;gap:4px}

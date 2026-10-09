@@ -5539,7 +5539,7 @@ function App({ session }: { session: Session }) {
                   aria-label={`Open your ${wrapped.periodLabel} Wrapped`}
                   style={(() => {
                     const t = wrappedThemeFor(wrapped.periodKey);
-                    return (t ? { "--acc": t.accent, "--bimg": `url(${t.introPhoto})` } : {}) as React.CSSProperties;
+                    return (t ? { "--acc": t.accent, "--bimg": `url(${t.bannerPhoto ?? t.introPhoto})` } : {}) as React.CSSProperties;
                   })()}
                 >
                   <span className="row">

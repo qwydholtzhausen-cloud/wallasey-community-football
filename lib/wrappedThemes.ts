@@ -22,6 +22,12 @@ export interface WrappedTheme {
   line: (who: WrappedThemeWho) => string; // the sentence under it, after "{first}, "
   push: { title: string; body: string }; // the release-day notification
   special?: "trickOrTreat"; // a card only this month has
+  // The month's own photos for some cards (falls back to the rotating
+  // bank), a wider photo for the Fixtures banner, and an effect over the
+  // intro drawn in code (fog and bats for Halloween).
+  photos?: Partial<Record<WrappedPhotoKey | "treat", string>>;
+  bannerPhoto?: string;
+  effect?: "fog";
   // Themed copy: card labels by card key, the intro's tap line, and the
   // closing card's headline and line.
   copy?: { labels?: Partial<Record<string, string>>; quips?: Partial<Record<string, string>>; tap?: string; endTitle?: [string, string]; endLine?: string };
@@ -33,8 +39,21 @@ const THEMES: Record<string, WrappedTheme> = {
     word: "FRIGHT LIGHTS",
     edition: "Halloween edition",
     accent: "#f59e4b",
-    introPhoto: "/wrapped/bank/october-leaves.jpg",
+    introPhoto: "/wrapped/halloween/intro.jpg",
+    bannerPhoto: "/wrapped/halloween/banner.jpg",
+    effect: "fog",
     special: "trickOrTreat",
+    photos: {
+      glance: "/wrapped/halloween/month.jpg",
+      motm: "/wrapped/halloween/motm.jpg",
+      partner: "/wrapped/halloween/coven.jpg",
+      club: "/wrapped/halloween/coven.jpg",
+      nemesis: "/wrapped/halloween/nemesis.jpg",
+      weather: "/wrapped/halloween/weather.jpg",
+      summary: "/wrapped/halloween/ending.jpg",
+      end: "/wrapped/halloween/ending.jpg",
+      treat: "/wrapped/halloween/trick-or-treat.jpg",
+    },
     copy: {
       labels: {
         glance: "At a glance, if you dare",
