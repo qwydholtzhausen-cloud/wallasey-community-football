@@ -451,7 +451,10 @@ export async function GET(req: Request) {
   const allGames = (games ?? []) as unknown as CronGame[];
   const playedBefore = (playerId: string, beforeDate: string) =>
     allGames.some((x) => x.date < beforeDate && x.team_white_score != null && x.bookings.some((b) => b.player_id === playerId && !b.waiting));
-  const { data: codeRows } = await admin.from("profiles").select("id, display_name, payment_code");
+  // select("*"), not named columns: payment_code is in schema.sql but not on
+  // the live database, and naming it made this whole query fail - so every
+  // first-game message went out with a blank name ("...with us,  👋").
+  const { data: codeRows } = await admin.from("profiles").select("*");
   const profileOf = (id: string) => (codeRows ?? []).find((p) => p.id === id);
   const yesterday = new Date(Date.UTC(+todayDate.slice(0, 4), +todayDate.slice(5, 7) - 1, +todayDate.slice(8, 10) - 1)).toISOString().slice(0, 10);
   const hhmm = nowUkStr.slice(11, 16);
