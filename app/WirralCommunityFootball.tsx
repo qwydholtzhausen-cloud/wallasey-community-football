@@ -50,6 +50,8 @@ import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
 import { ResultsTab } from "./ui/results";
 import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
 import { WinMoment, type SeasonGame } from "./ui/celebrate";
+import { TrophyCabinet, MatchBallMoment, cabinetCss } from "./ui/cabinet";
+import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { ClubOdometer, DebutCard, MilestoneShirt, MotmWinCard, PotmMine, PotmNight, RecordCard } from "./ui/premium";
 import { MatchDayClock, MatchDayTeam, isMatchDay } from "./ui/matchday";
 import { scorersForSide } from "../lib/goalSides";
@@ -3860,6 +3862,59 @@ function App({ session }: { session: Session }) {
   // mean anything, and only reveals once the month's over (not a
   // mid-month leaderboard that flips around), staying up for the whole
   // next month.
+  // Player of the Month for any finished month (the same rules as the
+  // announcement): most MOTM wins, then votes, then goals; 2+ voted games.
+  const potmFor = useCallback(
+    (monthKey: string) => {
+      const monthGames = pastGames.filter(
+        (g) => g.date.startsWith(monthKey) && g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g)
+      );
+      if (monthGames.length < 2) return null;
+
+      const wins: Record<string, number> = {};
+      const votes: Record<string, number> = {};
+      const goals: Record<string, number> = {};
+      const names: Record<string, string> = {};
+
+      const monthGameIds = new Set(monthGames.map((g) => g.id));
+      for (const r of goalRows) {
+        if (!monthGameIds.has(r.game_id)) continue;
+        goals[r.player_id] = (goals[r.player_id] ?? 0) + r.goals;
+      }
+
+      for (const g of monthGames) {
+        const tally = motmTallyByGame[g.id] ?? {};
+        const gameWinners = motmWinnerIdsByGame[g.id] ?? [];
+        for (const [playerId, count] of Object.entries(tally)) {
+          votes[playerId] = (votes[playerId] ?? 0) + count;
+          names[playerId] ??= g.bookings.find((b) => b.player_id === playerId)?.player.display_name ?? "";
+          if (gameWinners.includes(playerId)) wins[playerId] = (wins[playerId] ?? 0) + 1;
+        }
+      }
+
+      const contenders = Object.keys(wins);
+      if (contenders.length === 0) return null;
+      const maxWins = Math.max(...contenders.map((id) => wins[id]));
+      let leaders = contenders.filter((id) => wins[id] === maxWins);
+      if (leaders.length > 1) {
+        const maxVotes = Math.max(...leaders.map((id) => votes[id] ?? 0));
+        leaders = leaders.filter((id) => (votes[id] ?? 0) === maxVotes);
+      }
+      if (leaders.length > 1) {
+        const maxGoals = Math.max(...leaders.map((id) => goals[id] ?? 0));
+        leaders = leaders.filter((id) => (goals[id] ?? 0) === maxGoals);
+      }
+
+      return {
+        monthKey,
+        monthLabel: new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
+        names: leaders.map((id) => names[id]).filter(Boolean),
+        // For the card: why they won.
+        winners: leaders.map((id) => ({ id, name: names[id], wins: wins[id] ?? 0, votes: votes[id] ?? 0, goals: goals[id] ?? 0 })),
+      };
+    },
+    [pastGames, motmTallyByGame, motmWinnerIdsByGame, goalRows]
+  );
   const playerOfMonth = useMemo(() => {
     // Announced as soon as the month's last published game is played and its
     // vote has closed (same rule as Wrapped), not on the 1st - otherwise
@@ -3872,58 +3927,15 @@ function App({ session }: { session: Session }) {
       thisMonthGames.every((g) => g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g)) &&
       nowUk >= monthReleaseAt(lastOfMonth!.date, lastOfMonth!.kickoff);
     const monthKey = thisMonthFinished ? thisKey : previousMonthKey(nowUk);
-    const monthGames = pastGames.filter(
-      (g) => g.date.startsWith(monthKey) && g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g)
-    );
-    if (monthGames.length < 2) return null;
-
-    const wins: Record<string, number> = {};
-    const votes: Record<string, number> = {};
-    const goals: Record<string, number> = {};
-    const names: Record<string, string> = {};
-
-    const monthGameIds = new Set(monthGames.map((g) => g.id));
-    for (const r of goalRows) {
-      if (!monthGameIds.has(r.game_id)) continue;
-      goals[r.player_id] = (goals[r.player_id] ?? 0) + r.goals;
-    }
-
-    for (const g of monthGames) {
-      const tally = motmTallyByGame[g.id] ?? {};
-      const gameWinners = motmWinnerIdsByGame[g.id] ?? [];
-      for (const [playerId, count] of Object.entries(tally)) {
-        votes[playerId] = (votes[playerId] ?? 0) + count;
-        names[playerId] ??= g.bookings.find((b) => b.player_id === playerId)?.player.display_name ?? "";
-        if (gameWinners.includes(playerId)) wins[playerId] = (wins[playerId] ?? 0) + 1;
-      }
-    }
-
-    const contenders = Object.keys(wins);
-    if (contenders.length === 0) return null;
-    const maxWins = Math.max(...contenders.map((id) => wins[id]));
-    let leaders = contenders.filter((id) => wins[id] === maxWins);
-    if (leaders.length > 1) {
-      const maxVotes = Math.max(...leaders.map((id) => votes[id] ?? 0));
-      leaders = leaders.filter((id) => (votes[id] ?? 0) === maxVotes);
-    }
-    if (leaders.length > 1) {
-      const maxGoals = Math.max(...leaders.map((id) => goals[id] ?? 0));
-      leaders = leaders.filter((id) => (goals[id] ?? 0) === maxGoals);
-    }
-
-    return {
-      monthKey,
-      monthLabel: new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
-      names: leaders.map((id) => names[id]).filter(Boolean),
-      // For the card: why they won.
-      winners: leaders.map((id) => ({ id, name: names[id], wins: wins[id] ?? 0, votes: votes[id] ?? 0, goals: goals[id] ?? 0 })),
-    };
-  }, [games, pastGames, motmTallyByGame, motmWinnerIdsByGame, goalRows, nowUk]);
+    return potmFor(monthKey);
+  }, [games, pastGames, motmTallyByGame, motmWinnerIdsByGame, goalRows, nowUk, potmFor]);
 
   // A new game credit of yours (a paid drop-out, an admin's gift, or a
   // "did the money arrive?" yes): a gold coin, once per credit. The first
   // run on a phone only records what you already hold.
   const [coinCredit, setCoinCredit] = useState<CreditRow | null>(null);
+  // A trophy to show landing in the cabinet when a player card opens.
+  const [cabinetHighlight, setCabinetHighlight] = useState<string | null>(null);
   const coinKey = `wcf-credit-seen-${myId}`;
   function saveCoinSeen() {
     try {
@@ -4430,6 +4442,80 @@ function App({ session }: { session: Session }) {
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastGames, motmTallyByGame, nowUk]);
+  // Every announced Player of the Month so far, for the trophy cabinet:
+  // the months before the one on show, plus that one. Never a month that
+  // hasn't been announced (no spoilers).
+  const potmHistory = useMemo(() => {
+    const first = pastGames.map((g) => g.date.slice(0, 7)).sort()[0];
+    const last = playerOfMonth?.monthKey ?? (first ? previousMonthKey(nowUk) : null);
+    if (!first || !last) return [] as { monthKey: string; winnerIds: string[] }[];
+    const out: { monthKey: string; winnerIds: string[] }[] = [];
+    for (let k = first; k <= last; k = nextMonthStart(k).slice(0, 7)) {
+      const w = k === playerOfMonth?.monthKey ? playerOfMonth : potmFor(k);
+      if (w) out.push({ monthKey: k, winnerIds: w.winners.map((x) => x.id) });
+    }
+    return out;
+  }, [pastGames, playerOfMonth, potmFor, nowUk]);
+  const seasonRecords = useMemo(() => {
+    const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
+    return computeRecords({
+      games: pastGames.filter((g) => g.date.slice(0, 4) === String(currentSeasonYear) && g.team_white_score != null && g.team_red_score != null),
+      goals: goalRows,
+      motmTallyByGame: closedMotmTallies,
+      names: (id) => nameById.get(id) ?? "Former player",
+    });
+  }, [pastGames, goalRows, closedMotmTallies, profiles, currentSeasonYear]);
+  const trophiesFor = useCallback(
+    (playerId: string): Trophy[] =>
+      computeCabinet({
+        playerId,
+        games: pastGames,
+        goals: goalRows,
+        motmWinnerIdsByGame: Object.fromEntries(Object.entries(motmWinnerIdsByGame).filter(([id]) => closedMotmTallies[id])),
+        potmMonths: potmHistory,
+        records: seasonRecords,
+        team: (t) => (t === "white" ? cs.team_white_name : cs.team_red_name),
+      }),
+    [pastGames, goalRows, motmWinnerIdsByGame, closedMotmTallies, potmHistory, seasonRecords, cs.team_white_name, cs.team_red_name]
+  );
+
+  // Your new match ball: a hat-trick (or better) from the last week this
+  // phone hasn't celebrated yet. The first run only records what's there.
+  const [matchBallDone, setMatchBallDone] = useState(false);
+  const myMatchBall = useMemo(() => {
+    if (!myId || loading || matchBallDone) return null;
+    const mine = trophiesFor(myId).filter((t) => t.kind === "matchball");
+    const key = `wcf-matchball-seen-${myId}`;
+    let seen: string[] | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      seen = raw ? JSON.parse(raw) : null;
+      if (!seen) localStorage.setItem(key, JSON.stringify(mine.map((t) => t.key)));
+    } catch {
+      return null;
+    }
+    if (!seen) return null;
+    const weekAgo = new Date(Date.UTC(+nowUk.slice(0, 4), +nowUk.slice(5, 7) - 1, +nowUk.slice(8, 10) - 7)).toISOString().slice(0, 10);
+    const fresh = mine.filter((t) => !seen!.includes(t.key) && (t.date ?? "") >= weekAgo).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+    if (!fresh[0]) return null;
+    const game = pastGames.find((g) => fresh[0].key === `matchball-${g.id}`);
+    if (!game) return null;
+    return { trophy: fresh[0], game, all: mine.map((t) => t.key) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myId, loading, matchBallDone, trophiesFor, pastGames, nowUk]);
+  function closeMatchBall(toCabinet: boolean) {
+    if (!myMatchBall) return;
+    try {
+      localStorage.setItem(`wcf-matchball-seen-${myId}`, JSON.stringify(myMatchBall.all));
+    } catch {}
+    setMatchBallDone(true);
+    if (toCabinet) {
+      setCabinetHighlight(myMatchBall.trophy.key);
+      setPlayerCardTeam(null);
+      setPlayerCardId(myId);
+    }
+  }
+
   // The same season's bests for the signed-in player, for "Your bests".
   const myBests = useMemo(
     () =>
@@ -5288,6 +5374,7 @@ function App({ session }: { session: Session }) {
   const MOMENTS_PER_OPEN = 2;
   const momentCandidates: string[] = [];
   if (promoGame) momentCandidates.push("promo:" + promoGame.id);
+  if (myMatchBall && motionOk()) momentCandidates.push("matchball:" + myMatchBall.trophy.key);
   if (coinCredit) momentCandidates.push("coin:" + coinCredit.id);
   if (envelope) momentCandidates.push("envelope:" + envelope.ids.join(","));
   if (predLock) momentCandidates.push("predlock:" + predLock.key);
@@ -6132,7 +6219,9 @@ function App({ session }: { session: Session }) {
             team={playerCardTeam}
             season={cardSeason}
             appsMilestone={appsMilestoneFor(playerCardId)}
-            onClose={() => { setPlayerCardId(null); setPlayerCardTeam(null); }}
+            trophies={trophiesFor(playerCardId)}
+            highlightTrophy={cabinetHighlight}
+            onClose={() => { setPlayerCardId(null); setPlayerCardTeam(null); setCabinetHighlight(null); }}
           />
         );
       })()}
@@ -6267,6 +6356,22 @@ function App({ session }: { session: Session }) {
             when={when}
             odds={queueOdds[queueTicket.pos] ?? null}
             onDone={() => setQueueTicket(null)}
+          />
+        );
+      })()}
+      {myMatchBall && showMoment("matchball") && (() => {
+        const g = myMatchBall.game;
+        const names = g.bookings.filter((b) => !b.waiting).map((b) => b.player.display_name.split(" ")[0]);
+        const me = myProfile?.display_name ?? "";
+        const t = myMatchBall.trophy;
+        return (
+          <MatchBallMoment
+            goals={t.n ?? 3}
+            scorer={me.split(" ")[0]}
+            names={names}
+            plate={[`${me} · ${t.title}`, t.detail.split(" · ").slice(0, 2).join(" · ")]}
+            onCabinet={() => closeMatchBall(true)}
+            onDone={() => closeMatchBall(false)}
           />
         );
       })()}
@@ -7430,9 +7535,13 @@ function PlayerCardModal({
   team,
   season,
   appsMilestone,
+  trophies,
+  highlightTrophy,
   onClose,
 }: {
   appsMilestone?: number | null;
+  trophies: Trophy[];
+  highlightTrophy?: string | null;
   profile: Profile;
   stats: { apps: number; goals: number; motm: number };
   rating: PlayerRating | null;
@@ -7545,6 +7654,9 @@ function PlayerCardModal({
               </div>
             </div>
           )}
+
+          <style>{cabinetCss}</style>
+          <TrophyCabinet trophies={trophies} isOwn={isOwnCard} firstName={firstName} highlight={highlightTrophy} />
 
           {canSeeRating && rating ? (
             <div className="wcf-pcard-ratings wcf-rv" style={{ ["--d" as string]: "1.2s" }}>
