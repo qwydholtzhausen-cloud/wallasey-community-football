@@ -53,8 +53,8 @@ export const MONZO_MATCHING_LIVE = false;
 
 // Game credits (scoped 2026-10-08): a player who'd paid and drops out gets a
 // credit they can spend on any game ("Use credit"), confirming it straight
-// away; on a dearer game it covers £5 and they pay the difference. Off until
-// the player_credits SQL (supabase/schema.sql) is run on the live database -
-// the app doesn't ask for the table while this is false. The env var is
-// only for local screenshot previews and is never set in Vercel.
-export const GAME_CREDITS_LIVE = false || process.env.NEXT_PUBLIC_CREDITS_PREVIEW === "1";
+// away; on a dearer game it covers £5 and they pay the difference. The
+// player_credits SQL (supabase/schema.sql) went onto the live database on
+// 9 Oct 2026 and passed a live check, so it's on. Setting this to false
+// hides credits in the app again (the database keeps earning them).
+export const GAME_CREDITS_LIVE = true;
