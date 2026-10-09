@@ -308,7 +308,7 @@ export function FeedTab({
   isAdmin: boolean;
   myId: string;
   profiles: { id: string; display_name: string; avatar_url?: string | null }[];
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
   onRefresh: () => Promise<unknown>;
   feedView: "feed" | "bootroom";
   setFeedView: (v: "feed" | "bootroom") => void;

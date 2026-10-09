@@ -102,7 +102,7 @@ export function AccountPanel({
   myTabOwed: { game: GameRow; booking: BookingRow }[];
   myTabPending: { game: GameRow; booking: BookingRow }[];
   onMarkPaid: (bookingId: string) => void;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
   auditLog: AuditLogEntry[];
   showAuditLog: boolean;
   onToggleAuditLog: () => void;
@@ -1033,7 +1033,7 @@ export function AwardsForm({
   awards: AwardRow[];
   onAdd: (title: string, value: string, note: string, imageFile: File | null, videoFile: File | null) => Promise<void>;
   onDelete: (id: string) => void;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
 }) {
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");

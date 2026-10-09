@@ -1529,10 +1529,13 @@ function App({ session }: { session: Session }) {
     message: string;
     confirmLabel: string;
     danger: boolean;
+    hold: boolean;
     resolve: (v: boolean) => void;
   } | null>(null);
-  function askConfirm(title: string, message: string, confirmLabel = "Confirm", danger = true): Promise<boolean> {
-    return new Promise((resolve) => setConfirmState({ title, message, confirmLabel, danger, resolve }));
+  // hold: permanent actions (a played fixture, an account) need the button
+  // held down, not a single tap.
+  function askConfirm(title: string, message: string, confirmLabel = "Confirm", danger = true, hold = false): Promise<boolean> {
+    return new Promise((resolve) => setConfirmState({ title, message, confirmLabel, danger, hold, resolve }));
   }
   function resolveConfirm(value: boolean) {
     confirmState?.resolve(value);
@@ -1626,7 +1629,7 @@ function App({ session }: { session: Session }) {
   // The vote you just cast gets the medal drop (replaces the old toast).
   const [justVoted, setJustVoted] = useState<{ gameId: string; candidateId: string; n: number } | null>(null);
   const [motmMomentClosed, setMotmMomentClosed] = useState<string | null>(null);
-  const [ticketShow, setTicketShow] = useState<{ mode: "booked" | "paid" | "birthday"; gameIds: string[] } | null>(null);
+  const [ticketShow, setTicketShow] = useState<{ mode: "booked" | "paid" | "birthday" | "credit"; gameIds: string[] } | null>(null);
   // "Take a ticket": the moment after you join a waiting list.
   const [queueTicket, setQueueTicket] = useState<{ gameId: string; pos: number } | null>(null);
   const [specialShow, setSpecialShow] = useState<string | null>(null);
@@ -1921,6 +1924,62 @@ function App({ session }: { session: Session }) {
       }
     })();
   }, [loadAll]);
+
+  // Pull to refresh on Fixtures, Feed and Results: pull down from the top
+  // and a goal appears, its net stretching as you pull; let go past the
+  // line and the ball goes in while everything reloads.
+  const mainRef = useRef<HTMLElement | null>(null);
+  const PTR_TRIGGER = 78;
+  const [ptr, setPtr] = useState<{ pull: number; phase: "pull" | "refresh" | "done" }>({ pull: 0, phase: "pull" });
+  const ptrBusy = useRef(false);
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el || !["fixtures", "feed", "results"].includes(tab)) return;
+    let y0: number | null = null;
+    let pull = 0;
+    const start = (e: TouchEvent) => {
+      if (ptrBusy.current || el.scrollTop > 0 || e.touches.length !== 1) return;
+      y0 = e.touches[0].clientY;
+    };
+    const move = (e: TouchEvent) => {
+      if (y0 == null) return;
+      const dy = e.touches[0].clientY - y0;
+      if (dy <= 0 || el.scrollTop > 0) {
+        if (pull) { pull = 0; setPtr({ pull: 0, phase: "pull" }); }
+        return;
+      }
+      e.preventDefault();
+      pull = Math.min(120, dy * 0.5);
+      setPtr({ pull, phase: "pull" });
+    };
+    const end = async () => {
+      if (y0 == null) return;
+      y0 = null;
+      if (pull < PTR_TRIGGER) {
+        pull = 0;
+        return setPtr({ pull: 0, phase: "pull" });
+      }
+      ptrBusy.current = true;
+      setPtr({ pull: 70, phase: "refresh" });
+      await Promise.all([loadAll(), new Promise((r) => setTimeout(r, 650))]);
+      setPtr({ pull: 70, phase: "done" });
+      await new Promise((r) => setTimeout(r, 650));
+      pull = 0;
+      setPtr({ pull: 0, phase: "pull" });
+      ptrBusy.current = false;
+    };
+    el.addEventListener("touchstart", start, { passive: true });
+    el.addEventListener("touchmove", move, { passive: false });
+    el.addEventListener("touchend", end);
+    el.addEventListener("touchcancel", end);
+    return () => {
+      el.removeEventListener("touchstart", start);
+      el.removeEventListener("touchmove", move);
+      el.removeEventListener("touchend", end);
+      el.removeEventListener("touchcancel", end);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, loading]);
 
   // PWAs/mobile browsers often suspend the page in the background and just
   // resume the same in-memory state when reopened, rather than reloading -
@@ -2302,8 +2361,25 @@ function App({ session }: { session: Session }) {
     spendCredit: async (bookingId) => {
       const { data, error } = await supabase.rpc("use_credit", { p_booking_id: bookingId });
       if (error) return notifyError(error.message);
+      const covered = !(typeof data === "number" && data > 0);
+      // No "Payment confirmed" toast on top: the credit ticket says it.
+      selfConfirmedRef.current.add(bookingId);
+      // This booking's PAID ticket is the credit ticket, not a second one.
+      try {
+        const k = `wcf-paid-seen-${myId}`;
+        const raw = localStorage.getItem(k);
+        // No list yet = first run, which records everything quietly anyway.
+        if (raw) {
+          const seen: string[] = JSON.parse(raw);
+          if (!seen.includes(bookingId)) localStorage.setItem(k, JSON.stringify([...seen, bookingId]));
+        }
+      } catch {}
+      const gameId = games.find((g) => g.bookings.some((b) => b.id === bookingId))?.id;
       await afterCredit();
-      notifySuccess(typeof data === "number" && data > 0 ? `Credit used · £${data} left to pay` : "Paid with credit · you're confirmed");
+      if (covered && gameId && motionOk()) {
+        setPaySheetOpen(false);
+        setTicketShow({ mode: "credit", gameIds: [gameId] });
+      } else notifySuccess(covered ? "Paid with credit · you're confirmed" : `Credit used · £${data} left to pay`);
     },
     addCredit: async (playerId, note) => {
       const { data, error } = await supabase.rpc("admin_add_credit", { p_player_id: playerId, p_note: note.trim() || null });
@@ -2984,7 +3060,7 @@ function App({ session }: { session: Session }) {
     logAction("Changed role", `${targetName} → ${ROLE_LABEL[role]}`);
   }
   async function deleteProfile(id: string, name: string) {
-    if (!(await askConfirm(`Permanently delete ${name}'s account?`, "This removes their login and all their bookings. This can't be undone.", "Delete forever"))) {
+    if (!(await askConfirm(`Permanently delete ${name}'s account?`, "This removes their login and all their bookings. This can't be undone.", "Hold to delete", true, true))) {
       return;
     }
     const token = await getFreshAccessToken();
@@ -3843,6 +3919,34 @@ function App({ session }: { session: Session }) {
       winners: leaders.map((id) => ({ id, name: names[id], wins: wins[id] ?? 0, votes: votes[id] ?? 0, goals: goals[id] ?? 0 })),
     };
   }, [games, pastGames, motmTallyByGame, motmWinnerIdsByGame, goalRows, nowUk]);
+
+  // A new game credit of yours (a paid drop-out, an admin's gift, or a
+  // "did the money arrive?" yes): a gold coin, once per credit. The first
+  // run on a phone only records what you already hold.
+  const [coinCredit, setCoinCredit] = useState<CreditRow | null>(null);
+  const coinKey = `wcf-credit-seen-${myId}`;
+  function saveCoinSeen() {
+    try {
+      localStorage.setItem(coinKey, JSON.stringify(credits.filter((c) => c.player_id === myId).map((c) => c.id)));
+    } catch {}
+  }
+  useEffect(() => {
+    if (!creditsOn || loading || !myId || coinCredit) return;
+    const mine = credits.filter((c) => c.player_id === myId && c.status === "available");
+    let seen: string[] | null = null;
+    try {
+      const raw = localStorage.getItem(coinKey);
+      seen = raw ? JSON.parse(raw) : null;
+    } catch {
+      return;
+    }
+    if (!seen) return saveCoinSeen();
+    const fresh = mine.filter((c) => !seen!.includes(c.id));
+    if (fresh.length === 0) return;
+    if (!motionOk()) return saveCoinSeen();
+    setCoinCredit(fresh[fresh.length - 1]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [credits, creditsOn, loading, myId]);
 
   // PAID tickets: bookings of yours on upcoming games that have become
   // confirmed since this phone last looked. The first run on a phone just
@@ -5184,20 +5288,21 @@ function App({ session }: { session: Session }) {
   const MOMENTS_PER_OPEN = 2;
   const momentCandidates: string[] = [];
   if (promoGame) momentCandidates.push("promo:" + promoGame.id);
+  if (coinCredit) momentCandidates.push("coin:" + coinCredit.id);
   if (envelope) momentCandidates.push("envelope:" + envelope.ids.join(","));
   if (predLock) momentCandidates.push("predlock:" + predLock.key);
   if (myMotmMoment && motmMomentClosed !== myMotmMoment.game.id) momentCandidates.push("motm:" + myMotmMoment.game.id);
   if (potmShow) momentCandidates.push("potm:" + potmShow);
   if (myRecordMoment && !recordMomentDone) momentCandidates.push("record:" + myRecordMoment.seenKey);
   if (nextBigMoment) momentCandidates.push("big:" + nextBigMoment.key);
-  if (ticketShow && ticketShow.mode !== "booked" && ticketGames.length > 0) momentCandidates.push("ticket:" + ticketShow.mode + ticketShow.gameIds.join(","));
+  if (ticketShow && ticketShow.mode !== "booked" && ticketShow.mode !== "credit" && ticketGames.length > 0) momentCandidates.push("ticket:" + ticketShow.mode + ticketShow.gameIds.join(","));
   if (specialGame) momentCandidates.push("special:" + specialGame.id);
   if (fxCalendar && tab === "fixtures") momentCandidates.push("fx:" + fxCalendar.ids.join(","));
   const splashGone = useContext(SplashGoneCtx);
   const [ftBand, setFtBand] = useState<string | null>(null);
   // Anything else full-screen on top: nothing new pops up over it.
   const momentsPaused =
-    !splashGone || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand;
+    !splashGone || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || ticketShow?.mode === "credit" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand;
   const [momentNow, setMomentNow] = useState<string | null>(null);
   const [momentsPlayed, setMomentsPlayed] = useState(0);
   const momentKey = momentCandidates.join("|");
@@ -5352,7 +5457,21 @@ function App({ session }: { session: Session }) {
         </button>
       )}
 
-      <main className={"wcf-main" + (isAdmin ? " has-fab" : "")} key={tab}>
+      <main className={"wcf-main" + (isAdmin ? " has-fab" : "")} key={tab} ref={mainRef}>
+        {ptr.pull > 0 && (
+          <div className={"wcf-ptr " + ptr.phase} style={{ height: ptr.pull }} aria-live="polite">
+            {motionOk() ? (
+              <div className="wcf-ptr-goal" style={{ ["--k" as string]: Math.min(1, ptr.pull / PTR_TRIGGER) }}>
+                <span className="net" />
+                <span className="frame" />
+                <span className="ball" />
+              </div>
+            ) : (
+              <span className="wcf-ptr-spin" />
+            )}
+            <small>{ptr.phase === "refresh" ? "Refreshing" : ptr.phase === "done" ? "Up to date" : ptr.pull >= PTR_TRIGGER ? "Let go" : "Pull to refresh"}</small>
+          </div>
+        )}
         <div className="wcf-heading">
           <div>
             <h2>{heading}{tab === "fixtures" && fxChip > 0 && <span className="wcf-new-chip">{fxChip} NEW</span>}{tab === "feed" && feedView === "feed" && !showArchived && (feedFresh?.keys.size ?? 0) > 0 && <span className="wcf-new-chip">{feedFresh!.keys.size} NEW</span>}</h2>
@@ -6151,7 +6270,8 @@ function App({ session }: { session: Session }) {
           />
         );
       })()}
-      {ticketShow && ticketGames.length > 0 && (ticketShow.mode === "booked" || showMoment("ticket")) && <MatchTickets key={ticketShow.mode + ticketShow.gameIds.join(",")} mode={ticketShow.mode} games={ticketGames} onDone={() => setTicketShow(null)} />}
+      {coinCredit && showMoment("coin") && <CreditCoin credit={coinCredit} onDone={() => { saveCoinSeen(); setCoinCredit(null); }} />}
+      {ticketShow && ticketGames.length > 0 && (ticketShow.mode === "booked" || ticketShow.mode === "credit" || showMoment("ticket")) && <MatchTickets key={ticketShow.mode + ticketShow.gameIds.join(",")} mode={ticketShow.mode} games={ticketGames} onDone={() => setTicketShow(null)} />}
       {potmShow === "everyone" && playerOfMonth && showMoment("potm") && (
         <PotmNight
           month={playerOfMonth.monthLabel.split(" ")[0]}
@@ -6241,6 +6361,7 @@ function App({ session }: { session: Session }) {
       {confirmState && (
         <div className="wcf-modal-overlay" onClick={() => resolveConfirm(false)}>
           <div className="wcf-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="wcf-modal-handle" />
             <div className={"wcf-modal-icon " + (confirmState.danger ? "danger" : "safe")}>
               {confirmState.danger ? (
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.5L22 20.5H2z" /><path d="M12 9.5v5M12 18v.01" /></svg>
@@ -6252,9 +6373,13 @@ function App({ session }: { session: Session }) {
             <div className="wcf-modal-msg">{confirmState.message}</div>
             <div className="wcf-modal-actions">
               <button className="wcf-modal-cancel" onClick={() => resolveConfirm(false)}>Cancel</button>
-              <button className={"wcf-modal-confirm" + (confirmState.danger ? "" : " safe")} onClick={() => resolveConfirm(true)}>
-                {confirmState.confirmLabel}
-              </button>
+              {confirmState.hold ? (
+                <HoldButton className="wcf-modal-confirm hold" label={confirmState.confirmLabel} onDone={() => resolveConfirm(true)} />
+              ) : (
+                <button className={"wcf-modal-confirm" + (confirmState.danger ? "" : " safe")} onClick={() => resolveConfirm(true)}>
+                  {confirmState.confirmLabel}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -6332,7 +6457,7 @@ function FixtureSheet({
   onSave: (id: string, patch: FixtureDraft, post: boolean) => Promise<void>;
   onDelete: (id: string) => void;
   onClose: () => void;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
 }) {
   const todayStr = nowInLondon().slice(0, 10);
   const addDays = (d: string, n: number) => {
@@ -7054,6 +7179,91 @@ function SubBoard({ number, label, onDone }: { number: number; label: string; on
   );
 }
 
+// Press and hold to confirm: the button fills over ~1.2s; letting go early
+// does nothing. For the permanent actions only.
+function HoldButton({ label, onDone, className }: { label: string; onDone: () => void; className?: string }) {
+  const [k, setK] = useState(0);
+  const raf = useRef<number | null>(null);
+  const t0 = useRef(0);
+  const DUR = 1200;
+  const tick = () => {
+    const v = Math.min(1, (performance.now() - t0.current) / DUR);
+    setK(v);
+    if (v < 1) raf.current = requestAnimationFrame(tick);
+    else {
+      raf.current = null;
+      onDone();
+    }
+  };
+  const down = (e: React.PointerEvent) => {
+    e.preventDefault();
+    if (raf.current) return;
+    t0.current = performance.now();
+    raf.current = requestAnimationFrame(tick);
+  };
+  const up = () => {
+    if (!raf.current) return;
+    cancelAnimationFrame(raf.current);
+    raf.current = null;
+    setK(0);
+  };
+  useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
+  return (
+    <button
+      type="button"
+      className={className}
+      onPointerDown={down}
+      onPointerUp={up}
+      onPointerLeave={up}
+      onPointerCancel={up}
+      onContextMenu={(e) => e.preventDefault()}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onDone(); }}
+      aria-label={label}
+    >
+      <span className="fill" style={{ transform: `scaleX(${k})`, transition: k === 0 ? "transform .25s" : "none" }} />
+      <span className="lbl">{k > 0 && k < 1 ? "Keep holding…" : label}</span>
+    </button>
+  );
+}
+
+// A new game credit: a gold coin spins in, flips, then flies up towards the
+// credit chip on Fixtures. ~3s, tap to skip. (Reduce Motion never gets here.)
+function CreditCoin({ credit, onDone }: { credit: CreditRow; onDone: () => void }) {
+  const [stage, setStage] = useState<"in" | "fly" | "out">("in");
+  const finish = () => {
+    if (stage === "out") return;
+    setStage("out");
+    setTimeout(onDone, 300);
+  };
+  useEffect(() => {
+    const a = setTimeout(() => setStage("fly"), 2300);
+    const b = setTimeout(() => { setStage("out"); setTimeout(onDone, 300); }, 3000);
+    return () => { clearTimeout(a); clearTimeout(b); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const why = credit.source === "admin"
+    ? "An admin has given you one. Use it on any game."
+    : credit.source_game
+      ? `You'd paid for ${fmtDate(credit.source_game.date)} and dropped out, so it's yours to use on any game.`
+      : "It's yours to use on any game.";
+  return (
+    <div className={"wcf-moment dim wcf-coin-moment" + (stage === "out" ? " out" : "")} onClick={finish}>
+      <div className={"wcf-coin " + stage}>
+        <div className="face front"><b>1</b>GAME</div>
+        <div className="face back">WCF<br />CREDIT</div>
+      </div>
+      <div className="wcf-coin-sparks" aria-hidden="true">
+        {Array.from({ length: 14 }, (_, i) => {
+          const a = (i / 14) * Math.PI * 2;
+          return <i key={i} style={{ ["--x" as string]: `${Math.cos(a) * 110}px`, ["--y" as string]: `${Math.sin(a) * 110}px` }} />;
+        })}
+      </div>
+      <div className="wcf-moment-h" style={{ marginTop: 22 }}>You&apos;ve got a game credit</div>
+      <div className="wcf-moment-s">{why}</div>
+    </div>
+  );
+}
+
 // The trophy's plate: "SEP 2026".
 const potmPlate = (monthKey: string) =>
   new Date(monthKey + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }).slice(0, 3).toUpperCase() + " " + monthKey.slice(0, 4);
@@ -7083,7 +7293,7 @@ type BigMoment =
 // approvals) are one fanned stack, so it never becomes a queue of pop-ups.
 // About 2s whatever the count, tap to dismiss. Not shown under Reduce Motion.
 interface TicketGame { id: string; date: string; kickoff: string; venue: string; spot: string; side: string }
-function MatchTickets({ mode, games, onDone, caption }: { mode: "booked" | "paid" | "birthday"; games: TicketGame[]; onDone: () => void; caption?: string }) {
+function MatchTickets({ mode, games, onDone, caption }: { mode: "booked" | "paid" | "birthday" | "credit"; games: TicketGame[]; onDone: () => void; caption?: string }) {
   const [leaving, setLeaving] = useState(false);
   const [count, setCount] = useState(0);
   const sorted = useMemo(() => [...games].sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)), [games]);
@@ -7126,7 +7336,7 @@ function MatchTickets({ mode, games, onDone, caption }: { mode: "booked" | "paid
               <div className="wcf-ticket-club">WCF · MATCHDAY</div>
               <div className="wcf-ticket-fx">{last.venue}</div>
               <div className="wcf-ticket-when">{day(last, { weekday: "long", day: "numeric", month: "long" })} · {time(last.kickoff)}</div>
-              <div className="wcf-ticket-row"><div>SIDE<b>{last.side}</b></div>{mode === "birthday" ? <div>PRICE<b>£0</b></div> : <div>SPOT<b>{last.spot}</b></div>}</div>
+              <div className="wcf-ticket-row"><div>SIDE<b>{last.side}</b></div>{mode === "birthday" ? <div>PRICE<b>£0</b></div> : mode === "credit" ? <div>PAID WITH<b>Game credit</b></div> : <div>SPOT<b>{last.spot}</b></div>}</div>
             </div>
             <div className="wcf-ticket-stub"><span>ADMIT ONE</span></div>
           </div>
@@ -7144,6 +7354,8 @@ function MatchTickets({ mode, games, onDone, caption }: { mode: "booked" | "paid
               </div>
               <div className="wcf-tk-st onus"><div>ON US<small>HAPPY BIRTHDAY</small></div></div>
             </>
+          ) : mode === "credit" ? (
+            <div className="wcf-tk-st credit"><div>PAID<small>GAME CREDIT</small></div></div>
           ) : (
             stamp("booked")
           )}
@@ -7177,7 +7389,7 @@ function MatchTickets({ mode, games, onDone, caption }: { mode: "booked" | "paid
             <span>This one&apos;s on the club.</span>
           </>
         ) : (
-          <b>{caption ?? (mode === "paid" ? "Paid. You're all set." : "You're in.")}</b>
+          <b>{caption ?? (mode === "paid" ? "Paid. You're all set." : mode === "credit" ? "Paid with your credit." : "You're in.")}</b>
         )}
       </div>
     </div>
@@ -7621,7 +7833,7 @@ function BootRoom({
   myId: string;
   isAdmin: boolean;
   profiles: Profile[];
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
   logAction: (action: string, details: string) => Promise<void>;
   notifyError: (message: string) => void;
   notifySuccess: (text: string) => void;
@@ -8367,7 +8579,7 @@ function GaffAIChat({
   onFixtureCreated: () => void;
   myId: string;
   myName: string;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<GaffAIMessage[]>([]);
@@ -9005,8 +9217,14 @@ function AdminConsole({
   onShareResult: (gameId: string) => void;
   emergencyContacts: EmergencyContact[];
   onConfirmPayments: (bookingIds: string[]) => void;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
 }) {
+  // Clearing the last thing on Today: the net ripples and a CLEAN SHEET
+  // stamp lands - only when it goes to zero while you're looking (not on
+  // opening an already-empty list), at most once a day on this phone.
+  const [cleanSheet, setCleanSheet] = useState(false);
+  const prevTodoCount = useRef<number | null>(null);
+
   const shared = {
     allGames: [...upcoming, ...previous],
     emergencyContacts,
@@ -9107,6 +9325,21 @@ function AdminConsole({
     : messages.filter((m) => !m.read_at || new Date(m.created_at).getTime() >= messageCutoff);
   const olderMessageCount = messages.length - visibleMessages.length;
   const unreadSentCount = messages.filter((m) => !m.read_at).length;
+  // One card per send: the same text from the same sender within ten
+  // minutes is one message to several people. No sender = automatic.
+  const [msgFilter, setMsgFilter] = useState<"all" | "admins" | "auto" | "unread">("all");
+  const [openSend, setOpenSend] = useState<string | null>(null);
+  const sends = useMemo(() => {
+    const out: { key: string; text: string; auto: boolean; sender: string | null; at: string; to: AdminMessage[] }[] = [];
+    for (const m of visibleMessages) {
+      const prev = out.find((g) => g.text === m.message && g.sender === (m.sender_id ?? null) && Math.abs(new Date(g.at).getTime() - new Date(m.created_at).getTime()) < 10 * 60000);
+      if (prev) prev.to.push(m);
+      else out.push({ key: m.id, text: m.message, auto: !m.sender_id, sender: m.sender_id ?? null, at: m.created_at, to: [m] });
+    }
+    return out;
+  }, [visibleMessages]);
+  const shownSends = sends.filter((g) => msgFilter === "all" || (msgFilter === "admins" ? !g.auto : msgFilter === "auto" ? g.auto : g.to.some((m) => !m.read_at)));
+  const profileById = (id: string) => profiles.find((p) => p.id === id);
 
   function startMessage(playerId: string, template: string) {
     setComposeTo(playerId);
@@ -9234,6 +9467,22 @@ function AdminConsole({
     if (expandedId !== id) onToggleExpand(id);
   };
 
+  const todoCount = todos.length;
+  useEffect(() => {
+    const prev = prevTodoCount.current;
+    prevTodoCount.current = todoCount;
+    if (prev == null || prev === 0 || todoCount !== 0 || adminView !== "today") return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const key = `wcf-clean-sheet-${nowInLondon().slice(0, 10)}`;
+    try {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, "1");
+    } catch {}
+    setCleanSheet(true);
+    const t = setTimeout(() => setCleanSheet(false), 3200);
+    return () => clearTimeout(t);
+  }, [todoCount, adminView]);
+
   return (
     <>
       <div className="wcf-subtabs wcf-admin-tabs">
@@ -9252,7 +9501,13 @@ function AdminConsole({
 
       {adminView === "today" && (
         <>
-          <div className={"wcf-needs" + (todos.length === 0 ? " clear" : "")}>
+          <div className={"wcf-needs" + (todos.length === 0 ? " clear" : "") + (cleanSheet && todos.length === 0 ? " clean-sheet" : "")}>
+            {cleanSheet && todos.length === 0 && (
+              <div className="wcf-clean" aria-hidden="true">
+                <div className="net" />
+                <div className="stamp">CLEAN SHEET</div>
+              </div>
+            )}
             <div className="wcf-needs-head">
               <b>{todos.length === 0 ? "All clear" : "Needs you"}</b>
               <span>{todos.length === 0 ? "Nothing waiting on an admin ✓" : `${todos.length} ${todos.length === 1 ? "thing" : "things"}`}</span>
@@ -9522,16 +9777,59 @@ function AdminConsole({
           {messages.length === 0 && <p className="wcf-empty small">No messages sent yet.</p>}
           {messages.length > 0 && (
             <div className="wcf-msg-log">
-              {visibleMessages.map((m) => (
-                <div key={m.id} className="wcf-msg-log-row">
-                  <div className="wcf-msg-log-top">
-                    <span className="wcf-msg-log-name">{m.recipient?.display_name ?? "Unknown"}</span>
-                    <span className={"wcf-msg-log-status " + (m.read_at ? "read" : "unread")}>{m.read_at ? "Read" : "Unread"}</span>
+              <div className="wcf-msg-filters">
+                {(
+                  [
+                    ["all", "All"],
+                    ["admins", "From admins"],
+                    ["auto", "Automatic"],
+                    ["unread", "Unread"],
+                  ] as const
+                ).map(([k, label]) => (
+                  <button key={k} className={msgFilter === k ? "on" : ""} onClick={() => setMsgFilter(k)}>{label}</button>
+                ))}
+              </div>
+              {shownSends.length === 0 && <p className="wcf-empty small">Nothing here.</p>}
+              {shownSends.map((g) => {
+                const read = g.to.filter((m) => m.read_at).length;
+                const open = openSend === g.key;
+                const senderName = g.sender ? profileById(g.sender)?.display_name.split(" ")[0] ?? "an admin" : null;
+                return (
+                  <div key={g.key} className={"wcf-send" + (open ? " open" : "")} onClick={() => setOpenSend(open ? null : g.key)}>
+                    <div className="wcf-send-top">
+                      <span className={"wcf-send-kind " + (g.auto ? "auto" : "you")}>{g.auto ? "Automatic" : `From ${senderName}`}</span>
+                      <span className="wcf-send-when">{fmtDateTime(g.at)}</span>
+                    </div>
+                    <div className="wcf-send-text">{g.text}</div>
+                    <div className="wcf-send-faces">
+                      {g.to.slice(0, 6).map((m) => {
+                        const p = profileById(m.recipient_id);
+                        const name = m.recipient?.display_name ?? p?.display_name ?? "?";
+                        return (
+                          <span key={m.id} className={"wcf-send-face" + (m.read_at ? " read" : "")} title={name}>
+                            <Avatar name={name} avatarUrl={p?.avatar_url ?? null} className="wcf-send-av" background={avatarFor(name).gradient} />
+                          </span>
+                        );
+                      })}
+                      {g.to.length > 6 && <span className="wcf-send-more">+{g.to.length - 6}</span>}
+                      <span className="wcf-send-count">
+                        {g.to.length === 1 ? `${g.to[0].recipient?.display_name ?? "Unknown"} · ` : ""}
+                        <b>{read}</b> of {g.to.length} read
+                      </span>
+                    </div>
+                    {open && (
+                      <div className="wcf-send-who">
+                        {g.to.map((m) => (
+                          <div key={m.id}>
+                            <span>{m.recipient?.display_name ?? "Unknown"}</span>
+                            <em className={m.read_at ? "r" : ""}>{m.read_at ? `Read ${fmtDateTime(m.read_at)}` : "Not read yet"}</em>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <div className="wcf-msg-log-text">{m.message}</div>
-                  <div className="wcf-msg-log-when">{fmtDateTime(m.created_at)}{m.read_at ? ` · read ${fmtDateTime(m.read_at)}` : ""}</div>
-                </div>
-              ))}
+                );
+              })}
               {!showOlderMessages && olderMessageCount > 0 && (
                 <button className="wcf-show-more-toggle" onClick={() => setShowOlderMessages(true)}>
                   Show {olderMessageCount} older
@@ -9597,7 +9895,7 @@ function AdminGameRow({
   onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>, otherSide: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
 }) {
   const expanded = expandedId === game.id;
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -9915,7 +10213,7 @@ function AdminGameRow({
                 : hasBookings
                 ? `${game.venue} on ${fmtDate(game.date)} — this removes it completely, along with everyone's bookings and payment records.`
                 : `${game.venue} on ${fmtDate(game.date)} — this removes it completely.`;
-              if (await askConfirm(title, message, "Delete")) {
+              if (await askConfirm(title, message, scored ? "Hold to delete" : "Delete", true, scored)) {
                 onDeleteGame(game.id);
               }
             }}
@@ -10525,7 +10823,7 @@ function GameCard({
   onOpenPlayerCard: (playerId: string) => void;
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   weather: { code: number; temp: number } | null;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
   featured?: boolean;
   // The second "Next match" card on a two-game night: a different photo.
   alt?: boolean;
@@ -11158,7 +11456,21 @@ const css = `
 .wcf-role.admin .dot{background:var(--green)}
 .wcf-role.on{color:#fff;border-color:var(--red)}
 
-.wcf-main{flex:1;padding:14px 14px 92px;overflow-y:auto}
+.wcf-main{flex:1;padding:14px 14px 92px;overflow-y:auto;overscroll-behavior-y:contain}
+.wcf-ptr{position:relative;margin:-14px -14px 0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;overflow:hidden;padding-bottom:6px}
+.wcf-ptr small{margin-top:5px;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.wcf-ptr-goal{position:relative;width:120px;height:46px;flex:none}
+.wcf-ptr-goal .frame{position:absolute;inset:0;border:3px solid #e2e8f0;border-bottom:0;border-radius:4px 4px 0 0}
+.wcf-ptr-goal .net{position:absolute;left:3px;right:3px;top:3px;height:calc(10px + var(--k) * 26px);background-image:linear-gradient(rgba(226,232,240,.35) 1px,transparent 1px),linear-gradient(90deg,rgba(226,232,240,.35) 1px,transparent 1px);background-size:9px 9px;border-radius:0 0 50% 50%/0 0 30% 30%}
+.wcf-ptr-goal .ball{position:absolute;left:50%;bottom:-2px;width:18px;height:18px;margin-left:-9px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,#cbd5e1);transform:translateY(calc(var(--k) * -26px)) rotate(calc(var(--k) * 540deg))}
+.wcf-ptr-goal .ball::after{content:"";position:absolute;inset:5px;border-radius:50%;background:#1e293b;clip-path:polygon(50% 0,100% 38%,82% 100%,18% 100%,0 38%)}
+.wcf-ptr.refresh .ball{animation:wcfPtrIn .6s cubic-bezier(.3,1.3,.5,1) forwards}
+.wcf-ptr.refresh .net{animation:wcfPtrNet .6s .3s ease-out}
+.wcf-ptr.done .ball{transform:translateY(-30px) scale(.75)}
+@keyframes wcfPtrIn{from{transform:translateY(-26px) rotate(540deg)}to{transform:translateY(-30px) scale(.75) rotate(900deg)}}
+@keyframes wcfPtrNet{40%{height:44px}}
+.wcf-ptr-spin{width:20px;height:20px;border-radius:50%;border:2.5px solid rgba(148,163,184,.3);border-top-color:#f5d97a;animation:wcfSpin .8s linear infinite}
+@keyframes wcfSpin{to{transform:rotate(360deg)}}
 .wcf-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin:4px 2px 14px}
 .wcf-heading h2{margin:0;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim)}
 .wcf-heading-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
@@ -11499,6 +11811,31 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-msg-compose-box{width:100%;background:var(--bg);border:1px solid rgba(148,163,184,.2);border-radius:12px;padding:13px;color:#f1f5f9;font-size:13px;font-family:var(--sans);min-height:64px;resize:vertical;box-sizing:border-box}
 .wcf-msg-compose-send{min-height:48px;padding:15px;border-radius:14px;cursor:pointer;font-weight:800;font-size:13px;color:#fff;border:1px solid rgba(230,57,70,.5);background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5))}
 .wcf-msg-compose-send:disabled{background:var(--panel2);color:var(--dim);border-color:var(--line);cursor:not-allowed}
+.wcf-msg-filters{display:flex;gap:6px;margin:0 0 10px;overflow-x:auto;scrollbar-width:none}
+.wcf-msg-filters::-webkit-scrollbar{display:none}
+.wcf-msg-filters button{flex:none;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:none;color:#cbd5e1;font-weight:700;font-size:11.5px;cursor:pointer}
+.wcf-msg-filters button.on{background:#f1f5f9;border-color:#f1f5f9;color:#0d0d1a}
+.wcf-send{margin-bottom:9px;padding:12px 13px;border-radius:16px;background:var(--panel);border:1px solid var(--line);cursor:pointer}
+.wcf-send-top{display:flex;align-items:center;gap:8px}
+.wcf-send-kind{font-size:9.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;padding:3px 7px;border-radius:6px}
+.wcf-send-kind.you{color:#fde68a;background:rgba(245,217,122,.12)}
+.wcf-send-kind.auto{color:#9cc3f5;background:rgba(46,116,204,.14)}
+.wcf-send-when{margin-left:auto;font-size:11px;color:#64748b}
+.wcf-send-text{margin:8px 0 10px;font-size:13px;line-height:1.45;color:#e2e8f0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
+.wcf-send.open .wcf-send-text{display:block}
+.wcf-send-faces{display:flex;align-items:center;min-width:0}
+.wcf-send-face{position:relative;margin-left:-7px;flex:none}
+.wcf-send-face:first-child{margin-left:0}
+.wcf-send-av{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:9.5px;color:#fff;border:2px solid var(--panel);object-fit:cover}
+.wcf-send-face:not(.read) .wcf-send-av{filter:grayscale(.6) brightness(.75)}
+.wcf-send-face.read::after{content:"✓";position:absolute;right:-3px;bottom:-3px;width:13px;height:13px;border-radius:50%;background:#22c55e;color:#052e14;font-size:8px;font-weight:900;display:grid;place-items:center;border:1.5px solid var(--panel)}
+.wcf-send-more{margin-left:4px;font-size:11px;font-weight:700;color:var(--dim)}
+.wcf-send-count{margin-left:10px;min-width:0;font-size:11.5px;color:var(--dim);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-send-count b{color:#4ade80}
+.wcf-send-who{display:grid;gap:6px;margin-top:10px;padding-top:9px;border-top:1px solid var(--line)}
+.wcf-send-who div{display:flex;gap:8px;font-size:12px;color:#cbd5e1}
+.wcf-send-who em{margin-left:auto;font-style:normal;font-size:11px;color:#64748b}
+.wcf-send-who em.r{color:#4ade80}
 .wcf-msg-log-toggle{display:flex;align-items:center;gap:9px;width:100%;margin-top:10px;padding:13px 14px;border-radius:14px;background:rgba(148,163,184,.06);border:1px solid rgba(148,163,184,.16);cursor:pointer;min-height:46px}
 .wcf-msg-log-toggle-label{flex:1;text-align:left;font-weight:700;font-size:11.5px;letter-spacing:.06em;color:#cbd5e1}
 .wcf-msg-log-toggle-count{font-weight:600;font-size:11px;color:#64748b}
@@ -12167,16 +12504,21 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-guide-arrow{flex:none;font-size:14px;color:#64748b}
 .wcf-lightbox{position:fixed;inset:0;background:rgba(4,9,20,.92);z-index:100;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 12px 40px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
 .wcf-lightbox-img{max-width:min(480px,100%);width:100%;border-radius:14px;box-shadow:0 20px 60px -20px rgba(0,0,0,.6)}
-.wcf-modal-overlay{position:fixed;inset:0;background:rgba(3,7,15,.7);z-index:110;display:flex;align-items:center;justify-content:center;padding:20px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
-.wcf-modal{width:100%;max-width:300px;background:linear-gradient(180deg,rgba(30,41,59,.97),rgba(19,22,38,.99));border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 30px 70px -20px rgba(0,0,0,.75);animation:wcfPcardIn .2s ease-out}
-.wcf-modal-icon{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:19px;margin-bottom:14px}
+.wcf-modal-overlay{position:fixed;inset:0;background:rgba(3,7,15,.66);z-index:110;display:flex;align-items:flex-end;justify-content:center;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);animation:wcfFadeIn .2s ease both}
+.wcf-modal{width:100%;max-width:520px;background:#141a2b;border:1px solid var(--line);border-bottom:0;border-radius:24px 24px 0 0;padding:10px 20px calc(env(safe-area-inset-bottom,0px) + 20px);box-shadow:0 -20px 50px -10px #000;text-align:center;animation:wcfSheetUp .38s cubic-bezier(.3,1.15,.5,1) both}
+.wcf-modal-handle{width:38px;height:4px;margin:0 auto 16px;border-radius:3px;background:rgba(148,163,184,.35)}
+.wcf-modal-icon{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;font-size:19px;margin:0 auto 12px}
+@keyframes wcfFadeIn{from{opacity:0}}
 .wcf-modal-icon.danger{background:rgba(230,57,70,.15);border:1px solid rgba(230,57,70,.35);color:var(--red-hi)}
 .wcf-modal-icon.safe{background:rgba(245,217,122,.14);border:1px solid rgba(245,217,122,.35);color:#f5d97a}
-.wcf-modal-title{font-family:var(--display);font-size:16px;font-weight:800;margin-bottom:7px;color:var(--white)}
-.wcf-modal-msg{font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:20px}
-.wcf-modal-actions{display:flex;gap:9px}
-.wcf-modal-cancel{flex:1;background:rgba(148,163,184,.08);border:1px solid var(--line);color:var(--dim);padding:12px;border-radius:11px;font-weight:700;font-size:12.5px;cursor:pointer}
-.wcf-modal-confirm{flex:1;background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5));color:#fff;border:1px solid rgba(230,57,70,.5);padding:12px;border-radius:11px;font-weight:800;font-size:12.5px;cursor:pointer;box-shadow:0 10px 24px -14px rgba(230,57,70,.8)}
+.wcf-modal-title{font-family:var(--display);font-size:19px;font-weight:800;margin-bottom:8px;color:var(--white);text-wrap:balance}
+.wcf-modal-msg{max-width:380px;margin:0 auto 20px;font-size:13px;color:var(--dim);line-height:1.55}
+.wcf-modal-actions{display:flex;gap:10px}
+.wcf-modal-cancel{flex:1;min-height:48px;background:var(--panel);border:1px solid var(--line);color:#e2e8f0;padding:12px;border-radius:14px;font-weight:800;font-size:14px;cursor:pointer}
+.wcf-modal-confirm{flex:1;min-height:48px;background:var(--red);color:#fff;border:1px solid var(--red);padding:12px;border-radius:14px;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 10px 24px -14px rgba(230,57,70,.8)}
+.wcf-modal-confirm.hold{position:relative;overflow:hidden;background:#3a1218;border-color:rgba(230,57,70,.6);color:#fecaca;box-shadow:none;-webkit-user-select:none;user-select:none;touch-action:none;-webkit-touch-callout:none}
+.wcf-modal-confirm.hold .fill{position:absolute;inset:0;background:var(--red);transform-origin:left;transform:scaleX(0)}
+.wcf-modal-confirm.hold .lbl{position:relative}
 .wcf-modal-confirm.safe{background:var(--red);border-color:var(--red);box-shadow:0 10px 24px -14px rgba(230,57,70,.8)}
 @keyframes wcfPcardIn{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
 .wcf-pcard{width:100%;max-width:300px;margin:auto;border-radius:20px;overflow:hidden;border:1px solid var(--line);box-shadow:0 26px 50px -30px rgba(0,0,0,.95);animation:wcfPcardIn .22s ease-out}
@@ -12742,6 +13084,13 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-admin-tab-badge{position:absolute;top:-7px;right:-4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#eab308;color:#0d0d1a;font-style:normal;font-size:10.5px;font-weight:800;display:grid;place-items:center}
 .wcf-needs{border-radius:20px;padding:14px;margin-bottom:12px;border:1px solid rgba(245,217,122,.4);background:radial-gradient(120% 140% at 0% 0%,rgba(245,217,122,.12),transparent 60%),var(--panel)}
 .wcf-needs.clear{border-color:rgba(34,197,94,.35);background:radial-gradient(120% 140% at 0% 0%,rgba(34,197,94,.12),transparent 60%),var(--panel)}
+.wcf-needs{position:relative;overflow:hidden}
+.wcf-needs.clean-sheet{min-height:150px}
+.wcf-clean{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.wcf-clean .net{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.08) 1px,transparent 1px);background-size:16px 16px;animation:wcfNetRipple 1.2s ease-out forwards}
+@keyframes wcfNetRipple{0%{opacity:.9;transform:scale(1.15) perspective(400px) rotateX(10deg)}40%{transform:scale(.97)}100%{opacity:.3;transform:none}}
+.wcf-clean .stamp{position:relative;margin-top:22px;font-family:var(--display);font-weight:800;font-size:22px;letter-spacing:.14em;color:#4ade80;border:3px solid currentColor;border-radius:10px;padding:6px 14px;background:rgba(8,20,12,.85);transform:rotate(-8deg) scale(2.4);opacity:0;animation:wcfCleanStamp .5s .35s cubic-bezier(.3,1.6,.5,1) forwards}
+@keyframes wcfCleanStamp{to{transform:rotate(-8deg) scale(1);opacity:1}}
 .wcf-needs-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:2px}
 .wcf-needs-head b{font-family:var(--display);font-weight:800;font-size:18px;color:var(--white)}
 .wcf-needs-head span{font-size:12px;font-weight:700;color:#f5d97a}
@@ -13901,6 +14250,17 @@ a.wcf-set-link{text-decoration:none}
 @media (prefers-reduced-motion:reduce){.wcf-tick,.wcf-avatar-chip.more,.wcf-pay-strip,.wcf-fx-pill.low,.wcf-cd-dot,.wcf-queue,.wcf-queue *,.wcf-navbtn svg,.wcf-main,.wcf-squad-sheet,.wcf-sheet-row,.wcf-tk-layer,.wcf-tk-layer *,.wcf-potm-intro,.wcf-potm-intro *{animation:none!important}.wcf-card.featured,.wcf-fx-row,.wcf-hero-bar-fill,.wcf-fx-bar-fill,.wcf-book{transition:none!important}}
 /* Big moments: substitution board, debut cap, milestone shirt, club milestone */
 .wcf-moment{position:fixed;inset:0;z-index:146;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;color:#fff;cursor:pointer;animation:wcfWonIn .3s both}
+.wcf-coin{position:relative;width:120px;height:120px;transform-style:preserve-3d;animation:wcfCoinIn 1.1s cubic-bezier(.2,.9,.3,1) both}
+.wcf-coin .face{position:absolute;inset:0;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;backface-visibility:hidden;background:radial-gradient(circle at 35% 30%,#fff3c4,#f5d97a 40%,#b8902a 100%);box-shadow:inset 0 0 0 6px rgba(120,90,20,.45),0 10px 40px rgba(245,217,122,.35);color:#5b4310;font-family:var(--display);font-weight:800;font-size:14px;letter-spacing:.14em;line-height:1.15;text-align:center}
+.wcf-coin .face b{display:block;font-size:34px;letter-spacing:0;line-height:1}
+.wcf-coin .face.back{transform:rotateY(180deg);font-size:12px;letter-spacing:.2em}
+.wcf-coin.fly{animation:wcfCoinFly .7s cubic-bezier(.5,0,.7,.4) forwards}
+@keyframes wcfCoinIn{0%{transform:translateY(-260px) rotateY(0) scale(.5);opacity:0}55%{opacity:1}100%{transform:translateY(0) rotateY(1080deg) scale(1)}}
+@keyframes wcfCoinFly{from{transform:rotateY(1080deg)}to{transform:translate(-110px,-300px) rotateY(1080deg) scale(.2);opacity:.2}}
+.wcf-coin-sparks{position:absolute;left:50%;top:50%;width:0;height:0;pointer-events:none}
+.wcf-coin-sparks i{position:absolute;width:6px;height:6px;margin:-3px;border-radius:50%;background:#f5d97a;opacity:0;animation:wcfCoinSpark .8s .95s ease-out forwards}
+@keyframes wcfCoinSpark{0%{opacity:1;transform:none}100%{opacity:0;transform:translate(var(--x),var(--y))}}
+.wcf-coin-moment .wcf-coin-sparks{top:calc(50% - 60px)}
 .wcf-moment.dim{background:rgba(4,6,12,.88);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 .wcf-moment.club{background:radial-gradient(80% 55% at 50% 40%,rgba(234,179,8,.22),rgba(8,8,16,.97) 70%),rgba(8,8,16,.9)}
 .wcf-moment.out{animation:wcfLayerOut .38s ease-in both}
@@ -14116,6 +14476,8 @@ a.wcf-set-link{text-decoration:none}
 .wcf-tk-st.paid{right:70px;bottom:-42px;--r:10deg;transform:rotate(10deg);color:#15803d;box-shadow:inset 0 0 0 3px #15803d,inset 0 0 0 6px #f3ead2,inset 0 0 0 7.5px #15803d}
 .wcf-tk-layer.booked .wcf-tk-wrap>.wcf-tk-st.booked{animation:wcfThump .38s .55s cubic-bezier(.3,1.6,.5,1) both}
 .wcf-tk-layer.paid .wcf-tk-wrap>.wcf-tk-st.paid{animation:wcfThump .38s .5s cubic-bezier(.3,1.6,.5,1) both}
+.wcf-tk-st.credit{right:-18px;top:-30px;--r:-14deg;transform:rotate(-14deg);color:#a16207;background:radial-gradient(circle at 35% 30%,#fff7d6,#f5d97a 70%);box-shadow:inset 0 0 0 3px #a16207,inset 0 0 0 6px #fdf0c4,inset 0 0 0 7.5px #a16207,0 6px 18px rgba(234,179,8,.45)}
+.wcf-tk-layer.credit .wcf-tk-wrap>.wcf-tk-st.credit{animation:wcfThump .38s .55s cubic-bezier(.3,1.6,.5,1) both}
 .wcf-tk-layer.paid .wcf-tk-wrap{animation:wcfShake .25s .8s both}
 .wcf-tk-stack{position:relative;width:min(260px,80vw)}
 .wcf-mt{position:absolute;left:0;right:0;top:calc(var(--i) * 50px);display:grid;grid-template-columns:1fr 48px;border-radius:11px;background:#f3ead2;color:#1d1a14;box-shadow:0 14px 30px -14px #000;transform:rotate(calc((var(--i) - 1) * 3deg));animation:wcfTkFan .5s cubic-bezier(.2,.9,.3,1.1) both;animation-delay:calc(var(--i) * 70ms)}

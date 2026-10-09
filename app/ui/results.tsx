@@ -19,7 +19,7 @@ export type ResultsTabProps = {
   activeStatsYear: number;
   addingPotEntry: boolean;
   addPotEntry: (amount: number, description: string, category: PotCategory) => Promise<void>;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean) => Promise<boolean>;
+  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
   avatarByPlayerId: Map<string, string | null | undefined>;
   awards: AwardRow[];
   castMotmVote: (gameId: string, candidateId: string, candidateName: string) => Promise<void>;
