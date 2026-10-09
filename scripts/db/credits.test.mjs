@@ -175,5 +175,27 @@ await book(gx, ids.p5, "confirmed");
 const delErr = await err(() => db.query(`delete from public.games where id = $1`, [gx]));
 check("deleting a fixture with paid bookings works (no error)", delErr === null, delErr);
 
+console.log("\n— The admin switch (Account > Game credits) —");
+check("credits are on by default", (await one(`select public.credits_enabled() as on`)).on === true);
+await rpcAs(ids.admin, "admin_add_credit", [ids.p4, "before pause"]);
+const heldBefore = (await creditsOf(ids.p4)).filter((x) => x.status === "available").length;
+await as(db, ids.admin, () => db.query(`update public.club_settings set credits_enabled = false where id`));
+check("an admin can pause credits", (await one(`select public.credits_enabled() as on`)).on === false);
+const pz = await mk("pz", 12, 5, 16);
+const pz1 = await book(pz, ids.p5, "confirmed");
+await delAs(ids.p5, pz1.id);
+check("paused: a paid drop-out earns nothing", (await creditsOf(ids.p5)).filter((x) => x.source_game_id === pz).length === 0);
+const pz2 = await book(pz, ids.p4, "unpaid");
+check("paused: Use credit is refused", /paused/.test(await err(() => rpcAs(ids.p4, "use_credit", [pz2.id])) ?? ""));
+check("paused: Add credit is refused", /paused/.test(await err(() => rpcAs(ids.admin, "admin_add_credit", [ids.p4, "x"])) ?? ""));
+check("paused: credits already held are kept", (await creditsOf(ids.p4)).filter((x) => x.status === "available").length === heldBefore);
+const p3used = (await creditsOf(ids.p3)).find((x) => x.status === "used");
+await delAs(ids.p3, p3used.used_on_booking_id);
+check("paused: dropping out of a credit-paid game still returns that credit", (await creditsOf(ids.p3)).find((x) => x.id === p3used.id).status === "available");
+check("a player can't flip the switch", (await as(db, ids.p2, async () => { await db.query(`update public.club_settings set credits_enabled = true where id`); return (await one(`select credits_enabled from public.club_settings`)).credits_enabled; })) === false);
+await as(db, ids.admin, () => db.query(`update public.club_settings set credits_enabled = true where id`));
+r = await rpcAs(ids.p4, "use_credit", [pz2.id]);
+check("back on: held credits work again", r.rows[0].r === 0);
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

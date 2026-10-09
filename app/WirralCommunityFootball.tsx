@@ -204,6 +204,7 @@ export interface ClubSettings {
   default_max_players: number;
   last_fixture_update_at: string | null;
   require_approval?: boolean; // member approval switch (undefined before its SQL is run)
+  credits_enabled?: boolean; // game credits switch (undefined before its SQL is run = on)
 }
 
 // Someone who signed up while member approval was on, with what they told
@@ -2287,8 +2288,11 @@ function App({ session }: { session: Session }) {
   const myAvailableCredits = credits.filter((c) => c.player_id === myId && c.status === "available").length;
   const creditByBooking = useMemo(() => creditsByBooking(credits), [credits]);
   const afterCredit = () => Promise.all([loadGames(), loadCredits(), loadAdminMessages()]);
+  // Admins can pause credits (Account > Game credits); credits people
+  // already hold are kept for when it's back on.
+  const creditsOn = GAME_CREDITS_LIVE && clubSettings?.credits_enabled !== false;
   const creditsApi: CreditsApi = {
-    live: GAME_CREDITS_LIVE,
+    live: creditsOn,
     all: credits,
     myAvailable: myAvailableCredits,
     byBooking: creditByBooking,
@@ -2989,6 +2993,13 @@ function App({ session }: { session: Session }) {
     await Promise.all([loadProfiles(), loadGames()]);
     logAction("Deleted account", name);
   }
+  async function setCreditsEnabled(on: boolean) {
+    if (!on && !(await askConfirm("Pause game credits?", "Drop-outs stop earning credits and players can't use them. Credits people already have are kept for when you turn it back on.", "Pause")))
+      return;
+    await saveClubSettings({ credits_enabled: on });
+    await logAction(on ? "Turned on game credits" : "Paused game credits", "");
+  }
+
   // Member approval: the switch, and letting a waiting member in or not.
   async function setRequireApproval(on: boolean) {
     if (on && !(await askConfirm("Approve new members?", "New sign-ups will wait in a waiting room until an admin lets them in. Everyone already in isn't affected.", "Turn on"))) return;
@@ -5832,6 +5843,17 @@ function App({ session }: { session: Session }) {
             onAddPlayer={addPlayer}
             newMembers={
               isAdmin ? (
+                <>
+                {GAME_CREDITS_LIVE && (
+                  <GameCreditsSection
+                    on={creditsOn}
+                    available={cs.credits_enabled !== undefined}
+                    onSet={setCreditsEnabled}
+                    holders={new Set(credits.filter((c) => c.status === "available").map((c) => c.player_id)).size}
+                    held={credits.filter((c) => c.status === "available").length}
+                    checks={credits.filter((c) => c.status === "awaiting_check").length}
+                  />
+                )}
                 <NewMembersSection
                   requireApproval={!!cs.require_approval}
                   available={cs.require_approval !== undefined}
@@ -5841,6 +5863,7 @@ function App({ session }: { session: Session }) {
                   onDismissLetIn={(id) => setJustLetIn((cur) => cur.filter((j) => j.id !== id))}
                   onDecide={decideMember}
                 />
+                </>
               ) : null
             }
             onGenerateLoginCode={generateLoginCode}
@@ -8751,6 +8774,40 @@ function agoLabel(iso: string) {
 }
 
 // Admin > New members: the approval switch and everyone waiting to join.
+// The admin switch for game credits (club_settings.credits_enabled).
+function GameCreditsSection({ on, available, onSet, holders, held, checks }: { on: boolean; available: boolean; onSet: (on: boolean) => void; holders: number; held: number; checks: number }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <AccordionSection
+      icon={<SetIcon name="star" />}
+      title="Game credits"
+      meta={!available ? "Needs its database update" : on ? (held ? `On · ${creditLabel(held)} held` : "On") : "Paused"}
+      open={open}
+      onToggle={() => setOpen((v) => !v)}
+    >
+      <div className="wcf-approve-row">
+        <div>
+          <b>Game credits</b>
+          <span>{on ? "A paid drop-out earns a credit players can use on any game." : "Paused: drop-outs don't earn credits and players can't use them."}</span>
+        </div>
+        <button
+          role="switch"
+          aria-checked={on}
+          aria-label="Game credits"
+          disabled={!available}
+          className={"wcf-switch" + (on ? " on" : "")}
+          onClick={() => onSet(!on)}
+        />
+      </div>
+      <p className="wcf-admin-hint">
+        {held ? `${holders} ${holders === 1 ? "player has" : "players have"} ${creditLabel(held)} between them. ` : "Nobody's holding a credit right now. "}
+        {checks ? `${checks} drop-out payment${checks === 1 ? "" : "s"} to check on the Payments tab. ` : ""}
+        Pausing keeps the credits people already have for when it&apos;s back on.
+      </p>
+    </AccordionSection>
+  );
+}
+
 function NewMembersSection({
   requireApproval,
   available,

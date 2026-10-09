@@ -2279,3 +2279,123 @@ begin
   return msg_id;
 end;
 $$;
+
+-- ─────────────────────────────────────────────────────────────────
+-- 2026-10-09: an admin switch for game credits (Account > Game credits),
+-- like the member-approval one. Off = paused: drop-outs don't earn
+-- credits and nobody can spend or add one; credits already held are kept
+-- for when it's back on. A game paid with a credit still gets its credit
+-- back if the player drops out. On by default.
+-- ─────────────────────────────────────────────────────────────────
+alter table public.club_settings add column if not exists credits_enabled boolean not null default true;
+
+create or replace function public.credits_enabled() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select credits_enabled from public.club_settings where id), true);
+$$;
+
+create or replace function public.credit_on_booking_delete() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  g record;
+  spent record;
+begin
+  if old.waiting then
+    return old;
+  end if;
+  select date, kickoff, price into g from public.games where id = old.game_id;
+  if not found then
+    return old; -- the whole fixture is being deleted
+  end if;
+  if ((g.date + g.kickoff::time) at time zone 'Europe/London') <= now() then
+    return old; -- after kick-off: a no-show, not a drop-out
+  end if;
+  select * into spent from public.player_credits where used_on_booking_id = old.id and status = 'used' for update;
+  if found then
+    update public.player_credits set status = 'available', used_on_booking_id = null, used_at = null where id = spent.id;
+    insert into public.admin_messages (recipient_id, sender_id, message)
+    values (old.player_id, null, format('You dropped out of %s, which you''d paid for with a credit, so the credit is back with you.', public.credit_game_label(old.game_id)));
+  elsif not public.credits_enabled() then
+    return old; -- credits paused by an admin: nothing new is earned
+  elsif old.pot_exempt_reason is null and old.status = 'confirmed' then
+    insert into public.player_credits (player_id, status, source, source_game_id) values (old.player_id, 'available', 'dropout', old.game_id);
+    insert into public.admin_messages (recipient_id, sender_id, message)
+    values (old.player_id, null, format('You dropped out of %s, so you''ve got a game credit. Use it on any game from the To pay list.', public.credit_game_label(old.game_id)));
+  elsif old.pot_exempt_reason is null and old.status = 'pending' then
+    insert into public.player_credits (player_id, status, source, source_game_id) values (old.player_id, 'awaiting_check', 'dropout', old.game_id);
+  end if;
+  return old;
+end;
+$$;
+
+create or replace function public.use_credit(p_booking_id uuid) returns int
+language plpgsql security definer set search_path = public as $$
+declare
+  b record;
+  g record;
+  c record;
+  left_to_pay int;
+begin
+  if not public.credits_enabled() then
+    raise exception 'Game credits are paused at the moment';
+  end if;
+  select * into b from public.bookings where id = p_booking_id for update;
+  if not found or b.player_id <> auth.uid() then
+    raise exception 'That booking isn''t yours';
+  end if;
+  if b.waiting then
+    raise exception 'You can use a credit once you''re off the waiting list';
+  end if;
+  if b.status <> 'unpaid' or b.pot_exempt_reason is not null then
+    raise exception 'This game doesn''t need paying for';
+  end if;
+  if exists (select 1 from public.player_credits where used_on_booking_id = p_booking_id and status = 'used') then
+    raise exception 'You''ve already used a credit on this game';
+  end if;
+  select date, kickoff, price into g from public.games where id = b.game_id;
+  if ((g.date + g.kickoff::time) at time zone 'Europe/London') <= now() then
+    raise exception 'Credits are for games that haven''t kicked off yet';
+  end if;
+  select * into c from public.player_credits
+  where player_id = auth.uid() and status = 'available'
+  order by created_at limit 1 for update skip locked;
+  if not found then
+    raise exception 'You don''t have a credit to use';
+  end if;
+  update public.player_credits set status = 'used', used_on_booking_id = p_booking_id, used_at = now() where id = c.id;
+  left_to_pay := greatest(0, g.price - c.value);
+  if left_to_pay = 0 then
+    update public.bookings set status = 'confirmed', confirmed_at = now() where id = p_booking_id;
+  end if;
+  insert into public.admin_messages (recipient_id, sender_id, message)
+  values (
+    auth.uid(), null,
+    case when left_to_pay = 0
+      then format('Your credit paid for %s. You''re confirmed.', public.credit_game_label(b.game_id))
+      else format('Your credit covered £%s of %s. £%s left to pay.', c.value, public.credit_game_label(b.game_id), left_to_pay)
+    end
+  );
+  return left_to_pay;
+end;
+$$;
+
+create or replace function public.admin_add_credit(p_player_id uuid, p_note text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  msg_id uuid;
+begin
+  if not public.is_admin() then
+    raise exception 'Only admins can add credits';
+  end if;
+  if not public.credits_enabled() then
+    raise exception 'Game credits are paused - turn them on in Account > Game credits first';
+  end if;
+  insert into public.player_credits (player_id, status, source, note, created_by) values (p_player_id, 'available', 'admin', nullif(trim(p_note), ''), auth.uid());
+  insert into public.admin_messages (recipient_id, sender_id, message)
+  values (p_player_id, auth.uid(), 'An admin has given you a game credit. Use it on any game from the To pay list.')
+  returning id into msg_id;
+  insert into public.audit_log (actor_id, action, details)
+  values (auth.uid(), 'Added a game credit', (select display_name from public.profiles where id = p_player_id) || coalesce(' — ' || nullif(trim(p_note), ''), ''));
+  return msg_id;
+end;
+$$;
