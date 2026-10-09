@@ -103,6 +103,7 @@ export function ShirtHandover({
   nextName,
   shirtColor,
   initial,
+  note,
   onConfirm,
   onClose,
 }: {
@@ -110,6 +111,8 @@ export function ShirtHandover({
   nextName: string | null;
   shirtColor: string;
   initial: string;
+  // What happens to their money (game credits), shown before they hold.
+  note?: { tone: "good" | "wait" | "none"; text: string } | null;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -153,6 +156,7 @@ export function ShirtHandover({
     <div className={"wcf-sh" + (leaving ? " out" : "")} role="dialog" aria-label="Give up your spot">
       <div className="wcf-sh-t">Can&apos;t make {day}?</div>
       <div className="wcf-sh-s">{stage === "hold" ? "Hold your shirt to give up your spot." : "Spot handed over."}</div>
+      {note && <div className={"wcf-credit-note " + note.tone}>{note.text}</div>}
       {stage !== "board" ? (
         <div className="wcf-sh-room">
           <span className="rail" />

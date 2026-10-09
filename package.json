@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "smoke": "node --env-file=.env.local scripts/smoke.mjs"
+    "smoke": "node --env-file=.env.local scripts/smoke.mjs",
+    "test:db": "node scripts/db/credits.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.0",
@@ -17,12 +18,14 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@types/node": "20.14.2",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
     "@types/web-push": "^3.6.4",
     "eslint": "8.57.0",
     "eslint-config-next": "15.3.8",
+    "playwright": "1.63.0",
     "typescript": "5.6.2"
   }
 }

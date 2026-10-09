@@ -50,3 +50,11 @@ export const WRAPPED_FIRST_MONTH_FOR_ALL = "2026-09";
 // false the app doesn't ask for it, so every open isn't a failed request.
 // Flip to true once the table exists.
 export const MONZO_MATCHING_LIVE = false;
+
+// Game credits (scoped 2026-10-08): a player who'd paid and drops out gets a
+// credit they can spend on any game ("Use credit"), confirming it straight
+// away; on a dearer game it covers £5 and they pay the difference. Off until
+// the player_credits SQL (supabase/schema.sql) is run on the live database -
+// the app doesn't ask for the table while this is false. The env var is
+// only for local screenshot previews and is never set in Vercel.
+export const GAME_CREDITS_LIVE = false || process.env.NEXT_PUBLIC_CREDITS_PREVIEW === "1";

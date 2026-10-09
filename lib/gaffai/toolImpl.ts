@@ -6,7 +6,7 @@ import { buildLeaderboard, topScorers, type ScoredPrediction } from "../predicti
 import { sendPushToUsers } from "../push";
 import { defaultPitchCost } from "../pitchCost";
 import { BOOT_CATEGORY, type BootCategory } from "../bootRoom";
-import { WRAPPED_OPEN_TO_ALL_FROM } from "../clubPolicy";
+import { WRAPPED_OPEN_TO_ALL_FROM, GAME_CREDITS_LIVE } from "../clubPolicy";
 import { computeJourney, fmtJourneyDate } from "../memberJourney";
 import { testAccountIds } from "../testAccounts";
 import { motmWinners, goalsLookup } from "../motm";
@@ -1697,6 +1697,8 @@ const QUERYABLE_TABLES = new Set([
   "boot_room_endorsements", "wrapped_events", "game_weather", "rating_history", "monthly_snapshots", "booking_cancellations",
   "notification_sends", "app_days", "game_ratings", "join_requests", "club_settings", "gaffai_facts", "monzo_transactions",
   "feed_hidden_items", "posts", "post_likes",
+  // Readable once the credits table exists on the live database.
+  ...(GAME_CREDITS_LIVE ? ["player_credits"] : []),
 ]);
 const BLOCKED_IN_SELECT = /monzo_tokens|push_subscriptions|gaffai_conversations|motm_votes|score_predictions|p256dh|auth_key|access_token|refresh_token/i;
 type QueryFilter = { column: string; op: "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "like" | "ilike" | "in" | "is"; value: unknown };

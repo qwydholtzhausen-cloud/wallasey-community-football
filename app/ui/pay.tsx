@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useCredits } from "./credits";
+import { creditLabel } from "../../lib/credits";
 
 // Paying on time. Everyone pays in the end; they just pay late, and a red
 // strip on every unpaid card (plus a push per booking) shouted about games
@@ -6,7 +8,7 @@ import { useState } from "react";
 // single list of what to pay, and a deadline only on games in the next 7
 // days (see payDeadline / GameCard).
 
-export type DueGame = { bookingId: string; gameId: string; date: string; kickoff: string; venue: string; price: number; msToKickoff: number; status: "unpaid" | "pending" };
+export type DueGame = { bookingId: string; gameId: string; date: string; kickoff: string; venue: string; price: number; msToKickoff: number; status: "unpaid" | "pending"; credited?: boolean };
 
 const DAY = 86400000;
 export const PAY_SOON_MS = 7 * DAY;
@@ -49,6 +51,7 @@ export function OweBar({ due, onOpen }: { due: DueGame[]; onOpen: () => void }) 
 
 export function PaySheet({ due, paymentLink, onMarkPaid, onClose }: { due: DueGame[]; paymentLink: string; onMarkPaid: (bookingId: string) => void; onClose: () => void }) {
   const [leaving, setLeaving] = useState(false);
+  const { live, myAvailable, spendCredit } = useCredits();
   const close = () => { setLeaving(true); setTimeout(onClose, 280); };
   const unpaid = due.filter((d) => d.status === "unpaid");
   const pending = due.filter((d) => d.status === "pending");
@@ -65,11 +68,22 @@ export function PaySheet({ due, paymentLink, onMarkPaid, onClose }: { due: DueGa
         <b>£{d.price} · {d.venue}</b>
         {d.status === "pending"
           ? "You said you'd paid"
-          : d.msToKickoff <= PAY_SOON_MS
+          : d.credited
+            ? `Credit covered £5 · £${d.price} left to pay`
+            : d.msToKickoff <= PAY_SOON_MS
             ? d.msToKickoff > 0 ? `Pay before kick-off · ${untilLabel(d.msToKickoff)}` : "Pay tonight"
             : `${dayLabel(d.date, { month: "long" })} · ${d.kickoff}`}
       </span>
-      {d.status === "pending" ? <span className="chkpill">CHECKING</span> : <button type="button" className="paid-btn" onClick={() => onMarkPaid(d.bookingId)}>I&apos;ve paid</button>}
+      {d.status === "pending" ? (
+        <span className="chkpill">CHECKING</span>
+      ) : live && myAvailable > 0 && !d.credited ? (
+        <span className="wcf-prow-btns">
+          <button type="button" className="wcf-credit-btn" onClick={() => spendCredit(d.bookingId)}>Use credit</button>
+          <button type="button" className="paid-btn" onClick={() => onMarkPaid(d.bookingId)}>I&apos;ve paid</button>
+        </span>
+      ) : (
+        <button type="button" className="paid-btn" onClick={() => onMarkPaid(d.bookingId)}>{d.credited ? `I've paid £${d.price}` : "I've paid"}</button>
+      )}
     </div>
   );
   return (
@@ -82,6 +96,9 @@ export function PaySheet({ due, paymentLink, onMarkPaid, onClose }: { due: DueGa
           </div>
           <button type="button" className="x" onClick={close} aria-label="Close">✕</button>
         </div>
+        {live && myAvailable > 0 && unpaid.some((d) => !d.credited) && (
+          <div className="wcf-paysheet-credit">You have {creditLabel(myAvailable)}. One credit covers one game.</div>
+        )}
         <div className="body">
           {soon.length > 0 && <div className="grp">This week</div>}
           {soon.map(row)}

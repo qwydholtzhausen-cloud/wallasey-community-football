@@ -16,6 +16,7 @@ import {
   WRAPPED_ADMIN_PREVIEW_MONTH_SO_FAR,
   WRAPPED_FIRST_MONTH_FOR_ALL,
   MONZO_MATCHING_LIVE,
+  GAME_CREDITS_LIVE,
 } from "../lib/clubPolicy";
 import { computeWrapped } from "../lib/wrapped";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
@@ -54,6 +55,8 @@ import { MatchDayClock, MatchDayTeam, isMatchDay } from "./ui/matchday";
 import { scorersForSide } from "../lib/goalSides";
 import { GameStory, StoryRings, type StoryGame } from "./ui/stories";
 import { OweBar, PaySheet, PAY_SOON_MS, untilLabel, type DueGame } from "./ui/pay";
+import { CreditsContext, CreditChip, useCredits, dropOutNote, type CreditsApi } from "./ui/credits";
+import { CREDIT_SELECT, amountDue, creditsByBooking, creditLabel, type CreditRow } from "../lib/credits";
 import { LineupTab } from "./ui/lineup";
 import { AccountPanel } from "./ui/account";
 import { wrappedThemeFor } from "../lib/wrappedThemes";
@@ -1740,6 +1743,14 @@ function App({ session }: { session: Session }) {
     if (data) setAdminMessages(data as unknown as AdminMessage[]);
   }, []);
 
+  // Game credits: a player gets their own (RLS), an admin gets everyone's.
+  const [credits, setCredits] = useState<CreditRow[]>([]);
+  const loadCredits = useCallback(async () => {
+    if (!GAME_CREDITS_LIVE) return;
+    const { data } = await supabase.from("player_credits").select(CREDIT_SELECT).order("created_at", { ascending: true });
+    if (data) setCredits(data as unknown as CreditRow[]);
+  }, []);
+
   const loadPotEntries = useCallback(async () => {
     const { data } = await supabase.from("pot_entries").select("id, amount, description, category, created_at").order("created_at", { ascending: false });
     if (data) setPotEntries(data as PotEntry[]);
@@ -1875,6 +1886,7 @@ function App({ session }: { session: Session }) {
         loadBirthdays(),
         loadAdminMessages(),
         loadMonzoUnmatched(),
+        loadCredits(),
       ]),
     [
       loadProfile,
@@ -1894,6 +1906,7 @@ function App({ session }: { session: Session }) {
       loadBirthdays,
       loadAdminMessages,
       loadMonzoUnmatched,
+      loadCredits,
     ]
   );
 
@@ -1928,12 +1941,13 @@ function App({ session }: { session: Session }) {
       .channel("bookings-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, () => {
         loadGames();
+        loadCredits();
       })
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadGames]);
+  }, [loadGames, loadCredits]);
 
   useEffect(() => {
     const prevStatus = prevStatusRef.current;
@@ -2264,7 +2278,48 @@ function App({ session }: { session: Session }) {
     const { error } = await supabase.from("bookings").delete().eq("id", bookingId);
     if (error) return notifyError(error.message);
     if (logDetails) logAction("Removed player from game", logDetails);
+    // Dropping out of a paid game can create a credit (database trigger).
+    if (GAME_CREDITS_LIVE) Promise.all([loadCredits(), loadAdminMessages()]);
   }
+  // Game credits. The database does the real work (who's allowed, which
+  // credit, confirming the booking, the inbox message); these just call it
+  // and refresh what it changed.
+  const myAvailableCredits = credits.filter((c) => c.player_id === myId && c.status === "available").length;
+  const creditByBooking = useMemo(() => creditsByBooking(credits), [credits]);
+  const afterCredit = () => Promise.all([loadGames(), loadCredits(), loadAdminMessages()]);
+  const creditsApi: CreditsApi = {
+    live: GAME_CREDITS_LIVE,
+    all: credits,
+    myAvailable: myAvailableCredits,
+    byBooking: creditByBooking,
+    spendCredit: async (bookingId) => {
+      const { data, error } = await supabase.rpc("use_credit", { p_booking_id: bookingId });
+      if (error) return notifyError(error.message);
+      await afterCredit();
+      notifySuccess(typeof data === "number" && data > 0 ? `Credit used · £${data} left to pay` : "Paid with credit · you're confirmed");
+    },
+    addCredit: async (playerId, note) => {
+      const { data, error } = await supabase.rpc("admin_add_credit", { p_player_id: playerId, p_note: note.trim() || null });
+      if (error) return notifyError(error.message);
+      if (typeof data === "string") pushNotify("notify-admin-message", { messageId: data });
+      await afterCredit();
+      notifySuccess("Credit added · they've been sent a message");
+    },
+    cancelCredit: async (playerId) => {
+      const { error } = await supabase.rpc("admin_cancel_credit", { p_player_id: playerId });
+      if (error) return notifyError(error.message);
+      await afterCredit();
+      notifySuccess("Credit cancelled");
+    },
+    resolveCheck: async (creditId, arrived) => {
+      const { data, error } = await supabase.rpc("resolve_credit_check", { p_credit_id: creditId, p_arrived: arrived });
+      if (error) return notifyError(error.message);
+      if (typeof data === "string") pushNotify("notify-admin-message", { messageId: data });
+      await afterCredit();
+      notifySuccess(arrived ? "Credit added · they've been sent a message" : "No credit · marked as not received");
+    },
+  };
+
   async function markPaid(bookingId: string) {
     const { error } = await supabase.from("bookings").update({ status: "pending" }).eq("id", bookingId);
     if (error) notifyError(error.message);
@@ -3141,10 +3196,10 @@ function App({ session }: { session: Session }) {
       upcomingGames.flatMap((g) => {
         const b = g.bookings.find((x) => x.player_id === myId && !x.waiting && !x.pot_exempt_reason && (x.status === "unpaid" || x.status === "pending"));
         return b
-          ? [{ bookingId: b.id, gameId: g.id, date: g.date, kickoff: g.kickoff, venue: g.venue, price: g.price, msToKickoff: toMs(kickoffCutoff(g.date, g.kickoff, 0)) - toMs(nowUk), status: b.status as "unpaid" | "pending" }]
+          ? [{ bookingId: b.id, gameId: g.id, date: g.date, kickoff: g.kickoff, venue: g.venue, price: amountDue(g.price, creditByBooking.get(b.id)), msToKickoff: toMs(kickoffCutoff(g.date, g.kickoff, 0)) - toMs(nowUk), status: b.status as "unpaid" | "pending", credited: creditByBooking.has(b.id) }]
           : [];
       }),
-    [upcomingGames, myId, nowUk]
+    [upcomingGames, myId, nowUk, creditByBooking]
   );
   const [paySheetOpen, setPaySheetOpen] = useState(false);
   // Split for the "Your tab" card display only - owed (unpaid, real
@@ -5231,7 +5286,7 @@ function App({ session }: { session: Session }) {
   }
 
   return (
-    <>
+    <CreditsContext.Provider value={creditsApi}>
       {toast && (
         <div className={"wcf-toast " + toast.kind + (toast.undo ? " has-undo" : "")}>
           <span>{toast.text}</span>
@@ -5291,6 +5346,7 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
+            <CreditChip />
             <OweBar due={myDue} onOpen={() => setPaySheetOpen(true)} />
             {rateGame && !myRatings[rateGame.id] && rateDismissed[rateGame.id] && (
               <div className="wcf-rate-card">
@@ -6164,7 +6220,7 @@ function App({ session }: { session: Session }) {
           </div>
         </div>
       )}
-    </>
+    </CreditsContext.Provider>
   );
 }
 
@@ -8986,15 +9042,32 @@ function AdminConsole({
   const laterUpcoming = upcoming.filter((g) => g.date > in28);
 
   // Needs-you items, each with the one button that deals with it.
-  type Todo = { key: string; tone: "gold" | "red" | "blue"; icon: string; title: string; sub: string; label: string; act: () => void };
+  type Todo = { key: string; tone: "gold" | "red" | "blue"; icon: string; title: string; sub: string; label: string; act: () => void; alt?: { label: string; act: () => void } };
   const todos: Todo[] = [];
+  // Said they'd paid, then dropped out: the credit waits on an admin
+  // confirming the money actually arrived.
+  const credits = useCredits();
+  const creditChecks = credits.all.filter((c) => c.status === "awaiting_check");
+  const checkSub = (c: CreditRow) => `${c.source_game ? fmtDate(c.source_game.date) + " · £" + c.source_game.price + ". " : ""}Did the money arrive?`;
+  creditChecks.forEach((c) =>
+    todos.push({
+      key: "credit-" + c.id,
+      tone: "gold",
+      icon: "£",
+      title: `${c.player?.display_name ?? "A player"} said paid, then dropped out`,
+      sub: checkSub(c),
+      label: "Yes, give credit",
+      act: () => credits.resolveCheck(c.id, true),
+      alt: { label: "No", act: () => credits.resolveCheck(c.id, false) },
+    })
+  );
   paymentClaims.slice(0, 3).forEach(({ booking: b, game: g }) =>
     todos.push({
       key: "claim-" + b.id,
       tone: "gold",
       icon: "£",
       title: `${b.player.display_name} says they've paid`,
-      sub: `${fmtDate(g.date)} · £${g.price}`,
+      sub: `${fmtDate(g.date)} · £${amountDue(g.price, credits.byBooking.get(b.id))}${credits.byBooking.has(b.id) ? " (rest paid by credit)" : ""}`,
       label: "Confirm",
       act: () => onSetStatus(b.id, "confirmed"),
     })
@@ -9056,7 +9129,14 @@ function AdminConsole({
               <div key={t.key} className="wcf-todo">
                 <span className={"wcf-todo-ic " + t.tone}>{t.icon}</span>
                 <span className="wcf-todo-tx"><b>{t.title}</b><span>{t.sub}</span></span>
-                <button className={"wcf-todo-btn " + t.tone} onClick={t.act}>{t.label}</button>
+                {t.alt ? (
+                  <span className="wcf-todo-btns">
+                    <button className={"wcf-todo-btn " + t.tone} onClick={t.act}>{t.label}</button>
+                    <button className="wcf-todo-btn ghost" onClick={t.alt.act}>{t.alt.label}</button>
+                  </span>
+                ) : (
+                  <button className={"wcf-todo-btn " + t.tone} onClick={t.act}>{t.label}</button>
+                )}
               </div>
             ))}
           </div>
@@ -9135,13 +9215,27 @@ function AdminConsole({
               </button>
             )}
           </div>
-          {paymentClaims.length === 0 && <p className="wcf-empty small">Nobody&apos;s waiting on a payment check.</p>}
+          {paymentClaims.length === 0 && creditChecks.length === 0 && <p className="wcf-empty small">Nobody&apos;s waiting on a payment check.</p>}
+          {creditChecks.length > 0 && (
+            <div className="wcf-admin-card">
+              {creditChecks.map((c) => (
+                <div key={c.id} className="wcf-todo">
+                  <span className="wcf-todo-ic gold">£</span>
+                  <span className="wcf-todo-tx"><b>{c.player?.display_name ?? "A player"}</b><span>Said paid, then dropped out · {checkSub(c)}</span></span>
+                  <span className="wcf-todo-btns">
+                    <button className="wcf-todo-btn gold" onClick={() => credits.resolveCheck(c.id, true)}>Yes, give credit</button>
+                    <button className="wcf-todo-btn ghost" onClick={() => credits.resolveCheck(c.id, false)}>No</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
           {paymentClaims.length > 0 && (
             <div className="wcf-admin-card">
               {paymentClaims.map(({ booking: b, game: g }) => (
                 <div key={b.id} className="wcf-todo">
                   <span className="wcf-todo-ic gold">£</span>
-                  <span className="wcf-todo-tx"><b>{b.player.display_name}</b><span>Says paid · {fmtDate(g.date)} · £{g.price} · booked {fmtDateTime(b.created_at)}</span></span>
+                  <span className="wcf-todo-tx"><b>{b.player.display_name}</b><span>Says paid · {fmtDate(g.date)} · £{amountDue(g.price, credits.byBooking.get(b.id))}{credits.byBooking.has(b.id) ? " (rest by credit)" : ""} · booked {fmtDateTime(b.created_at)}</span></span>
                   <button className="wcf-todo-btn gold" onClick={() => onSetStatus(b.id, "confirmed")}>Confirm</button>
                 </div>
               ))}
@@ -10119,7 +10213,7 @@ function GameCard({
   const myBooking = game.bookings.find((b) => b.player_id === myId);
   // Captured when it opens: once the spot's given up the booking is gone,
   // and the handover still has its substitution board to show.
-  const [handover, setHandover] = useState<{ bookingId: string; day: string; nextName: string | null; shirtColor: string; initial: string } | null>(null);
+  const [handover, setHandover] = useState<{ bookingId: string; day: string; nextName: string | null; shirtColor: string; initial: string; note: ReturnType<typeof dropOutNote> } | null>(null);
   const full = confirmed.length >= game.max_players;
   const spotsLeft = Math.max(0, game.max_players - confirmed.length);
   const fillPct = Math.min(100, (confirmed.length / game.max_players) * 100);
@@ -10149,14 +10243,22 @@ function GameCard({
   // clock (two-game nights included); the "your team" block below still
   // needs you booked in on a team.
   const matchDay = !!featured && !game.special && isMatchDay(game.date, game.kickoff);
+  const credits = useCredits();
+  const myCredit = myBooking ? credits.byBooking.get(myBooking.id) : undefined;
+  const due = amountDue(game.price, myCredit);
+  const canSpendCredit = credits.live && credits.myAvailable > 0 && !myCredit;
   const payStrip =
-    myBooking && !myBooking.waiting && myBooking.status === "unpaid" && !myBooking.pot_exempt_reason ? (
+    myBooking && !myBooking.waiting && myBooking.status === "confirmed" && myCredit ? (
+      <div className="wcf-pay-quiet">✓ Paid with a game credit</div>
+    ) : myBooking && !myBooking.waiting && myBooking.status === "unpaid" && !myBooking.pot_exempt_reason ? (
       msToKickoff <= PAY_SOON_MS ? (
         <div className="wcf-payby-wrap">
           <span className={"wcf-payby" + (msToKickoff <= 86400000 ? " red" : "")}>⏱ {msToKickoff > 0 ? `Pay before kick-off · ${untilLabel(msToKickoff)}` : "Pay tonight"}</span>
           <div className="wcf-pay-strip">
-            <span className="wcf-pay-strip-text">£{game.price} due</span>
-            {PAYMENT_LINK && (
+            <span className="wcf-pay-strip-text">£{due} due{myCredit ? " · credit used" : ""}</span>
+            {canSpendCredit ? (
+              <button className="wcf-credit-btn" onClick={() => credits.spendCredit(myBooking.id)}>Use credit</button>
+            ) : PAYMENT_LINK && (
               <a className="wcf-pay-now" href={PAYMENT_LINK} target="_blank" rel="noreferrer">
                 Pay Now
               </a>
@@ -10165,7 +10267,12 @@ function GameCard({
           </div>
         </div>
       ) : (
-        <div className="wcf-pay-quiet">£{game.price} · pay any time before kick-off</div>
+        <div className="wcf-pay-quiet">
+          £{due} · pay any time before kick-off{myCredit ? " (credit used)" : ""}
+          {canSpendCredit && (
+            <button className="wcf-credit-link" onClick={() => credits.spendCredit(myBooking.id)}>Use credit</button>
+          )}
+        </div>
       )
     ) : null;
 
@@ -10219,10 +10326,11 @@ function GameCard({
                 nextName: waitingList[0]?.player.display_name.split(" ")[0] ?? null,
                 shirtColor: myBooking.team === "white" ? "#F5F6F8" : "#e63946",
                 initial: (myBooking.player.display_name.trim()[0] || "?").toUpperCase(),
+                note: dropOutNote(myBooking.status, !!myCredit, credits.live),
               });
             const ok = myBooking.waiting
               ? await askConfirm("Leave the waiting list?", "You'll lose your place in the queue.", "Leave")
-              : await askConfirm("Give up your spot?", `${game.venue} · ${fmtDate(game.date)}. Someone from the waiting list will be offered it.`, "Give up spot");
+              : await askConfirm("Give up your spot?", `${game.venue} · ${fmtDate(game.date)}. Someone from the waiting list will be offered it.${dropOutNote(myBooking.status, !!myCredit, credits.live) ? " " + dropOutNote(myBooking.status, !!myCredit, credits.live)!.text : ""}`, "Give up spot");
             if (ok) onCancel(myBooking.id);
           }}
         >
@@ -10238,6 +10346,7 @@ function GameCard({
             nextName={handover.nextName}
             shirtColor={handover.shirtColor}
             initial={handover.initial}
+            note={handover.note}
             onConfirm={() => onCancel(handover.bookingId)}
             onClose={() => setHandover(null)}
           />,
@@ -13111,6 +13220,22 @@ a.wcf-set-link{text-decoration:none}
 .wcf-paysheet .ft .tot span:last-child{font-size:20px}
 .wcf-paysheet .ft .pn{display:grid;place-items:center;min-height:48px;border-radius:14px;background:var(--red);color:#fff;font-family:var(--display);font-weight:800;font-size:14px;text-decoration:none}
 .wcf-paysheet .ft small{text-align:center;color:var(--dim);font-size:11px}
+/* Game credits */
+.wcf-credit-chip{display:flex;align-items:center;gap:10px;margin:0 2px 12px;padding:10px 14px;border-radius:14px;border:1px solid rgba(245,217,122,.5);background:linear-gradient(135deg,rgba(245,217,122,.14),rgba(245,217,122,.03));color:#fde68a;font-weight:700;font-size:12.5px}
+.wcf-credit-chip i{width:24px;height:24px;flex:none;border-radius:50%;background:#f5d97a;color:#1a1405;display:grid;place-items:center;font-weight:900;font-size:12px;font-style:normal}
+.wcf-credit-chip span{color:var(--dim);font-weight:600}
+.wcf-credit-btn{flex:none;background:#f5d97a;color:#1a1405;border:0;border-radius:10px;padding:9px 14px;min-height:36px;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap}
+.wcf-prow .wcf-credit-btn{padding:7px 10px;font-size:11.5px}
+.wcf-prow-btns{display:flex;flex-direction:column;gap:6px;flex:none}
+.wcf-credit-link{margin-left:8px;background:none;border:0;padding:0;color:#f5d97a;font:inherit;font-weight:800;text-decoration:underline;cursor:pointer}
+.wcf-paysheet-credit{margin:0 14px 4px;padding:9px 12px;border-radius:12px;background:rgba(245,217,122,.08);border:1px solid rgba(245,217,122,.35);font-size:12px;color:#fde68a;font-weight:700}
+.wcf-credit-note{max-width:320px;margin:12px auto 0;padding:10px 12px;border-radius:12px;font-size:12.5px;line-height:1.45;text-align:left}
+.wcf-credit-note.good{background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);color:#fde68a}
+.wcf-credit-note.wait{background:rgba(148,163,184,.1);border:1px solid rgba(148,163,184,.3);color:#cbd5e1}
+.wcf-credit-note.none{background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.35);color:#fecaca}
+.wcf-todo-btns{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+.wcf-todo-btn.ghost{background:transparent;color:#cbd5e1;border:1px solid var(--line)}
+.wcf-roles-credit{color:#f5d97a;font-weight:700}
 /* Match-day mode */
 .wcf-md-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-weight:800;font-size:10.5px;letter-spacing:.18em;color:#1a1405;background:linear-gradient(90deg,#f5d97a,#fde68a,#f5d97a);background-size:200% 100%;animation:wcfMdShimmer 2.4s linear infinite}
 @keyframes wcfMdShimmer{to{background-position:-200% 0}}

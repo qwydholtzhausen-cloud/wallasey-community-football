@@ -2,6 +2,8 @@ import { SeasonPitch, type SeasonGame } from "./celebrate";
 import { useEffect, useState } from "react";
 import { nowInLondon } from "../../lib/time";
 import { EmptyScene } from "./EmptyScene";
+import { useCredits } from "./credits";
+import { creditLabel } from "../../lib/credits";
 import {
   AccordionSection,
   Avatar,
@@ -150,6 +152,11 @@ export function AccountPanel({
   const [roleMenuFor, setRoleMenuFor] = useState<string | null>(null);
   const [openRoleTool, setOpenRoleTool] = useState<"add" | "code" | null>(null);
   const [renamingPlayerId, setRenamingPlayerId] = useState<string | null>(null);
+  // Game credits: an admin adding one by hand, with an optional note.
+  const credits = useCredits();
+  const [creditFor, setCreditFor] = useState<string | null>(null);
+  const [creditNote, setCreditNote] = useState("");
+  const creditsOf = (playerId: string) => credits.all.filter((c) => c.player_id === playerId && c.status === "available").length;
   const [renameDraft, setRenameDraft] = useState("");
   const filteredRoleProfiles = profiles.filter((p) => p.display_name.toLowerCase().includes(roleSearch.trim().toLowerCase()));
   const [pushBusy, setPushBusy] = useState(false);
@@ -433,6 +440,9 @@ export function AccountPanel({
                   <span className="wcf-booking-badge amber">
                     {queuePos === 1 ? "NEXT IN LINE" : queuePos > 1 ? `${nth(queuePos).toUpperCase()} IN LINE` : "WAITING LIST"}
                   </span>
+                ) : credits.byBooking.has(booking.id) ? (
+                  // Paid with a game credit (fully, or £5 of a dearer game).
+                  <span className={"wcf-status-badge " + booking.status}>{booking.status === "confirmed" ? "Paid with credit" : `Credit + £${game.price - (credits.byBooking.get(booking.id)?.value ?? 0)} to pay`}</span>
                 ) : (
                   <StatusBadge status={booking.status} />
                 )}
@@ -705,7 +715,7 @@ export function AccountPanel({
                   fn();
                 };
                 return (
-                  <div key={p.id} className={"wcf-roles-row" + (menuOpen || renamingPlayerId === p.id || ratingPlayerId === p.id ? " open" : "")}>
+                  <div key={p.id} className={"wcf-roles-row" + (menuOpen || renamingPlayerId === p.id || ratingPlayerId === p.id || creditFor === p.id ? " open" : "")}>
                     <div className="wcf-roles-row-top">
                       <Avatar name={p.display_name} avatarUrl={p.avatar_url} className="wcf-roles-avatar" background={avatarFor(p.display_name).gradient} />
                       <div className="wcf-roles-who">
@@ -714,7 +724,10 @@ export function AccountPanel({
                           {isSelf ? " (you)" : ""}
                           {p.role !== "player" && <span className={"wcf-role-badge small " + p.role}>{ROLE_LABEL[p.role]}</span>}
                         </div>
-                        <div className="wcf-roles-sub">{rated ? "Rated" : "Not rated"}</div>
+                        <div className="wcf-roles-sub">
+                          {rated ? "Rated" : "Not rated"}
+                          {credits.live && creditsOf(p.id) > 0 && <span className="wcf-roles-credit"> · {creditLabel(creditsOf(p.id))}</span>}
+                        </div>
                       </div>
                       <button
                         className="wcf-roles-more"
@@ -729,6 +742,30 @@ export function AccountPanel({
                     {menuOpen && (
                       <div className="wcf-roles-menu">
                         <button onClick={() => act(() => onToggleRatingPlayer(p.id))}>{rated ? "Edit rating" : "Rate player"}</button>
+                        {credits.live && (
+                          <button
+                            onClick={() =>
+                              act(() => {
+                                setCreditFor(p.id);
+                                setCreditNote("");
+                              })
+                            }
+                          >
+                            Add credit<small>One game they can use whenever they like</small>
+                          </button>
+                        )}
+                        {credits.live && creditsOf(p.id) > 0 && (
+                          <button
+                            onClick={() =>
+                              act(async () => {
+                                if (await askConfirm(`Cancel one of ${p.display_name}'s credits?`, `They have ${creditLabel(creditsOf(p.id))}. This takes one away.`, "Cancel credit"))
+                                  credits.cancelCredit(p.id);
+                              })
+                            }
+                          >
+                            Cancel a credit<small>They have {creditLabel(creditsOf(p.id))}</small>
+                          </button>
+                        )}
                         <button
                           onClick={() =>
                             act(() => {
@@ -832,6 +869,22 @@ export function AccountPanel({
                       </div>
                     )}
 
+                    {creditFor === p.id && (
+                      <div className="wcf-account-rename wcf-credit-add" style={{ marginTop: 10 }}>
+                        <input value={creditNote} onChange={(e) => setCreditNote(e.target.value)} placeholder="Note (optional), e.g. paid cash, dropped out 12 Oct" aria-label="Note for the activity log" autoFocus />
+                        <button
+                          onClick={() => {
+                            credits.addCredit(p.id, creditNote);
+                            setCreditFor(null);
+                          }}
+                        >
+                          Add 1 credit
+                        </button>
+                        <button className="wcf-ghost" onClick={() => setCreditFor(null)}>
+                          Cancel
+                        </button>
+                      </div>
+                    )}
                     {renamingPlayerId === p.id && (
                       <div className="wcf-account-rename" style={{ marginTop: 10 }}>
                         <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} autoFocus />
