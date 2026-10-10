@@ -84,7 +84,7 @@ export type ResultsTabProps = {
   recordFalls: Record<string, { v: number; who: string }>;
   resultsMonth: string;
   resultsMonths: string[];
-  resultsView: "fixtures" | "season" | "table" | "records" | "pot";
+  resultsView: "fixtures" | "season" | "table" | "records" | "history" | "pot";
   statsLastGame: { gameId: string; delta: Record<string, { apps: number; goals: number }> } | null;
   rivalryStreak: { winner: Team; count: number; otherLastWon: string | null } | null;
   scoredPastGames: GameRow[];
@@ -100,7 +100,9 @@ export type ResultsTabProps = {
   setPotDescription: React.Dispatch<React.SetStateAction<string>>;
   setPotEntryKind: React.Dispatch<React.SetStateAction<"add" | "deduct">>;
   setResultsMonth: React.Dispatch<React.SetStateAction<string>>;
-  setResultsView: React.Dispatch<React.SetStateAction<"fixtures" | "season" | "table" | "records" | "pot">>;
+  setResultsView: React.Dispatch<React.SetStateAction<"fixtures" | "season" | "table" | "records" | "history" | "pot">>;
+  // Results › History ("Our story"), drawn by app/ui/history.tsx.
+  historyView: React.ReactNode;
   setShowAllHatTricks: React.Dispatch<React.SetStateAction<boolean>>;
   setStatsOpenId: React.Dispatch<React.SetStateAction<string | null>>;
   setStatsSeasonYear: React.Dispatch<React.SetStateAction<number | null>>;
@@ -114,6 +116,7 @@ export type ResultsTabProps = {
 };
 
 export function ResultsTab({
+  historyView,
   activeStatsYear,
   addingPotEntry,
   addPotEntry,
@@ -193,6 +196,13 @@ export function ResultsTab({
   statsOpenId,
   statsSort,
 }: ResultsTabProps) {
+  // A gold dot on the History tab until it's been opened once on this phone.
+  const [historyNew, setHistoryNew] = useState(false);
+  useEffect(() => {
+    try {
+      setHistoryNew(!localStorage.getItem("wcf-history-seen"));
+    } catch {}
+  }, [resultsView]);
   // ── Climbing the Stats table ──
   // The first open of Stats (this season, within a week) after a game that
   // moved you up the table that's open: the rank card ticks, then your row
@@ -274,6 +284,10 @@ export function ResultsTab({
         <button className={resultsView === "records" ? "active" : ""} onClick={() => setResultsView("records")}>
           Records
         </button>
+        <button className={resultsView === "history" ? "active" : ""} onClick={() => { setResultsView("history"); try { localStorage.setItem("wcf-history-seen", "1"); } catch {} }} style={{ position: "relative" }}>
+          History
+          {historyNew && <i className="wcf-hist-dot" aria-hidden="true" />}
+        </button>
         <button className={resultsView === "fixtures" ? "active" : ""} onClick={() => setResultsView("fixtures")}>
           Scores
         </button>
@@ -281,6 +295,8 @@ export function ResultsTab({
           Pot
         </button>
       </div>
+
+      {resultsView === "history" && historyView}
 
       {resultsView === "season" &&
         (() => {
@@ -293,6 +309,9 @@ export function ResultsTab({
           return (
             <>
               <div className="wcf-season-hero">
+                <button type="button" className="wcf-story-pill" onClick={() => { setResultsView("history"); try { localStorage.setItem("wcf-history-seen", "1"); } catch {} }}>
+                  Our story ›
+                </button>
                 <div className="wcf-season-hero-eyebrow">Season {currentSeasonYear - SEASON_EPOCH_YEAR + 1}</div>
                 <div className="wcf-season-hero-title">{currentSeasonYear}</div>
                 {scoredSeason.length > 0 ? (

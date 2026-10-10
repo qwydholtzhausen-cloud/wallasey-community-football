@@ -52,6 +52,8 @@ import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
 import { WinMoment, type SeasonGame } from "./ui/celebrate";
 import { TrophyCabinet, MatchBallMoment, cabinetCss } from "./ui/cabinet";
 import { FirstGameCard, NameStep, WelcomeCards, type BestChance, type PushState } from "./ui/newplayer";
+import { HistoryPage } from "./ui/history";
+import { computeHistory, type HMoment } from "../lib/history";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { ClubOdometer, DebutCard, MilestoneShirt, MotmWinCard, PotmMine, PotmNight, RecordCard } from "./ui/premium";
 import { MatchDayClock, MatchDayTeam, dayWord, isLiveNow, isMatchDay } from "./ui/matchday";
@@ -1626,7 +1628,7 @@ function App({ session }: { session: Session }) {
 
   const [tab, setTab] = useState<"fixtures" | "feed" | "lineup" | "results" | "account" | "admin">("fixtures");
   const [showAllHatTricks, setShowAllHatTricks] = useState(false);
-  const [resultsView, setResultsView] = useState<"season" | "table" | "records" | "fixtures" | "pot">("season");
+  const [resultsView, setResultsView] = useState<"season" | "table" | "records" | "history" | "fixtures" | "pot">("season");
   const [potAmount, setPotAmount] = useState("");
   const [potDescription, setPotDescription] = useState("");
   const [potEntryKind, setPotEntryKind] = useState<"add" | "deduct">("add");
@@ -1773,6 +1775,13 @@ function App({ session }: { session: Session }) {
   // (other people's appear once voting closes), so "8 of 16 voted" comes
   // from a counter that gives the number and nothing else.
   const [motmBallotCounts, setMotmBallotCounts] = useState<Record<string, number>>({});
+  // Club history: moments admins add by hand (history_moments). Missing
+  // table (before its SQL has run) just means none yet.
+  const [historyMoments, setHistoryMoments] = useState<HMoment[]>([]);
+  const loadHistoryMoments = useCallback(async () => {
+    const { data, error } = await supabase.from("history_moments").select("id, happened_on, title, body, kind, player_ids").order("happened_on");
+    setHistoryMoments(error || !data ? [] : (data as HMoment[]));
+  }, []);
   const loadMotmVotes = useCallback(async () => {
     const { data } = await supabase.from("motm_votes").select("*");
     if (data) setMotmVotes(data as MotmVote[]);
@@ -1900,6 +1909,7 @@ function App({ session }: { session: Session }) {
         loadAdminMessages(),
         loadMonzoUnmatched(),
         loadCredits(),
+        loadHistoryMoments(),
       ]),
     [
       loadProfile,
@@ -1920,6 +1930,7 @@ function App({ session }: { session: Session }) {
       loadAdminMessages,
       loadMonzoUnmatched,
       loadCredits,
+      loadHistoryMoments,
     ]
   );
 
@@ -5390,6 +5401,42 @@ function App({ session }: { session: Session }) {
   // stacked). The rating sheet, Wrapped, a player card or your own booking
   // ticket pause the queue. Time-critical moments come first.
   const MOMENTS_PER_OPEN = 2;
+  // ── Results › History ("Our story"): lib/history.ts + app/ui/history.tsx ──
+  const historyData = useMemo(
+    () =>
+      computeHistory({
+        games: pastGames,
+        goals: goalRows,
+        people: profiles,
+        motmWinnerIdsByGame,
+        motmVotes,
+        potm: potmHistory,
+        moments: historyMoments,
+        teams: { white: cs.team_white_name, red: cs.team_red_name },
+        upcoming: upcomingGames,
+      }),
+    [pastGames, goalRows, profiles, motmWinnerIdsByGame, motmVotes, potmHistory, historyMoments, cs.team_white_name, cs.team_red_name, upcomingGames]
+  );
+  const historyPeople = useMemo(() => new Map(profiles.map((p) => [p.id, { name: p.display_name, avatar: p.avatar_url ?? null }])), [profiles]);
+  async function addHistoryMoment(m: { happened_on: string; title: string; body: string | null; kind: "note" | "goal"; player_ids: string[] }) {
+    const { error } = await supabase.from("history_moments").insert({ ...m, created_by: myId });
+    if (error) {
+      notifyError(error.message);
+      return false;
+    }
+    await loadHistoryMoments();
+    logAction("Added a history moment", m.title);
+    notifySuccess("Added to our story");
+    return true;
+  }
+  async function deleteHistoryMoment(id: string) {
+    const m = historyMoments.find((x) => x.id === id);
+    if (!(await askConfirm("Remove this moment?", `"${m?.title ?? "This moment"}" comes out of the club's story.`, "Remove", true))) return;
+    const { error } = await supabase.from("history_moments").delete().eq("id", id);
+    if (error) return notifyError(error.message);
+    await loadHistoryMoments();
+  }
+
   // ── A brand-new member's first few minutes (app/ui/newplayer.tsx) ──
   // New = joined in the last 3 days and never played. Once per phone:
   // what to call them (only if they're still named after their email),
@@ -6063,6 +6110,16 @@ function App({ session }: { session: Session }) {
 
         {tab === "results" && (
           <ResultsTab
+            historyView={
+              <HistoryPage
+                data={historyData}
+                people={historyPeople}
+                isAdmin={isAdmin}
+                today={nowUk.slice(0, 10)}
+                onAdd={addHistoryMoment}
+                onDelete={deleteHistoryMoment}
+              />
+            }
             activeStatsYear={activeStatsYear}
             addingPotEntry={addingPotEntry}
             addPotEntry={addPotEntry}
@@ -13780,6 +13837,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-set-link-title{flex:1;min-width:0;font-weight:600;font-size:13.5px;color:#f1f5f9}
 .wcf-set-chev{font-size:18px;color:#64748b}
 .wcf-set-email{flex:none;max-width:55%;font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-story-pill{position:absolute;right:14px;top:14px;z-index:3;padding:7px 12px;border-radius:999px;background:rgba(10,12,20,.72);border:1px solid rgba(245,217,122,.6);color:#f5d97a;font-family:var(--sans);font-weight:800;font-size:12px;cursor:pointer;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.wcf-hist-dot{position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:#f5d97a;box-shadow:0 0 8px #f5d97a}
 .wcf-season-hero-stats>span{position:relative}
 .wcf-season-hero-stats em{font-style:normal;display:flex;align-items:center;gap:5px}
 .wcf-season-hero-stats>span.moved b{animation:wcfSeasonFlash 2.2s var(--d) ease-out both}

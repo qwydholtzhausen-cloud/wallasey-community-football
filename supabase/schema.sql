@@ -2430,3 +2430,39 @@ drop trigger if exists guard_player_booking_update on public.bookings;
 create trigger guard_player_booking_update
   before update on public.bookings
   for each row execute function public.guard_player_booking_update();
+
+-- ─────────────────────────────────────────────────────────────────
+-- Club history: moments admins add by hand (10 Oct 2026). Everything
+-- else in Results › History is worked out from the games; these are the
+-- things the data can't know (the first ever goal, a new kit...). The
+-- date can be any day in the past, so a moment slots into the story
+-- where it happened.
+-- ─────────────────────────────────────────────────────────────────
+create table if not exists public.history_moments (
+  id uuid primary key default gen_random_uuid(),
+  happened_on date not null,
+  title text not null check (char_length(title) between 2 and 80),
+  body text check (body is null or char_length(body) <= 240),
+  kind text not null default 'note' check (kind in ('note', 'goal')),
+  player_ids uuid[] not null default '{}',
+  created_by uuid references public.profiles (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.history_moments enable row level security;
+
+drop policy if exists "history_moments_select" on public.history_moments;
+create policy "history_moments_select" on public.history_moments for select using (auth.role() = 'authenticated' and public.is_active_member());
+drop policy if exists "history_moments_admin_insert" on public.history_moments;
+create policy "history_moments_admin_insert" on public.history_moments for insert with check (public.is_admin());
+drop policy if exists "history_moments_admin_update" on public.history_moments;
+create policy "history_moments_admin_update" on public.history_moments for update using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "history_moments_admin_delete" on public.history_moments;
+create policy "history_moments_admin_delete" on public.history_moments for delete using (public.is_admin());
+
+-- The first ever goal: Gary McKay, Mon 17 Aug 2026 (the user's word; the
+-- app records goals per game, not their order).
+insert into public.history_moments (happened_on, title, body, kind, player_ids)
+select date '2026-08-17', 'The first ever goal', 'The very first goal in the club''s history.', 'goal', array['c6aa4c41-596a-4818-9622-2cb57dbe9e49']::uuid[]
+where exists (select 1 from public.profiles where id = 'c6aa4c41-596a-4818-9622-2cb57dbe9e49')
+  and not exists (select 1 from public.history_moments where title = 'The first ever goal');
