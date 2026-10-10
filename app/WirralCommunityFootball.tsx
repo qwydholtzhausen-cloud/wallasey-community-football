@@ -7635,16 +7635,42 @@ function PlayerCardModal({
               in the app (Scores, Records), just gathered on one card. */}
           {season && season.W + season.D + season.L > 0 && (
             <div className="wcf-pcard-season">
-              <div className="wcf-pcard-sec-head wcf-rv" style={{ ["--d" as string]: ".35s" }}><span>Season record</span><b>{season.W}W · {season.D}D · {season.L}L</b></div>
+              <div className="wcf-pcard-sec-head wcf-rv" style={{ ["--d" as string]: ".35s" }}><span>Season record</span><span>{season.W + season.D + season.L} games</span></div>
+              {/* Won, drawn, lost: each part of the bar fills in turn, then the counts. */}
               <div className="wcf-pcard-wdl">
-                {season.W > 0 && <div style={{ flex: season.W }} className="w">{season.W}</div>}
-                {season.D > 0 && <div style={{ flex: season.D }} className="d">{season.D}</div>}
-                {season.L > 0 && <div style={{ flex: season.L }} className="l">{season.L}</div>}
+                {(["w", "d", "l"] as const).map((k, i) => {
+                  const n = k === "w" ? season.W : k === "d" ? season.D : season.L;
+                  return n > 0 ? <div key={k} style={{ flex: n, ["--i" as string]: i }} className={k} /> : null;
+                })}
+              </div>
+              <div className="wcf-pcard-wdl-key">
+                <span className="w"><b>{season.W}</b> won</span>
+                <span className="d"><b>{season.D}</b> drawn</span>
+                <span className="l"><b>{season.L}</b> lost</span>
               </div>
               <div className="wcf-pcard-sec-head wcf-rv" style={{ marginTop: 12, ["--d" as string]: ".6s" }}><span>Last {season.form.length}</span><span>oldest → latest</span></div>
-              <div className="wcf-pcard-form">
-                {season.form.map((r, i) => <i key={i} className={"f" + r} style={{ ["--i" as string]: i }}>{r}</i>)}
-              </div>
+              {(() => {
+                // A current run worth calling out: 2+ wins, or 3+ unbeaten.
+                const f = season.form;
+                let wins = 0;
+                for (let i = f.length - 1; i >= 0 && f[i] === "W"; i--) wins++;
+                let unbeaten = 0;
+                for (let i = f.length - 1; i >= 0 && f[i] !== "L"; i--) unbeaten++;
+                const run = wins >= 2 ? { n: wins, text: `${wins} wins on the bounce` } : unbeaten >= 3 ? { n: unbeaten, text: `Unbeaten in ${unbeaten}` } : null;
+                return (
+                  <>
+                    <div className="wcf-pcard-form" style={{ ["--n" as string]: f.length }}>
+                      {f.map((r, i) => (
+                        <i key={i} className={"f" + r + (run && i >= f.length - run.n ? " run" : "")} style={{ ["--i" as string]: i }}>
+                          {r}
+                        </i>
+                      ))}
+                      {run && <span className="wcf-pcard-runline" style={{ ["--from" as string]: f.length - run.n, ["--len" as string]: run.n }} />}
+                    </div>
+                    {run && <div className="wcf-pcard-runtext">{run.text}</div>}
+                  </>
+                );
+              })()}
               <div className="wcf-pcard-sec-head wcf-rv" style={{ marginTop: 12, ["--d" as string]: "1.05s" }}><span>Bests</span></div>
               <div className="wcf-pcard-bests wcf-rv" style={{ ["--d" as string]: "1.1s" }}>
                 <div><b><CountUp to={season.bestGoals?.goals ?? 0} delay={at(1.1)} run={animate} /></b><span>{season.bestGoals ? `goals in a game · ${fmtDate(season.bestGoals.date)}` : "goals in a game"}</span></div>
@@ -12746,8 +12772,6 @@ button.wcf-glance-card:disabled{cursor:default}
 @keyframes wcfWalkout{from{transform:translateY(110px) scale(.88);filter:blur(6px) brightness(.4);opacity:0}to{transform:none;filter:none;opacity:1}}
 @keyframes wcfTrace{0%{stroke-dashoffset:var(--per);opacity:1}85%{stroke-dashoffset:0;opacity:1}100%{stroke-dashoffset:0;opacity:0}}
 .wcf-walkout .wcf-rv{animation:wcfRvIn .4s both;animation-delay:calc(.95s + var(--d,0s))}
-.wcf-walkout .wcf-pcard-wdl{transform-origin:left;animation:wcfBarGrow .6s cubic-bezier(.3,.8,.3,1) both;animation-delay:1.4s}
-.wcf-walkout .wcf-pcard-form i{animation:wcfPop .3s cubic-bezier(.3,1.6,.5,1) both;animation-delay:calc(1.65s + var(--i,0) * .09s)}
 .wcf-walkout .wcf-pcard-fill{transform-origin:left;animation:wcfBarGrow .7s cubic-bezier(.3,.8,.3,1) both;animation-delay:calc(2.05s + var(--i,0) * .08s)}
 .wcf-walkout .wcf-pcard-honour{animation:wcfPop .35s cubic-bezier(.3,1.6,.5,1) both;animation-delay:1s}
 @keyframes wcfRvIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -13236,12 +13260,33 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-pcard-season{margin-top:14px}
 .wcf-pcard-sec-head{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
 .wcf-pcard-sec-head b{font-family:var(--display);font-size:12px;letter-spacing:.02em;color:var(--white)}
-.wcf-pcard-wdl{display:flex;height:24px;border-radius:7px;overflow:hidden;margin-top:6px;font-family:var(--display);font-weight:800;font-size:11px}
-.wcf-pcard-wdl div{display:grid;place-items:center;color:#0d0d1a;min-width:18px}
-.wcf-pcard-wdl .w{background:#86efac}.wcf-pcard-wdl .d{background:#cbd5e1}.wcf-pcard-wdl .l{background:#f8b3b8}
-.wcf-pcard-form{display:flex;gap:6px;margin-top:6px}
-.wcf-pcard-form i{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-family:var(--display);font-weight:800;font-size:10.5px;color:#0d0d1a}
-.wcf-pcard-form .fW{background:#86efac}.wcf-pcard-form .fD{background:#cbd5e1}.wcf-pcard-form .fL{background:#f8b3b8}
+/* Season record: a slim three-part bar that fills W, then D, then L,
+   with the counts underneath; the last five are scoreboard tiles that
+   flip over oldest first. Every time the card opens (later in the
+   walkout, after the card has landed). */
+.wcf-pcard-season{--base:.25s}
+.wcf-walkout .wcf-pcard-season{--base:1.35s}
+.wcf-pcard-wdl{position:relative;display:flex;gap:3px;height:8px;margin-top:8px;animation:wcfWdlWipe 1s cubic-bezier(.45,.05,.35,1) both;animation-delay:var(--base)}
+.wcf-pcard-wdl div{border-radius:4px;min-width:6px}
+.wcf-pcard-wdl::after{content:"";position:absolute;top:50%;left:0;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:radial-gradient(circle,#fff 0,rgba(255,250,220,.85) 25%,rgba(245,217,122,0) 70%);opacity:0;animation:wcfWdlHead 1s cubic-bezier(.45,.05,.35,1) both;animation-delay:var(--base)}
+@keyframes wcfWdlWipe{from{clip-path:inset(-12px 100% -12px 0)}to{clip-path:inset(-12px 0 -12px 0)}}
+@keyframes wcfWdlHead{0%{left:0;opacity:1}90%{left:100%;opacity:1}100%{left:100%;opacity:0}}
+.wcf-pcard-wdl .w{background:linear-gradient(90deg,#16a34a,#4ade80)}.wcf-pcard-wdl .d{background:#64748b}.wcf-pcard-wdl .l{background:linear-gradient(90deg,#b91c1c,#E42A36)}
+.wcf-pcard-wdl-key{display:flex;gap:14px;margin-top:8px;font-size:11.5px;color:var(--dim)}
+.wcf-pcard-wdl-key span{display:flex;align-items:center;gap:5px}
+.wcf-pcard-wdl-key span::before{content:"";width:7px;height:7px;border-radius:50%}
+.wcf-pcard-wdl-key .w::before{background:#4ade80}.wcf-pcard-wdl-key .d::before{background:#64748b}.wcf-pcard-wdl-key .l::before{background:#E42A36}
+.wcf-pcard-wdl-key b{font-family:var(--display);font-weight:800;font-size:13px;color:var(--white)}
+.wcf-pcard-form{position:relative;display:flex;gap:6px;margin-top:8px;padding-bottom:8px;perspective:400px}
+.wcf-pcard-form i.run{animation-name:wcfFormFlip,wcfRunGlow;animation-duration:.45s,1.2s;animation-delay:calc(var(--base) + .55s + var(--i,0) * .14s),calc(var(--base) + 1.5s + var(--i,0) * .08s);animation-fill-mode:both,both}
+@keyframes wcfRunGlow{0%{box-shadow:inset 0 -12px 14px -12px rgba(0,0,0,.6)}40%{box-shadow:0 0 0 1.5px #f5d97a,0 0 18px rgba(245,217,122,.6),inset 0 -12px 14px -12px rgba(0,0,0,.6)}100%{box-shadow:0 0 0 1px rgba(245,217,122,.45),inset 0 -12px 14px -12px rgba(0,0,0,.6)}}
+.wcf-pcard-runline{position:absolute;bottom:0;left:calc(var(--from) * 38px);width:calc(var(--len) * 38px - 6px);height:3px;border-radius:3px;background:linear-gradient(90deg,#f5d97a,#fff3c4,#f5d97a);box-shadow:0 0 10px rgba(245,217,122,.7);transform-origin:left;animation:wcfBarGrow .5s cubic-bezier(.3,.8,.3,1) both;animation-delay:calc(var(--base) + 1.45s)}
+.wcf-pcard-runtext{margin-top:6px;font-size:10.5px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#f5d97a;animation:wcfRvIn .4s both;animation-delay:calc(var(--base) + 1.8s)}
+.wcf-pcard-form i{width:32px;height:36px;border-radius:8px;display:grid;place-items:center;font-style:normal;font-family:var(--display);font-weight:800;font-size:14px;background:linear-gradient(180deg,#1c2436,#111827);border:1px solid rgba(255,255,255,.08);border-bottom-width:3px;box-shadow:inset 0 -12px 14px -12px rgba(0,0,0,.6);backface-visibility:hidden;animation:wcfFormFlip .45s cubic-bezier(.3,1.3,.5,1) both;animation-delay:calc(var(--base) + .55s + var(--i,0) * .14s)}
+.wcf-pcard-form .fW{color:#4ade80;border-bottom-color:#22c55e}.wcf-pcard-form .fD{color:#cbd5e1;border-bottom-color:#64748b}.wcf-pcard-form .fL{color:#ff6b74;border-bottom-color:#E42A36}
+.wcf-pcard-form i:last-of-type{box-shadow:0 0 0 1.5px rgba(245,217,122,.55),inset 0 -12px 14px -12px rgba(0,0,0,.6)}
+@keyframes wcfFormFlip{0%{transform:rotateX(-110deg) scale(.9);opacity:0}55%{transform:rotateX(14deg) scale(1.04);opacity:1}75%{transform:rotateX(-6deg)}100%{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.wcf-pcard-wdl,.wcf-pcard-wdl::after,.wcf-pcard-form i,.wcf-pcard-runline,.wcf-pcard-runtext{animation:none}.wcf-pcard-wdl::after{display:none}}
 .wcf-pcard-bests{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:6px}
 .wcf-pcard-bests b{display:block;font-family:var(--display);font-weight:800;font-size:19px;color:var(--white)}
 .wcf-pcard-bests span{display:block;font-size:10.5px;color:var(--dim);font-weight:600;line-height:1.3;margin-top:2px}
@@ -13521,8 +13566,24 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-set-link-title{flex:1;min-width:0;font-weight:600;font-size:13.5px;color:#f1f5f9}
 .wcf-set-chev{font-size:18px;color:#64748b}
 .wcf-set-email{flex:none;max-width:55%;font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wcf-season-hero-stats>span{position:relative}
+.wcf-season-hero-stats em{font-style:normal;display:flex;align-items:center;gap:5px}
+.wcf-season-hero-stats>span.moved b{animation:wcfSeasonFlash 2.2s var(--d) ease-out both}
+@keyframes wcfSeasonFlash{0%,100%{color:#fff;text-shadow:none}25%,60%{color:#f5d97a;text-shadow:0 0 22px rgba(245,217,122,.7)}}
+.wcf-season-plus{font-style:normal;font-family:var(--display);font-weight:800;font-size:10px;letter-spacing:0;color:#1a1405;background:#f5d97a;border-radius:999px;padding:1px 6px;animation:wcfSeasonPlus .45s calc(var(--d) + 900ms) cubic-bezier(.3,1.7,.5,1) both}
+@keyframes wcfSeasonPlus{from{opacity:0;transform:scale(.3)}to{opacity:1;transform:none}}
+.wcf-season-since{position:relative;align-self:flex-start;margin-top:10px;font-size:10px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:#f5d97a;display:flex;align-items:center;gap:7px;animation:wcfSinceIn .5s .2s ease-out both}
+.wcf-season-since::before{content:"";width:6px;height:6px;border-radius:50%;background:#f5d97a;box-shadow:0 0 10px #f5d97a}
+@keyframes wcfSinceIn{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:none}}
+.wcf-season-gleam{position:absolute;inset:0;pointer-events:none;background:linear-gradient(105deg,transparent 35%,rgba(255,240,200,.28) 48%,rgba(255,255,255,.4) 50%,rgba(255,240,200,.28) 52%,transparent 65%);transform:translateX(-100%);animation:wcfGleam 1.3s .15s ease-in-out both}
+@keyframes wcfGleam{to{transform:translateX(100%)}}
+.wcf-sodo{display:inline-flex;gap:0;vertical-align:top;height:1em;overflow:hidden;line-height:1}
+.wcf-sodo-col{display:block;height:1em;overflow:hidden;line-height:1}
+.wcf-sodo-strip{display:flex;flex-direction:column;transition:transform 1.2s cubic-bezier(.2,.9,.25,1.05)}
+.wcf-sodo-strip span{height:1em;line-height:1}
+@media (prefers-reduced-motion:reduce){.wcf-season-gleam{display:none}}
 .wcf-season-hero-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:12px}
-.wcf-season-hero-stats span{display:flex;flex-direction:column;gap:4px;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#B7BDD0}
+.wcf-season-hero-stats>span{display:flex;flex-direction:column;gap:4px;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#B7BDD0}
 .wcf-season-hero-stats b{font-family:var(--display);font-weight:800;font-size:20px;line-height:1;letter-spacing:0;color:#fff;font-variant-numeric:tabular-nums}
 /* Season: Whites v Reds rivalry */
 .wcf-rivalry{border-radius:20px;padding:14px 16px 16px;margin-bottom:14px;border:1px solid var(--line);background-color:var(--panel);background-image:linear-gradient(180deg,rgba(13,13,26,.5) 0%,rgba(13,13,26,.82) 30%,rgba(13,13,26,.95) 60%,rgba(13,13,26,.98) 100%),url('/net-rain.jpg');background-size:cover;background-position:center 40%}

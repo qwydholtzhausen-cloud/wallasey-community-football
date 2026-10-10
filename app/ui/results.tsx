@@ -296,21 +296,15 @@ export function ResultsTab({
                 <div className="wcf-season-hero-eyebrow">Season {currentSeasonYear - SEASON_EPOCH_YEAR + 1}</div>
                 <div className="wcf-season-hero-title">{currentSeasonYear}</div>
                 {scoredSeason.length > 0 ? (
-                  <div className="wcf-season-hero-stats">
-                    <span>
-                      <b>{gamesThisSeason}</b>
-                      {gamesThisSeason === 1 ? "Game" : "Games"}
-                    </span>
-                    <span>
-                      <b>{seasonGoals}</b>Goals
-                    </span>
-                    <span>
-                      <b>{seasonPlayers}</b>Players
-                    </span>
-                    <span>
-                      <b>{(seasonGoals / scoredSeason.length).toFixed(1)}</b>Per game
-                    </span>
-                  </div>
+                  <SeasonStats
+                    year={currentSeasonYear}
+                    stats={[
+                      { k: "games", v: gamesThisSeason, label: gamesThisSeason === 1 ? "Game" : "Games" },
+                      { k: "goals", v: seasonGoals, label: "Goals" },
+                      { k: "players", v: seasonPlayers, label: "Players" },
+                      { k: "pergame", v: Math.round((seasonGoals / scoredSeason.length) * 10) / 10, label: "Per game", decimals: 1 },
+                    ]}
+                  />
                 ) : (
                   <div className="wcf-season-hero-sub">
                     {gamesThisSeason} game{gamesThisSeason === 1 ? "" : "s"} played so far
@@ -1873,5 +1867,84 @@ export function ResultsTab({
           );
         })()}
     </>
+  );
+}
+
+// The season's headline numbers. If they've moved since this phone last
+// saw them (a new result), it plays like the stadium board: "Since you
+// last looked", a sweep of light across the photo, each changed number
+// rolling up digit by digit, and a gold "+10" on it.
+type SeasonStat = { k: string; v: number; label: string; decimals?: number };
+function SeasonStats({ year, stats }: { year: number; stats: SeasonStat[] }) {
+  const key = `wcf-season-seen-${year}`;
+  const [before] = useState<Record<string, number> | null>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(key) ?? "null");
+    } catch {
+      return null;
+    }
+  });
+  const run = !!before && motionAllowed() && stats.some((s) => before[s.k] !== undefined && before[s.k] !== s.v);
+  const sig = stats.map((s) => `${s.k}:${s.v}`).join(",");
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, JSON.stringify(Object.fromEntries(sig.split(",").map((p) => [p.split(":")[0], Number(p.split(":")[1])]))));
+    } catch {}
+  }, [key, sig]);
+  return (
+    <>
+      {run && <span className="wcf-season-gleam" aria-hidden="true" />}
+      {run && <div className="wcf-season-since">Since you last looked</div>}
+      <div className={"wcf-season-hero-stats" + (run ? " run" : "")}>
+        {stats.map((s, i) => {
+          const from = before?.[s.k];
+          const moved = run && from !== undefined && from !== s.v;
+          const diff = moved ? s.v - from! : 0;
+          const d = s.decimals ?? 0;
+          return (
+            <span key={s.k} className={moved ? "moved" : undefined} style={{ ["--d" as string]: `${500 + i * 180}ms` }}>
+              <b>{moved ? <Odometer from={from!.toFixed(d)} to={s.v.toFixed(d)} delay={500 + i * 180} /> : s.v.toFixed(d)}</b>
+              <em>
+                {s.label}
+                {moved && diff > 0 && s.k !== "pergame" && <i className="wcf-season-plus">+{diff}</i>}
+              </em>
+            </span>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+// Each digit is a strip of 0-9 that rolls from the old digit to the new
+// one (once round if it has to pass 9), rightmost digit first.
+function Odometer({ from, to, delay }: { from: string; to: string; delay: number }) {
+  const [go, setGo] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setGo(true), delay);
+    return () => clearTimeout(t);
+  }, [delay]);
+  const pad = from.padStart(to.length, " ");
+  return (
+    <span className="wcf-sodo" aria-label={to}>
+      {[...to].map((ch, i) => {
+        if (!/\d/.test(ch)) return <span key={i} className="wcf-sodo-ch">{ch}</span>;
+        const old = /\d/.test(pad[i]) ? Number(pad[i]) : 0;
+        const neu = Number(ch);
+        const end = neu >= old ? neu : neu + 10;
+        const pos = go ? end : old;
+        return (
+          <span key={i} className="wcf-sodo-col" aria-hidden="true">
+            <span
+              className="wcf-sodo-strip"
+              style={{ transform: `translateY(-${pos * 5}%)`, transitionDelay: `${(to.length - 1 - i) * 90}ms`, opacity: pad[i] === " " && !go ? 0 : 1 }}
+            >
+              {Array.from({ length: 20 }, (_, n) => (
+                <span key={n}>{n % 10}</span>
+              ))}
+            </span>
+          </span>
+        );
+      })}
+    </span>
   );
 }
