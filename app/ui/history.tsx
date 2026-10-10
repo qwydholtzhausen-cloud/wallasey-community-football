@@ -101,7 +101,7 @@ export function HistoryPage({
       el.querySelectorAll<HTMLElement>(".wcf-hs-mosaic > *").forEach((f, i) => setTimeout(() => f.classList.add("on"), motion ? 200 + i * 28 : 0));
       const anim = el.querySelector<SVGAnimateMotionElement>("animateMotion");
       if (anim) {
-        if (!motion) el.classList.add("go", "hit");
+        if (!motion) el.classList.add("go", "contact", "hit");
         else {
           setTimeout(() => {
             el.classList.add("go");
@@ -109,6 +109,7 @@ export function HistoryPage({
               anim.beginElement();
             } catch {}
           }, 450);
+          setTimeout(() => el.classList.add("contact"), 1140);
           setTimeout(() => el.classList.add("hit"), 1500);
         }
       }
@@ -195,7 +196,7 @@ export function HistoryPage({
           </div>
         );
       case "goal":
-        return <GoalScene date={s.date} title={e.title} line={e.text} who={s.id ? people.get(s.id) ?? null : null} face={s.id ? face(s.id) : null} />;
+        return <GoalScene date={s.date} title={e.title} line={e.text} who={s.id ? people.get(s.id) ?? null : null} face={s.id ? face(s.id) : null} leapFace={s.id ? face(s.id, "leap") : null} />;
       case "matchball":
         return (
           <>
@@ -346,10 +347,13 @@ function Flip({ to, delay }: { to: number; delay: number }) {
 // A goal moment as a little floodlit scene. Each moment uses its own words;
 // "Nº1" only for the first ever goal; a header (title or line mentions
 // one) comes in as a high cross and is nodded down into the net.
-function GoalScene({ date, title, line, who, face }: { date: string; title: string; line: string; who: Person | null; face: React.ReactNode }) {
+function GoalScene({ date, title, line, who, face, leapFace }: { date: string; title: string; line: string; who: Person | null; face: React.ReactNode; leapFace: React.ReactNode }) {
   const header = /head/i.test(title + " " + line);
   const firstEver = /first ever goal/i.test(title);
-  const P = header ? "M14 40 Q 96 -6 176 66 L 238 112" : "M40 226 C 90 160, 170 84, 264 78";
+  // A header: the cross comes in high, the scorer leaps into it (their own
+  // photo in a gold ring), a burst on contact, then it's nodded down in.
+  const P = header ? "M10 46 Q 92 0 168 78 L 236 112" : "M40 226 C 90 160, 170 84, 264 78";
+  const net = header ? { x: "74%", y: "45%" } : { x: "82%", y: "31%" };
   const conf = useMemo(
     () =>
       Array.from({ length: 16 }, (_, i) => {
@@ -381,20 +385,28 @@ function GoalScene({ date, title, line, who, face }: { date: string; title: stri
           </g>
           <path d="M140 138 V62 H292 V138" stroke="#f5f6f8" strokeWidth="4.5" fill="none" strokeLinecap="round" />
         </g>
-        {header && (
-          <g className="nod" fill="#0a1a10" stroke="rgba(245,217,122,.8)" strokeWidth="1.5">
-            <circle cx="176" cy="84" r="11" />
-            <path d="M156 122 C 158 102, 194 102, 196 122 Z" />
-          </g>
-        )}
         <path className="trail" d={P} stroke="url(#hsTr)" strokeWidth="5" fill="none" strokeLinecap="round" />
         <g>
           <g transform="translate(-11 -11)"><svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.5" fill="#f5f6f8" stroke="#0d0d1a" strokeWidth="1" /><path d="M12 7.2l3.4 2.5-1.3 4h-4.2l-1.3-4z" fill="#0d0d1a" /></svg></g>
-          <animateMotion dur="1.05s" begin="indefinite" fill="freeze" path={P} keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".3 .6 .4 1" />
+          {header ? (
+            <animateMotion dur="1.05s" begin="indefinite" fill="freeze" path={P} keyPoints="0;0.6;1" keyTimes="0;0.66;1" calcMode="linear" />
+          ) : (
+            <animateMotion dur="1.05s" begin="indefinite" fill="freeze" path={P} keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".3 .6 .4 1" />
+          )}
         </g>
       </svg>
-      <span className="flash" />
-      <span className="conf">{conf}</span>
+      <span className="flash" style={{ ["--fx" as string]: net.x, ["--fy" as string]: net.y }} />
+      <span className="conf" style={{ ["--fx" as string]: net.x, ["--fy" as string]: net.y }}>{conf}</span>
+      {header && (
+        <>
+          <span className="leapwrap">{leapFace}</span>
+          <span className="burst">
+            <i />
+            <i />
+            <b>HEADER!</b>
+          </span>
+        </>
+      )}
       <span className="sb">{header ? "HEADER" : "GOAL"}<small>{short}</small></span>
       {firstEver && <span className="no1">Nº1<small>GOAL</small></span>}
       {who && (
@@ -620,16 +632,29 @@ const historyCss = `
 .wcf-hs-goal{padding:0;background:#06100a}
 .wcf-hs-goal svg{display:block;width:100%;height:auto}
 .wcf-hs-goal .trail{stroke-dasharray:400;stroke-dashoffset:400}
-.wcf-hs-goal .nod{transform:translateY(40px);opacity:0;transition:transform .45s cubic-bezier(.3,1.5,.5,1),opacity .3s}
-.wcf-hs-ev.go .wcf-hs-goal .nod{transform:none;opacity:1;transition-delay:.25s}
+.wcf-hs-goal .leapwrap{position:absolute;left:52.5%;top:35%;z-index:2;width:46px;height:46px;margin:-23px 0 0 -23px;opacity:0;transform:translateY(120px) scale(.7)}
+.wcf-hs-goal .leapwrap .wcf-hs-face{width:46px;height:46px;border-width:3px;box-shadow:0 0 0 3px rgba(6,16,10,.8),0 10px 18px -6px #000;font-size:16px}
+.wcf-hs-ev.go .wcf-hs-goal .leapwrap{animation:wcfHsLeap .62s cubic-bezier(.25,.8,.35,1.15) forwards}
+@keyframes wcfHsLeap{0%{opacity:0;transform:translateY(120px) scale(.7)}30%{opacity:1}100%{opacity:1;transform:none}}
+.wcf-hs-ev.hit .wcf-hs-goal .leapwrap{animation:wcfHsLeapOut .5s .5s forwards}
+@keyframes wcfHsLeapOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(-10px) scale(1.1)}}
+.wcf-hs-goal .burst{position:absolute;left:52.5%;top:31.2%;z-index:3;width:10px;height:10px;margin:-5px 0 0 -5px;pointer-events:none}
+.wcf-hs-goal .burst i{position:absolute;left:0;top:0;width:10px;height:10px;border-radius:50%;border:2px solid #f5d97a;opacity:0}
+.wcf-hs-ev.contact .wcf-hs-goal .burst i{animation:wcfHsRing .55s ease-out forwards}
+.wcf-hs-ev.contact .wcf-hs-goal .burst i:nth-child(2){animation-delay:.08s}
+@keyframes wcfHsRing{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(7)}}
+.wcf-hs-goal .burst b{position:absolute;left:-30px;top:-34px;width:70px;text-align:center;font-family:var(--display);font-weight:800;font-size:11px;letter-spacing:.14em;color:#f5d97a;opacity:0;text-shadow:0 2px 8px #000}
+.wcf-hs-ev.contact .wcf-hs-goal .burst b{animation:wcfHsPow .7s ease-out forwards}
+@keyframes wcfHsPow{0%{opacity:0;transform:translateY(6px) scale(.6)}30%{opacity:1;transform:none}100%{opacity:0;transform:translateY(-10px)}}
 .wcf-hs-ev.go .wcf-hs-goal .trail{transition:stroke-dashoffset 1.05s cubic-bezier(.3,.6,.4,1);stroke-dashoffset:0}
 .wcf-hs-goal .net{transform-box:fill-box;transform-origin:85% 20%}
 .wcf-hs-ev.hit .wcf-hs-goal .net{animation:wcfHsRipple .7s ease-out}
 @keyframes wcfHsRipple{25%{transform:scale(1.07,1.12) skewX(-3deg)}60%{transform:scale(.98,.97)}}
-.wcf-hs-goal .flash{position:absolute;inset:0;background:radial-gradient(circle at 82% 31%,#fff,rgba(255,255,255,0) 55%);opacity:0;pointer-events:none}
+.wcf-hs-goal .flash{position:absolute;inset:0;background:radial-gradient(circle at var(--fx,82%) var(--fy,31%),#fff,rgba(255,255,255,0) 55%);opacity:0;pointer-events:none}
 .wcf-hs-ev.hit .wcf-hs-goal .flash{animation:wcfHsFlash .6s ease-out}
 @keyframes wcfHsFlash{15%{opacity:.85}100%{opacity:0}}
-.wcf-hs-goal .conf i{position:absolute;left:82%;top:31%;width:7px;height:4px;border-radius:1px;opacity:0}
+.wcf-hs-goal .conf{position:absolute;left:var(--fx,82%);top:var(--fy,31%)}
+.wcf-hs-goal .conf i{position:absolute;left:0;top:0;width:7px;height:4px;border-radius:1px;opacity:0}
 .wcf-hs-ev.hit .wcf-hs-goal .conf i{animation:wcfHsConf 1.2s cubic-bezier(.2,.7,.3,1) forwards}
 @keyframes wcfHsConf{0%{opacity:1;transform:translate(0,0) rotate(0)}100%{opacity:0;transform:translate(var(--cx),var(--cy)) rotate(var(--cr))}}
 .wcf-hs-goal .sb{position:absolute;left:12px;top:12px;z-index:2;display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:9px;background:rgba(6,8,14,.82);border:1px solid var(--line);font-family:var(--display);font-weight:800;font-size:12px;color:#f5d97a;letter-spacing:.1em;opacity:0;transform:translateY(-8px);transition:all .4s}
