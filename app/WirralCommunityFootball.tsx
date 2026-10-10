@@ -53,7 +53,7 @@ import { WinMoment, type SeasonGame } from "./ui/celebrate";
 import { TrophyCabinet, MatchBallMoment, cabinetCss } from "./ui/cabinet";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { ClubOdometer, DebutCard, MilestoneShirt, MotmWinCard, PotmMine, PotmNight, RecordCard } from "./ui/premium";
-import { MatchDayClock, MatchDayTeam, isMatchDay } from "./ui/matchday";
+import { MatchDayClock, MatchDayTeam, isLiveNow, isMatchDay } from "./ui/matchday";
 import { scorersForSide } from "../lib/goalSides";
 import { GameStory, StoryRings, type StoryGame } from "./ui/stories";
 import { OweBar, PaySheet, PAY_SOON_MS, untilLabel, type DueGame } from "./ui/pay";
@@ -3783,7 +3783,7 @@ function App({ session }: { session: Session }) {
         }
         if (best.seen && w + r > best.total && w + r >= 10) {
           isRecord = true;
-          lines.push(<>Most goals in a game this season: <strong>{w + r}</strong>.</>);
+          lines.push(<>Highest-scoring game of the season: <strong>{w + r} goals</strong>.</>);
         }
         if (lines.length > 0) {
           items.push({
@@ -5531,7 +5531,7 @@ function App({ session }: { session: Session }) {
           onClick={() => setTab(tab === "account" ? "fixtures" : "account")}
         >
           <span className="dot" />
-          <span className="wcf-role-name">{myProfile.display_name}</span>
+          <span className="wcf-role-name">{myProfile.display_name.split(" ")[0].replace(/[()]/g, "")}</span>
           {myUnreadMessages.length > 0 && <span className="wcf-role-unread">{myUnreadMessages.length}</span>}
         </button>
       </header>
@@ -11052,7 +11052,7 @@ function GameCard({
 
   const cta = (
     <div className="wcf-card-actions">
-      {!myBooking && overdue ? (
+      {matchDay && isLiveNow(game.date, game.kickoff) ? null : !myBooking && overdue ? (
         <p className="wcf-overdue-note">Overdue payment — speak to an admin before booking your next game.</p>
       ) : (
         <button
@@ -11098,7 +11098,7 @@ function GameCard({
           Android gets Google Calendar (where Android calendars live);
           everything else gets the .ics file, which iPhones open straight
           into their own "Add to Calendar" sheet. */}
-      {myBooking && !myBooking.waiting && (CALENDAR_BUTTON_OPEN_TO_ALL || isAdmin) && (
+      {myBooking && !myBooking.waiting && !(matchDay && isLiveNow(game.date, game.kickoff)) && (CALENDAR_BUTTON_OPEN_TO_ALL || isAdmin) && (
         <a
           className="wcf-cal-btn"
           href={
@@ -11130,7 +11130,7 @@ function GameCard({
           {game.special && <span className="wcf-special-ribbon">★ {fmtDate(game.date).split(",")[0]} {game.pitch}</span>}
           <div className="wcf-hero-top">
             {matchDay ? (
-              <span className="wcf-md-badge">⚽ MATCHDAY</span>
+              <span className="wcf-md-badge"><i />Matchday · {fmtDate(game.date).split(",")[0]}</span>
             ) : (
               <span className="wcf-hero-date mono">{fmtDate(game.date).replace(",", "").toUpperCase()}</span>
             )}
@@ -13089,7 +13089,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-res-pill{margin-left:4px;font-family:var(--sans);font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:3px 7px;border-radius:5px;color:#fff;white-space:nowrap}
 .wcf-res-pill.white{color:#111}
 .wcf-res-pill.draw{background:#475569}
-.wcf-res-meta{font-size:12px;color:var(--dim);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-res-meta{font-size:12px;color:var(--dim);margin-top:4px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .wcf-res-meta b{color:#f5d97a;font-weight:700}
 .wcf-res-open{color:var(--green);font-weight:700}
 .wcf-res-chev{color:var(--dim);transition:transform .2s}
@@ -14141,27 +14141,29 @@ a.wcf-set-link{text-decoration:none}
 .wcf-todo-btn.ghost{background:transparent;color:#cbd5e1;border:1px solid var(--line)}
 .wcf-roles-credit{color:#f5d97a;font-weight:700}
 /* Match-day mode */
-.wcf-md-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-weight:800;font-size:10.5px;letter-spacing:.18em;color:#1a1405;background:linear-gradient(90deg,#f5d97a,#fde68a,#f5d97a);background-size:200% 100%;animation:wcfMdShimmer 2.4s linear infinite}
-@keyframes wcfMdShimmer{to{background-position:-200% 0}}
-.wcf-md-count{font-family:var(--display);font-weight:800;font-size:46px;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums;margin:12px 0 10px}
-.wcf-md-count small{display:block;font-family:var(--sans);font-weight:700;font-size:11px;letter-spacing:.14em;color:var(--dim);margin-top:6px}
-.wcf-md-count.hot{color:#fbbf24;animation:wcfMdHot 1.6s ease-in-out infinite}
-@keyframes wcfMdHot{50%{text-shadow:0 0 18px rgba(251,191,36,.6)}}
+.wcf-md-badge{display:inline-flex;align-items:center;gap:8px;font-weight:800;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#f5d97a}
+.wcf-md-badge i{width:7px;height:7px;border-radius:50%;background:#f5d97a;box-shadow:0 0 0 0 rgba(245,217,122,.6);animation:wcfMdDot 2s ease-out infinite}
+@keyframes wcfMdDot{0%{box-shadow:0 0 0 0 rgba(245,217,122,.55)}70%,100%{box-shadow:0 0 0 7px rgba(245,217,122,0)}}
+.wcf-md-count{font-family:var(--display);font-weight:800;font-size:48px;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums;margin:12px 0 10px}
+.wcf-md-count i{font-style:normal;font-size:24px;font-weight:700;color:var(--dim);margin-left:2px;letter-spacing:0}
+.wcf-md-count small{display:block;font-family:var(--sans);font-weight:600;font-size:12px;letter-spacing:0;color:var(--dim);margin-top:7px}
+.wcf-md-count.hot{color:#fbbf24}
 .wcf-md-livebox{margin:12px 0 10px}
-.wcf-md-live{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;background:rgba(34,197,94,.16);border:1px solid rgba(34,197,94,.5);color:#86efac;font-weight:800;font-size:11px;letter-spacing:.16em}
-.wcf-md-live i{width:8px;height:8px;border-radius:50%;background:#22c55e;animation:wcfMdPulse 1.2s ease-in-out infinite}
-@keyframes wcfMdPulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.7)}100%{box-shadow:0 0 0 7px rgba(34,197,94,0)}}
-.wcf-md-min{font-family:var(--display);font-weight:800;font-size:40px;font-variant-numeric:tabular-nums;margin-top:8px}
-.wcf-md-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:6px}
-.wcf-md-bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#86efac);transition:width 1s linear}
-.wcf-md-team{display:flex;align-items:center;gap:12px;margin:14px 0 0;padding:12px;border-radius:14px;border:1px solid;animation:wcfRise .45s both}
-.wcf-md-team .bib{width:40px;height:44px;flex:none}
+.wcf-md-min{display:flex;align-items:center;gap:12px;font-family:var(--display);font-weight:800;font-size:48px;line-height:1;font-variant-numeric:tabular-nums}
+.wcf-md-live{display:inline-flex;align-items:center;gap:6px;font-family:var(--sans);font-weight:800;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#ff6b74}
+.wcf-md-live i{width:7px;height:7px;border-radius:50%;background:#ff3b47;animation:wcfMdPulse 1.2s ease-in-out infinite}
+@keyframes wcfMdPulse{0%{box-shadow:0 0 0 0 rgba(255,59,71,.7)}100%{box-shadow:0 0 0 7px rgba(255,59,71,0)}}
+.wcf-md-bar{height:3px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:12px}
+.wcf-md-bar i{display:block;height:100%;background:linear-gradient(90deg,rgba(245,217,122,.4),#f5d97a);transition:width 1s linear}
+.wcf-md-team{display:flex;align-items:center;gap:14px;margin:16px 0 0;padding-top:14px;border-top:1px solid rgba(255,255,255,.08);animation:wcfRise .45s both}
+.wcf-md-team .bib{width:40px;height:46px;flex:none;filter:drop-shadow(0 6px 10px rgba(0,0,0,.5))}
 .wcf-md-team .tx{min-width:0}
-.wcf-md-team b{display:block;font-family:var(--display);font-weight:800;font-size:16px}
-.wcf-md-team span{font-size:11.5px;color:var(--dim)}
-.wcf-md-team .mates{display:flex;margin-top:6px;padding-left:5px}
-.wcf-md-team .mates .wcf-avatar-chip{width:22px;height:22px;font-size:9px;margin-left:-5px;border:2px solid #0d0d1a}
-@media (prefers-reduced-motion:reduce){.wcf-md-badge,.wcf-md-count.hot,.wcf-md-live i{animation:none}}
+.wcf-md-team small{display:block;font-size:10.5px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+.wcf-md-team b{display:block;font-family:var(--display);font-weight:800;font-size:19px;margin-top:3px}
+.wcf-md-team b em{font-style:normal;color:var(--team);color:color-mix(in srgb,var(--team) 62%,#fff);text-shadow:0 1px 10px rgba(0,0,0,.6)}
+.wcf-md-team .mates{display:flex;margin-top:8px;padding-left:4px}
+.wcf-md-team .mates .wcf-avatar-chip{width:26px;height:26px;font-size:10px;margin-left:-4px;border:2px solid var(--team);box-shadow:0 0 0 1.5px #0d0d1a}
+@media (prefers-reduced-motion:reduce){.wcf-md-badge i,.wcf-md-live i{animation:none}}
 /* Game Stories */
 .wcf-stories{margin:0 2px 12px}
 .wcf-stories-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}

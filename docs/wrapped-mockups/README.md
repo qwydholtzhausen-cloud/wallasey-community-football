@@ -6,3 +6,5 @@ Design references saved 29 Sep 2026. Open the HTML files in a browser from this 
   - Live copy: https://claude.ai/artifact/4QfepmdpRUTpHDEwSsyDPN
 - `wrapped-editions.html`: the October "FRIGHT LIGHTS" and November "BANGERS" monthly Wrappeds. They mix existing and new cards, use rotating photos and pick the best 8 cards per player. There is no December monthly, because Season One replaces it.
   - Live copy: https://claude.ai/artifact/L5aLqurW3gCu94HeoSesxw
+- `awards-ballot.html` (saved 10 Oct 2026): how players vote in the Season One awards. A gold Fixtures banner opens the vote, followed by an intro, five award screens, a ballot-paper review and a sealed envelope dropping into a ballot box. It uses real players and moments as of 8 Oct; the Goal of the Season descriptions and turnout are examples. The award list is to be confirmed by the user later. It is self-contained (images embedded).
+  - Live copy: https://claude.ai/artifact/PsHSembsPNjwDALgZRwpgi

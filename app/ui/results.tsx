@@ -665,7 +665,7 @@ export function ResultsTab({
                   options={seasonYears.map((y) => ({ value: y, label: `Season ${y - SEASON_EPOCH_YEAR + 1} · ${y}${y === currentSeasonYear ? " (now)" : ""}` }))}
                 />
                 <p className="wcf-board-note">
-                  Confirmed spots across upcoming fixtures, plus goals logged by admins. Sorted by {statsSort === "goals" ? "goals" : "appearances"}.
+                  Games played and goals scored this season, sorted by {statsSort === "goals" ? "goals" : "appearances"}.
                 </p>
 
                 <div className="wcf-lb-sorts">
@@ -961,7 +961,7 @@ export function ResultsTab({
                     {r.mostGoalsInGame &&
                       row("goals", r.mostGoalsInGame.goals, "Most goals by one player", who(r.mostGoalsInGame.holders, true), r.mostGoalsInGame.holders)}
                     {r.biggestWin && row("win", `+${r.biggestWin.margin}`, "Biggest win", scoreLine(r.biggestWin))}
-                    {r.highestScoring && row("high", r.highestScoring.total, "Most goals in a game", scoreLine(r.highestScoring))}
+                    {r.highestScoring && row("high", r.highestScoring.total, "Highest-scoring game", scoreLine(r.highestScoring))}
                     {r.mostMotmVotesInGame &&
                       row(
                         "votes1",
@@ -1131,7 +1131,7 @@ export function ResultsTab({
                             {top && (
                               <>
                                 {(votingOpen || motmNames.length > 0) && " · "}
-                                {top.player.display_name} {top.goals}
+                                {!votingOpen && motmNames.length === 1 && motmNames[0] === top.player.display_name ? `${top.goals} goals` : `${top.player.display_name} ${top.goals} goals`}
                               </>
                             )}
                             {away && (

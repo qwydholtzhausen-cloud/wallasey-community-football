@@ -340,7 +340,7 @@ export function AccountPanel({
           {unreadMessages.length === 0 && <EmptyScene kind="inbox" small title="All caught up" text="No new messages." />}
           {readMessages.length > 0 && (
             <button className="wcf-rec-more quiet" onClick={() => setOpenReadMessages((v) => !v)}>
-              {openReadMessages ? "Hide read messages" : `Read messages (${readMessages.length})`}
+              {openReadMessages ? "Hide past messages" : `Past messages (${readMessages.length})`}
             </button>
           )}
           {openReadMessages && readMessages.map(inboxRow)}

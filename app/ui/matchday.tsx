@@ -18,6 +18,12 @@ export function isMatchDay(date: string, kickoff: string) {
   return nowInLondon().slice(0, 10) === date && nowMs() < kickMs(date, kickoff) + MATCH_DURATION_MINUTES * 60000;
 }
 
+// From kick-off to full time: no booking or drop-out buttons then.
+export function isLiveNow(date: string, kickoff: string) {
+  const now = nowMs(), k = kickMs(date, kickoff);
+  return now >= k && now < k + MATCH_DURATION_MINUTES * 60000;
+}
+
 export function MatchDayClock({ date, kickoff }: { date: string; kickoff: string }) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -30,16 +36,23 @@ export function MatchDayClock({ date, kickoff }: { date: string; kickoff: string
     const pad = (n: number) => String(n).padStart(2, "0");
     return (
       <div className={"wcf-md-count" + (diff <= 3600 ? " hot" : "")}>
-        {h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`}
-        <small>TO KICK-OFF · {kickoff}</small>
+        {diff > 3600 ? (
+          <>
+            {h}<i>h</i> {pad(m)}<i>m</i>
+          </>
+        ) : (
+          `${pad(m)}:${pad(s)}`
+        )}
+        <small>to kick-off at {kickoff}</small>
       </div>
     );
   }
   const minute = Math.min(MATCH_DURATION_MINUTES, Math.floor(-diff / 60) + 1);
   return (
     <div className="wcf-md-livebox">
-      <span className="wcf-md-live"><i />LIVE NOW</span>
-      <div className="wcf-md-min">{minute}&apos;</div>
+      <div className="wcf-md-min">
+        {minute}&apos;<span className="wcf-md-live"><i />Live</span>
+      </div>
       <div className="wcf-md-bar"><i style={{ width: `${(minute / MATCH_DURATION_MINUTES) * 100}%` }} /></div>
     </div>
   );
@@ -55,26 +68,24 @@ export function MatchDayTeam({
   mates: { display_name: string; avatar_url?: string | null }[];
 }) {
   const light = ["#f5f6f8", "#ffffff", "#fff"].includes(color.toLowerCase());
-  const first = mates.slice(0, 3).map((m) => m.display_name.split(" ")[0]);
-  const rest = mates.length - first.length;
   return (
-    <div className="wcf-md-team" style={{ background: `${color}22`, borderColor: `${color}88` }}>
-      <svg className="bib" viewBox="0 0 40 44" aria-hidden="true">
-        <path d="M10 4 L16 2 Q20 6 24 2 L30 4 L38 12 L33 17 L31 15 V42 H9 V15 L7 17 L2 12 Z" fill={color} stroke={light ? "#94a3b8" : "rgba(255,255,255,.7)"} strokeWidth="1.5" />
+    <div className="wcf-md-team" style={{ ["--team" as string]: color }}>
+      <svg className="bib" viewBox="0 0 40 46" aria-hidden="true">
+        <path d="M10 2h5q5 9 10 0h5q.5 10 6 15v26q0 1-1 1H4q-1 0-1-1V17q5.5-5 6-15z" fill={color} stroke={light ? "#94a3b8" : "rgba(255,255,255,.55)"} strokeWidth="1.3" />
+        <path d="M6 20v20h28V20" fill="none" stroke={light ? "rgba(13,13,26,.3)" : "rgba(255,255,255,.4)"} strokeWidth="1" strokeDasharray="2 2" />
       </svg>
       <div className="tx">
-        <b>You&apos;re in {name.toUpperCase()} tonight</b>
+        <small>Your side tonight</small>
+        <b>
+          You&apos;re on the <em>{name}</em>
+        </b>
         {mates.length > 0 && (
-          <span>
-            with {first.join(", ")}
-            {rest > 0 ? ` and ${rest} more` : ""}
+          <span className="mates">
+            {mates.map((m) => (
+              <Avatar key={m.display_name} name={m.display_name} avatarUrl={m.avatar_url} className="wcf-avatar-chip" background={avatarFor(m.display_name).gradient} />
+            ))}
           </span>
         )}
-        <span className="mates">
-          {mates.slice(0, 5).map((m) => (
-            <Avatar key={m.display_name} name={m.display_name} avatarUrl={m.avatar_url} className="wcf-avatar-chip" background={avatarFor(m.display_name).gradient} />
-          ))}
-        </span>
       </div>
     </div>
   );
