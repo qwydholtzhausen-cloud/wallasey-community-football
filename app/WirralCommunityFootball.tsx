@@ -9551,6 +9551,8 @@ function AdminConsole({
   // the amount shown, same distinction the pre-removal warning already
   // makes (see the frequent cron job).
   const [expandedTabId, setExpandedTabId] = useState<string | null>(null);
+  // Payments to check: which players' game lists are dropped down.
+  const [openClaims, setOpenClaims] = useState<Set<string>>(new Set());
   const playerTabs = useMemo(() => {
     const byPlayer: Record<string, { playerId: string; playerName: string; owed: typeof overdue; pending: typeof overdue }> = {};
     for (const row of overdue) {
@@ -9906,41 +9908,58 @@ function AdminConsole({
                 const ids = p.rows.map((c) => c.booking.id);
                 const total = p.rows.reduce((s, c) => s + due(c), 0);
                 const allStamped = ids.every((id) => stamped.has(id));
+                // Collapsed to one line per player; several games open as a
+                // drop-down underneath, each confirmable on its own.
+                const many = p.rows.length > 1;
+                const open = many && openClaims.has(p.id);
+                const single = p.rows[0];
                 return (
-                  <div key={p.id} className={"wcf-admin-card wcf-claim" + (allStamped ? " stamped" : "")}>
+                  <div key={p.id} className={"wcf-admin-card wcf-claim" + (allStamped ? " stamped" : "") + (open ? " open" : "")}>
                     <div className="wcf-claim-head">
-                      <Avatar name={p.name} avatarUrl={p.avatar} className="wcf-claim-av" />
-                      <span className="wcf-claim-who">
-                        <b>{p.name}</b>
-                        <span>
-                          Says paid · {p.rows.length} {p.rows.length === 1 ? "game" : "games"} · booked {fmtDate(p.oldest.slice(0, 10))}
-                        </span>
-                      </span>
-                      <span className="wcf-claim-total">£{total}</span>
-                    </div>
-                    {p.rows.length > 1 &&
-                      p.rows.map((c) => (
-                        <div key={c.booking.id} className={"wcf-claim-line" + (stamped.has(c.booking.id) ? " stamped" : "")}>
-                          <span className="wcf-paid-stamp" aria-hidden="true">PAID</span>
+                      <span className="wcf-paid-stamp" aria-hidden="true">PAID</span>
+                      <button
+                        type="button"
+                        className="wcf-claim-toggle"
+                        disabled={!many}
+                        aria-expanded={many ? open : undefined}
+                        onClick={() =>
+                          setOpenClaims((cur) => {
+                            const next = new Set(cur);
+                            if (next.has(p.id)) next.delete(p.id);
+                            else next.add(p.id);
+                            return next;
+                          })
+                        }
+                      >
+                        <Avatar name={p.name} avatarUrl={p.avatar} className="wcf-claim-av" />
+                        <span className="wcf-claim-who">
+                          <b>{p.name}</b>
                           <span>
-                            {fmtDate(c.game.date)} · £{due(c)}
-                            {credits.byBooking.has(c.booking.id) ? " (rest by credit)" : ""}
+                            {many
+                              ? `${p.rows.length} games · booked ${fmtDate(p.oldest.slice(0, 10))}`
+                              : `${fmtDate(single.game.date)}${credits.byBooking.has(single.booking.id) ? " · rest by credit" : ""} · booked ${fmtDate(p.oldest.slice(0, 10))}`}
                           </span>
-                          <button className="wcf-claim-one" onClick={() => stampConfirm(c.booking.id)}>Confirm</button>
-                        </div>
-                      ))}
-                    {p.rows.length === 1 && (
-                      <div className={"wcf-claim-line" + (stamped.has(ids[0]) ? " stamped" : "")}>
-                        <span className="wcf-paid-stamp" aria-hidden="true">PAID</span>
-                        <span>
-                          {fmtDate(p.rows[0].game.date)} · £{due(p.rows[0])}
-                          {credits.byBooking.has(ids[0]) ? " (rest by credit)" : ""}
                         </span>
+                        {many && <span className="wcf-claim-chev" aria-hidden="true">›</span>}
+                      </button>
+                      <button className="wcf-claim-go" onClick={() => (ids.length === 1 ? stampConfirm(ids[0]) : stampAll(ids, total))}>
+                        <small>{ids.length === 1 ? "Confirm" : ids.length === 2 ? "Confirm both" : `Confirm all ${ids.length}`}</small>£{total}
+                      </button>
+                    </div>
+                    {open && (
+                      <div className="wcf-claim-lines">
+                        {p.rows.map((c) => (
+                          <div key={c.booking.id} className={"wcf-claim-line" + (stamped.has(c.booking.id) ? " stamped" : "")}>
+                            <span className="wcf-paid-stamp" aria-hidden="true">PAID</span>
+                            <span>
+                              {fmtDate(c.game.date)} · £{due(c)}
+                              {credits.byBooking.has(c.booking.id) ? " (rest by credit)" : ""}
+                            </span>
+                            <button className="wcf-claim-one" onClick={() => stampConfirm(c.booking.id)}>Confirm</button>
+                          </div>
+                        ))}
                       </div>
                     )}
-                    <button className="wcf-todo-btn gold wcf-claim-all" onClick={() => (ids.length === 1 ? stampConfirm(ids[0]) : stampAll(ids, total))}>
-                      {ids.length === 1 ? `Confirm £${total}` : ids.length === 2 ? `Confirm both · £${total}` : `Confirm all ${ids.length} · £${total}`}
-                    </button>
                   </div>
                 );
               });
@@ -13492,21 +13511,28 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-todo.stamped .wcf-todo-btn,.wcf-todo.stamped .wcf-todo-btns{visibility:hidden}
 @keyframes wcfPaidStamp{0%{opacity:0;transform:translateY(-50%) rotate(-9deg) scale(2.3)}100%{opacity:1;transform:translateY(-50%) rotate(-9deg) scale(1)}}
 @keyframes wcfPaidFold{to{opacity:0;transform:translateX(36px);max-height:0;padding-top:0;padding-bottom:0;border-top-width:0}}
-.wcf-claim{padding:12px 14px}
-.wcf-claim-head{display:flex;align-items:center;gap:11px}
+.wcf-claim{padding:12px 12px 12px 14px;margin-bottom:12px}
+.wcf-claim-head{position:relative;display:flex;align-items:center;gap:10px}
+.wcf-claim-toggle{flex:1;min-width:0;display:flex;align-items:center;gap:11px;padding:2px 0;background:none;border:0;color:inherit;text-align:left;cursor:pointer;font-family:inherit}
+.wcf-claim-toggle:disabled{cursor:default}
+.wcf-claim-chev{flex:none;color:var(--dim);font-size:20px;line-height:1;transition:transform .25s}
+.wcf-claim.open .wcf-claim-chev{transform:rotate(90deg);color:#f5d97a}
+.wcf-claim-go{flex:none;display:grid;justify-items:center;min-width:86px;min-height:46px;padding:5px 12px;border-radius:13px;border:0;background:#f5d97a;color:#1a1405;font-family:var(--display);font-weight:800;font-size:16px;line-height:1.1;cursor:pointer}
+.wcf-claim-go small{font-family:var(--sans);font-size:10px;font-weight:800;letter-spacing:.02em;opacity:.8}
+.wcf-claim-lines{margin-top:10px;padding-top:2px;border-top:1px solid var(--line);animation:wcfRvIn .25s both}
+.wcf-claim-head .wcf-paid-stamp{right:96px}
+.wcf-claim.stamped .wcf-claim-head .wcf-paid-stamp{animation:wcfPaidStamp .42s cubic-bezier(.3,1.6,.5,1) forwards}
+.wcf-claim.stamped .wcf-claim-go{visibility:hidden}
 .wcf-claim-av{width:38px;height:38px;border-radius:50%;flex:none;object-fit:cover;display:grid;place-items:center;font-weight:800;background:var(--panel2);color:var(--dim)}
 .wcf-claim-who{flex:1;min-width:0}
 .wcf-claim-who b{display:block;font-size:14.5px}
 .wcf-claim-who span{display:block;font-size:11.5px;color:var(--dim);margin-top:2px}
-.wcf-claim-total{flex:none;font-family:var(--display);font-weight:800;font-size:18px;color:#f5d97a}
 .wcf-claim-line{position:relative;display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--line);font-size:12.5px;color:var(--soft,#cbd5e1)}
 .wcf-claim-line>span:not(.wcf-paid-stamp){flex:1;min-width:0}
 .wcf-claim-one{flex:none;min-height:30px;padding:0 10px;border-radius:9px;border:1px solid rgba(245,217,122,.45);background:transparent;color:#f5d97a;font-weight:800;font-size:11.5px;cursor:pointer}
-.wcf-claim-all{width:100%;margin-top:10px;min-height:42px}
 .wcf-claim-line.stamped .wcf-paid-stamp{animation:wcfPaidStamp .42s cubic-bezier(.3,1.6,.5,1) forwards}
 .wcf-claim-line.stamped .wcf-claim-one{visibility:hidden}
 .wcf-claim.stamped{max-height:600px;overflow:hidden;animation:wcfPaidFold .45s .6s ease forwards}
-.wcf-claim.stamped .wcf-claim-all{visibility:hidden}
 .wcf-paid-summary{margin:0 0 12px;padding:16px;border-radius:16px;text-align:center;background:radial-gradient(120% 120% at 50% 0%,rgba(34,197,94,.2),transparent 60%),var(--panel);border:1px solid rgba(34,197,94,.42);animation:wcfMomentPop .5s cubic-bezier(.3,1.5,.5,1) both}
 .wcf-paid-summary b{display:block;font-family:var(--display);font-weight:800;font-size:30px;color:#4ade80}
 .wcf-paid-summary span{font-size:12.5px;color:#cbd5e1}
