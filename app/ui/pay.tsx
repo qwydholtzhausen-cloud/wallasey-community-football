@@ -71,7 +71,7 @@ export function PaySheet({ due, paymentLink, onMarkPaid, onClose }: { due: DueGa
           : d.credited
             ? `Credit covered £5 · £${d.price} left to pay`
             : d.msToKickoff <= PAY_SOON_MS
-            ? d.msToKickoff > 0 ? `Pay before kick-off · ${untilLabel(d.msToKickoff)}` : "Pay tonight"
+            ? d.msToKickoff > 0 ? `Pay before kick-off · ${untilLabel(d.msToKickoff)}` : `Pay ${Number(d.kickoff.split(":")[0]) < 17 ? "today" : "tonight"}`
             : `${dayLabel(d.date, { month: "long" })} · ${d.kickoff}`}
       </span>
       {d.status === "pending" ? (

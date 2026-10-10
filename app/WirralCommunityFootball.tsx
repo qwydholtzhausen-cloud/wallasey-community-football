@@ -53,7 +53,7 @@ import { WinMoment, type SeasonGame } from "./ui/celebrate";
 import { TrophyCabinet, MatchBallMoment, cabinetCss } from "./ui/cabinet";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { ClubOdometer, DebutCard, MilestoneShirt, MotmWinCard, PotmMine, PotmNight, RecordCard } from "./ui/premium";
-import { MatchDayClock, MatchDayTeam, isLiveNow, isMatchDay } from "./ui/matchday";
+import { MatchDayClock, MatchDayTeam, dayWord, isLiveNow, isMatchDay } from "./ui/matchday";
 import { scorersForSide } from "../lib/goalSides";
 import { GameStory, StoryRings, type StoryGame } from "./ui/stories";
 import { OweBar, PaySheet, PAY_SOON_MS, untilLabel, type DueGame } from "./ui/pay";
@@ -240,7 +240,11 @@ function formationSlots(n: number): { x: number; y: number; role: string }[] {
   const outfield = n - 1;
   if (outfield <= 0) return slots;
   let rows: { count: number; role: string }[];
-  if (outfield <= 3) {
+  // Big sides (10 or 11) line up like proper 11-a-side: a back four, two
+  // up front, the rest in midfield (4-4-2 for 11).
+  if (outfield >= 9) {
+    rows = [{ count: 4, role: "Defence" }, { count: outfield - 6, role: "Midfield" }, { count: 2, role: "Attack" }];
+  } else if (outfield <= 3) {
     rows = [{ count: outfield, role: "Outfield" }];
   } else {
     // A single lone striker up front (like a real 1-3-3-1), with the rest
@@ -256,13 +260,15 @@ function formationSlots(n: number): { x: number; y: number; role: string }[] {
   }
   // Each team spreads across nearly its whole half, back row close to the
   // keeper (20) through front row right up against the halfway line (46.5).
+  // Two strikers each side would meet at the halfway line, so big sides
+  // stop a little short of it.
   const backY = 20;
-  const frontY = 46.5;
+  const frontY = outfield >= 9 ? 42 : 46.5;
   const rowYs = rows.length === 1 ? [frontY] : rows.map((_, i) => backY + (i * (frontY - backY)) / (rows.length - 1));
   rows.forEach((row, ri) => {
     const y = rowYs[ri];
     for (let i = 0; i < row.count; i++) {
-      const x = row.count === 1 ? 50 : 16 + i * (68 / (row.count - 1));
+      const x = row.count === 1 ? 50 : row.count === 2 && row.role === "Attack" ? 34 + i * 32 : 16 + i * (68 / (row.count - 1));
       slots.push({ x, y, role: row.role });
     }
   });
@@ -5619,7 +5625,7 @@ function App({ session }: { session: Session }) {
                   </span>
                   <span className="wcf-vote-prompt-text">
                     <span className="wcf-vote-prompt-k">Man of the Match</span>
-                    <span className="wcf-vote-prompt-t">Who was best tonight?</span>
+                    <span className="wcf-vote-prompt-t">Who was best {dayWord(g.kickoff)}?</span>
                     <span className="wcf-vote-prompt-s">
                       {cs.team_white_name} {g.team_white_score}–{g.team_red_score} {cs.team_red_name} · closes {motmClosesLabel(g)}
                     </span>
@@ -9138,7 +9144,7 @@ function RateGameSheet({
           </div>
         </div>
         <div className="wcf-rate-body">
-          <div className="wcf-rate-q">{rating ? "Thanks, noted." : "How was tonight?"}</div>
+          <div className="wcf-rate-q">{rating ? "Thanks, noted." : `How was ${dayWord(game.kickoff)}?`}</div>
           <RateGameMeter value={rating} onRate={onRate} />
           <div className="wcf-rate-ends"><span>Scrappy</span><span>Classic</span></div>
           <div key={rating} className={"wcf-rate-verdict" + (rating ? " pop" : "")}>{rating ? RATING_WORDS[rating - 1] : " "}</div>
@@ -11015,7 +11021,7 @@ function GameCard({
   // Match-day mode: every game on today's card gets the badge and live
   // clock (two-game nights included); the "your team" block below still
   // needs you booked in on a team.
-  const matchDay = !!featured && !game.special && isMatchDay(game.date, game.kickoff);
+  const matchDay = !!featured && isMatchDay(game.date, game.kickoff);
   const credits = useCredits();
   const myCredit = myBooking ? credits.byBooking.get(myBooking.id) : undefined;
   const due = amountDue(game.price, myCredit);
@@ -11026,7 +11032,7 @@ function GameCard({
     ) : myBooking && !myBooking.waiting && myBooking.status === "unpaid" && !myBooking.pot_exempt_reason ? (
       msToKickoff <= PAY_SOON_MS ? (
         <div className="wcf-payby-wrap">
-          <span className={"wcf-payby" + (msToKickoff <= 86400000 ? " red" : "")}>⏱ {msToKickoff > 0 ? `Pay before kick-off · ${untilLabel(msToKickoff)}` : "Pay tonight"}</span>
+          <span className={"wcf-payby" + (msToKickoff <= 86400000 ? " red" : "")}>⏱ {msToKickoff > 0 ? `Pay before kick-off · ${untilLabel(msToKickoff)}` : `Pay ${dayWord(game.kickoff)}`}</span>
           <div className="wcf-pay-strip">
             <span className="wcf-pay-strip-text">£{due} due{myCredit ? " · credit used" : ""}</span>
             {canSpendCredit ? (
@@ -11235,6 +11241,7 @@ function GameCard({
             <MatchDayTeam
               name={teams[myBooking.team].name}
               color={teams[myBooking.team].color}
+              kickoff={game.kickoff}
               mates={confirmed.filter((b) => b.team === myBooking.team && b.player_id !== myId).map((b) => b.player)}
             />
           )}

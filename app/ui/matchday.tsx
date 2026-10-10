@@ -18,6 +18,9 @@ export function isMatchDay(date: string, kickoff: string) {
   return nowInLondon().slice(0, 10) === date && nowMs() < kickMs(date, kickoff) + MATCH_DURATION_MINUTES * 60000;
 }
 
+// "today" for a daytime kick-off (a Sunday 12:00), "tonight" otherwise.
+export const dayWord = (kickoff: string) => (Number(kickoff.split(":")[0]) < 17 ? "today" : "tonight");
+
 // From kick-off to full time: no booking or drop-out buttons then.
 export function isLiveNow(date: string, kickoff: string) {
   const now = nowMs(), k = kickMs(date, kickoff);
@@ -62,9 +65,11 @@ export function MatchDayTeam({
   name,
   color,
   mates,
+  kickoff,
 }: {
   name: string;
   color: string;
+  kickoff: string;
   mates: { display_name: string; avatar_url?: string | null }[];
 }) {
   const light = ["#f5f6f8", "#ffffff", "#fff"].includes(color.toLowerCase());
@@ -75,7 +80,7 @@ export function MatchDayTeam({
         <path d="M6 20v20h28V20" fill="none" stroke={light ? "rgba(13,13,26,.3)" : "rgba(255,255,255,.4)"} strokeWidth="1" strokeDasharray="2 2" />
       </svg>
       <div className="tx">
-        <small>Your side tonight</small>
+        <small>Your side {dayWord(kickoff)}</small>
         <b>
           You&apos;re on the <em>{name}</em>
         </b>

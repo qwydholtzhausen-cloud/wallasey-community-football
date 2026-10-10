@@ -776,6 +776,16 @@ export function LineupTab({
                 (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) &&
                 (() => {
                   const allTokens = pitchTokens;
+                  // "Callum M" and "Callum S" rather than two "Callum"s on the pitch.
+                  const firstCount = new Map<string, number>();
+                  allTokens.forEach((t) => {
+                    const f = t.booking.player.display_name.split(" ")[0];
+                    firstCount.set(f, (firstCount.get(f) ?? 0) + 1);
+                  });
+                  const tokenName = (name: string) => {
+                    const [f, ...rest] = name.split(" ");
+                    return (firstCount.get(f) ?? 0) > 1 && rest.length ? `${f} ${rest[rest.length - 1][0].toUpperCase()}` : f;
+                  };
                   const selected = allTokens.find((t) => t.booking.player_id === selectedLineupPlayerId);
                   const selectedStats = selected ? playerStats.find((p) => p.id === selected.booking.player_id) : null;
                   const selectColor = (isRed: boolean) => (isRed ? cs.team_red_color : cs.team_white_color);
@@ -820,7 +830,7 @@ export function LineupTab({
                           background={teamGradient(color)}
                           style={{ color: readableTextColor(color), boxShadow: me ? "0 0 0 2px var(--blue), 0 6px 14px -6px rgba(0,0,0,.85)" : undefined }}
                         />
-                        <span className="wcf-lineup-token-label">{t.booking.player.display_name.split(" ")[0]}</span>
+                        <span className="wcf-lineup-token-label">{tokenName(t.booking.player.display_name)}</span>
                       </button>
                     );
                   };
