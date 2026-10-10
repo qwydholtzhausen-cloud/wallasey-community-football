@@ -9886,18 +9886,65 @@ function AdminConsole({
               ))}
             </div>
           )}
-          {paymentClaims.length > 0 && (
-            <div className="wcf-admin-card">
-              {paymentClaims.map(({ booking: b, game: g }) => (
-                <div key={b.id} className={"wcf-todo" + (stamped.has(b.id) ? " stamped" : "")}>
-                  <span className="wcf-paid-stamp" aria-hidden="true">PAID</span>
-                  <span className="wcf-todo-ic gold">£</span>
-                  <span className="wcf-todo-tx"><b>{b.player.display_name}</b><span>Says paid · {fmtDate(g.date)} · £{amountDue(g.price, credits.byBooking.get(b.id))}{credits.byBooking.has(b.id) ? " (rest by credit)" : ""} · booked {fmtDateTime(b.created_at)}</span></span>
-                  <button className="wcf-todo-btn gold" onClick={() => stampConfirm(b.id)}>Confirm</button>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* One card per player, longest-waiting first: their games
+              underneath (each can still be confirmed on its own, for a
+              part payment), and one button for the lot when it matches
+              what came into the bank. */}
+          {paymentClaims.length > 0 &&
+            (() => {
+              const byPlayer = new Map<string, { name: string; avatar: string | null | undefined; rows: typeof paymentClaims }>();
+              for (const c of paymentClaims) {
+                const cur = byPlayer.get(c.booking.player_id) ?? { name: c.booking.player.display_name, avatar: c.booking.player.avatar_url, rows: [] };
+                cur.rows.push(c);
+                byPlayer.set(c.booking.player_id, cur);
+              }
+              const due = (c: (typeof paymentClaims)[number]) => amountDue(c.game.price, credits.byBooking.get(c.booking.id));
+              const groups = [...byPlayer.entries()]
+                .map(([id, v]) => ({ id, ...v, rows: v.rows.sort((a, b) => a.game.date.localeCompare(b.game.date)), oldest: v.rows.reduce((m, c) => (c.booking.created_at < m ? c.booking.created_at : m), v.rows[0].booking.created_at) }))
+                .sort((a, b) => a.oldest.localeCompare(b.oldest));
+              return groups.map((p) => {
+                const ids = p.rows.map((c) => c.booking.id);
+                const total = p.rows.reduce((s, c) => s + due(c), 0);
+                const allStamped = ids.every((id) => stamped.has(id));
+                return (
+                  <div key={p.id} className={"wcf-admin-card wcf-claim" + (allStamped ? " stamped" : "")}>
+                    <div className="wcf-claim-head">
+                      <Avatar name={p.name} avatarUrl={p.avatar} className="wcf-claim-av" />
+                      <span className="wcf-claim-who">
+                        <b>{p.name}</b>
+                        <span>
+                          Says paid · {p.rows.length} {p.rows.length === 1 ? "game" : "games"} · booked {fmtDate(p.oldest.slice(0, 10))}
+                        </span>
+                      </span>
+                      <span className="wcf-claim-total">£{total}</span>
+                    </div>
+                    {p.rows.length > 1 &&
+                      p.rows.map((c) => (
+                        <div key={c.booking.id} className={"wcf-claim-line" + (stamped.has(c.booking.id) ? " stamped" : "")}>
+                          <span className="wcf-paid-stamp" aria-hidden="true">PAID</span>
+                          <span>
+                            {fmtDate(c.game.date)} · £{due(c)}
+                            {credits.byBooking.has(c.booking.id) ? " (rest by credit)" : ""}
+                          </span>
+                          <button className="wcf-claim-one" onClick={() => stampConfirm(c.booking.id)}>Confirm</button>
+                        </div>
+                      ))}
+                    {p.rows.length === 1 && (
+                      <div className={"wcf-claim-line" + (stamped.has(ids[0]) ? " stamped" : "")}>
+                        <span className="wcf-paid-stamp" aria-hidden="true">PAID</span>
+                        <span>
+                          {fmtDate(p.rows[0].game.date)} · £{due(p.rows[0])}
+                          {credits.byBooking.has(ids[0]) ? " (rest by credit)" : ""}
+                        </span>
+                      </div>
+                    )}
+                    <button className="wcf-todo-btn gold wcf-claim-all" onClick={() => (ids.length === 1 ? stampConfirm(ids[0]) : stampAll(ids, total))}>
+                      {ids.length === 1 ? `Confirm £${total}` : ids.length === 2 ? `Confirm both · £${total}` : `Confirm all ${ids.length} · £${total}`}
+                    </button>
+                  </div>
+                );
+              });
+            })()}
 
           <div className="wcf-admin-group"><span>Owed from past games</span>{owingTotal > 0 && <b className="red">£{owingTotal}</b>}</div>
       {owingTabs.length === 0 && <EmptyScene kind="paid" small title="Everyone's settled up" text="Nothing outstanding." />}
@@ -13445,6 +13492,21 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-todo.stamped .wcf-todo-btn,.wcf-todo.stamped .wcf-todo-btns{visibility:hidden}
 @keyframes wcfPaidStamp{0%{opacity:0;transform:translateY(-50%) rotate(-9deg) scale(2.3)}100%{opacity:1;transform:translateY(-50%) rotate(-9deg) scale(1)}}
 @keyframes wcfPaidFold{to{opacity:0;transform:translateX(36px);max-height:0;padding-top:0;padding-bottom:0;border-top-width:0}}
+.wcf-claim{padding:12px 14px}
+.wcf-claim-head{display:flex;align-items:center;gap:11px}
+.wcf-claim-av{width:38px;height:38px;border-radius:50%;flex:none;object-fit:cover;display:grid;place-items:center;font-weight:800;background:var(--panel2);color:var(--dim)}
+.wcf-claim-who{flex:1;min-width:0}
+.wcf-claim-who b{display:block;font-size:14.5px}
+.wcf-claim-who span{display:block;font-size:11.5px;color:var(--dim);margin-top:2px}
+.wcf-claim-total{flex:none;font-family:var(--display);font-weight:800;font-size:18px;color:#f5d97a}
+.wcf-claim-line{position:relative;display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--line);font-size:12.5px;color:var(--soft,#cbd5e1)}
+.wcf-claim-line>span:not(.wcf-paid-stamp){flex:1;min-width:0}
+.wcf-claim-one{flex:none;min-height:30px;padding:0 10px;border-radius:9px;border:1px solid rgba(245,217,122,.45);background:transparent;color:#f5d97a;font-weight:800;font-size:11.5px;cursor:pointer}
+.wcf-claim-all{width:100%;margin-top:10px;min-height:42px}
+.wcf-claim-line.stamped .wcf-paid-stamp{animation:wcfPaidStamp .42s cubic-bezier(.3,1.6,.5,1) forwards}
+.wcf-claim-line.stamped .wcf-claim-one{visibility:hidden}
+.wcf-claim.stamped{max-height:600px;overflow:hidden;animation:wcfPaidFold .45s .6s ease forwards}
+.wcf-claim.stamped .wcf-claim-all{visibility:hidden}
 .wcf-paid-summary{margin:0 0 12px;padding:16px;border-radius:16px;text-align:center;background:radial-gradient(120% 120% at 50% 0%,rgba(34,197,94,.2),transparent 60%),var(--panel);border:1px solid rgba(34,197,94,.42);animation:wcfMomentPop .5s cubic-bezier(.3,1.5,.5,1) both}
 .wcf-paid-summary b{display:block;font-family:var(--display);font-weight:800;font-size:30px;color:#4ade80}
 .wcf-paid-summary span{font-size:12.5px;color:#cbd5e1}

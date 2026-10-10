@@ -2399,3 +2399,34 @@ begin
   return msg_id;
 end;
 $$;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Players can only ever mark their own booking "I've paid" (10 Oct 2026).
+-- The update policy checked only that the new status was 'pending', so a
+-- player could change anything else in the same update: take themselves
+-- off a waiting list (over the game's limit), make the game free
+-- (pot_exempt_reason) or move the booking to another game. Found by
+-- scripts/db/bookings.test.mjs. Not security definer on purpose:
+-- current_user is then the caller, so the app's own signed-in requests
+-- ('authenticated') are checked, while the club's functions (use_credit
+-- etc., which run as their owner) and the server (service_role) aren't.
+-- ─────────────────────────────────────────────────────────────────
+create or replace function public.guard_player_booking_update()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if current_user = 'authenticated' and not public.is_admin() then
+    if (to_jsonb(new) - 'status') is distinct from (to_jsonb(old) - 'status') or new.status <> 'pending' then
+      raise exception 'You can only mark your own booking as paid';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists guard_player_booking_update on public.bookings;
+create trigger guard_player_booking_update
+  before update on public.bookings
+  for each row execute function public.guard_player_booking_update();
