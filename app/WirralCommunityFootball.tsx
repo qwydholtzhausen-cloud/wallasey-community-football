@@ -3268,6 +3268,17 @@ function App({ session }: { session: Session }) {
     }
     return out;
   }, [games, nowUk]);
+  // How many spots usually open up on a full game: across past games that
+  // had a waiting list, how many from it got in (the middle half of those
+  // counts, e.g. "2 to 3"). Shown before you join a waiting list.
+  const spotsUsuallyOpen = useMemo(() => {
+    const counts = games
+      .filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk && g.bookings.some((b) => b.waiting || b.promoted_at))
+      .map((g) => g.bookings.filter((b) => b.promoted_at).length)
+      .sort((a, b) => a - b);
+    if (counts.length < 3) return null;
+    return { games: counts.length, lo: counts[Math.floor((counts.length - 1) / 4)], hi: counts[Math.ceil(((counts.length - 1) * 3) / 4)] };
+  }, [games, nowUk]);
   const pastGames = useMemo(
     () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
     [games, nowUk]
@@ -5653,21 +5664,6 @@ function App({ session }: { session: Session }) {
                 <button className="wr-banner-x" onClick={dismissWrapped} aria-label="Hide this month's Wrapped">×</button>
               </div>
             )}
-            {showPushNudge && (
-              <div className="wcf-nudge-banner">
-                <span className="wcf-nudge-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
-                </span>
-                <div className="wcf-nudge-body">
-                  <strong>Never miss a game</strong>
-                  <p>Kickoff reminders, payment nudges and a heads-up when a spot opens.</p>
-                  <div className="wcf-nudge-actions">
-                    <button onClick={async () => { if (await enablePush()) dismissPushNudge(); }}>Turn on</button>
-                    <button className="wcf-ghost" onClick={dismissPushNudge}>Not now</button>
-                  </div>
-                </div>
-              </div>
-            )}
             {showRatingNudge && (
               <div className="wcf-nudge-banner">
                 <span className="wcf-nudge-icon" aria-hidden="true">
@@ -5755,6 +5751,9 @@ function App({ session }: { session: Session }) {
                         onSetStatus={setBookingStatus}
                         weather={weatherFor(g.date, g.kickoff)}
                         askConfirm={askConfirm}
+                        queueOdds={queueOdds}
+                        spotsUsuallyOpen={spotsUsuallyOpen}
+                        push={{ on: myPushGranted, dismissed: pushNudgeDismissed, enable: enablePush, dismiss: dismissPushNudge }}
                       />
                     ))}
                   </>
@@ -10918,7 +10917,14 @@ function GameCard({
   countdownText,
   isNew,
   cascadeIndex,
+  queueOdds,
+  spotsUsuallyOpen,
+  push,
 }: {
+  // Waiting-list history and notifications, for the "Next match" card.
+  queueOdds?: Record<number, QueueOdds>;
+  spotsUsuallyOpen?: { games: number; lo: number; hi: number } | null;
+  push?: { on: boolean; dismissed: boolean; enable: () => Promise<boolean>; dismiss: () => void };
   isNew?: boolean;
   cascadeIndex?: number;
   game: GameRow;
@@ -11017,13 +11023,37 @@ function GameCard({
       )
     ) : null;
 
+  // What the waiting list has been like: how often this place in the queue
+  // has got in (once it's happened 5+ times), otherwise how many spots
+  // usually open up on a full game.
+  const nth = (n: number) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
+  const placeName = (n: number) => (n === 1 ? "Next in line" : `${nth(n)} in line`);
+  const oddsLine = (pos: number) => {
+    const o = queueOdds?.[pos];
+    if (o) return `${placeName(pos)} has got in ${o.got} of ${o.total} times so far.`;
+    if (spotsUsuallyOpen) return `Usually ${spotsUsuallyOpen.lo === spotsUsuallyOpen.hi ? spotsUsuallyOpen.lo : `${spotsUsuallyOpen.lo} to ${spotsUsuallyOpen.hi}`} spots open up on a full game.`;
+    return "";
+  };
+  // Asking for notifications where they matter (a spot opening, a
+  // reminder for a game you're in), instead of a banner on top of Fixtures.
+  const pushSupported = typeof window !== "undefined" && "PushManager" in window && "serviceWorker" in navigator;
+  const [pushBusy, setPushBusy] = useState(false);
+  const spotAlert = (ask: string, iphone: string, on: string) =>
+    !push ? null : push.on ? <div className="wcf-ask quiet">{on}</div> : pushSupported ? (
+      <div className="wcf-ask">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
+        <span>{ask}</span>
+        <button disabled={pushBusy} onClick={async () => { setPushBusy(true); await push.enable(); setPushBusy(false); }}>Turn on</button>
+      </div>
+    ) : (
+      <div className="wcf-ask quiet">{iphone}</div>
+    );
   // Where you are in the queue, if you're on the waiting list: "2nd in
   // line", with the queue drawn out. Updates live as people drop out (the
   // bookings realtime channel already refreshes this card), and getting a
   // place sends the "You're in" push from the booking-promoted webhook.
   const queuePos = myBooking?.waiting ? waitingList.findIndex((b) => b.player_id === myId) + 1 : 0;
   const movedUp = useChanged(queuePos, (a, b) => b > 0 && a > b);
-  const nth = (n: number) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
   const queueStrip = queuePos > 0 && (
     <div key={queuePos} className={"wcf-queue" + (movedUp ? " moved" : "")}>
       <div className="wcf-queue-k">You&apos;re on the waiting list</div>
@@ -11045,11 +11075,28 @@ function GameCard({
         {queuePos === 1
           ? "If anyone drops out, the spot's yours."
           : `If ${queuePos} people drop out, you're in.`}{" "}
-        We&apos;ll send you a notification.
+        {oddsLine(queuePos)}
       </div>
+      {spotAlert("Get a notification the second a spot opens", "Add the app to your Home Screen to get a notification when a spot opens.", "We'll send you a notification.")}
     </div>
   );
 
+  const wouldBe = waitingList.length + 1;
+  const oddsBefore =
+    featured && full && !myBooking && !isLiveNow(game.date, game.kickoff) && waitingList.length < 10 && (queueOdds?.[wouldBe] || spotsUsuallyOpen) ? (
+      <div className="wcf-odds">
+        You&apos;d be <b>{wouldBe === 1 ? "next in line" : `${nth(wouldBe)} in line`}</b>. {oddsLine(wouldBe)}
+      </div>
+    ) : null;
+  const remindAsk =
+    featured && push && !push.on && !push.dismissed && pushSupported && myBooking && !myBooking.waiting && !isLiveNow(game.date, game.kickoff) ? (
+      <div className="wcf-ask">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
+        <span>Get a reminder before kick-off</span>
+        <button disabled={pushBusy} onClick={async () => { setPushBusy(true); await push.enable(); setPushBusy(false); }}>Turn on</button>
+        <button className="x" aria-label="Not now" onClick={push.dismiss}>×</button>
+      </div>
+    ) : null;
   const cta = (
     <div className="wcf-card-actions">
       {matchDay && isLiveNow(game.date, game.kickoff) ? null : !myBooking && overdue ? (
@@ -11320,7 +11367,9 @@ function GameCard({
           already is one card, so they render here. */}
       {featured && queueStrip}
       {featured && payStrip}
+      {oddsBefore}
       {featured && cta}
+      {remindAsk}
 
       {isAdmin && editing && (
         <div className="wcf-edit">
@@ -12135,6 +12184,17 @@ button.wcf-glance-card:disabled{cursor:default}
    ".wcf-lineup-chip span" knocked its initial off-centre. */
 .wcf-lineup-chip-name{font-size:11px;font-weight:700;line-height:1.25;text-align:center;max-width:100%;overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
+/* Before teams are picked there's nothing to show on the photo but the
+   venue and time, so it's a short band; and who's in is faces in rings,
+   not boxed tiles. */
+.wcf-lineup-head.pre{min-height:0;padding-bottom:16px;background-position:center 72%}
+.wcf-lineup-head.pre .wcf-lineup-head-actions{margin-top:14px}
+.wcf-lineup-group.pre .wcf-lineup-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px 6px}
+.wcf-lineup-group.pre .wcf-lineup-chip{background:none;border-color:transparent;padding:2px 0}
+.wcf-lineup-group.pre .wcf-lineup-chip-avatar{width:54px;height:54px;font-size:18px;box-shadow:0 0 0 2px rgba(148,163,184,.35),0 6px 14px -6px rgba(0,0,0,.8)}
+.wcf-lineup-group.pre .wcf-lineup-chip.me .wcf-lineup-chip-avatar{box-shadow:0 0 0 2.5px #f5d97a,0 0 16px rgba(245,217,122,.45)}
+.wcf-lineup-group.pre .wcf-lineup-chip.me .wcf-lineup-chip-name{color:#f5d97a}
+.wcf-lineup-group.pre .wcf-lineup-chip-name{font-weight:600;color:var(--soft,#cbd5e1)}
 .wcf-lineup-row.me-edit{background:rgba(245,217,122,.07);border-color:rgba(245,217,122,.45)}
 .wcf-lineup-avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;flex:0 0 auto;background:var(--panel2);color:var(--dim);object-fit:cover}
 .wcf-lineup-name{font-weight:700;font-size:14px;flex:1;min-width:0}
@@ -14349,6 +14409,14 @@ a.wcf-set-link{text-decoration:none}
 .wcf-cd-live{color:#f5d97a!important;display:inline-flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
 .wcf-cd-dot{width:6px;height:6px;border-radius:50%;background:#f5d97a;animation:wcfCdDot 1s ease-in-out infinite}
 @keyframes wcfCdDot{50%{opacity:.25;transform:scale(.7)}}
+.wcf-odds{margin:12px 2px 0;font-size:12.5px;line-height:1.45;color:var(--dim)}
+.wcf-odds b{color:#f5d97a;font-weight:800}
+.wcf-ask{display:flex;align-items:center;gap:10px;margin-top:10px;padding:9px 10px 9px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);font-size:12.5px;color:var(--white);line-height:1.35}
+.wcf-ask svg{flex:none;color:#f5d97a}
+.wcf-ask span{flex:1;min-width:0}
+.wcf-ask button{flex:none;min-height:34px;padding:0 14px;border-radius:10px;border:0;background:#f5d97a;color:#1a1405;font-weight:800;font-size:12.5px;cursor:pointer}
+.wcf-ask button.x{min-height:34px;min-width:30px;padding:0;background:none;color:var(--dim);font-size:18px;font-weight:600}
+.wcf-ask.quiet{display:block;background:none;border:0;padding:0;margin-top:6px;font-size:12px;color:var(--dim)}
 .wcf-queue.moved{animation:wcfQFlash .9s ease-out}
 .wcf-queue.moved .wcf-queue-t{animation:wcfTickRoll .45s cubic-bezier(.3,1.4,.5,1)}
 .wcf-queue.moved .wcf-queue-slot{animation:wcfSlotLeft .45s cubic-bezier(.3,1.2,.5,1) both}

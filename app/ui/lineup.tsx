@@ -611,7 +611,7 @@ export function LineupTab({
           {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
           {nextGame && (
             <>
-              <div className={"wcf-lineup-head" + (bdays.length ? " bday" : "")}>
+              <div className={"wcf-lineup-head" + (bdays.length ? " bday" : "") + (!editingLineup && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 ? " pre" : "")}>
                 {bdays.length > 0 && <BirthdayBunting />}
                 <div className="wcf-lineup-eyebrow">Line-up</div>
                 <div className="wcf-lineup-title">{nextGame.venue}</div>
@@ -952,13 +952,13 @@ export function LineupTab({
                 })()}
 
               {!editingLineup && nextGrouped.unassigned.length > 0 && (
-                <div className="wcf-lineup-group">
+                <div className={"wcf-lineup-group" + (nextGrouped.white.length === 0 && nextGrouped.red.length === 0 ? " pre" : "")}>
                   {/* "Unassigned" is admin language. Before any teams are
                         picked this is simply who's playing. */}
                   <div className="wcf-lineup-group-label">
                     {nextGrouped.white.length === 0 && nextGrouped.red.length === 0 ? "Who's in" : "Still to be picked"} · {nextGrouped.unassigned.length}
                   </div>
-                  {nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && <p className="wcf-lineup-group-note">Teams get picked nearer kick-off.</p>}
+                  {nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && <p className="wcf-lineup-group-note">Teams are picked before kick-off and show here the moment they&apos;re out.</p>}
                   {/* A grid of faces rather than one full-width row each:
                         sixteen rows was a long scroll to see who's playing,
                         and faces are what people recognise at a glance. */}
