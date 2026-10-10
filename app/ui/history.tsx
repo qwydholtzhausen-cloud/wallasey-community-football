@@ -150,7 +150,7 @@ export function HistoryPage({
     const list = Array.from(host.querySelectorAll<HTMLElement>(".wcf-hs-tot, .wcf-hs-ev"));
     const wait = (el: HTMLElement) =>
       el.querySelector(".wcf-hs-mb") ? 5200 : el.querySelector(".wcf-hs-chain") ? 3600 : el.querySelector(".wcf-hs-mosaic") ? 2600 : el.querySelector(".wcf-hs-goal, .wcf-hs-board, .wcf-hs-big, .wcf-hs-twin") ? 2400 : 1500;
-    let k = Math.max(0, list.findIndex((el) => el.getBoundingClientRect().top > 120));
+    let k = Math.max(0, list.findIndex((el) => el.getBoundingClientRect().top > 120 && !el.classList.contains("wcf-hs-tot")));
     let timer = 0;
     const next = () => {
       if (k >= list.length) return setPlaying(false);
@@ -253,10 +253,12 @@ export function HistoryPage({
   return (
     <div ref={root} className={"wcf-hs" + (motion ? "" : " still")}>
       <style>{historyCss}</style>
-      <button type="button" className={"wcf-hs-pill" + (playing ? " on" : "")} onClick={() => setPlaying((p) => !p)}>
-        <i />
-        {playing ? "Pause" : "Auto-play"}
-      </button>
+      {playing && (
+        <button type="button" className="wcf-hs-pill on" onClick={() => setPlaying(false)}>
+          <i />
+          Pause
+        </button>
+      )}
       <div className={"wcf-hs-intro" + (intro ? " play" : "")}>
         <div className="bg" />
         <div className="sc" />
@@ -278,6 +280,10 @@ export function HistoryPage({
           <div><b data-n={data.totals.goals}>{intro ? 0 : data.totals.goals}</b><span>goals</span></div>
           <div><b data-n={data.totals.players}>{intro ? 0 : data.totals.players}</b><span>players</span></div>
         </div>
+        <button type="button" className="wcf-hs-play" onClick={() => setPlaying(true)}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>
+          Auto-play the story
+        </button>
       </div>
       <div ref={story} className="wcf-hs-story">
         <div className="wcf-hs-rail"><i /></div>
@@ -537,7 +543,7 @@ function AddMoment({ people, today, onClose, onAdd }: { people: Map<string, Pers
 }
 
 const historyCss = `
-.wcf-hs{position:relative;margin:0 -2px}
+.wcf-hs{position:relative;max-width:100%;overflow-x:clip;touch-action:pan-y}
 .wcf-hs-face{border-radius:50%;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;color:#fff;flex:none;width:32px;height:32px;font-size:11px;border:2px solid #f5d97a}
 .wcf-hs-pill{position:fixed;left:16px;bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:40;box-shadow:0 10px 24px -8px #000;display:flex;align-items:center;gap:7px;min-height:36px;padding:0 14px;border-radius:999px;border:1px solid rgba(245,217,122,.55);background:rgba(10,12,20,.85);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#f5d97a;font-weight:800;font-size:12px;cursor:pointer;font-family:var(--sans)}
 .wcf-hs-pill i{width:7px;height:7px;border-radius:50%;background:#f5d97a}
@@ -566,16 +572,19 @@ const historyCss = `
 .wcf-hs-intro.play p{opacity:0;animation:wcfHsUp .6s 1.3s forwards}
 .wcf-hs-intro.play .wcf-hs-tot{opacity:0;animation:wcfHsUp .6s 1.5s forwards}
 @keyframes wcfHsUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.wcf-hs-play{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:46px;margin-top:16px;border-radius:14px;border:0;background:#f5d97a;color:#1a1405;font-family:var(--sans);font-weight:800;font-size:14px;cursor:pointer}
+.wcf-hs-play svg{width:18px;height:18px}
+.wcf-hs-intro.play .wcf-hs-play{opacity:0;animation:wcfHsUp .6s 1.8s forwards}
 .wcf-hs-tot{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:18px;padding-top:14px;border-top:1px solid rgba(245,217,122,.3)}
 .wcf-hs-tot b{display:block;font-family:var(--display);font-size:24px;font-variant-numeric:tabular-nums;color:#fff}
 .wcf-hs-tot span{font-size:9px;font-weight:800;letter-spacing:.14em;color:var(--dim);text-transform:uppercase}
-.wcf-hs-story{position:relative;padding:0 4px 24px 32px}
+.wcf-hs-story{position:relative;padding:0 4px 120px 32px}
 .wcf-hs-rail{position:absolute;left:12px;top:0;bottom:30px;width:2px;background:rgba(245,217,122,.12)}
 .wcf-hs-rail i{position:absolute;left:0;top:0;width:2px;height:0;background:linear-gradient(#f5d97a,#fff3c4);box-shadow:0 0 10px rgba(245,217,122,.8);transition:height .8s ease}
-.wcf-hs-chap{position:sticky;top:0;z-index:3;margin:0 -4px 0 -32px;padding:12px 4px 10px 32px;background:linear-gradient(180deg,var(--bg,#0d0d1a) 72%,rgba(13,13,26,0))}
+.wcf-hs-chap{position:relative;margin:26px 0 4px -32px;padding:0 4px 0 32px}
 .wcf-hs-chap small{display:block;font-size:10px;font-weight:800;letter-spacing:.24em;color:#f5d97a}
 .wcf-hs-chap b{display:block;font-family:var(--display);font-size:20px;margin-top:2px}
-.wcf-hs-ev{position:relative;margin:14px 0 20px;opacity:0;transform:translateX(26px);transition:opacity .55s,transform .55s cubic-bezier(.3,1.2,.5,1)}
+.wcf-hs-ev{position:relative;margin:14px 0 20px;opacity:0;transform:translateY(18px);transition:opacity .55s,transform .55s cubic-bezier(.3,1.2,.5,1)}
 .wcf-hs-ev.in{opacity:1;transform:none}
 .wcf-hs-ev::before{content:"";position:absolute;left:-26px;top:5px;width:12px;height:12px;border-radius:50%;background:var(--bg,#0d0d1a);border:2px solid rgba(245,217,122,.5);transition:all .4s .2s}
 .wcf-hs-ev.in::before{background:#f5d97a;border-color:#fff3c4;box-shadow:0 0 0 4px rgba(245,217,122,.15),0 0 14px rgba(245,217,122,.7)}
@@ -681,10 +690,10 @@ const historyCss = `
 .wcf-hs-ev.in .wcf-hs-tp.p1 .sold{animation:wcfHsSold .45s 2.1s cubic-bezier(.3,1.6,.5,1) forwards}
 .wcf-hs-ev.in .wcf-hs-tp.p2 .sold{animation:wcfHsSold .45s 2.4s cubic-bezier(.3,1.6,.5,1) forwards}
 @keyframes wcfHsSold{to{opacity:1;transform:translateX(-50%) rotate(-8deg) scale(1)}}
-.wcf-hs-end{margin:24px 0 0 -26px;border-radius:20px;padding:18px;border:1px dashed rgba(245,217,122,.55);background:rgba(245,217,122,.05);text-align:center}
+.wcf-hs-end{margin:32px 0 0 -26px;border-radius:20px;padding:18px;border:1px dashed rgba(245,217,122,.55);background:rgba(245,217,122,.05);text-align:center}
 .wcf-hs-end::before{display:none}
 .wcf-hs-end small{display:block;font-size:10px;font-weight:800;letter-spacing:.24em;color:#f5d97a}
-.wcf-hs-end b{display:block;font-family:var(--display);font-size:21px;margin:6px 0 4px}
+.wcf-hs-end b{display:block;font-family:var(--display);font-size:20px;line-height:1.2;margin:8px 0 6px}
 .wcf-hs-add{width:calc(100% + 26px);margin:14px 0 0 -26px;min-height:44px;border-radius:12px;border:1px dashed var(--line);background:none;color:var(--dim);font-weight:700;font-size:12.5px;cursor:pointer}
 .wcf-hs-sheetwrap{position:fixed;inset:0;z-index:300;background:rgba(3,5,10,.6);display:flex;align-items:flex-end;justify-content:center}
 .wcf-hs-sheet{width:100%;max-width:520px;max-height:88vh;overflow-y:auto;border-radius:24px 24px 0 0;background:#111827;border-top:1px solid rgba(245,217,122,.35);padding:10px 18px calc(18px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:10px;animation:wcfHsSheet .3s cubic-bezier(.3,1.2,.5,1)}
