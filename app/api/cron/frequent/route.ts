@@ -6,6 +6,7 @@ import { kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, nextMonth
 import { ensureFreshMonzoToken, registerMonzoWebhook } from "../../../../lib/monzo";
 import { AUTO_REMOVE_UNPAID_BOOKINGS, WRAPPED_OPEN_TO_ALL_FROM, WRAPPED_FIRST_MONTH_FOR_ALL } from "../../../../lib/clubPolicy";
 import { nextOpenGame, fmtJourneyDate, type JourneyGame } from "../../../../lib/memberJourney";
+import { sendWelcome } from "../../../../lib/welcome";
 import { announcePlayerOfMonth } from "../../../../lib/potmAnnounce";
 import { recordHeartbeat } from "../../../../lib/gaffai/health";
 
@@ -538,34 +539,16 @@ export async function GET(req: Request) {
   // built for: people who joined online with no other channel to reach
   // them, who'd otherwise get no orientation to the club at all.
   // Waiting-for-approval members get theirs once an admin lets them in.
+  // A brand-new sign-up gets 15 minutes to tell the app their name, which
+  // sends the welcome straight away (POST /api/welcome); after that the
+  // cron sends it anyway. sendWelcome (lib/welcome.ts) claims the key
+  // first, so the two can never both send it.
   const { data: allProfiles } = await admin.from("profiles").select("*");
-  for (const p of (allProfiles ?? []) as { id: string; display_name: string; status?: string }[]) {
+  for (const p of (allProfiles ?? []) as { id: string; display_name: string; status?: string; created_at?: string }[]) {
     if ((p.status ?? "active") !== "active") continue;
-    const key = `welcome-${p.id}`;
-    if (notifiedKeys.has(key)) continue;
-
-    const firstName = p.display_name.split(" ")[0];
-    // Honest about how far ahead games fill: if the next free spot is weeks
-    // away, say when it is and point to the waiting lists for sooner games,
-    // rather than "grab a spot" and a page of full games.
-    const open = nextOpenGame((games ?? []) as unknown as JourneyGame[], nowUkStr);
-    const openDays = open ? (toMs(kickoffCutoff(open.date, open.kickoff, 0)) - nowMs) / 86400000 : null;
-    const whereToStart = !open
-      ? "Games are all full right now, so join the waiting list on any game in Fixtures: if someone drops out you move up, and you'll get a message the moment you're in."
-      : openDays! <= 10
-        ? `The next game with a free spot is ${fmtJourneyDate(open.date)} at ${open.kickoff} (${open.venue}), so head to Fixtures and grab it.`
-        : `Games book up a few weeks ahead: the next one with a free spot is ${fmtJourneyDate(open.date)} (${open.venue}). For anything sooner, join the waiting list on a game in Fixtures: if someone drops out you move up, and you'll get a message the moment you're in.`;
-    await admin.from("admin_messages").insert({
-      recipient_id: p.id,
-      sender_id: null,
-      message: `Welcome to Wirral Community Football, ${firstName}! 👋 ${whereToStart} Payment details show up once you're booked. Worth turning on notifications in Account, so you don't miss a spot opening up. See you on the pitch!`,
-    });
-    await sendPushToUsers([p.id], {
-      title: "Welcome to the club! ⚽",
-      body: open && openDays! <= 10 ? `Next free spot: ${fmtJourneyDate(open.date)}. Head to Fixtures to grab it.` : "Games book up fast. Open the app to see the next free spot and join a waiting list.",
-      url: "/",
-    });
-    await markNotified(key);
+    if (notifiedKeys.has(`welcome-${p.id}`)) continue;
+    if (p.created_at && Date.now() - new Date(p.created_at).getTime() < 15 * 60000) continue;
+    await sendWelcome(admin, p.id, (games ?? []) as unknown as JourneyGame[]);
   }
 
   // --- "Your September, wrapped": one push per month, when it goes live ---

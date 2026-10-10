@@ -51,6 +51,7 @@ import { ResultsTab } from "./ui/results";
 import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
 import { WinMoment, type SeasonGame } from "./ui/celebrate";
 import { TrophyCabinet, MatchBallMoment, cabinetCss } from "./ui/cabinet";
+import { FirstGameCard, NameStep, WelcomeCards, type BestChance, type PushState } from "./ui/newplayer";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { ClubOdometer, DebutCard, MilestoneShirt, MotmWinCard, PotmMine, PotmNight, RecordCard } from "./ui/premium";
 import { MatchDayClock, MatchDayTeam, dayWord, isLiveNow, isMatchDay } from "./ui/matchday";
@@ -1693,7 +1694,7 @@ function App({ session }: { session: Session }) {
   };
 
   const loadProfile = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id, display_name, role, push_opt_in, avatar_url").eq("id", myId).single();
+    const { data } = await supabase.from("profiles").select("id, display_name, role, push_opt_in, avatar_url, created_at").eq("id", myId).single();
     if (data) setMyProfile(data as Profile);
   }, [myId]);
 
@@ -5389,6 +5390,97 @@ function App({ session }: { session: Session }) {
   // stacked). The rating sheet, Wrapped, a player card or your own booking
   // ticket pause the queue. Time-critical moments come first.
   const MOMENTS_PER_OPEN = 2;
+  // ── A brand-new member's first few minutes (app/ui/newplayer.tsx) ──
+  // New = joined in the last 3 days and never played. Once per phone:
+  // what to call them (only if they're still named after their email),
+  // then three welcome cards; finishing sends their welcome message now
+  // (POST /api/welcome) instead of waiting for the cron.
+  const emailPrefix = (session.user.email ?? "").split("@")[0];
+  const myPlayedCount = useMemo(() => pastGames.filter((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting)).length, [pastGames, myId]);
+  const isBrandNew = !!myProfile?.created_at && Date.now() - new Date(myProfile.created_at).getTime() < 3 * 86400000 && myPlayedCount === 0;
+  const [npStep, setNpStep] = useState<"name" | "cards" | null>(null);
+  const npStarted = useRef(false);
+  useEffect(() => {
+    if (loading || !myProfile || !isBrandNew || npStarted.current) return;
+    try {
+      if (localStorage.getItem(`wcf-welcomed-${myId}`) === "1") return;
+    } catch {
+      return;
+    }
+    npStarted.current = true;
+    setNpStep(myProfile.display_name === emailPrefix ? "name" : "cards");
+  }, [loading, myProfile, isBrandNew, myId, emailPrefix]);
+  async function finishWelcome() {
+    try {
+      localStorage.setItem(`wcf-welcomed-${myId}`, "1");
+    } catch {}
+    setNpStep(null);
+    const { data } = await supabase.auth.getSession();
+    fetch("/api/welcome", { method: "POST", headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` } }).catch(() => {});
+  }
+  // How it works: the club's usual night(s), time, venue, price and size,
+  // read from the games that are actually on.
+  const npHow = useMemo(() => {
+    const regular = upcomingGames.filter((g) => g.published && !g.special);
+    const top = <T,>(xs: T[]) => {
+      const n = new Map<T, number>();
+      xs.forEach((x) => n.set(x, (n.get(x) ?? 0) + 1));
+      return [...n.entries()].sort((a, b) => b[1] - a[1]);
+    };
+    const days = top(regular.map((g) => new Date(g.date + "T12:00:00Z").getUTCDay()))
+      .filter(([, c], _, all) => c >= Math.max(2, all[0][1] / 3))
+      .map(([d]) => d)
+      .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7))
+      .map((d) => ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"][d]);
+    const pitch = String(top(regular.map((g) => g.pitch))[0]?.[0] ?? cs.default_pitch);
+    return {
+      days: days.length > 1 ? `${days.slice(0, -1).join(", ")} and ${days[days.length - 1]}` : days[0] ?? "most weeks",
+      kickoff: String(top(regular.map((g) => g.kickoff))[0]?.[0] ?? cs.default_kickoff),
+      venue: String(top(regular.map((g) => g.venue.replace(/\s*#\d+$/, "")))[0]?.[0] ?? cs.default_venue),
+      price: Number(top(regular.map((g) => g.price))[0]?.[0] ?? cs.default_price),
+      format: pitch.charAt(0).toUpperCase() + pitch.slice(1),
+    };
+  }, [upcomingGames, cs]);
+  // Where a newcomer's best chance of a game is: games with a free spot
+  // first (soonest), otherwise the shortest waiting lists.
+  const npChances = useMemo<BestChance[]>(() => {
+    const avail = upcomingGames.filter((g) => g.published && !g.bookings.some((b) => b.player_id === myId));
+    const info = (g: GameRow) => {
+      const d = new Date(g.date + "T12:00:00Z");
+      const waiting = g.bookings.filter((b) => b.waiting).length;
+      return {
+        id: g.id,
+        dow: d.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }),
+        day: String(d.getUTCDate()),
+        mon: d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }),
+        waiting,
+        place: waiting + 1,
+        full: g.bookings.filter((b) => !b.waiting).length >= g.max_players,
+      };
+    };
+    const open = avail.map(info).filter((c) => !c.full);
+    if (open.length) return open.slice(0, 3);
+    return avail
+      .map((g) => ({ g, c: info(g) }))
+      .filter(({ c }) => c.waiting < 10)
+      .sort((a, b) => a.c.waiting - b.c.waiting || a.g.date.localeCompare(b.g.date) || a.g.kickoff.localeCompare(b.g.kickoff))
+      .slice(0, 3)
+      .map(({ c }) => c);
+  }, [upcomingGames, myId]);
+  const npPush: PushState = myPushGranted
+    ? "on"
+    : typeof window !== "undefined" && "PushManager" in window && "serviceWorker" in navigator
+      ? "available"
+      : typeof navigator !== "undefined" && /iPhone|iPad|iPod/.test(navigator.userAgent)
+        ? "install"
+        : "unsupported";
+  const showFirstGame = !isAdmin && myPlayedCount === 0 && !!myProfile;
+  const iHaveBooking = upcomingGames.some((g) => g.bookings.some((b) => b.player_id === myId));
+  function openFixture(id: string) {
+    setShowLaterFixtures(true);
+    setTimeout(() => document.getElementById("fx-" + id)?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
+  }
+
   const momentCandidates: string[] = [];
   if (promoGame) momentCandidates.push("promo:" + promoGame.id);
   if (myMatchBall && motionOk()) momentCandidates.push("matchball:" + myMatchBall.trophy.key);
@@ -5406,7 +5498,7 @@ function App({ session }: { session: Session }) {
   const [ftBand, setFtBand] = useState<string | null>(null);
   // Anything else full-screen on top: nothing new pops up over it.
   const momentsPaused =
-    !splashGone || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || ticketShow?.mode === "credit" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand;
+    !splashGone || !!npStep || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || ticketShow?.mode === "credit" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand;
   const [momentNow, setMomentNow] = useState<string | null>(null);
   const [momentsPlayed, setMomentsPlayed] = useState(0);
   const momentKey = momentCandidates.join("|");
@@ -5698,6 +5790,7 @@ function App({ session }: { session: Session }) {
               </div>
             )}
             {upcomingGames.length === 0 && <EmptyScene kind="fixtures" title="No games on yet" text={isAdmin ? "Add one above." : "New games show up here as soon as they're posted."} />}
+            {showFirstGame && upcomingGames.length > 0 && <FirstGameCard booked={iHaveBooking} chances={npChances} onOpen={openFixture} />}
 
             {(() => {
               const publishedUpcoming = upcomingGames.filter((g) => g.published);
@@ -6349,6 +6442,32 @@ function App({ session }: { session: Session }) {
         return <GameStory game={buildStory(g)} motmClosed={kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) <= nowUk} onClose={() => setStoryOpen(null)} />;
       })()}
       {paySheetOpen && <PaySheet due={myDue} paymentLink={PAYMENT_LINK} onMarkPaid={markPaid} onClose={() => setPaySheetOpen(false)} />}
+      {npStep === "name" && myProfile && (
+        <NameStep
+          suggested={{ first: "", last: "" }}
+          onSave={async (name) => {
+            const { error } = await supabase.from("profiles").update({ display_name: name }).eq("id", myId);
+            if (error) {
+              notifyError(error.message);
+              return false;
+            }
+            await Promise.all([loadProfile(), loadProfiles()]);
+            setNpStep("cards");
+            return true;
+          }}
+          onSkip={() => setNpStep("cards")}
+        />
+      )}
+      {npStep === "cards" && myProfile && (
+        <WelcomeCards
+          firstName={myProfile.display_name === emailPrefix ? "" : myProfile.display_name.split(" ")[0]}
+          how={npHow}
+          best={npChances[0] ?? null}
+          push={npPush}
+          onEnablePush={enablePush}
+          onDone={finishWelcome}
+        />
+      )}
       {queueTicket && (() => {
         const g = games.find((x) => x.id === queueTicket.gameId);
         if (!g) return null;
