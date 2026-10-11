@@ -8247,7 +8247,7 @@ function BootRoom({
   function endorseLine(l: BootListing) {
     const ids = endorsers(l);
     const names = [...(ids.includes(myId) ? ["You"] : []), ...ids.filter((id) => id !== myId).map((id) => (profileById.get(id)?.display_name ?? "A member").split(" ")[0])];
-    if (!names.length) return "No recommendations yet";
+    if (!names.length) return `Be the first to recommend ${ownerName(l).split(" ")[0]}`;
     if (names.length === 1) return `Recommended by ${names[0]}`;
     if (names.length === 2) return `Recommended by ${names[0]} & ${names[1]}`;
     return `Recommended by ${names[0]}, ${names[1]} + ${names.length - 2} more`;
@@ -8284,30 +8284,108 @@ function BootRoom({
     );
   }
 
+  // A business card: logo (or monogram) with the owner's face on it,
+  // because squad mates know the face before the company name.
   function card(l: BootListing, i: number) {
     const c = BOOT_CATEGORY[l.category];
+    const owner = profileById.get(l.player_id);
+    const first = ownerName(l).split(" ")[0];
+    const mine = l.player_id === myId;
+    const recs = endorsers(l).length;
     return (
-      <button key={l.id} className="wcf-br-card" style={{ animationDelay: `${i * 30}ms` }} onClick={() => setDetailId(l.id)}>
-        {badge(l, false)}
-        <span className="wcf-br-card-body">
-          <span className="wcf-br-card-top">
-            <span className="wcf-br-card-name">{l.company}</span>
-            {pickIds.has(l.id) && <span className="wcf-br-pick">PICK</span>}
-            {isNew(l) && <span className="wcf-br-new">NEW</span>}
+      <div
+        key={l.id}
+        role="button"
+        tabIndex={0}
+        className="wcf-br-card"
+        style={{ animationDelay: `${i * 90}ms`, ["--c" as string]: c.colour } as React.CSSProperties}
+        onClick={() => setDetailId(l.id)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setDetailId(l.id);
+          }
+        }}
+      >
+        <div className="wcf-br-card-head">
+          <span className="wcf-br-mark">
+            {badge(l, true)}
+            <Avatar name={ownerName(l)} avatarUrl={owner?.avatar_url} className="wcf-br-owner-face" background={avatarFor(ownerName(l)).gradient} />
           </span>
-          <span className="wcf-br-card-desc">
-            {ownerName(l)}
-            {l.description ? ` · ${l.description}` : ""}
+          <span className="wcf-br-card-body">
+            <span className="wcf-br-card-top">
+              <span className="wcf-br-card-name">{l.company}</span>
+              {pickIds.has(l.id) && <span className="wcf-br-pick">PICK</span>}
+              {isNew(l) && <span className="wcf-br-new">NEW</span>}
+            </span>
+            <span className="wcf-br-card-own">
+              Run by <b>{mine ? "you" : ownerName(l)}</b>
+            </span>
+            {l.description && <span className="wcf-br-card-desc">{l.description}</span>}
+            {l.tags.length > 0 && (
+              <span className="wcf-br-card-tags">
+                {l.tags.slice(0, 4).map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </span>
+            )}
           </span>
-          <span className="wcf-br-card-meta">
+        </div>
+        {mine ? (
+          <div className="wcf-br-rec mine">
+            {recs > 0 ? faces(l) : null}
+            <span>{recs > 0 ? endorseLine(l) : "Your listing. Teammates recommend it from here."}</span>
+          </div>
+        ) : recs === 0 ? (
+          <button
+            className="wcf-br-rec"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleEndorse(l);
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M7 11v9H4v-9h3Zm0 0 4-7a2 2 0 0 1 3 2l-1 4h5a2 2 0 0 1 2 2.3l-1.2 6A2 2 0 0 1 16.8 20H7" />
+            </svg>
+            <span>
+              <b>Be the first to recommend</b> {first}
+            </span>
+          </button>
+        ) : (
+          <button
+            className={"wcf-br-rec done" + (endorsedByMe(l) ? " me" : "")}
+            aria-pressed={endorsedByMe(l)}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleEndorse(l);
+            }}
+          >
             {faces(l)}
-            <span className="wcf-br-recs">{endorseLine(l)}</span>
-          </span>
-        </span>
-        <span className="wcf-br-flag" style={{ color: c.colour }}>{c.label}</span>
-      </button>
+            <span>{endorseLine(l)}</span>
+            {!endorsedByMe(l) && <b className="wcf-br-rec-add">+ You</b>}
+          </button>
+        )}
+      </div>
     );
   }
+
+  // Claim your peg as the last card in a list, not a floating button that
+  // sat on top of the listings.
+  const pegCard = (
+    <div className="wcf-br-peg">
+      <span className="wcf-br-peg-hook" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <circle cx="12" cy="6" r="2.5" />
+          <path d="M12 8.5V12c0 2 3 2 3 4.5a3 3 0 0 1-6 0" />
+        </svg>
+      </span>
+      <span className="wcf-br-peg-txt">
+        <b>{listings.some((l) => l.player_id === myId) ? "Another trade?" : "Got a trade?"}</b>
+        Hang your boots on a peg. Free for squad members.
+      </span>
+      <button onClick={() => openEditor(null)}>Claim your peg</button>
+    </div>
+  );
 
   function bootArt(cat: BootCategory, cls: string) {
     const c = BOOT_CATEGORY[cat];
@@ -8547,11 +8625,47 @@ function BootRoom({
     <div className="wcf-br" ref={rootRef}>
       {!openCat ? (
         <>
+          <div className="wcf-br-room">
           <div className="wcf-br-head">
             <div>
               <div className="wcf-br-kicker">THE</div>
               <div className="wcf-br-title">BOOT ROOM</div>
-              <div className="wcf-br-sub">The squad&apos;s own trades and services. Someone here can probably sort it.</div>
+              <div className="wcf-br-sub">
+                The squad&apos;s own trades and services.
+                {listings.length > 0 && (
+                  <>
+                    {" "}
+                    <b>
+                      {listings.length} {listings.length === 1 ? "business" : "businesses"}
+                    </b>{" "}
+                    run by players in the squad.
+                  </>
+                )}
+                {listings.length === 0 && " Someone here can probably sort it."}
+              </div>
+              {(() => {
+                const owners = [...new Set(listings.map((l) => l.player_id))];
+                if (!owners.length) return null;
+                const names = owners.map((id) => (profileById.get(id)?.display_name ?? "A member").split(" ")[0]);
+                const line =
+                  names.length === 1
+                    ? names[0]
+                    : names.length <= 3
+                      ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
+                      : `${names.slice(0, 2).join(", ")} + ${names.length - 2} more`;
+                return (
+                  <div className="wcf-br-owners">
+                    <span className="wcf-br-owners-stack">
+                      {owners.slice(0, 4).map((id) => {
+                        const pr = profileById.get(id);
+                        const nm = pr?.display_name ?? "?";
+                        return <Avatar key={id} name={nm} avatarUrl={pr?.avatar_url} className="wcf-br-owners-face" background={avatarFor(nm).gradient} />;
+                      })}
+                    </span>
+                    {line}
+                  </div>
+                );
+              })()}
             </div>
             <button
               className={"wcf-br-iconbtn" + (searchOpen ? " on" : "")}
@@ -8571,6 +8685,30 @@ function BootRoom({
               <input autoFocus type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder='Try "boiler", "logo", "MOT"…' />
             </div>
           )}
+          {!listing && (
+            <div className="wcf-br-stage">
+              <div className="wcf-br-stage-glow" />
+              <div className="wcf-br-stage-row">
+                {BOOT_CATEGORIES.map((c, i) => {
+                  const n = countIn(c.key);
+                  return (
+                    <button
+                      key={c.key}
+                      className="wcf-br-slot"
+                      style={{ ["--d" as string]: `${-i * 0.7}s`, ["--c" as string]: c.colour } as React.CSSProperties}
+                      onClick={() => goTo(c.key)}
+                      aria-label={`${c.full}, ${n} listed`}
+                    >
+                      {bootArt(c.key, "wcf-br-boot")}
+                      <b className="wcf-br-slot-name">{c.label}</b>
+                      <span className="wcf-br-slot-n">{n ? `${n} listed` : "Be the first"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          </div>
 
           {listing ? (
             <>
@@ -8581,33 +8719,19 @@ function BootRoom({
                 <button className="wcf-br-link" onClick={() => { setQuery(""); setShowAll(false); setSearchOpen(false); }}>Close</button>
               </div>
               {results.length ? (
-                <div className="wcf-br-cards">{results.map(card)}</div>
+                <div className="wcf-br-cards">
+                  {results.map(card)}
+                  {pegCard}
+                </div>
               ) : (
-                <p className="wcf-br-note">No one matches that yet. Try another word — or claim your peg and be the first.</p>
+                <>
+                  <p className="wcf-br-note">No one matches that yet. Try another word, or claim your peg and be the first.</p>
+                  <div className="wcf-br-cards">{pegCard}</div>
+                </>
               )}
             </>
           ) : (
             <>
-              <div className="wcf-br-stage">
-                <div className="wcf-br-stage-glow" />
-                <div className="wcf-br-stage-row">
-                  {BOOT_CATEGORIES.map((c, i) => (
-                    <button key={c.key} className="wcf-br-slot" style={{ ["--d" as string]: `${-i * 0.7}s` } as React.CSSProperties} onClick={() => goTo(c.key)} aria-label={`${c.full}, ${countIn(c.key)} listed`}>
-                      {bootArt(c.key, "wcf-br-boot")}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="wcf-br-tiles">
-                {BOOT_CATEGORIES.map((c) => (
-                  <button key={c.key} className="wcf-br-tile" style={{ ["--c" as string]: c.colour } as React.CSSProperties} onClick={() => goTo(c.key)}>
-                    <img src={c.img} alt="" />
-                    <b>{c.label}</b>
-                    <span>{countIn(c.key)}</span>
-                  </button>
-                ))}
-              </div>
-
               {loadState === "ready" && listings.length === 0 ? (
                 <div className="wcf-br-empty">
                   <b>Nobody&apos;s in yet</b>
@@ -8623,7 +8747,10 @@ function BootRoom({
                     <div className="wcf-br-sec-title">{endorsedSorted.length ? "Community Picks" : "New in the Boot Room"}</div>
                     <button className="wcf-br-link" onClick={() => { setSearchOpen(true); setShowAll(true); }}>See all</button>
                   </div>
-                  <div className="wcf-br-cards">{picks.map(card)}</div>
+                  <div className="wcf-br-cards">
+                    {picks.map(card)}
+                    {pegCard}
+                  </div>
                 </>
               ) : null}
             </>
@@ -8648,9 +8775,15 @@ function BootRoom({
               </div>
               <div className="wcf-br-sec"><div className="wcf-br-sec-title">{catList.length ? "Who's in" : "Nobody yet"}</div></div>
               {catList.length ? (
-                <div className="wcf-br-cards">{catList.map(card)}</div>
+                <div className="wcf-br-cards">
+                  {catList.map(card)}
+                  {pegCard}
+                </div>
               ) : (
-                <p className="wcf-br-note">Nobody&apos;s claimed a peg here yet. If this is what you do, you&apos;re first in.</p>
+                <>
+                  <p className="wcf-br-note">Nobody&apos;s claimed a peg here yet. If this is what you do, you&apos;re first in.</p>
+                  <div className="wcf-br-cards">{pegCard}</div>
+                </>
               )}
               <div className="wcf-br-switch">
                 {BOOT_CATEGORIES.filter((o) => o.key !== openCat).map((o) => (
@@ -8671,12 +8804,7 @@ function BootRoom({
           there for admins, and admins are exactly who sees this first. */}
       {/* While the room is empty the button sits inside the "Nobody's in
           yet" message instead - floating, it covered that exact text. */}
-      {loadState === "ready" && (listings.length > 0 || openCat || listing) && (
-        <button className="wcf-br-fab" onClick={() => openEditor(null)}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
-          Claim your peg
-        </button>
-      )}
+
 
       {detail && (
         <div className="wcf-sheet-overlay" onClick={() => setDetailId(null)}>
@@ -13217,13 +13345,6 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-br-boot .reflect img,.wcf-br-heroboot .reflect img{transform:scaleY(-1);opacity:.3;filter:blur(1.1px)}
 @keyframes wcfBrFloat{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-6px) rotate(-1.2deg)}}
 
-.wcf-br-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:8px}
-.wcf-br-tile{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:9px 4px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;font-family:var(--sans)}
-.wcf-br-tile:active{border-color:var(--c)}
-.wcf-br-tile img{width:28px;height:auto;filter:drop-shadow(0 0 5px var(--c))}
-.wcf-br-tile b{font-family:var(--mono);font-weight:600;font-size:8.5px;letter-spacing:.08em;color:var(--c)}
-.wcf-br-tile span{font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
-
 .wcf-br-sec{display:flex;align-items:baseline;justify-content:space-between;padding:22px 2px 10px}
 .wcf-br-sec-title{font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase}
 .wcf-br-link{background:none;border:none;color:var(--dim);font-family:var(--sans);font-size:12px;cursor:pointer;padding:4px 0}
@@ -13300,6 +13421,46 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-br-ddesc{font-size:13.5px;line-height:1.6;color:#cfd4e0;margin-top:14px}
 .wcf-br-dtags{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
 .wcf-br-dtags span{font-size:11px;color:var(--dim);background:rgba(148,163,184,.08);border:1px solid var(--line);padding:4px 9px;border-radius:999px}
+/* Boot Room V2: the bench photo, labelled boots, business cards, peg card */
+.wcf-br-room{margin-top:14px;border-radius:20px;overflow:hidden;border:1px solid var(--line);padding:0 12px 6px;background:linear-gradient(180deg,rgba(10,15,28,.35) 0%,rgba(10,15,28,.55) 45%,rgba(10,15,28,.94) 92%),url('/bench-kit.jpg') 50% 20%/cover}
+.wcf-br-room .wcf-br-head{padding-top:16px}
+.wcf-br-room .wcf-br-sub{color:#cbd5e1;max-width:34ch}
+.wcf-br-room .wcf-br-sub b{color:#f5d97a}
+.wcf-br-owners{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:#cbd5e1}
+.wcf-br-owners-stack{display:flex}
+.wcf-br-owners-face{width:24px;height:24px;border-radius:50%;object-fit:cover;border:2px solid #f5d97a;margin-left:-6px;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:10px;color:#fff}
+.wcf-br-owners-stack .wcf-br-owners-face:first-child{margin-left:0}
+.wcf-br-room .wcf-br-stage{margin-top:14px}
+.wcf-br-room .wcf-br-stage-glow{background:radial-gradient(ellipse at center,rgba(245,217,122,.12),transparent 70%)}
+.wcf-br-room .wcf-br-stage-row::after{content:"";position:absolute;left:6%;right:6%;bottom:38px;height:2px;background:linear-gradient(90deg,transparent,rgba(245,217,122,.55),transparent);box-shadow:0 0 12px rgba(245,217,122,.45);pointer-events:none}
+.wcf-br-slot-name{font-family:var(--mono);font-weight:700;font-size:9.5px;letter-spacing:.12em;color:var(--c);margin-top:2px}
+.wcf-br-slot-n{font-size:10.5px;color:#94a3b8;font-variant-numeric:tabular-nums;margin-top:1px}
+.wcf-br-card{display:block;position:relative;overflow:hidden;padding:0;border-radius:18px;background:linear-gradient(160deg,#1b2336,#141b2b);animation:wcfBrDeal .55s cubic-bezier(.2,.9,.3,1.15) backwards}
+.wcf-br-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c)}
+@keyframes wcfBrDeal{from{opacity:0;transform:translateY(30px) rotate(-2.5deg) scale(.97)}}
+.wcf-br-card-head{display:grid;grid-template-columns:58px minmax(0,1fr);gap:12px;padding:14px 14px 12px 16px}
+.wcf-br-mark{position:relative;width:58px;height:58px}
+.wcf-br-owner-face{position:absolute;right:-8px;bottom:-8px;width:28px;height:28px;border-radius:50%;object-fit:cover;border:2px solid #f5d97a;box-shadow:0 0 10px rgba(245,217,122,.4);display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:11px;color:#fff}
+.wcf-br-card .wcf-br-card-top{display:flex;align-items:center;gap:7px}
+.wcf-br-card .wcf-br-card-name{font-family:var(--display);font-weight:700;font-size:15px;line-height:1.25;white-space:normal}
+.wcf-br-card-own{display:block;font-size:12px;color:var(--dim);margin-top:2px}
+.wcf-br-card-own b{color:var(--white);font-weight:600}
+.wcf-br-card .wcf-br-card-desc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;font-size:13px;line-height:1.45;color:#cbd5e1;margin-top:6px}
+.wcf-br-card-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.wcf-br-card-tags span{font-size:11px;color:var(--c);border:1px solid color-mix(in srgb,var(--c) 40%,transparent);border-radius:999px;padding:2px 8px}
+.wcf-br-rec{display:flex;align-items:center;gap:10px;width:calc(100% - 30px);margin:0 14px 12px 16px;padding:10px 12px;border-radius:12px;border:1px dashed rgba(245,217,122,.35);background:none;font-family:var(--sans);font-size:12px;color:var(--dim);text-align:left;cursor:pointer}
+.wcf-br-rec svg{flex:none;width:18px;height:18px;color:#f5d97a}
+.wcf-br-rec b{color:#f5d97a}
+.wcf-br-rec.done{border-style:solid;border-color:rgba(245,217,122,.25);background:rgba(245,217,122,.06);color:var(--white)}
+.wcf-br-rec.mine{cursor:default;border-style:solid;border-color:var(--line)}
+.wcf-br-rec-add{margin-left:auto;font-size:11px}
+.wcf-br-peg{display:flex;align-items:center;gap:12px;padding:16px;border-radius:18px;border:1.5px dashed rgba(245,217,122,.4);animation:wcfBrDeal .55s cubic-bezier(.2,.9,.3,1.15) .25s backwards}
+.wcf-br-peg-hook{flex:none;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:rgba(245,217,122,.1);color:#f5d97a}
+.wcf-br-peg-hook svg{width:22px;height:22px}
+.wcf-br-peg-txt{min-width:0;font-size:12px;color:var(--dim);line-height:1.4}
+.wcf-br-peg-txt b{display:block;font-family:var(--display);font-size:14px;color:var(--white)}
+.wcf-br-peg button{margin-left:auto;flex:none;border:0;border-radius:10px;padding:9px 12px;background:#f5d97a;color:#1a1404;font-family:var(--sans);font-weight:800;font-size:12px;cursor:pointer}
+@media (prefers-reduced-motion: reduce){.wcf-br-card,.wcf-br-peg{animation:none}}
 .wcf-br-proof{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:12px;color:var(--dim)}
 .wcf-br-wa{margin-top:14px;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;padding:14px;border-radius:14px;
   background:#25d366;color:#06301a;font-weight:800;font-size:14px}
