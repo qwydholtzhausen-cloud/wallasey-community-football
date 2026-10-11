@@ -1,7 +1,6 @@
 import { SeasonPitch, type SeasonGame } from "./celebrate";
 import { useEffect, useState } from "react";
 import { nowInLondon } from "../../lib/time";
-import { EmptyScene } from "./EmptyScene";
 import { useCredits } from "./credits";
 import { creditLabel } from "../../lib/credits";
 import {
@@ -337,8 +336,22 @@ export function AccountPanel({
               {showAllUnread ? "Show fewer" : `${unreadMessages.length - INBOX_SHOWN} more unread`}
             </button>
           )}
-          {unreadMessages.length === 0 && <EmptyScene kind="inbox" small title="All caught up" text="No new messages." />}
-          {readMessages.length > 0 && (
+          {/* Nothing new: one quiet line, not a third of the screen. */}
+          {unreadMessages.length === 0 && (
+            <div className="wcf-inbox-calm">
+              <span className="wcf-inbox-env" aria-hidden="true">
+                <i />
+              </span>
+              <span className="wcf-inbox-calm-txt">
+                <b>All caught up</b>
+                <small>No new messages</small>
+              </span>
+              {readMessages.length > 0 && (
+                <button onClick={() => setOpenReadMessages((v) => !v)}>{openReadMessages ? "Hide past" : `Past messages (${readMessages.length})`}</button>
+              )}
+            </div>
+          )}
+          {unreadMessages.length > 0 && readMessages.length > 0 && (
             <button className="wcf-rec-more quiet" onClick={() => setOpenReadMessages((v) => !v)}>
               {openReadMessages ? "Hide past messages" : `Past messages (${readMessages.length})`}
             </button>
@@ -415,7 +428,22 @@ export function AccountPanel({
             <span className="wcf-console-section-rule" />
             <span className="wcf-console-section-meta">{myUpcomingBookings.length}</span>
           </div>
-          {(showAllBookings ? myUpcomingBookings : myUpcomingBookings.slice(0, BOOKINGS_SHOWN)).map(({ game, booking }) => {
+          <div className="wcf-bk-card">
+            {(() => {
+              const next = myUpcomingBookings[0].game;
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const days = Math.round((new Date(next.date + "T00:00:00").getTime() - today.getTime()) / 86400000);
+              return (
+                <div className="wcf-bk-head">
+                  <b>Next: {fmtDate(next.date)}</b>
+                  <small>
+                    {days <= 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`} · {next.kickoff}
+                  </small>
+                </div>
+              );
+            })()}
+          {(showAllBookings ? myUpcomingBookings : myUpcomingBookings.slice(0, BOOKINGS_SHOWN)).map(({ game, booking }, i) => {
             const d = new Date(game.date + "T00:00:00");
             // Same queue order as the fixture card's "2nd in line".
             const queuePos = booking.waiting
@@ -425,7 +453,11 @@ export function AccountPanel({
                   .findIndex((b) => b.id === booking.id) + 1
               : 0;
             return (
-              <div key={game.id} className="wcf-booking-row">
+              <div
+                key={game.id}
+                className="wcf-booking-row"
+                style={{ ["--e" as string]: booking.waiting ? "#f5d97a" : booking.status === "confirmed" ? "#22c55e" : "#f59e0b", ["--i" as string]: i }}
+              >
                 <div className="wcf-booking-date-tile">
                   <span className="wcf-booking-day">{d.getDate()}</span>
                   <span className="wcf-booking-month">{d.toLocaleDateString("en-GB", { month: "short" }).toUpperCase()}</span>
@@ -450,10 +482,11 @@ export function AccountPanel({
             );
           })}
           {myUpcomingBookings.length > BOOKINGS_SHOWN && (
-            <button className="wcf-rec-more" onClick={() => setShowAllBookings((v) => !v)}>
+            <button className="wcf-bk-more" onClick={() => setShowAllBookings((v) => !v)}>
               {showAllBookings ? "Show fewer" : `Show all ${myUpcomingBookings.length} bookings`}
             </button>
           )}
+          </div>
         </>
       )}
 

@@ -13016,6 +13016,26 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-tab-hero-note{margin:12px 2px 0;font-size:10.5px;line-height:1.5;color:var(--dim)}
 .wcf-tab-ref-code{font-family:var(--mono);font-weight:700;color:var(--white);background:var(--panel2);padding:1px 7px;border-radius:6px;letter-spacing:.5px}
 .wcf-booking-row{display:flex;align-items:center;gap:11px;padding:14px;border-radius:18px;margin-bottom:10px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);box-shadow:0 18px 38px -30px rgba(0,0,0,.9)}
+/* Account tidy-up: the empty inbox as one line, bookings as one card */
+.wcf-inbox-calm{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;border:1px solid var(--line);background:var(--panel);margin-bottom:6px}
+.wcf-inbox-env{flex:none;width:38px;height:28px;border-radius:6px;background:#e63946;display:grid;place-items:center;box-shadow:0 6px 14px -6px rgba(226,52,63,.6)}
+.wcf-inbox-env i{display:block;width:24px;height:4px;border-radius:2px;background:#e8ecf3;animation:wcfInboxPeek 3.4s ease-in-out infinite}
+@keyframes wcfInboxPeek{0%,70%,100%{transform:none}80%{transform:translateY(-6px)}}
+.wcf-inbox-calm-txt{min-width:0}
+.wcf-inbox-calm-txt b{display:block;font-family:var(--display);font-size:14px;color:var(--white)}
+.wcf-inbox-calm-txt small{font-size:12px;color:var(--dim)}
+.wcf-inbox-calm button{margin-left:auto;flex:none;background:none;border:1px dashed rgba(255,255,255,.18);border-radius:10px;padding:7px 10px;color:var(--white);font:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.wcf-bk-card{border-radius:18px;overflow:hidden;border:1px solid var(--line);margin-bottom:6px;background:linear-gradient(180deg,rgba(10,15,28,.25) 0px,rgba(10,15,28,.8) 70px,rgba(17,24,38,.97) 150px),url('/pitch-floodlit.jpg') 50% 0/100% auto no-repeat,var(--panel)}
+.wcf-bk-head{display:flex;align-items:baseline;gap:8px;padding:44px 14px 10px;text-shadow:0 1px 8px rgba(0,0,0,.7)}
+.wcf-bk-head b{font-family:var(--display);font-size:15px;color:#fff}
+.wcf-bk-head small{font-size:12px;color:#cbd5e1}
+.wcf-bk-card .wcf-booking-row{position:relative;margin:0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;box-shadow:none;padding:11px 14px;animation:wcfBkRise .45s cubic-bezier(.2,.9,.3,1.1) backwards;animation-delay:calc(var(--i,0) * 70ms)}
+.wcf-bk-card .wcf-booking-row::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--e)}
+.wcf-bk-card .wcf-booking-date-tile{background:none;border:0;width:36px;height:auto}
+.wcf-bk-card .wcf-booking-day{font-size:17px}
+@keyframes wcfBkRise{from{opacity:0;transform:translateY(10px)}}
+.wcf-bk-more{display:block;width:100%;background:none;border:0;border-top:1px solid var(--line);padding:12px 0;font:inherit;font-size:13px;font-weight:700;color:#f5d97a;cursor:pointer}
+@media (prefers-reduced-motion: reduce){.wcf-inbox-env i,.wcf-bk-card .wcf-booking-row{animation:none}}
 .wcf-booking-date-tile{flex:none;width:46px;height:46px;border-radius:13px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(13,13,26,.7);border:1px solid rgba(148,163,184,.16)}
 .wcf-booking-day{font-family:var(--display);font-weight:800;font-size:15px;color:#f8fafc}
 .wcf-booking-month{margin-top:3px;font-weight:700;font-size:8.5px;letter-spacing:.12em;color:var(--dim)}
