@@ -4,6 +4,7 @@ import { CountUp, MotmReveal, PointsPill, PotAmountJar } from "./motion";
 import { VoteMedal } from "./celebrate";
 import { Icon } from "./icons";
 import { EmptyScene } from "./EmptyScene";
+import { GoalBalls, MotmPoll, monthPhoto, scoresCss } from "./scores";
 import { MOTM_TAGS } from "../motmTags";
 import { MOTM_VOTE_WINDOW_MINUTES, kickoffCutoff } from "../../lib/time";
 import { predictionPoints, type ScoredPrediction } from "../../lib/predictions";
@@ -177,7 +178,6 @@ export function ResultsTab({
   seasonYears,
   setAddingPotEntry,
   setExpandedResultId,
-  setMotmVotersFor,
   setMotmVoteTag,
   setPotAmount,
   setPotCategory,
@@ -1070,7 +1070,9 @@ export function ResultsTab({
             ) : (
               <p className="wcf-empty">No results yet.</p>
             ))}
-          {filteredResults.map((g, resultIndex) => {
+          <style>{scoresCss}</style>
+          {(() => {
+          const renderResult = (g: GameRow, resultIndex: number, rowIndex = 0) => {
             const scorers = goalRows.filter((r) => r.game_id === g.id && r.goals > 0).sort((a, b) => b.goals - a.goals);
             const teamOf = (playerId: string) => g.bookings.find((b) => b.player_id === playerId)?.team;
             const whiteScorers = scorersForSide(scorers, "white", teamOf);
@@ -1101,29 +1103,73 @@ export function ResultsTab({
                 .map((v) => profiles.find((p) => p.id === v.voter_id))
                 .filter((p): p is Profile => !!p);
             return (
-              <article key={g.id} id={"result-" + g.id} className={"wcf-result" + (resultIndex === 0 ? " featured" : "")}>
+              <article
+                key={g.id}
+                id={"result-" + g.id}
+                className={resultIndex === 0 ? "wcf-result featured wcf-sc-heroart" : "wcf-sc-item" + (expanded ? " open" : "")}
+              >
                 <button className="wcf-result-toggle" onClick={() => setExpandedResultId(expanded ? null : g.id)} aria-expanded={expanded}>
                   {(() => {
                     const w = g.team_white_score ?? 0;
                     const r = g.team_red_score ?? 0;
                     const outcome = w > r ? "white" : r > w ? "red" : "draw";
                     const d = new Date(g.date + "T12:00:00Z");
-                    const motmNames = !votingOpen
-                      ? ranked.filter((x) => winnerIds.includes(x.candidate.player_id)).map((x) => x.candidate.player.display_name)
-                      : [];
+                    const mon = d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }).toUpperCase();
+                    const motmWinners = !votingOpen ? ranked.filter((x) => winnerIds.includes(x.candidate.player_id)) : [];
+                    const motmNames = motmWinners.map((x) => x.candidate.player.display_name);
+                    const motmFace = motmWinners[0]?.candidate;
                     const top = scorers[0] && scorers[0].goals >= 2 ? scorers[0] : null;
-                    const away = g.venue !== mainResultsVenue;
-                    return (
-                      <div className="wcf-res-row">
-                        <div className="wcf-res-date">
-                          <b>{d.getUTCDate()}</b>
-                          <span>{d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }).toUpperCase()}</span>
-                        </div>
-                        <div className="wcf-res-mid">
-                          <div className="wcf-res-score">
-                            <span style={{ color: cs.team_white_color }}>{w}</span>
-                            <span className="wcf-result-dash">–</span>
-                            <span style={{ color: cs.team_red_color }}>{r}</span>
+                    const goalsWord = (n: number) => (n === 3 ? "hat-trick" : `${n} goals`);
+                    const topLine = top
+                      ? motmNames.length === 1 && motmNames[0] === top.player.display_name
+                        ? goalsWord(top.goals)
+                        : `${top.player.display_name} ${goalsWord(top.goals)}`
+                      : null;
+                    // Two-game nights are "Solar Campus #1" / "#2".
+                    const dbl = g.venue.match(/#(\d+)/)?.[1];
+                    const away = g.venue !== mainResultsVenue && !dbl;
+                    const chev = (
+                      <svg
+                        className={"wcf-res-chev" + (expanded ? " open" : "")}
+                        viewBox="0 0 24 24"
+                        width="18"
+                        height="18"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M9 6l6 6-6 6" />
+                      </svg>
+                    );
+                    const face = (cls: string) =>
+                      motmFace ? (
+                        <Avatar
+                          name={motmFace.player.display_name}
+                          avatarUrl={avatarByPlayerId.get(motmFace.player_id)}
+                          className={cls}
+                          background={avatarFor(motmFace.player.display_name).gradient}
+                        />
+                      ) : null;
+                    if (resultIndex === 0) {
+                      return (
+                        <div className="wcf-sc-hero">
+                          <div className="wcf-sc-hero-k">
+                            Latest · {d.getUTCDate()} {mon}
+                            {dbl && <span className="wcf-sc-dbl">#{dbl}</span>}
+                          </div>
+                          <div className="wcf-sc-hero-score">
+                            <div className="wcf-sc-hero-side">
+                              {cs.team_white_name}
+                              <b style={{ color: outcome === "red" ? "#64748b" : cs.team_white_color }}>{w}</b>
+                            </div>
+                            <span className="wcf-sc-hero-dash">–</span>
+                            <div className="wcf-sc-hero-side">
+                              {cs.team_red_name}
+                              <b style={{ color: outcome === "white" ? "#64748b" : cs.team_red_color }}>{r}</b>
+                            </div>
                             <span
                               className={"wcf-res-pill " + outcome}
                               style={
@@ -1133,43 +1179,71 @@ export function ResultsTab({
                               {outcome === "draw" ? "Draw" : `${outcome === "white" ? cs.team_white_name : cs.team_red_name} win`}
                             </span>
                           </div>
-                          <div className="wcf-res-meta">
-                            {votingOpen ? (
-                              <span className="wcf-res-open">MOTM voting open</span>
-                            ) : motmNames.length > 0 ? (
-                              <>
-                                MOTM <b>{motmNames.join(" & ")}</b>
-                              </>
-                            ) : null}
-                            {top && (
-                              <>
-                                {(votingOpen || motmNames.length > 0) && " · "}
-                                {!votingOpen && motmNames.length === 1 && motmNames[0] === top.player.display_name ? `${top.goals} goals` : `${top.player.display_name} ${top.goals} goals`}
-                              </>
-                            )}
-                            {away && (
-                              <>
-                                {(votingOpen || motmNames.length > 0 || top) && " · "}
-                                {g.venue}
-                              </>
-                            )}
-                            {!votingOpen && motmNames.length === 0 && !top && !away && fmtDate(g.date)}
+                          <div className="wcf-sc-hero-mo">
+                            {face("wcf-sc-face38")}
+                            <div>
+                              {votingOpen ? (
+                                <>
+                                  <small>Man of the Match</small>
+                                  <b className="wcf-sc-open">Voting open</b>
+                                  {topLine && <> · {topLine}</>}
+                                </>
+                              ) : motmNames.length > 0 ? (
+                                <>
+                                  <small>{motmNames.length > 1 ? "Joint Man of the Match" : "Man of the Match"}</small>
+                                  <b>{motmNames.join(" & ")}</b>
+                                  {topLine && <> · {topLine}</>}
+                                </>
+                              ) : (
+                                <>
+                                  <small>{fmtDate(g.date)}</small>
+                                  {topLine}
+                                </>
+                              )}
+                              {away && <> · {g.venue}</>}
+                            </div>
+                            <span style={{ marginLeft: "auto" }}>{chev}</span>
                           </div>
                         </div>
-                        <svg
-                          className={"wcf-res-chev" + (expanded ? " open" : "")}
-                          viewBox="0 0 24 24"
-                          width="18"
-                          height="18"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden="true"
-                        >
-                          <path d="M9 6l6 6-6 6" />
-                        </svg>
+                      );
+                    }
+                    const sub = [
+                      motmNames.length > 0 ? "MOTM" : null,
+                      motmNames.length > 0 || votingOpen ? topLine : null,
+                      away ? g.venue : null,
+                    ].filter(Boolean);
+                    return (
+                      <div
+                        className="wcf-sc-row"
+                        style={{
+                          ["--edge" as string]: outcome === "white" ? cs.team_white_color : outcome === "red" ? cs.team_red_color : "#5a6478",
+                          ["--i" as string]: rowIndex,
+                        }}
+                      >
+                        <div className="wcf-sc-date">
+                          {d.getUTCDate()}
+                          <span>{mon}</span>
+                        </div>
+                        <div className="wcf-sc-score">
+                          <span className={outcome === "red" ? "lose" : ""} style={outcome === "white" ? { color: cs.team_white_color } : undefined}>
+                            {w}
+                          </span>
+                          <i>–</i>
+                          <span className={outcome === "white" ? "lose" : ""} style={outcome === "red" ? { color: cs.team_red_color } : undefined}>
+                            {r}
+                          </span>
+                        </div>
+                        <div className="wcf-sc-who">
+                          {face("wcf-sc-face26")}
+                          <div>
+                            <b>
+                              {votingOpen ? <span className="wcf-sc-open">MOTM voting open</span> : motmNames.length > 0 ? motmNames.join(" & ") : (topLine ?? fmtDate(g.date))}
+                              {dbl && <span className="wcf-sc-dbl">#{dbl}</span>}
+                            </b>
+                            <small>{sub.length > 0 ? sub.join(" · ") : fmtDate(g.date)}</small>
+                          </div>
+                        </div>
+                        {chev}
                       </div>
                     );
                   })()}
@@ -1177,32 +1251,84 @@ export function ResultsTab({
 
                 {expanded && (
                   <div className="wcf-result-detail">
-                    {scorers.length > 0 && (
-                      <div className="wcf-result-goals">
-                        {(
-                          [
-                            ["white", whiteScorers, cs.team_white_name, cs.team_white_color, g.team_white_score],
-                            ["red", redScorers, cs.team_red_name, cs.team_red_color, g.team_red_score],
-                          ] as const
-                        ).map(([side, list, teamName, color, score]) => (
-                          <div key={side} className="wcf-result-goals-col">
-                            <div className="wcf-result-goals-head">
-                              <span className="wcf-h2h-dot" style={{ background: color }} />
-                              {teamName}
-                              <b>{score}</b>
+                    {resultIndex > 0 &&
+                      (() => {
+                        const w = g.team_white_score ?? 0;
+                        const r = g.team_red_score ?? 0;
+                        return (
+                          <div className="wcf-sc-board">
+                            <div className="wcf-sc-board-meta">
+                              {fmtDate(g.date)} · {g.venue} · {g.kickoff.slice(0, 5)}
                             </div>
-                            {list.map((s) => (
-                              <div key={s.id} className="wcf-result-goal-row">
-                                <button className="wcf-name-link" onClick={() => openPlayerCard(s.player_id)}>
-                                  {s.player.display_name}
-                                </button>
-                                <b>{s.goals}</b>
+                            <div className="wcf-sc-board-big">
+                              <div className={"wcf-sc-board-tm" + (w > r ? " win" : "")}>
+                                <b>
+                                  <CountUp to={w} delay={120} run={motionAllowed()} />
+                                </b>
+                                {cs.team_white_name}
+                              </div>
+                              <div className="wcf-sc-board-ft">FT</div>
+                              <div className={"wcf-sc-board-tm" + (r > w ? " win" : "")}>
+                                <b>
+                                  <CountUp to={r} delay={120} run={motionAllowed()} />
+                                </b>
+                                {cs.team_red_name}
+                              </div>
+                            </div>
+                            <div className="wcf-sc-share" style={{ background: cs.team_red_color }}>
+                              <i style={{ ["--w" as string]: `${w + r ? (100 * w) / (w + r) : 50}%`, background: cs.team_white_color }} />
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                    {scorers.length > 0 &&
+                      (() => {
+                        // Balls drop in one after another down both columns.
+                        let ball = 0;
+                        return (
+                          <div className="wcf-sc-halves">
+                            {(
+                              [
+                                ["white", whiteScorers, cs.team_white_name, cs.team_white_color],
+                                ["red", redScorers, cs.team_red_name, cs.team_red_color],
+                              ] as const
+                            ).map(([side, list, teamName, color]) => (
+                              <div key={side} className="wcf-sc-half">
+                                <h5>
+                                  <i style={{ background: color }} />
+                                  {teamName}
+                                </h5>
+                                {list.length === 0 && <div className="wcf-sc-none">No scorers</div>}
+                                {list.map((s) => {
+                                  const start = ball;
+                                  ball += s.goals;
+                                  return (
+                                    <button key={s.id} className="wcf-sc-scorer" onClick={() => openPlayerCard(s.player_id)}>
+                                      <Avatar
+                                        name={s.player.display_name}
+                                        avatarUrl={avatarByPlayerId.get(s.player_id)}
+                                        className="wcf-sc-face32"
+                                        background={avatarFor(s.player.display_name).gradient}
+                                      />
+                                      <span>
+                                        <span className="wcf-sc-scorer-nm">{s.player.display_name}</span>
+                                        <GoalBalls n={s.goals} start={start}>
+                                          {s.goals >= 3 && (
+                                            <span className="wcf-sc-ht" style={{ ["--i" as string]: start + s.goals }}>
+                                              {s.goals >= 6 ? "DOUBLE HAT-TRICK" : "HAT-TRICK"}
+                                            </span>
+                                          )}
+                                        </GoalBalls>
+                                      </span>
+                                    </button>
+                                  );
+                                })}
                               </div>
                             ))}
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        );
+                      })()}
 
                     {ownGoalScorers.length > 0 && (
                       <div className="wcf-result-og">
@@ -1381,7 +1507,7 @@ export function ResultsTab({
                           <MotmReveal storageKey={`wcf-motm-reveal-${myId}-${g.id}`} eligible={recent}>
                             {(phase, skip, replay) =>
                               phase === "drum" ? (
-                                <div className="wcf-motm-card wcf-mr-drumming" onPointerDown={skip}>
+                                <div className="wcf-motm-card wcf-sc-motm wcf-mr-drumming" onPointerDown={skip}>
                                   <div className="wcf-motm-card-k">{winners.length > 1 ? "Joint Man of the Match" : "Man of the Match"}</div>
                                   <div className="wcf-motm-card-main">
                                     <div className="wcf-motm-card-faces">
@@ -1398,7 +1524,7 @@ export function ResultsTab({
                                   </div>
                                 </div>
                               ) : (
-                                <div className={"wcf-motm-card" + (phase === "reveal" ? " wcf-mr-reveal" : "")}>
+                                <div className={"wcf-motm-card wcf-sc-motm" + (phase === "reveal" ? " wcf-mr-reveal" : "")}>
                                   <div className="wcf-motm-card-k">{winners.length > 1 ? "Joint Man of the Match" : "Man of the Match"}</div>
                                   <div className="wcf-motm-card-main">
                                     <div className="wcf-motm-card-faces">
@@ -1436,67 +1562,33 @@ export function ResultsTab({
                                       </div>
                                     </div>
                                   </div>
-                                  <div className="wcf-motm-rank">
-                                    {ranked
+                                  <MotmPoll
+                                    key={g.id}
+                                    total={totalVotes}
+                                    rows={ranked
                                       .filter((x) => x.votes > 0)
-                                      .map((x, rkIndex) => {
-                                        const voters = votersFor(x.candidate.player_id);
-                                        const top = winnerIds.includes(x.candidate.player_id);
-                                        return (
-                                          <button
-                                            key={x.candidate.id}
-                                            style={{ ["--i" as string]: rkIndex }}
-                                            className={"wcf-motm-rk" + (top ? " top" : "")}
-                                            onClick={() =>
-                                              setMotmVotersFor({
-                                                gameId: g.id,
-                                                candidateId: x.candidate.player_id,
-                                                candidateName: x.candidate.player.display_name,
-                                              })
-                                            }
-                                            aria-label={`See who voted for ${x.candidate.player.display_name}`}
-                                          >
-                                            <Avatar
-                                              name={x.candidate.player.display_name}
-                                              avatarUrl={avatarByPlayerId.get(x.candidate.player_id)}
-                                              className="wcf-motm-rk-av"
-                                              background={avatarFor(x.candidate.player.display_name).gradient}
-                                            />
-                                            <span className="wcf-motm-rk-mid">
-                                              <span className="wcf-motm-rk-name">{x.candidate.player.display_name}</span>
-                                              <span className="wcf-motm-rk-bar">
-                                                <i style={{ width: `${Math.max(8, (x.votes / topVotes) * 100)}%` }} />
-                                              </span>
-                                            </span>
-                                            <span className="wcf-avatars wcf-motm-rk-voters">
-                                              {voters.slice(0, 3).map((v) => (
-                                                <Avatar
-                                                  key={v.id}
-                                                  name={v.display_name}
-                                                  avatarUrl={v.avatar_url}
-                                                  className="wcf-avatar-chip"
-                                                  background={avatarFor(v.display_name).gradient}
-                                                />
-                                              ))}
-                                              {voters.length > 3 && <span className="wcf-avatar-chip more">+{voters.length - 3}</span>}
-                                            </span>
-                                            <span className="wcf-motm-rk-n">{x.votes}</span>
-                                          </button>
-                                        );
-                                      })}
-                                  </div>
-                                  <div className="wcf-motm-card-tip">
-                                    Tap a name to see who voted for them
-                                    {replay && (
-                                      <>
-                                        {" "}
-                                        ·{" "}
-                                        <button className="wcf-mr-again" onClick={replay}>
-                                          Watch the reveal again
-                                        </button>
-                                      </>
-                                    )}
-                                  </div>
+                                      .map((x) => ({
+                                        id: x.candidate.player_id,
+                                        name: x.candidate.player.display_name,
+                                        avatarUrl: avatarByPlayerId.get(x.candidate.player_id),
+                                        gradient: avatarFor(x.candidate.player.display_name).gradient,
+                                        votes: x.votes,
+                                        top: winnerIds.includes(x.candidate.player_id),
+                                        voters: votersFor(x.candidate.player_id).map((v) => ({
+                                          id: v.id,
+                                          name: v.display_name,
+                                          avatarUrl: v.avatar_url,
+                                          gradient: avatarFor(v.display_name).gradient,
+                                        })),
+                                      }))}
+                                  />
+                                  {replay && (
+                                    <div className="wcf-motm-card-tip">
+                                      <button className="wcf-mr-again" onClick={replay}>
+                                        Watch the reveal again
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
                               )
                             }
@@ -1578,11 +1670,93 @@ export function ResultsTab({
                         <span className="wcf-result-admin-tag">Admin only</span>
                       </div>
                     )}
+
+                    {(() => {
+                      const older = filteredResults[resultIndex + 1];
+                      const newer = filteredResults[resultIndex - 1];
+                      if (!older && !newer) return null;
+                      const goTo = (id: string) => {
+                        setExpandedResultId(id);
+                        setTimeout(() => document.getElementById("result-" + id)?.scrollIntoView({ block: "start", behavior: "smooth" }), 60);
+                      };
+                      const day = (x: GameRow) => new Date(x.date + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+                      return (
+                        <div className="wcf-sc-steps">
+                          {older && (
+                            <button className="older" onClick={() => goTo(older.id)}>
+                              ‹ {day(older)}
+                            </button>
+                          )}
+                          {newer && (
+                            <button className="newer" onClick={() => goTo(newer.id)}>
+                              {day(newer)} ›
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </article>
             );
-          })}
+          };
+          const [first, ...rest] = filteredResults;
+          if (!first) return null;
+          const months: { ym: string; games: GameRow[] }[] = [];
+          for (const g of rest) {
+            const ym = g.date.slice(0, 7);
+            const last = months[months.length - 1];
+            if (last && last.ym === ym) last.games.push(g);
+            else months.push({ ym, games: [g] });
+          }
+          const winner = (g: GameRow) => {
+            const w = g.team_white_score ?? 0;
+            const r = g.team_red_score ?? 0;
+            return w > r ? "white" : r > w ? "red" : "draw";
+          };
+          return (
+            <>
+              {renderResult(first, 0)}
+              {months.map((m) => {
+                const inMonth = filteredResults.filter((g) => g.date.slice(0, 7) === m.ym);
+                const ww = inMonth.filter((g) => winner(g) === "white").length;
+                const rw = inMonth.filter((g) => winner(g) === "red").length;
+                const dd = inMonth.length - ww - rw;
+                return (
+                  <section
+                    key={m.ym}
+                    className="wcf-sc-month"
+                    style={{
+                      backgroundImage: `linear-gradient(180deg,rgba(8,11,20,.25) 0px,rgba(8,11,20,.78) 80px,rgba(14,19,31,.97) 170px),url('${monthPhoto(m.ym)}')`,
+                    }}
+                  >
+                    <div className="wcf-sc-month-h">
+                      <h4>
+                        {new Date(m.ym + "-01T00:00:00").toLocaleDateString("en-GB", {
+                          month: "long",
+                          year: m.ym.slice(0, 4) === String(currentSeasonYear) ? undefined : "numeric",
+                        })}
+                      </h4>
+                      <span className="wcf-sc-strip" aria-hidden="true">
+                        {[...inMonth].reverse().map((g) => (
+                          <i
+                            key={g.id}
+                            style={{ background: winner(g) === "white" ? cs.team_white_color : winner(g) === "red" ? cs.team_red_color : "#5a6478" }}
+                          />
+                        ))}
+                      </span>
+                      <span className="wcf-sc-tally">
+                        {cs.team_white_name.charAt(0)} {ww} · {cs.team_red_name.charAt(0)} {rw}
+                        {dd > 0 && ` · D ${dd}`}
+                      </span>
+                    </div>
+                    {m.games.map((g, k) => renderResult(g, filteredResults.indexOf(g), k))}
+                  </section>
+                );
+              })}
+            </>
+          );
+          })()}
         </>
       )}
 

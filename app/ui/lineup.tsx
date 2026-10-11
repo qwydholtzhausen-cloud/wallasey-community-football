@@ -1,7 +1,7 @@
 import { PillChoice, Avatar, motionAllowed, POSITION_LABEL, TeamCallout, avatarFor, fmtDate, readableTextColor, teamGradient, type PlayerPosition } from "./shared";
 import { EmptyScene } from "./EmptyScene";
 import { BirthdayBunting, BirthdayTag, PartyHat } from "./celebrate";
-import { PredictPanel } from "./predict";
+import { PredictPanel, PredictPodium, PredictTicket, predictFaceCss } from "./predict";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { buildLeaderboard, predictionPoints, topScorers, type LeaderboardRow, type ScoredPrediction } from "../../lib/predictions";
 import type { BookingRow, ClubSettings, GameRow, ScorePrediction, Team } from "../WirralCommunityFootball";
@@ -191,6 +191,7 @@ export function LineupTab({
     if (from < 0 || to < 0 || from <= to) return null;
     return { key: `wcf-climb-${myId}-${latest.gameId}`, from, to, gained, prevPts: predictionSeasonLeaderboard[to].points - gained };
   }, [scoredPredictionInputs, predictionSeasonLeaderboard, currentSeasonYear, myId]);
+  const [lbShowAll, setLbShowAll] = useState(false);
   const [climbPhase, setClimbPhase] = useState<"before" | "points" | "move" | "done" | null>(null);
   const rowEls = useRef(new Map<string, HTMLDivElement>());
   const rowTops = useRef(new Map<string, number>());
@@ -1034,6 +1035,43 @@ export function LineupTab({
             ? scoredPredictionInputs.filter((p) => p.gameDate.slice(0, 4) === String(currentSeasonYear))
             : scoredPredictionInputs.filter((p) => p.gameDate.slice(0, 7) === predictView);
           const leader = board[0];
+          const podium = board.length >= 3;
+          const climbActive = isSeason && !!climb && !!climbPhase && climbPhase !== "done";
+          // The race line: where you stand and what one good call could do.
+          const race = (() => {
+            if (!isSeason && !isCurrentMonth) return null;
+            const mi = board.findIndex((r) => r.playerId === myId);
+            if (mi < 0) return null;
+            const me = board[mi];
+            const first = (r: LeaderboardRow) => r.playerName.split(" ")[0];
+            const pts = (n: number) => `${n} ${n === 1 ? "pt" : "pts"}`;
+            const place = `${mi + 1}${mi === 0 ? "st" : mi === 1 ? "nd" : mi === 2 ? "rd" : "th"}`;
+            if (mi === 0) {
+              const next = board[1];
+              if (!next) return null;
+              return next.points === me.points ? (
+                <>You&apos;re level at the top with <b>{first(next)}</b>. Exact scores break the tie.</>
+              ) : (
+                <>You&apos;re top, <b>{pts(me.points - next.points)} clear</b> of {first(next)}.</>
+              );
+            }
+            const gap = board[0].points - me.points;
+            if (gap === 0) return <>You&apos;re {place}, <b>level on points with {first(board[0])}</b>. Exact scores break the tie.</>;
+            if (gap <= 3)
+              return (
+                <>
+                  You&apos;re {place}, <b>{pts(gap)} behind {first(board[0])}</b>. An exact score next game (3 pts) could put you top.
+                </>
+              );
+            const toPodium = board[2].points - me.points;
+            if (mi > 2 && toPodium <= 3)
+              return (
+                <>
+                  You&apos;re {place}, <b>{pts(toPodium)} off the top 3</b>. An exact score next game could get you on the podium.
+                </>
+              );
+            return <>You&apos;re {place}, <b>{pts(gap)} behind {first(board[0])}</b>.</>;
+          })();
 
           return (
             <>
@@ -1053,22 +1091,28 @@ export function LineupTab({
                   />
                 </div>
               )}
-              {nextGame && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && (
-                <div className="wcf-predict wcf-predict-top">
-                  <div className="wcf-predict-gate">
-                    <div className="wcf-predict-gate-icon">
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="9" />
-                        <circle cx="12" cy="12" r="5" />
-                        <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
-                      </svg>
-                    </div>
-                    <div className="wcf-predict-gate-text">
-                      <b>{fmtDate(nextGame.date)}: predictions open once teams are posted.</b> Check back here nearer kickoff. They lock at kickoff.
-                    </div>
-                  </div>
-                </div>
-              )}
+              {nextGame &&
+                nextGrouped.white.length === 0 &&
+                nextGrouped.red.length === 0 &&
+                (() => {
+                  const mine = scoredPredictionInputs.filter((p) => p.playerId === myId).sort((a, b) => a.gameDate.localeCompare(b.gameDate));
+                  const lastCall = mine[mine.length - 1];
+                  return (
+                    <PredictTicket
+                      dateLabel={fmtDate(nextGame.date)}
+                      kickoff={nextGame.kickoff.slice(0, 5)}
+                      last={
+                        lastCall
+                          ? {
+                              score: `${lastCall.predictedWhite}–${lastCall.predictedRed}`,
+                              teams: `${cs.team_white_name} v ${cs.team_red_name}`,
+                              pts: predictionPoints(lastCall.predictedWhite, lastCall.predictedRed, lastCall.actualWhite, lastCall.actualRed),
+                            }
+                          : null
+                      }
+                    />
+                  );
+                })()}
 
               <PillChoice
                 label="Which leaderboard"
@@ -1083,7 +1127,21 @@ export function LineupTab({
                 ]}
               />
 
-              {leader && (
+              {podium && <PredictPodium rows={board.slice(0, 3)} myId={myId} faceOf={(r, className, style) => (
+                <Avatar name={r.playerName} avatarUrl={avatarByPlayerId.get(r.playerId)} className={className} background={avatarFor(r.playerName).gradient} style={style} />
+              )} />}
+              {podium && race && (
+                <div className="wcf-race">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <circle cx="12" cy="12" r="5" />
+                    <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+                  </svg>
+                  <span>{race}</span>
+                </div>
+              )}
+              {podium && isSeason && <div className="wcf-pod-prize">Top 3 at the season&apos;s end win from the pot · 3 pts exact score · 1 pt right result · booked players only</div>}
+              {leader && !podium && (
                 <div className="wcf-pl-leader-card">
                   <div className="wcf-pl-leader-eyebrow">Leader · {isSeason ? "This season" : monthLabel}</div>
                   <div className="wcf-pl-leader-row">
@@ -1107,7 +1165,7 @@ export function LineupTab({
                 </div>
               )}
 
-              {isSeason && (
+              {isSeason && !podium && (
                 <div className="wcf-lb-prize">
                   <span className="wcf-lb-medals" aria-hidden="true">
                     <i className="g">1</i>
@@ -1171,7 +1229,12 @@ export function LineupTab({
                   {(isSeason && climb && (climbPhase === "before" || climbPhase === "points")
                     ? [...board.slice(0, climb.to), ...board.slice(climb.to + 1, climb.from + 1), board[climb.to], ...board.slice(climb.from + 1)]
                     : board
-                  ).map((row, i) => {
+                  )
+                    .map((row, i) => ({ row, i }))
+                    // The podium already shows the top 3; then the top 10 and
+                    // you. The whole list while your climb is playing.
+                    .filter(({ row, i }) => climbActive || ((!podium || i >= 3) && (lbShowAll || i < 10 || row.playerId === myId)))
+                    .map(({ row, i }, k, shown) => {
                     const climbing = isSeason && !!climb && !!climbPhase && row.playerId === myId;
                     const inPrizes = isSeason && i < 3 && row.points > 0;
                     const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
@@ -1186,7 +1249,10 @@ export function LineupTab({
                     return (
                       <div
                         key={row.playerId}
-                        className={climbing && climbPhase !== "done" ? "wcf-climbing" : undefined}
+                        className={
+                          [climbing && climbPhase !== "done" ? "wcf-climbing" : "", k > 0 && i - shown[k - 1].i > 1 ? "wcf-lb-skip" : ""].filter(Boolean).join(" ") ||
+                          undefined
+                        }
                         ref={(el) => {
                           if (el) rowEls.current.set(row.playerId, el);
                           else rowEls.current.delete(row.playerId);
@@ -1250,6 +1316,12 @@ export function LineupTab({
                   })}
                 </div>
               )}
+              {board.length > 10 && !lbShowAll && !climbActive && (
+                <button className="wcf-lb-more" onClick={() => setLbShowAll(true)}>
+                  Show all {board.length}
+                </button>
+              )}
+              <style>{predictFaceCss}</style>
             </>
           );
         })()}
