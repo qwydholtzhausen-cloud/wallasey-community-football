@@ -59,6 +59,7 @@ import { computeProgramme } from "../lib/programme";
 import { FIRST_XI_GAME_ID, FIRST_XI_OPEN_TO_ALL_FROM } from "../lib/firstXI";
 import { MatchdayProgramme, type ProgrammeAd } from "./ui/programme";
 import { FirstXiMotmReveal, FirstXiPennant } from "./ui/firstxi";
+import { MatchdayHero, MatchdayIntro, MatchdayRibbon, MatchdayTeamCards, MatchdayTimeline, matchdayCss } from "./ui/matchdayxi";
 import { ClubOdometer, DebutCard, MilestoneShirt, MotmWinCard, PotmMine, PotmNight, RecordCard } from "./ui/premium";
 import { MatchDayClock, MatchDayTeam, dayWord, isLiveNow, isMatchDay } from "./ui/matchday";
 import { scorersForSide } from "../lib/goalSides";
@@ -4582,6 +4583,35 @@ function App({ session }: { session: Session }) {
     } catch {}
     setXiShow(null);
   }
+  // Matchday takeover: the whole day of the First XI, until its Man of the
+  // Match vote closes. The countdown runs on the real clock, so the gap to
+  // kick-off is worked out in pretend-UTC and added to Date.now().
+  const isMatchday = !!programme && nowUk.slice(0, 10) === programme.game.date && !closedMotmTallies[programme.game.id];
+  const kickoffMs = programme ? Date.now() + (toMs(kickoffCutoff(programme.game.date, programme.game.kickoff, 0)) - toMs(nowUk)) : 0;
+  const [mdIntro, setMdIntro] = useState(false);
+  useEffect(() => {
+    if (!isMatchday || !myId) return;
+    const key = `wcf-matchday-intro-${myId}-${programme!.game.date}`;
+    try {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, "1");
+    } catch {
+      return;
+    }
+    if (motionOk()) setMdIntro(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMatchday, myId]);
+  const xiStatOf = (id: string) => {
+    let apps = 0;
+    let motm = 0;
+    for (const g of pastGames) {
+      if (g.id === programme?.game.id) continue;
+      if (g.bookings.some((b) => b.player_id === id && !b.waiting)) apps++;
+      if (closedMotmTallies[g.id] && (motmWinnerIdsByGame[g.id] ?? []).includes(id)) motm++;
+    }
+    const goals = goalRows.filter((r) => r.player_id === id && r.game_id !== programme?.game.id).reduce((s, r) => s + r.goals, 0);
+    return { apps, goals, motm };
+  };
   async function openProgramme() {
     setProgrammeOpen(true);
     const { data } = await supabase
@@ -5788,7 +5818,9 @@ function App({ session }: { session: Session }) {
           )}
         </div>
       )}
-      <header className="wcf-top">
+      {isMatchday && <style>{matchdayCss}</style>}
+      {mdIntro && <MatchdayIntro onDone={() => setMdIntro(false)} />}
+      <header className={"wcf-top" + (isMatchday ? " mdx" : "")}>
         <button className="wcf-brand" onClick={() => setTab("fixtures")} aria-label="Go to fixtures">
           <span className="wcf-logo">
             <img src="/crest.png" alt="Wirral Community Football crest" />
@@ -5808,6 +5840,7 @@ function App({ session }: { session: Session }) {
         </button>
       </header>
 
+      {isMatchday && programme && <MatchdayRibbon kickoffMs={kickoffMs} onOpen={openProgramme} />}
       {isOffline && <div className="wcf-offline-banner">Offline · showing what was last loaded</div>}
 
       {updateAvailable && (
@@ -5988,7 +6021,13 @@ function App({ session }: { session: Session }) {
               />
             ) : (
               <>
-                {programme && programme.game.date >= nowUk.slice(0, 10) && (
+                {isMatchday && programme && (
+                  <>
+                    <MatchdayHero prog={programme} kickoffMs={kickoffMs} avatarOf={(id) => avatarByPlayerId.get(id)} onProgramme={openProgramme} onCards={() => setTab("lineup")} />
+                    <MatchdayTimeline kickoff={programme.game.kickoff} />
+                  </>
+                )}
+                {!isMatchday && programme && programme.game.date >= nowUk.slice(0, 10) && (
                   <button className="wcf-prog-card" onClick={openProgramme}>
                     <span className="cv" aria-hidden="true" />
                     <span className="tx">
@@ -6203,6 +6242,12 @@ function App({ session }: { session: Session }) {
           />
         )}
 
+        {tab === "lineup" && isMatchday && programme && (
+          <div className="mdx-teamwrap">
+            <div className="wcf-eyebrow">The First XI · today&apos;s teams</div>
+            <MatchdayTeamCards prog={programme} statOf={xiStatOf} avatarOf={(id) => avatarByPlayerId.get(id)} />
+          </div>
+        )}
         {tab === "lineup" && (
           <LineupTab
             applySuggestedTeams={applySuggestedTeams}
@@ -6443,7 +6488,7 @@ function App({ session }: { session: Session }) {
         )}
       </main>
 
-      <nav className="wcf-nav">
+      <nav className={"wcf-nav" + (isMatchday ? " mdx" : "")}>
         {TABS.map((t) => (
           <button key={t.k} className={"wcf-navbtn " + (tab === t.k ? "active" : "")} onClick={() => setTab(t.k)}>
             {t.icon}
