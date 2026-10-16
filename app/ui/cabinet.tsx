@@ -5,10 +5,12 @@ import type { Trophy, TrophyKind } from "../../lib/cabinet";
 // when there's more than one), on glass shelves in a wooden cabinet. Tap a
 // slot for every one of them, with dates and scores.
 
-const ORDER: TrophyKind[] = ["matchball", "potm", "motm", "record", "apps", "debut"];
+const ORDER: TrophyKind[] = ["ximedal", "xipennant", "matchball", "potm", "motm", "record", "apps", "debut"];
 const LABEL: Record<TrophyKind, [string, string]> = {
   matchball: ["Match ball", "Match balls"],
   potm: ["Player of the Month", "Player of the Month"],
+  xipennant: ["First XI pennant", "First XI pennant"],
+  ximedal: ["First XI medal", "First XI medal"],
   motm: ["MOTM medal", "MOTM medals"],
   record: ["Club record", "Club records"],
   apps: ["Milestone shirt", "Milestone shirts"],
@@ -27,6 +29,28 @@ export function TrophyIcon({ kind, n }: { kind: TrophyKind; n?: number }) {
           <path d="M24 16l6.5 4.7-2.5 7.6h-8l-2.5-7.6z" fill="rgba(90,62,10,.55)" />
           <path d="M24 7v9M30.5 20.7l9.5-3.2M28 28.3l5.5 8.2M20 28.3l-5.5 8.2M17.5 20.7L8 17.5" stroke="rgba(90,62,10,.45)" strokeWidth="1.6" fill="none" />
           <path d="M16 34c2-1 4 .5 6-.5s3-1.5 5 0" stroke="#7f1d1d" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+        </svg>
+      );
+    case "xipennant":
+      return (
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="8" y="5" width="32" height="3" rx="1.5" fill="#c9a24a" />
+          <path d="M10 8h28L24 44z" fill="#b0101c" />
+          <path d="M12 9h24L24 40z" fill="#e63946" />
+          <path d="M12 11h24" stroke="#fff" strokeWidth="1.6" />
+          <text x="24" y="22" textAnchor="middle" fontFamily="var(--font-oswald),sans-serif" fontWeight="700" fontSize="5.6" fill="#fff">FIRST XI</text>
+          <text x="24" y="28" textAnchor="middle" fontFamily="var(--font-caveat),cursive" fontWeight="700" fontSize="6" fill="#f5d97a">Nº1</text>
+        </svg>
+      );
+    case "ximedal":
+      return (
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M18 2h5l2 22h-5z" fill="#e63946" />
+          <path d="M25 2h5l-2 22h-5z" fill="#f5f6f8" />
+          <circle cx="24" cy="32" r="13" fill="#f5d97a" stroke="#9c7414" strokeWidth="1.6" />
+          <circle cx="24" cy="32" r="9.5" fill="none" stroke="#9c7414" strokeWidth="1" opacity=".7" />
+          <text x="24" y="31" textAnchor="middle" fontFamily="var(--font-oswald),sans-serif" fontWeight="700" fontSize="5" fill="#3a2a08">FIRST XI</text>
+          <text x="24" y="37.5" textAnchor="middle" fontFamily="var(--font-oswald),sans-serif" fontWeight="700" fontSize="4.6" fill="#5a4210">MOTM</text>
         </svg>
       );
     case "potm":

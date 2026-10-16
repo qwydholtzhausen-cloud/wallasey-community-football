@@ -35,6 +35,7 @@ export function HistoryPage({
   today,
   onAdd,
   onDelete,
+  onProgramme,
 }: {
   data: Data;
   people: Map<string, Person>;
@@ -42,6 +43,7 @@ export function HistoryPage({
   today: string;
   onAdd: (m: NewMoment) => Promise<boolean>;
   onDelete: (id: string) => Promise<void>;
+  onProgramme?: () => void; // the First XI matchday programme, kept here for good
 }) {
   const root = useRef<HTMLDivElement>(null);
   const story = useRef<HTMLDivElement>(null);
@@ -302,6 +304,16 @@ export function HistoryPage({
                   <h4>{e.title}</h4>
                   {e.text && <p>{e.text}</p>}
                   {scene(e.scene, e)}
+                  {e.key === "first-11" && onProgramme && (
+                    <button type="button" className="wcf-hs-prog" onClick={onProgramme}>
+                      <span className="cv" aria-hidden="true" />
+                      <span>
+                        <b>The matchday programme</b>
+                        <small>The First XI · with the full-time page</small>
+                      </span>
+                      <em>Open ›</em>
+                    </button>
+                  )}
                   {e.added && (
                     <div className="wcf-hs-added">
                       <span>ADDED BY AN ADMIN</span>
@@ -566,6 +578,12 @@ function AddMoment({ people, today, onClose, onAdd }: { people: Map<string, Pers
 }
 
 const historyCss = `
+.wcf-hs-prog{display:flex;gap:12px;align-items:center;width:100%;margin-top:10px;padding:10px;border-radius:14px;border:1px solid rgba(245,217,122,.35);background:rgba(245,217,122,.06);color:#fff;text-align:left;cursor:pointer;font:inherit}
+.wcf-hs-prog .cv{flex:none;width:46px;height:62px;border-radius:2px;background:linear-gradient(180deg,rgba(10,12,20,.05),rgba(10,12,20,.85)),url(/first-xi/cover.jpg) center/cover;box-shadow:3px 3px 0 rgba(0,0,0,.4);transform:rotate(-4deg)}
+.wcf-hs-prog b{display:block;font:700 15px var(--font-oswald),sans-serif;text-transform:uppercase;letter-spacing:.04em}
+.wcf-hs-prog small{font-size:11.5px;color:#94a3b8}
+.wcf-hs-prog em{margin-left:auto;font-style:normal;color:#f5d97a;font-weight:800;white-space:nowrap}
+
 .wcf-hs{position:relative;max-width:100%;overflow-x:clip;touch-action:pan-y}
 .wcf-hs-face{border-radius:50%;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;color:#fff;flex:none;width:32px;height:32px;font-size:11px;border:2px solid #f5d97a}
 .wcf-hs-pill{position:fixed;left:16px;bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:40;box-shadow:0 10px 24px -8px #000;display:flex;align-items:center;gap:7px;min-height:36px;padding:0 14px;border-radius:999px;border:1px solid rgba(245,217,122,.55);background:rgba(10,12,20,.85);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#f5d97a;font-weight:800;font-size:12px;cursor:pointer;font-family:var(--sans)}

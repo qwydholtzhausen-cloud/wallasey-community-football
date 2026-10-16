@@ -3,7 +3,7 @@
 // club records). Pure and DB-free, like lib/records.ts.
 import type { ClubRecords } from "./records";
 
-export type TrophyKind = "debut" | "matchball" | "motm" | "potm" | "record" | "apps";
+export type TrophyKind = "debut" | "matchball" | "motm" | "potm" | "record" | "apps" | "xipennant" | "ximedal";
 
 export interface Trophy {
   kind: TrophyKind;
@@ -33,6 +33,9 @@ export function computeCabinet(input: {
   goals: { game_id: string; player_id: string; goals: number }[];
   motmWinnerIdsByGame: Record<string, string[]>; // closed votes only
   potmMonths: { monthKey: string; winnerIds: string[] }[]; // announced months only
+  // The First XI (lib/firstXI.ts): a pennant for everyone who played once the
+  // result's in, and the one-of-one medal for its Man of the Match.
+  firstXi?: { date: string; played: string[]; motm: string[] } | null;
   records: ClubRecords | null; // this season's club records
   team: (t: "white" | "red") => string; // "Whites" / "Reds"
 }): Trophy[] {
@@ -61,6 +64,12 @@ export function computeCabinet(input: {
   for (const m of input.potmMonths) {
     if (m.winnerIds.includes(playerId)) out.push({ kind: "potm", key: `potm-${m.monthKey}`, title: "Player of the Month", detail: monthName(m.monthKey) + (m.winnerIds.length > 1 ? " (joint)" : ""), date: `${m.monthKey}-28` });
   }
+
+  const xi = input.firstXi;
+  if (xi && xi.played.includes(playerId))
+    out.push({ kind: "xipennant", key: "xipennant", title: "The First XI pennant", detail: `The club's first 11-a-side · ${shortDate(xi.date)}`, date: xi.date });
+  if (xi && xi.motm.includes(playerId))
+    out.push({ kind: "ximedal", key: "ximedal", title: "The First XI medal", detail: `Man of the Match, the club's first 11-a-side · one of one`, date: xi.date });
 
   const r = input.records;
   if (r) {

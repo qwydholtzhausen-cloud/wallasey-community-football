@@ -55,6 +55,10 @@ import { FirstGameCard, NameStep, WelcomeCards, type BestChance, type PushState 
 import { HistoryPage } from "./ui/history";
 import { computeHistory, type HMoment } from "../lib/history";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
+import { computeProgramme } from "../lib/programme";
+import { FIRST_XI_GAME_ID } from "../lib/firstXI";
+import { MatchdayProgramme, type ProgrammeAd } from "./ui/programme";
+import { FirstXiMotmReveal, FirstXiPennant } from "./ui/firstxi";
 import { ClubOdometer, DebutCard, MilestoneShirt, MotmWinCard, PotmMine, PotmNight, RecordCard } from "./ui/premium";
 import { MatchDayClock, MatchDayTeam, dayWord, isLiveNow, isMatchDay } from "./ui/matchday";
 import { scorersForSide } from "../lib/goalSides";
@@ -4520,6 +4524,79 @@ function App({ session }: { session: Session }) {
     }
     return out;
   }, [pastGames, playerOfMonth, potmFor, nowUk]);
+  // The First XI matchday programme (lib/programme.ts): frozen at the
+  // games before it, so it reads the same before kick-off and in History.
+  const [programmeOpen, setProgrammeOpen] = useState(false);
+  const [programmeAds, setProgrammeAds] = useState<ProgrammeAd[]>([]);
+  const firstXiGame = games.find((g) => g.id === FIRST_XI_GAME_ID && g.published) ?? null;
+  const programme = useMemo(
+    () =>
+      firstXiGame
+        ? computeProgramme({
+            game: firstXiGame,
+            games,
+            goals: goalRows,
+            motmWinnerIdsByGame: Object.fromEntries(Object.entries(motmWinnerIdsByGame).filter(([id]) => closedMotmTallies[id])),
+          })
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [firstXiGame, games, goalRows, motmWinnerIdsByGame, closedMotmTallies]
+  );
+  // Pennants once the result's in; the medal once its vote has closed.
+  const firstXiCabinet = useMemo(() => {
+    const g = firstXiGame;
+    if (!g || g.team_white_score == null || g.team_red_score == null) return null;
+    return {
+      date: g.date,
+      played: g.bookings.filter((b) => !b.waiting).map((b) => b.player_id),
+      motm: closedMotmTallies[g.id] ? (motmWinnerIdsByGame[g.id] ?? []) : [],
+    };
+  }, [firstXiGame, closedMotmTallies, motmWinnerIdsByGame]);
+  // Each one-off plays once per phone, within two weeks of the game: the
+  // pennant for the players, the big-screen medal for everyone.
+  const [xiShow, setXiShow] = useState<"pennant" | "medal" | null>(null);
+  useEffect(() => {
+    if (loading || !myId || !firstXiCabinet || xiShow) return;
+    if (kickoffCutoff(firstXiCabinet.date, "11:00", 14 * 24 * 60) <= nowUk) return;
+    const want: ("pennant" | "medal")[] = [];
+    if (firstXiCabinet.played.includes(myId)) want.push("pennant");
+    if (firstXiCabinet.motm.length) want.push("medal");
+    for (const w of want) {
+      const key = `wcf-firstxi-${w}-${myId}`;
+      try {
+        if (localStorage.getItem(key)) continue;
+      } catch {
+        return;
+      }
+      if (!motionOk()) continue;
+      setXiShow(w);
+      return;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstXiCabinet, loading, myId, xiShow]);
+  function xiDone() {
+    try {
+      if (xiShow) localStorage.setItem(`wcf-firstxi-${xiShow}-${myId}`, "1");
+    } catch {}
+    setXiShow(null);
+  }
+  async function openProgramme() {
+    setProgrammeOpen(true);
+    const { data } = await supabase
+      .from("boot_room_listings")
+      .select("company, description, tags, logo_url, player:profiles!boot_room_listings_player_id_fkey(display_name)")
+      .eq("hidden", false);
+    if (data)
+      setProgrammeAds(
+        (data as unknown as { company: string; description: string | null; tags: string[] | null; logo_url: string | null; player: { display_name: string } | null }[]).map((r) => ({
+          company: r.company,
+          description: r.description,
+          tag: r.tags?.[0] ?? null,
+          logoUrl: r.logo_url,
+          owner: r.player?.display_name ?? "A member",
+        }))
+      );
+  }
   const seasonRecords = useMemo(() => {
     const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
     return computeRecords({
@@ -4537,10 +4614,11 @@ function App({ session }: { session: Session }) {
         goals: goalRows,
         motmWinnerIdsByGame: Object.fromEntries(Object.entries(motmWinnerIdsByGame).filter(([id]) => closedMotmTallies[id])),
         potmMonths: potmHistory,
+        firstXi: firstXiCabinet,
         records: seasonRecords,
         team: (t) => (t === "white" ? cs.team_white_name : cs.team_red_name),
       }),
-    [pastGames, goalRows, motmWinnerIdsByGame, closedMotmTallies, potmHistory, seasonRecords, cs.team_white_name, cs.team_red_name]
+    [pastGames, goalRows, motmWinnerIdsByGame, closedMotmTallies, potmHistory, firstXiCabinet, seasonRecords, cs.team_white_name, cs.team_red_name]
   );
 
   // Your new match ball: a hat-trick (or better) from the last week this
@@ -5571,6 +5649,7 @@ function App({ session }: { session: Session }) {
   if (predLock) momentCandidates.push("predlock:" + predLock.key);
   if (myMotmMoment && motmMomentClosed !== myMotmMoment.game.id) momentCandidates.push("motm:" + myMotmMoment.game.id);
   if (potmShow) momentCandidates.push("potm:" + potmShow);
+  if (xiShow) momentCandidates.push("firstxi:" + xiShow);
   if (myRecordMoment && !recordMomentDone) momentCandidates.push("record:" + myRecordMoment.seenKey);
   if (nextBigMoment) momentCandidates.push("big:" + nextBigMoment.key);
   if (ticketShow && ticketShow.mode !== "booked" && ticketShow.mode !== "credit" && ticketGames.length > 0) momentCandidates.push("ticket:" + ticketShow.mode + ticketShow.gameIds.join(","));
@@ -5580,7 +5659,7 @@ function App({ session }: { session: Session }) {
   const [ftBand, setFtBand] = useState<string | null>(null);
   // Anything else full-screen on top: nothing new pops up over it.
   const momentsPaused =
-    !splashGone || !!npStep || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || ticketShow?.mode === "credit" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand;
+    !splashGone || !!npStep || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || ticketShow?.mode === "credit" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand || programmeOpen;
   const [momentNow, setMomentNow] = useState<string | null>(null);
   const [momentsPlayed, setMomentsPlayed] = useState(0);
   const momentKey = momentCandidates.join("|");
@@ -5907,6 +5986,17 @@ function App({ session }: { session: Session }) {
               />
             ) : (
               <>
+                {programme && programme.game.date >= nowUk.slice(0, 10) && (
+                  <button className="wcf-prog-card" onClick={openProgramme}>
+                    <span className="cv" aria-hidden="true" />
+                    <span className="tx">
+                      <small>THE FIRST XI · {fmtDate(programme.game.date).toUpperCase()}</small>
+                      <b>Read the matchday programme</b>
+                      <span>Teams, captains, form and the story so far</span>
+                    </span>
+                    <em aria-hidden="true">›</em>
+                  </button>
+                )}
                 {calledOffGames.map((g) => {
                   // The usual match card, switched off: drained photo, red
                   // border, CALLED OFF where the kick-off time would be.
@@ -6186,6 +6276,7 @@ function App({ session }: { session: Session }) {
                 today={nowUk.slice(0, 10)}
                 onAdd={addHistoryMoment}
                 onDelete={deleteHistoryMoment}
+                onProgramme={programme ? openProgramme : undefined}
               />
             }
             activeStatsYear={activeStatsYear}
@@ -6626,6 +6717,20 @@ function App({ session }: { session: Session }) {
       })()}
       {coinCredit && showMoment("coin") && <CreditCoin credit={coinCredit} onDone={() => { saveCoinSeen(); setCoinCredit(null); }} />}
       {ticketShow && ticketGames.length > 0 && (ticketShow.mode === "booked" || ticketShow.mode === "credit" || showMoment("ticket")) && <MatchTickets key={ticketShow.mode + ticketShow.gameIds.join(",")} mode={ticketShow.mode} games={ticketGames} onDone={() => setTicketShow(null)} />}
+      {xiShow === "medal" && firstXiCabinet && showMoment("firstxi") && (() => {
+        const g = firstXiGame!;
+        const tally = closedMotmTallies[g.id] ?? {};
+        const total = Object.values(tally).reduce((s, n) => s + n, 0);
+        const winners = firstXiCabinet.motm.map((id) => ({ id, name: profiles.find((p) => p.id === id)?.display_name ?? "A player", avatarUrl: avatarByPlayerId.get(id) }));
+        return <FirstXiMotmReveal winners={winners} total={total} votes={tally[firstXiCabinet.motm[0]] ?? 0} onDone={xiDone} />;
+      })()}
+      {xiShow === "pennant" && firstXiCabinet && showMoment("firstxi") && (
+        <FirstXiPennant
+          signers={firstXiCabinet.played.map((id) => profiles.find((p) => p.id === id)?.display_name ?? "").filter(Boolean)}
+          onProgramme={openProgramme}
+          onDone={xiDone}
+        />
+      )}
       {potmShow === "everyone" && playerOfMonth && showMoment("potm") && (
         <PotmNight
           month={playerOfMonth.monthLabel.split(" ")[0]}
@@ -6649,6 +6754,39 @@ function App({ session }: { session: Session }) {
             onDone={potmDone}
           />
         ) : null;
+      })()}
+
+      {programmeOpen && programme && (() => {
+        const g = programme.game;
+        const scored = g.team_white_score != null && g.team_red_score != null;
+        const nameOf = (id: string) => profiles.find((p) => p.id === id)?.display_name ?? "A player";
+        const scorers = goalRows
+          .filter((r) => r.game_id === g.id && r.goals > 0)
+          .sort((a, b) => b.goals - a.goals)
+          .map((r) => `${nameOf(r.player_id).split(" ")[0]}${r.goals > 1 ? ` ${r.goals}` : ""}`)
+          .join(", ");
+        const motm = closedMotmTallies[g.id] ? (motmWinnerIdsByGame[g.id] ?? []).map(nameOf).join(" & ") || null : null;
+        const firstGoal = historyMoments.find((m) => m.kind === "goal" && /first ever goal/i.test(m.title));
+        return (
+          <MatchdayProgramme
+            prog={programme}
+            members={profiles.length}
+            potm={potmHistory
+              .filter((m) => m.monthKey < g.date.slice(0, 7))
+              .flatMap((m) =>
+                m.winnerIds.map((id) => ({
+                  month: new Date(m.monthKey + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }),
+                  id,
+                  name: nameOf(id),
+                }))
+              )}
+            firstGoal={firstGoal?.player_ids[0] ? nameOf(firstGoal.player_ids[0]) : null}
+            ads={programmeAds}
+            avatarOf={(id) => avatarByPlayerId.get(id)}
+            result={scored ? { white: g.team_white_score!, red: g.team_red_score!, scorers, motm } : null}
+            onClose={() => setProgrammeOpen(false)}
+          />
+        );
       })()}
 
       {myMotmMoment && motmMomentClosed !== myMotmMoment.game.id && showMoment("motm") && (
@@ -14472,6 +14610,13 @@ a.wcf-set-link{text-decoration:none}
 .wcf-fxs-btn.g{background:var(--panel);border:1px solid var(--line);color:#e2e8f0}
 .wcf-fxs-btn.p{background:var(--red);border:0;color:#fff}
 .wcf-fxs-btn:disabled{opacity:.45;cursor:not-allowed}
+.wcf-prog-card{display:flex;align-items:center;gap:14px;width:100%;margin-bottom:14px;padding:12px 14px;border-radius:18px;border:1.5px solid #f5d97a;background:linear-gradient(90deg,rgba(13,13,26,.95) 30%,rgba(13,13,26,.55)),url(/first-xi/cover.jpg) 50% 65%/cover;color:#fff;text-align:left;cursor:pointer;font:inherit;box-shadow:0 0 30px -12px rgba(245,217,122,.6)}
+.wcf-prog-card .cv{flex:none;width:52px;height:72px;border-radius:2px;background:linear-gradient(180deg,rgba(10,12,20,.05),rgba(10,12,20,.8)),url(/first-xi/cover.jpg) center/cover;box-shadow:3px 3px 0 rgba(0,0,0,.45);transform:rotate(-4deg)}
+.wcf-prog-card .tx{min-width:0}
+.wcf-prog-card small{display:block;font:800 10px var(--sans);letter-spacing:.16em;color:#f5d97a}
+.wcf-prog-card b{display:block;font:700 19px var(--font-oswald),sans-serif;text-transform:uppercase;letter-spacing:.02em;margin-top:2px}
+.wcf-prog-card .tx span{display:block;font-size:12px;color:#cbd5e1;margin-top:2px}
+.wcf-prog-card em{margin-left:auto;font-style:normal;font-size:24px;color:#f5d97a}
 .wcf-fxs-calloff{display:block;width:100%;padding:12px 0 4px;background:#131624;border:0;color:#fca5a5;font-weight:800;font-size:13px;cursor:pointer}
 .wcf-fxs-co{margin:10px 16px 6px;padding:14px;border-radius:16px;border:1px solid rgba(230,57,70,.45);background:rgba(230,57,70,.08)}
 .wcf-fxs-co-h{font:800 15px var(--display);color:#fff}
