@@ -21,7 +21,9 @@ function useCountdown(targetMs: number) {
   return Math.max(0, Math.floor((targetMs - now) / 1000));
 }
 
-export function MatchdayRibbon({ kickoffMs, onOpen }: { kickoffMs: number; onOpen: () => void }) {
+export type MdPhase = "pre" | "live" | "ft";
+
+export function MatchdayRibbon({ kickoffMs, phase, onOpen }: { kickoffMs: number; phase: MdPhase; onOpen: () => void }) {
   const left = useCountdown(kickoffMs);
   const h = Math.floor(left / 3600);
   const m = Math.floor((left % 3600) / 60);
@@ -29,7 +31,7 @@ export function MatchdayRibbon({ kickoffMs, onOpen }: { kickoffMs: number; onOpe
     <button className="mdx-ribbon" onClick={onOpen}>
       <i />
       <b>THE FIRST XI</b>
-      <span>{left > 0 ? `Kick-off in ${h ? `${h}h ` : ""}${m}m` : "Kicked off · The Oval"}</span>
+      <span>{phase === "ft" ? "Full time · vote for Man of the Match" : left > 0 ? `Kick-off in ${h ? `${h}h ` : ""}${m}m` : "Under way at The Oval"}</span>
       <em>Programme ›</em>
     </button>
   );
@@ -38,15 +40,19 @@ export function MatchdayRibbon({ kickoffMs, onOpen }: { kickoffMs: number; onOpe
 export function MatchdayHero({
   prog,
   kickoffMs,
+  phase,
   avatarOf,
   onProgramme,
   onCards,
+  onVote,
 }: {
   prog: Programme;
   kickoffMs: number;
+  phase: MdPhase;
   avatarOf: (id: string) => string | null | undefined;
   onProgramme: () => void;
   onCards: () => void;
+  onVote: () => void;
 }) {
   const left = useCountdown(kickoffMs);
   const parts = [Math.floor(left / 3600), Math.floor((left % 3600) / 60), left % 60].map((n) => String(n).padStart(2, "0"));
@@ -91,7 +97,20 @@ export function MatchdayHero({
         <div>{prog.reds.filter((p) => p.id !== capR?.id).map((p, i) => face(p, "mdx-sph", { ["--c" as string]: RED, ["--d" as string]: `${0.2 + i * 0.05}s` } as React.CSSProperties))}</div>
         <div>{prog.whites.filter((p) => p.id !== capW?.id).map((p, i) => face(p, "mdx-sph", { ["--c" as string]: WHITE, ["--d" as string]: `${0.2 + i * 0.05}s` } as React.CSSProperties))}</div>
       </div>
-      {left > 0 ? (
+      {phase === "ft" ? (
+        <div className="mdx-ft">
+          <small>FULL TIME</small>
+          <div className="sc">
+            <b style={{ color: RED }}>{prog.game.team_red_score}</b>
+            <span>–</span>
+            <b>{prog.game.team_white_score}</b>
+          </div>
+          <div className="lb">
+            <span>REDS</span>
+            <span>WHITES</span>
+          </div>
+        </div>
+      ) : phase === "pre" && left > 0 ? (
         <>
           <div className="mdx-flip">
             {parts.map((p, gi) => (
@@ -113,40 +132,49 @@ export function MatchdayHero({
         </div>
       )}
       <div className="mdx-acts">
-        <button className="main" onClick={onProgramme}>
-          Read the programme
-        </button>
-        <button onClick={onCards}>The team cards</button>
+        {phase === "ft" ? (
+          <button className="main" onClick={onVote}>
+            Vote Man of the Match
+          </button>
+        ) : (
+          <button className="main" onClick={onProgramme}>
+            Read the programme
+          </button>
+        )}
+        {phase === "ft" ? <button onClick={onProgramme}>The programme</button> : <button onClick={onCards}>The team cards</button>}
       </div>
     </div>
   );
 }
 
-export function MatchdayTimeline({ kickoff }: { kickoff: string }) {
+export function MatchdayTimeline({ kickoff, phase, kickoffMs }: { kickoff: string; phase: MdPhase; kickoffMs: number }) {
+  const minsLeft = useCountdown(kickoffMs) / 60;
   const [h, m] = kickoff.split(":").map(Number);
   const at = (mins: number) => {
     const t = h * 60 + m + mins;
     return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
   };
+  // Which row is happening now: the walk-out from 30 minutes before, arrive
+  // from 20, then kick-off, then full time. Before the walk-out it's "next".
+  const nowIdx = phase === "ft" ? 3 : phase === "live" ? 2 : minsLeft <= 20 ? 1 : minsLeft <= 30 ? 0 : -1;
+  const rows: [string, string, MdPhase][] = [
+    [at(-30), "The walk-out: watch them come out of the tunnel", "pre"],
+    [at(-20), "Be at The Oval, boots on", "pre"],
+    [kickoff, "Kick-off: Reds v Whites", "live"],
+    ["FT", "Man of the Match vote opens · pennants for the 22", "ft"],
+  ];
   return (
     <div className="mdx-tl">
       <h5>TODAY</h5>
-      <div>
-        <b>{at(-30)}</b>
-        <span>The walk-out: watch them come out of the tunnel</span>
-      </div>
-      <div>
-        <b>{at(-20)}</b>
-        <span>Be at The Oval, boots on</span>
-      </div>
-      <div>
-        <b>{kickoff}</b>
-        <span>Kick-off: Reds v Whites</span>
-      </div>
-      <div>
-        <b>FT</b>
-        <span>Man of the Match vote opens · pennants for the 22</span>
-      </div>
+      {rows.map(([time, text], i) => (
+        <div key={time} className={i === nowIdx ? "now" : nowIdx === -1 && i === 0 ? "next" : i < nowIdx ? "done" : ""}>
+          <b>{i === nowIdx ? "NOW" : time}</b>
+          <span>
+            {text}
+            {nowIdx === -1 && i === 0 ? <em> · next</em> : null}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -175,11 +203,12 @@ export function MatchdayIntro({ onDone }: { onDone: () => void }) {
 }
 
 // The two teams as First XI cards: today's team sheet on Line-up.
-export function FirstXiCard({ p, n, side, captain, edition, stat, avatarUrl }: { p: ProgPerson; n: number; side: "red" | "white"; captain: boolean; edition: string; stat: Stat; avatarUrl?: string | null }) {
+export function FirstXiCard({ p, n, side, captain, edition, stat, avatarUrl, me }: { p: ProgPerson; n: number; side: "red" | "white"; captain: boolean; edition: string; stat: Stat; avatarUrl?: string | null; me?: boolean }) {
   const [flip, setFlip] = useState(false);
   const cls = captain ? "capt" : edition === "GOLDEN BOOT" ? "boot" : edition === "SQUAD'S PICK" ? "star" : "";
   return (
-    <button className={"mdx-cw" + (flip ? " f" : "")} onClick={() => setFlip((f) => !f)} aria-label={`${p.name}'s First XI card`}>
+    <button className={"mdx-cw" + (flip ? " f" : "") + (me ? " me" : "")} onClick={() => setFlip((f) => !f)} aria-label={`${p.name}'s First XI card`}>
+      {me && <span className="mdx-you">YOU</span>}
       <span className="mdx-cd">
         <span className={"mdx-fc fr " + cls}>
           <span className="t2">
@@ -216,32 +245,42 @@ export function FirstXiCard({ p, n, side, captain, edition, stat, avatarUrl }: {
   );
 }
 
-export function MatchdayTeamCards({ prog, statOf, avatarOf }: { prog: Programme; statOf: (id: string) => Stat; avatarOf: (id: string) => string | null | undefined }) {
+export function MatchdayTeamCards({ prog, statOf, avatarOf, myId }: { prog: Programme; statOf: (id: string) => Stat; avatarOf: (id: string) => string | null | undefined; myId: string }) {
   const all = [...prog.reds, ...prog.whites];
   const top = [...all].sort((a, b) => statOf(b.id).goals - statOf(a.id).goals)[0];
   const pick = all.filter((p) => p.id !== top?.id).sort((a, b) => statOf(b.id).motm - statOf(a.id).motm || statOf(b.id).goals - statOf(a.id).goals)[0];
   const ed = (p: ProgPerson) => (p.id === top?.id ? "GOLDEN BOOT" : p.id === pick?.id ? "SQUAD'S PICK" : "FIRST XI");
   const order = all.slice().sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
   const num = (p: ProgPerson) => order.indexOf(p) + 1;
+  const sideOf = (p: ProgPerson): "red" | "white" => (prog.reds.includes(p) ? "red" : "white");
+  const caps = all.filter((p) => prog.captains.includes(p.id));
+  const card = (p: ProgPerson) => (
+    <FirstXiCard key={p.id} p={p} n={num(p)} side={sideOf(p)} captain={prog.captains.includes(p.id)} edition={ed(p)} stat={statOf(p.id)} avatarUrl={avatarOf(p.id)} me={p.id === myId} />
+  );
   return (
     <div className="mdx-team">
+      <div className="mdx-th">
+        <small>THE FIRST XI · TODAY&apos;S TEAMS</small>
+        <b>Reds v Whites</b>
+        <span>Tap a card to turn it over. Yours goes in your trophy cabinet after the game.</span>
+      </div>
+      {caps.length > 0 && (
+        <>
+          <h4 className="caps">The captains</h4>
+          <div className="mdx-cards two">{caps.map(card)}</div>
+        </>
+      )}
       {(
         [
-          ["Reds", prog.reds, "red"],
-          ["Whites", prog.whites, "white"],
+          ["Reds", prog.reds],
+          ["Whites", prog.whites],
         ] as const
-      ).map(([label, list, side]) => (
+      ).map(([label, list]) => (
         <div key={label}>
-          <h4 style={{ color: side === "red" ? RED : WHITE }}>
+          <h4 className={label === "Reds" ? "r" : "w"}>
             {label} <small>{list.length}</small>
           </h4>
-          <div className="mdx-cards">
-            {[...list]
-              .sort((a, b) => Number(prog.captains.includes(b.id)) - Number(prog.captains.includes(a.id)))
-              .map((p) => (
-                <FirstXiCard key={p.id} p={p} n={num(p)} side={side} captain={prog.captains.includes(p.id)} edition={ed(p)} stat={statOf(p.id)} avatarUrl={avatarOf(p.id)} />
-              ))}
-          </div>
+          <div className="mdx-cards">{list.filter((p) => !prog.captains.includes(p.id)).map(card)}</div>
         </div>
       ))}
     </div>
@@ -249,9 +288,12 @@ export function MatchdayTeamCards({ prog, statOf, avatarOf }: { prog: Programme;
 }
 
 export const matchdayCss = `
-.wcf-top.mdx{background:linear-gradient(90deg,#2a1d05,#5a4210 50%,#2a1d05);border-bottom:1px solid #f5d97a}
+.wcf-top.mdx{position:sticky;background:#0a0b10;border-bottom:1px solid #f5d97a;box-shadow:0 6px 24px -10px rgba(245,217,122,.45)}
+.wcf-top.mdx::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:linear-gradient(90deg,transparent,#fff6d1,transparent);background-size:40% 100%;background-repeat:no-repeat;animation:mdxShine 3.2s linear infinite}
+@keyframes mdxShine{from{background-position:-40% 0}to{background-position:140% 0}}
+.wcf-top.mdx .wcf-logo img{filter:drop-shadow(0 0 10px rgba(245,217,122,.55))}
 .wcf-top.mdx .wcf-wordmark-sub{color:#f5d97a}
-.wcf-nav.mdx{background:linear-gradient(180deg,#14100a,#0b0905);border-top:1px solid #f5d97a}
+.wcf-nav.mdx{background:#0a0b10;border-top:1px solid #f5d97a}
 .wcf-nav.mdx .wcf-navbtn{color:#a08b5a}
 .wcf-nav.mdx .wcf-navbtn.active{color:#f5d97a}
 .mdx-ribbon{position:sticky;top:0;z-index:4;display:flex;align-items:center;gap:8px;width:100%;padding:8px 14px;border:0;border-bottom:1px solid rgba(245,217,122,.35);background:#14100a;color:#f5f6f8;font:inherit;font-size:12px;cursor:pointer;text-align:left}
@@ -300,6 +342,24 @@ export const matchdayCss = `
 .mdx-tl div{display:grid;grid-template-columns:48px 1fr;gap:8px;padding:5px 0;font-size:12.5px;color:#e2e8f0;border-top:1px solid rgba(245,217,122,.12)}
 .mdx-tl div:first-of-type{border:0}
 .mdx-tl b{font:700 13px var(--font-oswald),sans-serif;color:#f5d97a}
+.mdx-tl .now{color:#fff;font-weight:700}
+.mdx-tl .done{opacity:.45}
+.mdx-tl .next em{font-style:normal;color:#f5d97a;font-weight:800}
+.mdx-tl .now b{color:#1a1405;background:#f5d97a;border-radius:4px;padding:0 5px;justify-self:start}
+.mdx-ft{position:relative;text-align:center;margin-top:16px}
+.mdx-ft small{font:600 10.5px var(--font-oswald),sans-serif;letter-spacing:.3em;color:#f5d97a}
+.mdx-ft .sc{display:flex;justify-content:center;align-items:center;gap:14px;font:700 64px/1 var(--font-oswald),sans-serif;margin-top:4px}
+.mdx-ft .sc span{color:#94a3b8;font-size:36px}
+.mdx-ft .lb{display:flex;justify-content:center;gap:58px;font:600 10px var(--font-oswald),sans-serif;letter-spacing:.2em;color:#cbd5e1}
+.mdx-th{text-align:center;margin:2px 0 14px}
+.mdx-th small{font:600 10.5px var(--font-oswald),sans-serif;letter-spacing:.26em;color:#f5d97a}
+.mdx-th b{display:block;font:700 30px var(--font-oswald),sans-serif;text-transform:uppercase}
+.mdx-th span{font-size:12px;color:#94a3b8}
+.mdx-team h4.caps{color:#f5d97a}.mdx-team h4.r{color:#e63946}.mdx-team h4.w{color:#e2e8f0}
+.mdx-cards.two{grid-template-columns:repeat(2,1fr);padding:0 12%}
+.mdx-cw{position:relative}
+.mdx-cw.me .mdx-cd{box-shadow:0 0 0 3px #e63946,0 0 22px rgba(230,57,70,.6)}
+.mdx-you{position:absolute;left:50%;top:-8px;transform:translateX(-50%);z-index:3;font:800 8.5px var(--sans);letter-spacing:.12em;background:#e63946;color:#fff;border-radius:5px;padding:2px 6px}
 .mdx-intro{position:fixed;inset:0;z-index:160;display:flex;align-items:center;justify-content:center;background:#05060b;overflow:hidden;animation:mdxOut .6s ease-in 3.6s forwards;color:#fff}
 @keyframes mdxOut{to{opacity:0;visibility:hidden}}
 .mdx-intro .cur{position:absolute;top:0;bottom:0;width:50%;animation:mdxOpen 1s cubic-bezier(.7,0,.2,1) 2.6s forwards}

@@ -5,12 +5,13 @@ import type { Trophy, TrophyKind } from "../../lib/cabinet";
 // when there's more than one), on glass shelves in a wooden cabinet. Tap a
 // slot for every one of them, with dates and scores.
 
-const ORDER: TrophyKind[] = ["ximedal", "xipennant", "matchball", "potm", "motm", "record", "apps", "debut"];
+const ORDER: TrophyKind[] = ["ximedal", "xipennant", "xicard", "matchball", "potm", "motm", "record", "apps", "debut"];
 const LABEL: Record<TrophyKind, [string, string]> = {
   matchball: ["Match ball", "Match balls"],
   potm: ["Player of the Month", "Player of the Month"],
   xipennant: ["First XI pennant", "First XI pennant"],
   ximedal: ["First XI medal", "First XI medal"],
+  xicard: ["First XI card", "First XI card"],
   motm: ["MOTM medal", "MOTM medals"],
   record: ["Club record", "Club records"],
   apps: ["Milestone shirt", "Milestone shirts"],
@@ -40,6 +41,21 @@ export function TrophyIcon({ kind, n }: { kind: TrophyKind; n?: number }) {
           <path d="M12 11h24" stroke="#fff" strokeWidth="1.6" />
           <text x="24" y="22" textAnchor="middle" fontFamily="var(--font-oswald),sans-serif" fontWeight="700" fontSize="5.6" fill="#fff">FIRST XI</text>
           <text x="24" y="28" textAnchor="middle" fontFamily="var(--font-caveat),cursive" fontWeight="700" fontSize="6" fill="#f5d97a">Nº1</text>
+        </svg>
+      );
+    case "xicard":
+      return (
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <defs>
+            <linearGradient id="xiCardG" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stopColor="#fff3c4" />
+              <stop offset=".45" stopColor="#f5d97a" />
+              <stop offset="1" stopColor="#8a6a28" />
+            </linearGradient>
+          </defs>
+          <rect x="11" y="4" width="26" height="38" rx="3.5" fill="url(#xiCardG)" stroke="#fff" strokeWidth="1" transform="rotate(-6 24 23)" />
+          <circle cx="23.4" cy="19" r="6" fill="#2a1d05" opacity=".35" />
+          <text x="23" y="35" textAnchor="middle" fontFamily="var(--font-oswald),sans-serif" fontWeight="700" fontSize="5" fill="#2a1d05" transform="rotate(-6 24 23)">FIRST XI</text>
         </svg>
       );
     case "ximedal":

@@ -4588,6 +4588,15 @@ function App({ session }: { session: Session }) {
   // kick-off is worked out in pretend-UTC and added to Date.now().
   const isMatchday = !!programme && nowUk.slice(0, 10) === programme.game.date && !closedMotmTallies[programme.game.id];
   const kickoffMs = programme ? Date.now() + (toMs(kickoffCutoff(programme.game.date, programme.game.kickoff, 0)) - toMs(nowUk)) : 0;
+  const mdPhase: "pre" | "live" | "ft" = !programme
+    ? "pre"
+    : programme.game.team_white_score != null && programme.game.team_red_score != null
+      ? "ft"
+      : kickoffCutoff(programme.game.date, programme.game.kickoff, 0) <= nowUk
+        ? "live"
+        : "pre";
+  // On matchday the hero is the First XI's card, so its usual Next match card would repeat it.
+  const nmShown = isMatchday && programme ? nextMatchGames.filter((g) => g.id !== programme.game.id) : nextMatchGames;
   const [mdIntro, setMdIntro] = useState(false);
   useEffect(() => {
     if (!isMatchday || !myId) return;
@@ -5840,7 +5849,7 @@ function App({ session }: { session: Session }) {
         </button>
       </header>
 
-      {isMatchday && programme && <MatchdayRibbon kickoffMs={kickoffMs} onOpen={openProgramme} />}
+      {isMatchday && programme && tab !== "fixtures" && <MatchdayRibbon kickoffMs={kickoffMs} phase={mdPhase} onOpen={openProgramme} />}
       {isOffline && <div className="wcf-offline-banner">Offline · showing what was last loaded</div>}
 
       {updateAvailable && (
@@ -5884,6 +5893,20 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
+            {isMatchday && programme && (
+              <>
+                <MatchdayHero
+                  prog={programme}
+                  kickoffMs={kickoffMs}
+                  phase={mdPhase}
+                  avatarOf={(id) => avatarByPlayerId.get(id)}
+                  onProgramme={openProgramme}
+                  onCards={() => setTab("lineup")}
+                  onVote={() => goToResult(programme.game.id)}
+                />
+                <MatchdayTimeline kickoff={programme.game.kickoff} phase={mdPhase} kickoffMs={kickoffMs} />
+              </>
+            )}
             <CreditChip />
             <OweBar due={myDue} onOpen={() => setPaySheetOpen(true)} />
             {rateGame && !myRatings[rateGame.id] && rateDismissed[rateGame.id] && (
@@ -6021,12 +6044,6 @@ function App({ session }: { session: Session }) {
               />
             ) : (
               <>
-                {isMatchday && programme && (
-                  <>
-                    <MatchdayHero prog={programme} kickoffMs={kickoffMs} avatarOf={(id) => avatarByPlayerId.get(id)} onProgramme={openProgramme} onCards={() => setTab("lineup")} />
-                    <MatchdayTimeline kickoff={programme.game.kickoff} />
-                  </>
-                )}
                 {!isMatchday && programme && programme.game.date >= nowUk.slice(0, 10) && (
                   <button className="wcf-prog-card" onClick={openProgramme}>
                     <span className="cv" aria-hidden="true" />
@@ -6071,10 +6088,10 @@ function App({ session }: { session: Session }) {
                     </div>
                   );
                 })}
-                {nextMatchGames.length > 0 && (
+                {nmShown.length > 0 && (
                   <>
-                    <div className="wcf-eyebrow">{nextMatchGames.length > 1 ? `Next match · ${nextMatchGames.length} games` : "Next match"}</div>
-                    {nextMatchGames.map((g, i) => (
+                    <div className="wcf-eyebrow">{nmShown.length > 1 ? `Next match · ${nmShown.length} games` : "Next match"}</div>
+                    {nmShown.map((g, i) => (
                       <GameCard
                         key={g.id}
                         featured
@@ -6244,8 +6261,7 @@ function App({ session }: { session: Session }) {
 
         {tab === "lineup" && isMatchday && programme && (
           <div className="mdx-teamwrap">
-            <div className="wcf-eyebrow">The First XI · today&apos;s teams</div>
-            <MatchdayTeamCards prog={programme} statOf={xiStatOf} avatarOf={(id) => avatarByPlayerId.get(id)} />
+            <MatchdayTeamCards prog={programme} statOf={xiStatOf} avatarOf={(id) => avatarByPlayerId.get(id)} myId={myId} />
           </div>
         )}
         {tab === "lineup" && (

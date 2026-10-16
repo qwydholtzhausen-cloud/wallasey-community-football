@@ -3,7 +3,7 @@
 // club records). Pure and DB-free, like lib/records.ts.
 import type { ClubRecords } from "./records";
 
-export type TrophyKind = "debut" | "matchball" | "motm" | "potm" | "record" | "apps" | "xipennant" | "ximedal";
+export type TrophyKind = "debut" | "matchball" | "motm" | "potm" | "record" | "apps" | "xipennant" | "ximedal" | "xicard";
 
 export interface Trophy {
   kind: TrophyKind;
@@ -68,6 +68,8 @@ export function computeCabinet(input: {
   const xi = input.firstXi;
   if (xi && xi.played.includes(playerId))
     out.push({ kind: "xipennant", key: "xipennant", title: "The First XI pennant", detail: `The club's first 11-a-side · ${shortDate(xi.date)}`, date: xi.date });
+  if (xi && xi.played.includes(playerId))
+    out.push({ kind: "xicard", key: "xicard", title: "Your First XI card", detail: `One of 22 · the club's first 11-a-side · ${shortDate(xi.date)}`, date: xi.date });
   if (xi && xi.motm.includes(playerId))
     out.push({ kind: "ximedal", key: "ximedal", title: "The First XI medal", detail: `Man of the Match, the club's first 11-a-side · one of one`, date: xi.date });
 
