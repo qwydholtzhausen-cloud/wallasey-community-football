@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, avatarFor } from "./shared";
 import type { Programme, ProgPerson } from "../../lib/programme";
 import { FIRST_XI_DATE_LABEL } from "../../lib/firstXI";
+import { nowInLondon } from "../../lib/time";
 
 // ── The First XI matchday programme ──
 // A cream paper programme you page through, for the club's first
@@ -38,6 +39,16 @@ export function MatchdayProgramme({
   const face = (p: ProgPerson, cls: string, style?: React.CSSProperties) => (
     <Avatar name={p.name} avatarUrl={avatarOf(p.id)} className={cls} background={avatarFor(p.name).gradient} style={style} />
   );
+  // "Today" only on the day itself; before it (and in History after) the
+  // programme talks about the day by name.
+  const wd = dt(prog.game.date, { weekday: "long" });
+  const isDay = nowInLondon().slice(0, 10) === prog.game.date;
+  const day = isDay ? "today" : wd; // "Sunday is the first…"
+  const Day = isDay ? "Today" : wd;
+  const onDay = isDay ? "today" : `on ${wd}`; // "playing on Sunday"
+  const OnDay = isDay ? "Today" : `On ${wd}`;
+  const dayS = isDay ? "today's" : `${wd}'s`;
+  const DayS = isDay ? "Today's" : `${wd}'s`;
   const sideOf = (id: string) => (prog.reds.some((p) => p.id === id) ? "Reds" : "Whites");
   const cap = (id: string) => prog.captains.includes(id);
   const { h2h, tape, watch, records: rec } = prog;
@@ -109,8 +120,8 @@ export function MatchdayProgramme({
               afford, run properly, and built to last.
             </p>
             <p>
-              Since the first game{prog.firstDate ? ` on ${long(prog.firstDate)}` : ""}, that&apos;s meant {prog.games} games, {prog.goals} goals and {members} members. Today
-              we do something new: eleven against eleven, on a full-size pitch.
+              Since the first game{prog.firstDate ? ` on ${long(prog.firstDate)}` : ""}, that&apos;s meant {prog.games} games, {prog.goals} goals and {members} members. {OnDay} we
+              do something new: eleven against eleven, on a full-size pitch.
             </p>
             <p>Thank you to everyone who books, pays on time, turns up and votes. That&apos;s what keeps the price down and the games going.</p>
             <p>Play hard, play fair and look after each other. Enjoy it. You only play the first one once.</p>
@@ -124,10 +135,10 @@ export function MatchdayProgramme({
     },
     {
       key: "teams",
-      label: "Today's teams",
+      label: "The teams",
       body: (
         <div className="pgm-pg">
-          {stub("TODAY'S TEAMS", "Reds v Whites")}
+          {stub(`${DayS.toUpperCase()} TEAMS`, "Reds v Whites")}
           <div className="pgm-sides">
             {(
               [
@@ -161,7 +172,7 @@ export function MatchdayProgramme({
           {stub(
             "TALE OF THE TAPE",
             <>
-              Today&apos;s XIs,
+              {DayS} XIs,
               <br />
               this season
             </>,
@@ -290,7 +301,7 @@ export function MatchdayProgramme({
               Reds have scored {h2h.redGoals} to Whites&apos; {h2h.whiteGoals}.
             </p>
             <p>
-              Every one of them was on a small pitch. <b>Today is the first on a full one:</b> more space, longer runs, heavier legs. All square.
+              Every one of them was on a small pitch. <b>{Day} is the first on a full one:</b> more space, longer runs, heavier legs. All square.
             </p>
           </div>
           {folio("RIVALRY")}
@@ -324,7 +335,7 @@ export function MatchdayProgramme({
                   <small>{k}</small>
                   <b>{s.name}</b>
                   <span>
-                    {line(s)} Today: {sideOf(s.id)}.
+                    {line(s)} {OnDay}: {sideOf(s.id)}.
                   </span>
                 </div>
               </div>
@@ -356,7 +367,7 @@ export function MatchdayProgramme({
                   <div>
                     <small>{x.month.toUpperCase()}</small>
                     <b>{x.name}</b>
-                    <span>{playing ? `Playing today, for ${sideOf(x.id)}${cap(x.id) ? " (captain)" : ""}` : "Not in today's squad"}</span>
+                    <span>{playing ? `Playing ${onDay}, for ${sideOf(x.id)}${cap(x.id) ? " (captain)" : ""}` : `Not in ${dayS} squad`}</span>
                   </div>
                 </div>
               );
@@ -369,7 +380,7 @@ export function MatchdayProgramme({
                   <b>{rec.bestHaul.name}</b>
                   <span>
                     {rec.bestHaul.goals} in one night, {short(rec.bestHaul.date)}.
-                    {[...prog.reds, ...prog.whites].some((p) => p.id === rec.bestHaul!.id) ? ` Playing today, for ${sideOf(rec.bestHaul.id)}.` : ""}
+                    {[...prog.reds, ...prog.whites].some((p) => p.id === rec.bestHaul!.id) ? ` Playing ${onDay}, for ${sideOf(rec.bestHaul.id)}.` : ""}
                   </span>
                 </div>
               </div>
@@ -389,7 +400,7 @@ export function MatchdayProgramme({
             <>
               Records to
               <br />
-              break today
+              break {onDay}
             </>,
           )}
           {rec.biggestWin && (
@@ -440,7 +451,7 @@ export function MatchdayProgramme({
                 <small>{short(prog.firstDate).toUpperCase()}</small>
                 <b>The first game</b>
                 <span>
-                  A new club: affordable games, run properly. {prog.originals.length} of today&apos;s 22 were there.
+                  A new club: affordable games, run properly. {prog.originals.length} of {dayS} 22 were there.
                 </span>
               </div>
             )}
@@ -466,7 +477,7 @@ export function MatchdayProgramme({
               </div>
             )}
             <div className="pgm-stop now">
-              <small>TODAY</small>
+              <small>{isDay ? "TODAY" : short(prog.game.date).toUpperCase()}</small>
               <b>The First XI</b>
               <span>Eleven a side, for the first time.</span>
             </div>
@@ -482,7 +493,7 @@ export function MatchdayProgramme({
         <div className="pgm-pg">
           {stub("HERE FROM DAY ONE", "The originals")}
           <p className="pgm-p">
-            {prog.originals.length} of today&apos;s 22 played the very first game{prog.firstDate ? `, on ${long(prog.firstDate)}` : ""}.
+            {prog.originals.length} of {dayS} 22 played the very first game{prog.firstDate ? `, on ${long(prog.firstDate)}` : ""}.
           </p>
           <div className="pgm-orig">
             {prog.originals.map((p, i) => (
