@@ -74,7 +74,8 @@ export async function GET(req: Request) {
   const nowMs = toMs(nowUkStr);
   const { data: games } = await admin
     .from("games")
-    .select("id, date, kickoff, venue, pitch, price, published, max_players, team_white_score, team_red_score, bookings(id, player_id, status, waiting, team, pot_exempt_reason)");
+    .select("id, date, kickoff, venue, pitch, price, published, max_players, team_white_score, team_red_score, bookings(id, player_id, status, waiting, team, pot_exempt_reason)")
+    .is("called_off_at", null); // a called-off game gets no reminders or nudges
   const { data: settings } = await admin.from("club_settings").select("team_white_name, team_red_name").single();
   const whiteLabel = settings?.team_white_name || "Whites";
   const redLabel = settings?.team_red_name || "Reds";
@@ -426,6 +427,7 @@ export async function GET(req: Request) {
     .from("games")
     .select("id, date, venue")
     .eq("published", true)
+    .is("called_off_at", null)
     .not("published_at", "is", null)
     .lte("published_at", new Date(Date.now() - 30 * 60 * 1000).toISOString());
   const dueGames = (unannounced ?? []).filter((g) => !notifiedKeys.has(`fixture-announced-${g.id}`));
@@ -571,6 +573,7 @@ export async function GET(req: Request) {
     const { data: monthRows } = await admin
       .from("games")
       .select("date, kickoff, published, team_white_score, team_red_score, bookings(player_id, waiting, team)")
+      .is("called_off_at", null)
       .gte("date", `${previousMonthKey(nowUkStr)}-01`)
       .lt("date", nextMonthStart(thisMonth));
     const inMonth = (key: string) => (monthRows ?? []).filter((g) => g.published && g.date.startsWith(key));

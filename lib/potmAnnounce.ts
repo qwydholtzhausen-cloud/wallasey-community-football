@@ -18,6 +18,7 @@ export async function announcePlayerOfMonth(
   const { data: games } = await admin
     .from("games")
     .select("id, date, kickoff, published, team_white_score, team_red_score")
+    .is("called_off_at", null) // a called-off game never gets a score, so it can't hold the month up
     .gte("date", `${previousMonthKey(nowUk)}-01`)
     .lt("date", nextMonthStart(nowUk.slice(0, 7)));
   const all = (games ?? []) as { id: string; date: string; kickoff: string; published: boolean; team_white_score: number | null; team_red_score: number | null }[];

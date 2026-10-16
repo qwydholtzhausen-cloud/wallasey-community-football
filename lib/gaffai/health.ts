@@ -103,6 +103,7 @@ export async function checkAppHealth(admin: SupabaseClient) {
   const { data: gameData } = await admin
     .from("games")
     .select("id, date, kickoff, venue, published, team_white_score, team_red_score, bookings(player_id, waiting)")
+    .is("called_off_at", null)
     .gte("date", "2026-08-01")
     .lte("date", now.slice(0, 10));
   const played = ((gameData ?? []) as GameRow[]).filter((g) => g.published && g.bookings.some((b) => !b.waiting) && kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= now);
@@ -194,6 +195,7 @@ export async function checkWrapped(admin: SupabaseClient, period?: string) {
     admin
       .from("games")
       .select("id, date, kickoff, venue, published, max_players, special, team_white_score, team_red_score, bookings(player_id, waiting, team, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name))")
+      .is("called_off_at", null)
       .lt("date", end)
       .order("date"),
     fetchAll<{ game_id: string; player_id: string; goals: number }>((f, t) => admin.from("game_stats").select("game_id, player_id, goals").range(f, t)),

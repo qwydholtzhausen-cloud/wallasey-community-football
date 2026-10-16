@@ -160,7 +160,7 @@ export interface SetPotExemptAction {
 // in app/WirralCommunityFootball.tsx) rather than "has a score entered" -
 // a played-but-not-yet-scored game is still past, not upcoming.
 async function getFixtureCounts(admin: SupabaseClient) {
-  const { data } = await admin.from("games").select("date, kickoff");
+  const { data } = await admin.from("games").select("date, kickoff").is("called_off_at", null);
   const nowMs = toMs(nowInLondon());
   const rows = data ?? [];
   const played = rows.filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs).length;
@@ -173,7 +173,8 @@ async function findGames(
 ) {
   let query = admin
     .from("games")
-    .select("id, date, kickoff, venue, pitch, price, max_players, published, team_white_score, team_red_score, bookings(status, waiting)");
+    .select("id, date, kickoff, venue, pitch, price, max_players, published, team_white_score, team_red_score, bookings(status, waiting)")
+    .is("called_off_at", null);
   if (args.date_from) query = query.gte("date", args.date_from);
   if (args.date_to) query = query.lte("date", args.date_to);
   if (args.venue_contains) query = query.ilike("venue", `%${args.venue_contains}%`);
@@ -497,7 +498,7 @@ async function suggestBalancedTeams(admin: SupabaseClient, args: { game_id: stri
   const [nameOf, ratings, { data: games }, { data: goalRows }, { data: motmVotesRaw }] = await Promise.all([
     namesById(admin, playerIds),
     ratingsById(admin, playerIds),
-    admin.from("games").select("id, team_white_score, team_red_score, bookings(player_id, waiting, team)"),
+    admin.from("games").select("id, team_white_score, team_red_score, bookings(player_id, waiting, team)").is("called_off_at", null),
     admin.from("game_stats").select("game_id, player_id, goals"),
     admin.from("motm_votes").select("game_id, candidate_id"),
   ]);
@@ -534,6 +535,7 @@ async function getPlayerRecords(admin: SupabaseClient, args: { player_id?: strin
   const { data: games } = await admin
     .from("games")
     .select("date, team_white_score, team_red_score, bookings(player_id, waiting, team)")
+    .is("called_off_at", null)
     .not("team_white_score", "is", null)
     .not("team_red_score", "is", null);
 
@@ -817,6 +819,7 @@ async function getPlayerOfMonth(admin: SupabaseClient, args: { month?: string })
   const { data: games } = await admin
     .from("games")
     .select("id, date, kickoff, team_white_score, team_red_score")
+    .is("called_off_at", null)
     .gte("date", `${monthKey}-01`)
     .lt("date", `${nextMonthKey}-01`);
 
@@ -1002,7 +1005,7 @@ async function getPredictionLeaderboard(admin: SupabaseClient, args: { month?: s
 
   const gameIds = [...new Set(rows.map((r) => r.game_id))];
   const [{ data: games }, nameOf] = await Promise.all([
-    admin.from("games").select("id, date, team_white_score, team_red_score").in("id", gameIds),
+    admin.from("games").select("id, date, team_white_score, team_red_score").is("called_off_at", null).in("id", gameIds),
     namesById(
       admin,
       rows.map((r) => r.player_id)
@@ -1044,7 +1047,7 @@ async function getPredictionLeaderboard(admin: SupabaseClient, args: { month?: s
 // real one.
 async function getPotSummary(admin: SupabaseClient) {
   const [{ data: games }, { data: potEntries }] = await Promise.all([
-    admin.from("games").select("id, date, kickoff, venue, price, pitch_cost, bookings(waiting, status, pot_exempt_reason)"),
+    admin.from("games").select("id, date, kickoff, venue, price, pitch_cost, bookings(waiting, status, pot_exempt_reason)").is("called_off_at", null),
     admin.from("pot_entries").select("amount, description, category, created_at"),
   ]);
 
@@ -1318,7 +1321,7 @@ async function findInactivePlayers(admin: SupabaseClient, args: { inactive_days?
   if (error) throw new Error("Last-active tracking isn't set up yet (profiles.last_active_at is missing).");
   const tests = await testAccountIds(admin);
   const profiles = (allProfiles ?? []).filter((p) => !tests.has(p.id));
-  const { data: games } = await admin.from("games").select("date, kickoff, team_white_score, bookings(player_id, waiting)");
+  const { data: games } = await admin.from("games").select("date, kickoff, team_white_score, bookings(player_id, waiting)").is("called_off_at", null);
   const nowUk = nowInLondon();
   const lastPlayed: Record<string, string> = {};
   const upcoming: Record<string, number> = {};
@@ -1367,6 +1370,7 @@ async function getWrappedEngagement(admin: SupabaseClient, args: { month?: strin
     admin
       .from("games")
       .select("id, date, kickoff, published, team_white_score, bookings(player_id, waiting, team)")
+      .is("called_off_at", null)
       .gte("date", `${monthKey}-01`)
       .lt("date", nextMonthStart(monthKey)),
   ]);
@@ -1499,7 +1503,7 @@ async function getAverageAge(admin: SupabaseClient) {
 // game to offer a freebie against.
 async function nextBookedGamesByPlayer(admin: SupabaseClient, playerIds: string[]) {
   const nowMs = toMs(nowInLondon());
-  const { data: games } = await admin.from("games").select("id, date, kickoff, venue, bookings(id, player_id, waiting)").eq("published", true);
+  const { data: games } = await admin.from("games").select("id, date, kickoff, venue, bookings(id, player_id, waiting)").is("called_off_at", null).eq("published", true);
   const upcomingGames = (games ?? [])
     .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, 0)) > nowMs)
     .sort((a, b) => (a.date + a.kickoff).localeCompare(b.date + b.kickoff));
@@ -1647,8 +1651,9 @@ async function proposeBookingInvite(admin: SupabaseClient, args: { game_id: stri
   const ids = [...new Set(args.player_ids ?? [])];
   if (!ids.length) throw new Error("Pick at least one player.");
   if (ids.length > 40) throw new Error("That's a lot of people - 40 at most per message.");
-  const { data: game } = await admin.from("games").select("id, date, kickoff, venue, max_players, published, bookings(player_id, waiting)").eq("id", args.game_id).single();
+  const { data: game } = await admin.from("games").select("id, called_off_at, date, kickoff, venue, max_players, published, bookings(player_id, waiting)").eq("id", args.game_id).single();
   if (!game) throw new Error("Fixture not found.");
+  if (game.called_off_at) throw new Error("That fixture has been called off.");
   if (!game.published) throw new Error("That fixture isn't published yet - publish it first.");
   if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= toMs(nowInLondon())) throw new Error("That fixture's already kicked off.");
   const spacesLeft = game.max_players - (game.bookings ?? []).filter((b) => !b.waiting).length;
@@ -1664,8 +1669,9 @@ async function proposeBookingInvite(admin: SupabaseClient, args: { game_id: stri
 }
 
 export async function executeBookingInvite(admin: SupabaseClient, callerId: string, action: BookingInviteAction) {
-  const { data: game } = await admin.from("games").select("id, date, kickoff, max_players, bookings(player_id, waiting)").eq("id", action.gameId).single();
+  const { data: game } = await admin.from("games").select("id, called_off_at, date, kickoff, max_players, bookings(player_id, waiting)").eq("id", action.gameId).single();
   if (!game) throw new Error("That fixture no longer exists.");
+  if (game.called_off_at) throw new Error("That fixture has been called off.");
   if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= toMs(nowInLondon())) throw new Error("That fixture's already kicked off.");
   const booked = new Set((game.bookings ?? []).map((b) => b.player_id));
   const targets = action.players.filter((p) => !booked.has(p.id));
@@ -1804,7 +1810,7 @@ function contentKey(prefix: string, ids: string[]): string {
 // payment redesign (this session, earlier) exists to prevent.
 async function computeUnpaidNextGameNudge(admin: SupabaseClient): Promise<Nudge | null> {
   const nowMs = toMs(nowInLondon());
-  const { data: games } = await admin.from("games").select("id, date, kickoff, venue");
+  const { data: games } = await admin.from("games").select("id, date, kickoff, venue").is("called_off_at", null);
   const upcoming = (games ?? [])
     .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) > nowMs)
     .sort((a, b) => (a.date + a.kickoff).localeCompare(b.date + b.kickoff));
@@ -1870,7 +1876,7 @@ async function computePushIssuesNudge(admin: SupabaseClient): Promise<Nudge | nu
 async function computeUnpublishedDraftsNudge(admin: SupabaseClient): Promise<Nudge | null> {
   const nowMs = toMs(nowInLondon());
   const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-  const { data: games } = await admin.from("games").select("id, date, venue, kickoff").eq("published", false);
+  const { data: games } = await admin.from("games").select("id, date, venue, kickoff").is("called_off_at", null).eq("published", false);
   const soonDrafts = (games ?? []).filter((g) => {
     const kickoffMs = toMs(kickoffCutoff(g.date, g.kickoff, 0));
     return kickoffMs > nowMs && kickoffMs - nowMs <= sevenDaysMs;
@@ -1915,7 +1921,7 @@ const TREND_RUN_LENGTH = 3;
 // different key, not the same nudge staying dismissed forever).
 async function computeMotmTurnoutTrendNudge(admin: SupabaseClient): Promise<Nudge | null> {
   const nowMs = toMs(nowInLondon());
-  const { data: games } = await admin.from("games").select("id, date, kickoff");
+  const { data: games } = await admin.from("games").select("id, date, kickoff").is("called_off_at", null);
   const played = (games ?? [])
     .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs)
     .sort((a, b) => (a.date + a.kickoff).localeCompare(b.date + b.kickoff));
@@ -1938,7 +1944,7 @@ async function computeMotmTurnoutTrendNudge(admin: SupabaseClient): Promise<Nudg
 
 async function computeAttendanceTrendNudge(admin: SupabaseClient): Promise<Nudge | null> {
   const nowMs = toMs(nowInLondon());
-  const { data: games } = await admin.from("games").select("id, date, kickoff, bookings(waiting)");
+  const { data: games } = await admin.from("games").select("id, date, kickoff, bookings(waiting)").is("called_off_at", null);
   type GameWithBookings = { id: string; date: string; kickoff: string; bookings: { waiting: boolean }[] | null };
   const played = ((games ?? []) as GameWithBookings[])
     .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs)
@@ -1967,7 +1973,7 @@ async function computeAttendanceTrendNudge(admin: SupabaseClient): Promise<Nudge
 // going down"), not a hypothetical.
 async function computePredictionParticipationTrendNudge(admin: SupabaseClient): Promise<Nudge | null> {
   const nowMs = toMs(nowInLondon());
-  const { data: games } = await admin.from("games").select("id, date, kickoff");
+  const { data: games } = await admin.from("games").select("id, date, kickoff").is("called_off_at", null);
   const played = (games ?? [])
     .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs)
     .sort((a, b) => (a.date + a.kickoff).localeCompare(b.date + b.kickoff));
@@ -1999,7 +2005,7 @@ async function computePredictionParticipationTrendNudge(admin: SupabaseClient): 
 // before the subtraction.
 async function computeBookingLeadTimeTrendNudge(admin: SupabaseClient): Promise<Nudge | null> {
   const nowMs = toMs(nowInLondon());
-  const { data: games } = await admin.from("games").select("id, date, kickoff, bookings(waiting, created_at)");
+  const { data: games } = await admin.from("games").select("id, date, kickoff, bookings(waiting, created_at)").is("called_off_at", null);
   type GameWithBookingTimes = { id: string; date: string; kickoff: string; bookings: { waiting: boolean; created_at: string }[] | null };
   const played = ((games ?? []) as GameWithBookingTimes[])
     .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)) <= nowMs)
@@ -2038,7 +2044,7 @@ async function computeBookingLeadTimeTrendNudge(admin: SupabaseClient): Promise<
 async function computeMatchdayNotFullNudge(admin: SupabaseClient): Promise<Nudge | null> {
   const nowMs = toMs(nowInLondon());
   const today = nowInLondon().slice(0, 10);
-  const { data: games } = await admin.from("games").select("id, date, kickoff, venue, max_players, bookings(waiting)").eq("date", today).eq("published", true);
+  const { data: games } = await admin.from("games").select("id, date, kickoff, venue, max_players, bookings(waiting)").is("called_off_at", null).eq("date", today).eq("published", true);
   const notFull = (games ?? [])
     .filter((g) => toMs(kickoffCutoff(g.date, g.kickoff, 0)) > nowMs)
     .map((g) => ({ id: g.id, venue: g.venue, spotsLeft: g.max_players - (g.bookings ?? []).filter((b: { waiting: boolean }) => !b.waiting).length }))
@@ -2385,8 +2391,9 @@ export async function executePublishFixture(admin: SupabaseClient, callerId: str
 // confirming, same "re-check before mutating" discipline as every other
 // execute* function here.
 export async function executeMatchdayPush(admin: SupabaseClient, callerId: string, action: MatchdayPushAction) {
-  const { data: game } = await admin.from("games").select("id, date, kickoff, venue, max_players, bookings(player_id, waiting)").eq("id", action.gameId).single();
+  const { data: game } = await admin.from("games").select("id, called_off_at, date, kickoff, venue, max_players, bookings(player_id, waiting)").eq("id", action.gameId).single();
   if (!game) throw new Error("That fixture no longer exists.");
+  if (game.called_off_at) throw new Error("That fixture has been called off.");
   const nowMs = toMs(nowInLondon());
   if (game.date !== nowInLondon().slice(0, 10)) throw new Error("That fixture is no longer today.");
   if (toMs(kickoffCutoff(game.date, game.kickoff, 0)) <= nowMs) throw new Error("That fixture's already kicked off.");

@@ -2466,3 +2466,121 @@ insert into public.history_moments (happened_on, title, body, kind, player_ids)
 select date '2026-08-17', 'The first ever goal', 'The very first goal in the club''s history.', 'goal', array['c6aa4c41-596a-4818-9622-2cb57dbe9e49']::uuid[]
 where exists (select 1 from public.profiles where id = 'c6aa4c41-596a-4818-9622-2cb57dbe9e49')
   and not exists (select 1 from public.history_moments where title = 'The first ever goal');
+
+-- ── Calling off a game (16 Oct 2026) ─────────────────────────────────
+-- An admin calls off a fixture instead of deleting it: the game stays (with
+-- a red CALLED OFF stamp), everyone who'd paid gets a game credit, anyone
+-- who'd paid with a credit gets it back, and nothing else can happen to its
+-- bookings. Deleting a fixture still gives no credits, on purpose.
+alter table public.games add column if not exists called_off_at timestamptz;
+alter table public.games add column if not exists called_off_reason text;
+
+alter table public.player_credits drop constraint if exists player_credits_source_check;
+alter table public.player_credits add constraint player_credits_source_check check (source in ('dropout', 'admin', 'calloff'));
+
+create or replace function public.admin_call_off_game(p_game_id uuid, p_reason text) returns int
+language plpgsql security definer set search_path = public as $$
+declare
+  g record;
+  b record;
+  spent record;
+  label text;
+  why text := nullif(btrim(coalesce(p_reason, '')), '');
+  credited int := 0;
+begin
+  if not public.is_admin() then
+    raise exception 'Only admins can call off a game';
+  end if;
+  select * into g from public.games where id = p_game_id for update;
+  if not found then
+    raise exception 'Game not found';
+  end if;
+  if g.called_off_at is not null then
+    raise exception 'This game is already called off';
+  end if;
+  if g.team_white_score is not null or g.team_red_score is not null then
+    raise exception 'This game already has a result';
+  end if;
+  update public.games set called_off_at = now(), called_off_reason = why where id = p_game_id;
+  label := public.credit_game_label(p_game_id);
+  for b in select * from public.bookings where game_id = p_game_id and not waiting loop
+    select * into spent from public.player_credits where used_on_booking_id = b.id and status = 'used' for update;
+    if found then
+      update public.player_credits set status = 'available', used_on_booking_id = null, used_at = null where id = spent.id;
+      insert into public.admin_messages (recipient_id, sender_id, message)
+      values (b.player_id, null, format('%s has been called off%s. You''d paid with a game credit, so it''s back with you for your next game.', label, coalesce(' (' || why || ')', '')));
+      credited := credited + 1;
+    elsif b.pot_exempt_reason is null and b.status = 'confirmed' then
+      insert into public.player_credits (player_id, status, source, source_game_id) values (b.player_id, 'available', 'calloff', p_game_id);
+      insert into public.admin_messages (recipient_id, sender_id, message)
+      values (b.player_id, null, format('%s has been called off%s. You''d paid, so you''ve got a game credit. Use it on any game from the To pay list.', label, coalesce(' (' || why || ')', '')));
+      credited := credited + 1;
+    elsif b.pot_exempt_reason is null and b.status = 'pending' then
+      -- Said they'd paid, not yet confirmed: the same "did the money
+      -- arrive?" check as a drop-out.
+      insert into public.player_credits (player_id, status, source, source_game_id) values (b.player_id, 'awaiting_check', 'calloff', p_game_id);
+    end if;
+  end loop;
+  return credited;
+end;
+$$;
+grant execute on function public.admin_call_off_game(uuid, text) to authenticated;
+
+-- Dropping out of a called-off game would be a second credit: not allowed.
+create or replace function public.credit_on_booking_delete() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  g record;
+  spent record;
+begin
+  if old.waiting then
+    return old;
+  end if;
+  select date, kickoff, price, called_off_at into g from public.games where id = old.game_id;
+  if not found then
+    return old; -- the whole fixture is being deleted
+  end if;
+  if g.called_off_at is not null then
+    return old; -- called off: credits were already given
+  end if;
+  if ((g.date + g.kickoff::time) at time zone 'Europe/London') <= now() then
+    return old; -- after kick-off: a no-show, not a drop-out
+  end if;
+  select * into spent from public.player_credits where used_on_booking_id = old.id and status = 'used' for update;
+  if found then
+    update public.player_credits set status = 'available', used_on_booking_id = null, used_at = null where id = spent.id;
+    insert into public.admin_messages (recipient_id, sender_id, message)
+    values (old.player_id, null, format('You dropped out of %s, which you''d paid for with a credit, so the credit is back with you.', public.credit_game_label(old.game_id)));
+  elsif not public.credits_enabled() then
+    return old; -- credits paused by an admin: nothing new is earned
+  elsif old.pot_exempt_reason is null and old.status = 'confirmed' then
+    insert into public.player_credits (player_id, status, source, source_game_id) values (old.player_id, 'available', 'dropout', old.game_id);
+    insert into public.admin_messages (recipient_id, sender_id, message)
+    values (old.player_id, null, format('You dropped out of %s, so you''ve got a game credit. Use it on any game from the To pay list.', public.credit_game_label(old.game_id)));
+  elsif old.pot_exempt_reason is null and old.status = 'pending' then
+    insert into public.player_credits (player_id, status, source, source_game_id) values (old.player_id, 'awaiting_check', 'dropout', old.game_id);
+  end if;
+  return old;
+end;
+$$;
+
+-- From the app, a called-off game's bookings are frozen: no booking, no
+-- dropping out, no paying. (Deleting the whole fixture still works.)
+create or replace function public.guard_called_off_booking() returns trigger
+language plpgsql set search_path = public as $$
+declare
+  off timestamptz;
+begin
+  if current_user <> 'authenticated' then
+    return coalesce(new, old);
+  end if;
+  select called_off_at into off from public.games where id = coalesce(new.game_id, old.game_id);
+  if off is not null then
+    raise exception 'This game has been called off';
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+drop trigger if exists bookings_guard_called_off on public.bookings;
+create trigger bookings_guard_called_off before insert or update or delete on public.bookings
+  for each row execute function public.guard_called_off_booking();

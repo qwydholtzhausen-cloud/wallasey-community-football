@@ -149,7 +149,7 @@ export async function GET(req: Request) {
   const monthKey = todayStr.slice(0, 7);
   const reviewKey = `gaffai-wrapped-review-${monthKey}`;
   // typedGames only has scored games, and today's isn't scored yet.
-  const { data: monthFixtures } = await admin.from("games").select("date").eq("published", true).gte("date", `${monthKey}-01`).lt("date", nextMonthStart(monthKey)).order("date");
+  const { data: monthFixtures } = await admin.from("games").select("date").eq("published", true).is("called_off_at", null).gte("date", `${monthKey}-01`).lt("date", nextMonthStart(monthKey)).order("date");
   const lastOfMonth = (monthFixtures ?? []).at(-1);
   if (!monthKey.endsWith("-12") && lastOfMonth?.date === todayStr && !notifiedKeys.has(reviewKey)) {
     try {

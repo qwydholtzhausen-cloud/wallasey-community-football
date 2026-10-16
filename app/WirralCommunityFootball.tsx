@@ -136,6 +136,10 @@ export interface GameRow {
   // usual red/green booking colours. Undefined until the column exists.
   special?: boolean;
   published_at?: string | null;
+  // Called off by an admin (admin_call_off_game): kept, stamped CALLED OFF,
+  // paid players credited. Out of every other list.
+  called_off_at?: string | null;
+  called_off_reason?: string | null;
   bookings: BookingRow[];
 }
 
@@ -1724,6 +1728,7 @@ function App({ session }: { session: Session }) {
     } else setPendingMembers([]);
   }, []);
 
+  const [calledOff, setCalledOff] = useState<GameRow[]>([]);
   const loadGames = useCallback(async () => {
     const { data } = await supabase
       .from("games")
@@ -1731,7 +1736,13 @@ function App({ session }: { session: Session }) {
         "*, bookings(id, player_id, status, waiting, team, created_at, promoted_at, pot_exempt_reason, player:profiles!bookings_player_id_fkey(id, display_name, role, avatar_url), confirmer:profiles!bookings_confirmed_by_fkey(display_name))"
       )
       .order("date", { ascending: true });
-    if (data) setGames(data as unknown as GameRow[]);
+    if (data) {
+      // A called-off game is kept apart, so nothing else (results, stats,
+      // the pot, Player of the Month, Wrapped) ever counts it.
+      const rows = data as unknown as GameRow[];
+      setGames(rows.filter((g) => !g.called_off_at));
+      setCalledOff(rows.filter((g) => g.called_off_at));
+    }
   }, []);
 
   const loadClubSettings = useCallback(async () => {
@@ -2567,6 +2578,19 @@ function App({ session }: { session: Session }) {
     }
     setFixtureSheet(null);
   }
+  // Calling off a game (database: admin_call_off_game): the paid get a
+  // credit and a message, then one push to everyone who was booked.
+  async function callOffGame(id: string, reason: string) {
+    const game = games.find((g) => g.id === id);
+    const { data, error } = await supabase.rpc("admin_call_off_game", { p_game_id: id, p_reason: reason.trim() || null });
+    if (error) return notifyError(error.message);
+    pushNotify("notify-called-off", { gameId: id });
+    await loadGames();
+    if (GAME_CREDITS_LIVE) Promise.all([loadCredits(), loadAdminMessages()]);
+    if (game) logAction("Called off fixture", `${game.venue} — ${fmtDate(game.date)}${reason.trim() ? ` (${reason.trim()})` : ""}`);
+    const n = typeof data === "number" ? data : 0;
+    notifySuccess(`Game called off · ${n} ${n === 1 ? "credit" : "credits"} given`);
+  }
   async function deleteGame(id: string) {
     const game = games.find((g) => g.id === id);
     const { error } = await supabase.from("games").delete().eq("id", id);
@@ -3222,8 +3246,16 @@ function App({ session }: { session: Session }) {
 
   const nowUk = nowInLondon();
   const upcomingGames = useMemo(
-    () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) > nowUk).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)),
+    () =>
+      games
+        .filter((g) => !g.called_off_at && kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) > nowUk)
+        .sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)),
     [games, nowUk]
+  );
+  // Called-off games stay on Fixtures, stamped, until the day after.
+  const calledOffGames = useMemo(
+    () => calledOff.filter((g) => g.published && g.date >= nowUk.slice(0, 10)).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)),
+    [calledOff, nowUk]
   );
   // Same YYYY-MM grouping key already used by copyFixtureUpdate() for the
   // WhatsApp digest, just applied to the live list instead of a copied
@@ -3298,7 +3330,10 @@ function App({ session }: { session: Session }) {
     return { games: counts.length, lo: counts[Math.floor((counts.length - 1) / 4)], hi: counts[Math.ceil(((counts.length - 1) * 3) / 4)] };
   }, [games, nowUk]);
   const pastGames = useMemo(
-    () => games.filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk).sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
+    () =>
+      games
+        .filter((g) => !g.called_off_at && kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk)
+        .sort((a, b) => b.date.localeCompare(a.date) || b.kickoff.localeCompare(a.kickoff)),
     [games, nowUk]
   );
 
@@ -5872,6 +5907,25 @@ function App({ session }: { session: Session }) {
               />
             ) : (
               <>
+                {calledOffGames.map((g) => {
+                  const mine = g.bookings.find((b) => b.player_id === myId && !b.waiting);
+                  const paid = !!mine && (mine.status === "confirmed" || !!credits.find((c) => c.player_id === myId && c.source_game_id === g.id));
+                  return (
+                    <div key={g.id} className="wcf-co" role="note" aria-label={`${fmtDate(g.date)} called off`}>
+                      <span className="wcf-co-bar" aria-hidden="true" />
+                      <div className="wcf-co-when">
+                        {fmtDate(g.date)} · {g.kickoff}
+                      </div>
+                      <div className="wcf-co-title">{g.venue}</div>
+                      <div className="wcf-co-meta">{g.bookings.filter((b) => !b.waiting).length} were booked</div>
+                      <span className="wcf-co-stamp">CALLED OFF</span>
+                      {g.called_off_reason && <div className="wcf-co-why">{g.called_off_reason}</div>}
+                      {mine && !mine.pot_exempt_reason && (
+                        <div className="wcf-co-mine">{paid ? "You'd paid · a game credit is in your account" : "You were booked · nothing to pay"}</div>
+                      )}
+                    </div>
+                  );
+                })}
                 {nextMatchGames.length > 0 && (
                   <>
                     <div className="wcf-eyebrow">{nextMatchGames.length > 1 ? `Next match · ${nextMatchGames.length} games` : "Next match"}</div>
@@ -6619,6 +6673,7 @@ function App({ session }: { session: Session }) {
           onCreate={createFixtures}
           onSave={saveFixture}
           onDelete={deleteGame}
+          onCallOff={callOffGame}
           onClose={() => setFixtureSheet(null)}
           askConfirm={askConfirm}
         />
@@ -6732,6 +6787,7 @@ function FixtureSheet({
   onCreate,
   onSave,
   onDelete,
+  onCallOff,
   onClose,
   askConfirm,
 }: {
@@ -6742,10 +6798,12 @@ function FixtureSheet({
   onCreate: (rows: FixtureDraft[], post: boolean) => Promise<boolean>;
   onSave: (id: string, patch: FixtureDraft, post: boolean) => Promise<void>;
   onDelete: (id: string) => void;
+  onCallOff: (id: string, reason: string) => Promise<void>;
   onClose: () => void;
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
 }) {
   const todayStr = nowInLondon().slice(0, 10);
+  const [callOff, setCallOff] = useState<string | null>(null);
   const addDays = (d: string, n: number) => {
     const x = new Date(d + "T12:00:00Z");
     x.setUTCDate(x.getUTCDate() + n);
@@ -7130,6 +7188,45 @@ function FixtureSheet({
             </>
           )}
         </div>
+        {mode === "edit" && game && game.published && !game.called_off_at && game.team_white_score == null && kickoffCutoff(game.date, game.kickoff, MATCH_DURATION_MINUTES) > nowInLondon() &&
+          (callOff === null ? (
+            <button className="wcf-fxs-calloff" onClick={() => setCallOff("")}>
+              Call off this game
+            </button>
+          ) : (
+            (() => {
+              const live = game.bookings.filter((b) => !b.waiting);
+              const paid = live.filter((b) => b.status === "confirmed" && !b.pot_exempt_reason).length;
+              const said = live.filter((b) => b.status === "pending" && !b.pot_exempt_reason).length;
+              return (
+                <div className="wcf-fxs-co">
+                  <div className="wcf-fxs-co-h">Call off {fmtDate(game.date)}</div>
+                  <p>
+                    The game stays on Fixtures stamped <b>CALLED OFF</b> and nobody can book or drop out.{" "}
+                    {paid > 0 ? `The ${paid} who paid each get a game credit` : "Nobody's paid yet, so no credits"}
+                    {said > 0 ? `; ${said} who said they'd paid go to your "did the money arrive?" check` : ""}. Everyone booked gets a push.
+                  </p>
+                  <input type="text" maxLength={80} placeholder="Reason (optional), e.g. Pitch waterlogged" value={callOff} onChange={(e) => setCallOff(e.target.value)} />
+                  <div className="wcf-fxs-co-row">
+                    <button className="wcf-fxs-btn g" onClick={() => setCallOff(null)}>Keep it on</button>
+                    <button
+                      className="wcf-fxs-btn danger"
+                      disabled={busy}
+                      onClick={async () => {
+                        if (!(await askConfirm("Call off this game?", `${game.venue} on ${fmtDate(game.date)}. This can't be undone.`, "Call off", true, true))) return;
+                        setBusy(true);
+                        await onCallOff(game.id, callOff);
+                        setBusy(false);
+                        onClose();
+                      }}
+                    >
+                      Call off game
+                    </button>
+                  </div>
+                </div>
+              );
+            })()
+          ))}
         {mode === "edit" && game && (
           <button
             className="wcf-fxs-del"
@@ -14361,6 +14458,25 @@ a.wcf-set-link{text-decoration:none}
 .wcf-fxs-btn.g{background:var(--panel);border:1px solid var(--line);color:#e2e8f0}
 .wcf-fxs-btn.p{background:var(--red);border:0;color:#fff}
 .wcf-fxs-btn:disabled{opacity:.45;cursor:not-allowed}
+.wcf-fxs-calloff{display:block;width:100%;padding:12px 0 4px;background:#131624;border:0;color:#fca5a5;font-weight:800;font-size:13px;cursor:pointer}
+.wcf-fxs-co{margin:10px 16px 6px;padding:14px;border-radius:16px;border:1px solid rgba(230,57,70,.45);background:rgba(230,57,70,.08)}
+.wcf-fxs-co-h{font:800 15px var(--display);color:#fff}
+.wcf-fxs-co p{margin:6px 0 10px;font-size:12.5px;line-height:1.5;color:#cbd5e1}
+.wcf-fxs-co input{width:100%;box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;color:var(--white);font:500 14px var(--sans)}
+.wcf-fxs-co-row{display:flex;gap:8px;margin-top:10px}
+.wcf-fxs-co-row .wcf-fxs-btn{flex:1}
+.wcf-fxs-btn.danger{background:#e63946;color:#fff;border-color:#e63946}
+.wcf-fxs-btn.danger:disabled{opacity:.6}
+.wcf-co{position:relative;overflow:hidden;border-radius:18px;border:1px solid rgba(230,57,70,.4);background:linear-gradient(180deg,rgba(10,13,22,.55),rgba(10,13,22,.92)),url('/pitch-night.jpg') 50% 60%/cover;padding:16px;margin-bottom:12px}
+.wcf-co-when{font:800 11px var(--sans);letter-spacing:.16em;text-transform:uppercase;color:#94a3b8}
+.wcf-co-title{font:800 20px var(--display);color:#cbd5e1;margin-top:4px;text-decoration:line-through;text-decoration-color:#e63946;text-decoration-thickness:3px}
+.wcf-co-meta{font-size:12.5px;color:#94a3b8;margin-top:3px}
+.wcf-co-stamp{position:absolute;right:-8px;top:22px;transform:rotate(-12deg);padding:6px 16px;border:3px solid #e63946;border-radius:8px;color:#ff5a63;font:800 18px var(--display);letter-spacing:.12em;background:rgba(230,57,70,.12);box-shadow:0 0 22px rgba(230,57,70,.35);animation:wcfCoStamp .5s cubic-bezier(.3,1.6,.5,1) .2s backwards}
+@keyframes wcfCoStamp{from{opacity:0;transform:rotate(-12deg) scale(1.8)}}
+.wcf-co-bar{position:absolute;left:-10%;right:-10%;top:40%;height:4px;background:#e63946;transform:rotate(-8deg);opacity:.75;box-shadow:0 0 12px rgba(230,57,70,.5)}
+.wcf-co-why{position:relative;margin-top:12px;font-size:13px;color:#e2e8f0}
+.wcf-co-mine{position:relative;margin-top:10px;display:inline-block;font:700 12px var(--sans);padding:6px 10px;border-radius:999px;background:rgba(245,217,122,.12);border:1px solid rgba(245,217,122,.4);color:#f5d97a}
+@media (prefers-reduced-motion: reduce){.wcf-co-stamp{animation:none}}
 .wcf-fxs-del{display:block;width:100%;padding:4px 0 16px;background:#131624;border:0;color:var(--red-hi);font-weight:700;font-size:12.5px;cursor:pointer}
 @keyframes wcfRateUp{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
 /* Man of the Match: medal drop on your vote, the result reveal, the winner's moment */
