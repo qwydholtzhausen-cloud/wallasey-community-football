@@ -25,5 +25,6 @@ export const FIRST_XI_REDS = [
 
 export const FIRST_XI_DATE_LABEL = "25.10.26";
 
-// Admins see it first to test; everyone from this UK date (Mon 19 Oct).
-export const FIRST_XI_OPEN_TO_ALL_FROM = "2026-10-19";
+// Admins see it first to test; everyone from this UK date (Tue 20 Oct, so
+// Monday 19th's game and its MOTM vote are in the story).
+export const FIRST_XI_OPEN_TO_ALL_FROM = "2026-10-20";
