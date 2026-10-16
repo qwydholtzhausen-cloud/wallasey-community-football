@@ -56,7 +56,7 @@ import { HistoryPage } from "./ui/history";
 import { computeHistory, type HMoment } from "../lib/history";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { computeProgramme } from "../lib/programme";
-import { FIRST_XI_GAME_ID } from "../lib/firstXI";
+import { FIRST_XI_GAME_ID, FIRST_XI_OPEN_TO_ALL_FROM } from "../lib/firstXI";
 import { MatchdayProgramme, type ProgrammeAd } from "./ui/programme";
 import { FirstXiMotmReveal, FirstXiPennant } from "./ui/firstxi";
 import { ClubOdometer, DebutCard, MilestoneShirt, MotmWinCard, PotmMine, PotmNight, RecordCard } from "./ui/premium";
@@ -4528,7 +4528,9 @@ function App({ session }: { session: Session }) {
   // games before it, so it reads the same before kick-off and in History.
   const [programmeOpen, setProgrammeOpen] = useState(false);
   const [programmeAds, setProgrammeAds] = useState<ProgrammeAd[]>([]);
-  const firstXiGame = games.find((g) => g.id === FIRST_XI_GAME_ID && g.published) ?? null;
+  // Admins only until FIRST_XI_OPEN_TO_ALL_FROM, then everyone.
+  const firstXiOpen = isAdmin || nowUk.slice(0, 10) >= FIRST_XI_OPEN_TO_ALL_FROM;
+  const firstXiGame = firstXiOpen ? (games.find((g) => g.id === FIRST_XI_GAME_ID && g.published) ?? null) : null;
   const programme = useMemo(
     () =>
       firstXiGame

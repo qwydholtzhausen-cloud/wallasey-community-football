@@ -24,3 +24,6 @@ export const FIRST_XI_REDS = [
 ];
 
 export const FIRST_XI_DATE_LABEL = "25.10.26";
+
+// Admins see it first to test; everyone from this UK date (Mon 19 Oct).
+export const FIRST_XI_OPEN_TO_ALL_FROM = "2026-10-19";
