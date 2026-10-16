@@ -5908,21 +5908,35 @@ function App({ session }: { session: Session }) {
             ) : (
               <>
                 {calledOffGames.map((g) => {
+                  // The usual match card, switched off: drained photo, red
+                  // border, CALLED OFF where the kick-off time would be.
                   const mine = g.bookings.find((b) => b.player_id === myId && !b.waiting);
-                  const paid = !!mine && (mine.status === "confirmed" || !!credits.find((c) => c.player_id === myId && c.source_game_id === g.id));
+                  const paid = !!mine && (mine.status === "confirmed" || credits.some((c) => c.player_id === myId && c.source_game_id === g.id));
+                  const weekday = new Date(g.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" });
                   return (
-                    <div key={g.id} className="wcf-co" role="note" aria-label={`${fmtDate(g.date)} called off`}>
-                      <span className="wcf-co-bar" aria-hidden="true" />
-                      <div className="wcf-co-when">
-                        {fmtDate(g.date)} · {g.kickoff}
+                    <div key={g.id} className="wcf-co" role="alert" aria-label={`${fmtDate(g.date)}: game called off`}>
+                      <div className="wcf-co-photo" aria-hidden="true" />
+                      <div className="wcf-co-head">
+                        <span className="wcf-co-date">{new Date(g.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase()}</span>
+                        <span className="wcf-co-pill">NO GAME</span>
                       </div>
-                      <div className="wcf-co-title">{g.venue}</div>
-                      <div className="wcf-co-meta">{g.bookings.filter((b) => !b.waiting).length} were booked</div>
-                      <span className="wcf-co-stamp">CALLED OFF</span>
-                      {g.called_off_reason && <div className="wcf-co-why">{g.called_off_reason}</div>}
-                      {mine && !mine.pot_exempt_reason && (
-                        <div className="wcf-co-mine">{paid ? "You'd paid · a game credit is in your account" : "You were booked · nothing to pay"}</div>
-                      )}
+                      <div className="wcf-co-word">
+                        <b>
+                          CALLED
+                          <br />
+                          <span>OFF</span>
+                        </b>
+                        <span className="wcf-co-time">
+                          {g.kickoff} · {g.venue}
+                        </span>
+                      </div>
+                      <div className="wcf-co-msg">
+                        <div>Don&apos;t turn up on {weekday}.</div>
+                        {g.called_off_reason && <small>Reason: {g.called_off_reason}</small>}
+                        {mine && !mine.pot_exempt_reason && (
+                          <span className="wcf-co-credit">{paid ? `✓ You'd paid · £${g.price} credit added` : "You were booked · nothing to pay"}</span>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -14467,16 +14481,22 @@ a.wcf-set-link{text-decoration:none}
 .wcf-fxs-co-row .wcf-fxs-btn{flex:1}
 .wcf-fxs-btn.danger{background:#e63946;color:#fff;border-color:#e63946}
 .wcf-fxs-btn.danger:disabled{opacity:.6}
-.wcf-co{position:relative;overflow:hidden;border-radius:18px;border:1px solid rgba(230,57,70,.4);background:linear-gradient(180deg,rgba(10,13,22,.55),rgba(10,13,22,.92)),url('/pitch-night.jpg') 50% 60%/cover;padding:16px;margin-bottom:12px}
-.wcf-co-when{font:800 11px var(--sans);letter-spacing:.16em;text-transform:uppercase;color:#94a3b8}
-.wcf-co-title{font:800 20px var(--display);color:#cbd5e1;margin-top:4px;text-decoration:line-through;text-decoration-color:#e63946;text-decoration-thickness:3px}
-.wcf-co-meta{font-size:12.5px;color:#94a3b8;margin-top:3px}
-.wcf-co-stamp{position:absolute;right:-8px;top:22px;transform:rotate(-12deg);padding:6px 16px;border:3px solid #e63946;border-radius:8px;color:#ff5a63;font:800 18px var(--display);letter-spacing:.12em;background:rgba(230,57,70,.12);box-shadow:0 0 22px rgba(230,57,70,.35);animation:wcfCoStamp .5s cubic-bezier(.3,1.6,.5,1) .2s backwards}
-@keyframes wcfCoStamp{from{opacity:0;transform:rotate(-12deg) scale(1.8)}}
-.wcf-co-bar{position:absolute;left:-10%;right:-10%;top:40%;height:4px;background:#e63946;transform:rotate(-8deg);opacity:.75;box-shadow:0 0 12px rgba(230,57,70,.5)}
-.wcf-co-why{position:relative;margin-top:12px;font-size:13px;color:#e2e8f0}
-.wcf-co-mine{position:relative;margin-top:10px;display:inline-block;font:700 12px var(--sans);padding:6px 10px;border-radius:999px;background:rgba(245,217,122,.12);border:1px solid rgba(245,217,122,.4);color:#f5d97a}
-@media (prefers-reduced-motion: reduce){.wcf-co-stamp{animation:none}}
+.wcf-co{position:relative;overflow:hidden;border-radius:22px;border:2px solid #e63946;min-height:290px;display:flex;flex-direction:column;margin-bottom:14px;box-shadow:0 0 0 4px rgba(230,57,70,.12),0 20px 40px -20px rgba(230,57,70,.55);animation:wcfCoIn .5s cubic-bezier(.2,.9,.3,1.1) backwards}
+@keyframes wcfCoIn{from{opacity:0;transform:scale(.97)}}
+.wcf-co-photo{position:absolute;inset:0;background:url('/net-rain.jpg') center/cover;filter:grayscale(1) brightness(.45)}
+.wcf-co-photo::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(40,6,10,.35),rgba(10,6,12,.92) 75%)}
+.wcf-co-head{position:relative;display:flex;align-items:center;justify-content:space-between;padding:14px 16px 0}
+.wcf-co-date{font:800 12px var(--sans);letter-spacing:.16em;color:#cbd5e1}
+.wcf-co-pill{font:800 11px var(--sans);letter-spacing:.1em;background:#e63946;color:#fff;border-radius:999px;padding:5px 10px}
+.wcf-co-word{position:relative;margin-top:auto;padding:18px 16px 0}
+.wcf-co-word b{display:block;font:800 46px/.92 var(--display);letter-spacing:-.01em;color:#fff;text-shadow:0 4px 24px rgba(230,57,70,.6)}
+.wcf-co-word b span{color:#ff5a63}
+.wcf-co-time{display:inline-block;margin-top:8px;font:700 17px var(--display);color:#94a3b8;text-decoration:line-through;text-decoration-color:#e63946;text-decoration-thickness:3px}
+.wcf-co-msg{position:relative;padding:12px 16px 16px}
+.wcf-co-msg div{font-size:14.5px;font-weight:700;color:#fff}
+.wcf-co-msg small{display:block;font-size:12.5px;color:#cbd5e1;margin-top:3px}
+.wcf-co-credit{display:inline-flex;margin-top:12px;font:700 12px var(--sans);padding:7px 11px;border-radius:999px;background:rgba(245,217,122,.12);border:1px solid rgba(245,217,122,.45);color:#f5d97a}
+@media (prefers-reduced-motion: reduce){.wcf-co{animation:none}}
 .wcf-fxs-del{display:block;width:100%;padding:4px 0 16px;background:#131624;border:0;color:var(--red-hi);font-weight:700;font-size:12.5px;cursor:pointer}
 @keyframes wcfRateUp{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
 /* Man of the Match: medal drop on your vote, the result reveal, the winner's moment */
