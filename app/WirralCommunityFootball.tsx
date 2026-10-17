@@ -12216,15 +12216,24 @@ function GameCard({
       })
     );
   }, [showSheet]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Closing shrinks the sheet back onto the card and fades it out as it
+  // lands, so the card underneath shows through instead of popping back.
+  const closing = useRef(false);
   const closeSheet = () => {
+    if (closing.current) return;
     const sh = sheetRef.current, ov = overlayRef.current;
     if (!growFrom.current || !sh || !ov || !growFrom.current.isConnected) return setShowSheet(false);
+    closing.current = true;
     const from = growFrom.current.getBoundingClientRect(), to = sh.getBoundingClientRect();
-    sh.style.transition = "transform .45s cubic-bezier(.2,.9,.3,1), clip-path .45s cubic-bezier(.2,.9,.3,1)";
+    sh.style.transition = "transform .42s cubic-bezier(.4,0,.2,1), clip-path .42s cubic-bezier(.4,0,.2,1), opacity .2s ease-in .22s";
     sh.style.transform = `translateY(${from.top - to.top}px)`;
     sh.style.clipPath = `inset(0px ${Math.max(0, to.right - from.right)}px ${Math.max(0, to.height - from.height)}px ${Math.max(0, from.left - to.left)}px round 16px)`;
+    sh.style.opacity = "0";
     ov.classList.remove("in");
-    window.setTimeout(() => setShowSheet(false), 440);
+    window.setTimeout(() => {
+      closing.current = false;
+      setShowSheet(false);
+    }, 440);
   };
   // Red/amber/green glow (via the .in.<status> CSS below) replaces what used
   // to be a separate "Payment confirmed" card - it tells the viewer their
