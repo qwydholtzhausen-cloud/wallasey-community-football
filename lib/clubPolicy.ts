@@ -64,3 +64,8 @@ export const GAME_CREDITS_LIVE = true;
 // carousel. Admins-only while tested on real phones; opens to every member
 // on this UK date. Far future = admins only.
 export const FOR_YOU_OPEN_TO_ALL_FROM = "9999-12-31";
+
+// One house style (2026-10-17): one set of labels, tabs, buttons and card
+// edges across the app (app/ui/houseStyle.ts). Admins first, every member
+// from this UK date. Far future = admins only.
+export const HOUSE_STYLE_OPEN_TO_ALL_FROM = "9999-12-31";

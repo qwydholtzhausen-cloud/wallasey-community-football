@@ -18,7 +18,9 @@ import {
   MONZO_MATCHING_LIVE,
   GAME_CREDITS_LIVE,
   FOR_YOU_OPEN_TO_ALL_FROM,
+  HOUSE_STYLE_OPEN_TO_ALL_FROM,
 } from "../lib/clubPolicy";
+import { houseStyleCss } from "./ui/houseStyle";
 import { computeWrapped } from "../lib/wrapped";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
 import WrappedStory, { drawWrappedCard, wrappedBannerCss, type WrappedExtras } from "./WrappedStory";
@@ -5378,6 +5380,7 @@ function App({ session }: { session: Session }) {
   // rest stay gone for that game (Wrapped and Rate yourself reuse their
   // existing "hide" switches).
   const forYouOn = isAdmin || nowUk.slice(0, 10) >= FOR_YOU_OPEN_TO_ALL_FROM;
+  const houseStyleOn = isAdmin || nowUk.slice(0, 10) >= HOUSE_STYLE_OPEN_TO_ALL_FROM;
   const fyKey = `wcf-fy-hidden-${myId}`;
   const [fyHidden, setFyHidden] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -6023,6 +6026,7 @@ function App({ session }: { session: Session }) {
           )}
         </div>
       )}
+      {houseStyleOn && <style>{houseStyleCss}</style>}
       {isMatchday && <style>{matchdayCss}</style>}
       {mdIntro && <MatchdayIntro onDone={() => setMdIntro(false)} />}
       <header className={"wcf-top" + (isMatchday ? " mdx" : "")}>
