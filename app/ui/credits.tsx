@@ -29,9 +29,31 @@ export const CreditsContext = createContext<CreditsApi>({
 });
 export const useCredits = () => useContext(CreditsContext);
 
-export function CreditChip() {
-  const { live, myAvailable } = useCredits();
+// The premium version (calm Fixtures, admins first): a minted gold coin,
+// and a one-tap "Use on <next unpaid game>" when there is one.
+export function CreditChip({ premium, next }: { premium?: boolean; next?: { bookingId: string; label: string } | null } = {}) {
+  const { live, myAvailable, spendCredit } = useCredits();
   if (!live || myAvailable === 0) return null;
+  if (premium)
+    return (
+      <div className="wcf-cc">
+        <span className="coin" aria-hidden="true">
+          <b>{myAvailable}</b>
+        </span>
+        <span className="tx">
+          <small>GAME CREDIT</small>
+          <b>
+            {creditLabel(myAvailable)}
+          </b>
+          <span>Any game · never expires</span>
+        </span>
+        {next && (
+          <button onClick={() => void spendCredit(next.bookingId)}>
+            Use on {next.label} <em>›</em>
+          </button>
+        )}
+      </div>
+    );
   return (
     <div className="wcf-credit-chip">
       <i>✓</i>

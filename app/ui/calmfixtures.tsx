@@ -305,5 +305,18 @@ export const calmFixturesCss = `
 .cf-co .tx b{display:block;font:800 15px var(--display);color:#fff;margin-top:2px}
 .cf-co .tx span{display:block;margin-top:5px;font:700 11px var(--sans);color:#f5d97a}
 .cf-co button{flex:none;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#fff;border-radius:11px;padding:8px 12px;font:800 12px var(--sans);cursor:pointer}
+.wcf-cc{position:relative;display:flex;align-items:center;gap:13px;margin:0 0 14px;padding:12px 14px;border-radius:18px;overflow:hidden;background:linear-gradient(100deg,rgba(38,30,10,.96),rgba(16,18,30,.96) 70%);border:1px solid rgba(245,217,122,.45);box-shadow:0 0 26px -14px rgba(245,217,122,.85),inset 0 1px 0 rgba(255,255,255,.06)}
+.wcf-cc::after{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 35%,rgba(255,243,196,.14) 48%,transparent 60%);background-size:250% 100%;animation:cfFoil 6s ease-in-out infinite;pointer-events:none}
+.wcf-cc .coin{position:relative;flex:none;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 34% 28%,#fff8dc,#f5d97a 42%,#c9a24a 70%,#7a5a1a);box-shadow:inset 0 0 0 3px rgba(255,248,220,.35),inset 0 -4px 7px rgba(80,55,10,.45),0 0 18px -3px rgba(245,217,122,.85);animation:ccFlip .9s cubic-bezier(.3,1.4,.5,1) .2s backwards}
+.wcf-cc .coin::before{content:"";position:absolute;inset:5px;border-radius:50%;border:1px dashed rgba(90,64,16,.45)}
+.wcf-cc .coin b{position:relative;font:700 19px/1 var(--font-oswald),sans-serif;color:#3a2a08;text-shadow:0 1px 0 rgba(255,248,220,.6)}
+@keyframes ccFlip{from{transform:rotateY(90deg) scale(.6);opacity:0}}
+.wcf-cc .tx{position:relative;min-width:0;flex:1}
+.wcf-cc .tx small{display:block;font:600 10px var(--font-oswald),sans-serif;letter-spacing:.24em;color:#f5d97a}
+.wcf-cc .tx b{display:block;font:800 15px var(--display);color:#fff;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-cc .tx span{display:block;font:500 11.5px var(--sans);color:#cbd5e1;margin-top:2px}
+.wcf-cc button{position:relative;flex:none;border:0;border-radius:12px;padding:8px 11px;background:linear-gradient(180deg,#fff3c4,#f5d97a);color:#1a1405;font:800 11.5px var(--display);white-space:nowrap;cursor:pointer;box-shadow:0 8px 18px -10px rgba(245,217,122,.9)}
+.wcf-cc button em{font-style:normal;opacity:.7}
+@media (prefers-reduced-motion: reduce){.wcf-cc::after,.wcf-cc .coin{animation:none!important}}
 @media (prefers-reduced-motion: reduce){.cf-md.red i,.cf-md.amber i::after,.cf-tk::after,.cf-sh,.cf-ov{animation:none!important}}
 `;

@@ -6456,7 +6456,14 @@ function App({ session }: { session: Session }) {
             {forYouOn ? (
               <>
                 <ForYou items={forYouItems()} caughtUp={forYouCaughtUp()} />
-                <CreditChip />
+                {calmOn && <style>{calmFixturesCss}</style>}
+                <CreditChip
+                  premium={calmOn}
+                  next={(() => {
+                    const d = myDue.find((x) => x.status === "unpaid" && !x.credited);
+                    return d ? { bookingId: d.bookingId, label: new Date(d.date + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }) } : null;
+                  })()}
+                />
                 {!myDue.some((d) => d.status === "unpaid") && <OweBar due={myDue} onOpen={() => setPaySheetOpen(true)} />}
               </>
             ) : (
