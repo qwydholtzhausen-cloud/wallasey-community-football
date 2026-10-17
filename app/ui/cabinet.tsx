@@ -5,10 +5,11 @@ import type { Trophy, TrophyKind } from "../../lib/cabinet";
 // when there's more than one), on glass shelves in a wooden cabinet. Tap a
 // slot for every one of them, with dates and scores.
 
-const ORDER: TrophyKind[] = ["ximedal", "xipennant", "xicard", "matchball", "potm", "motm", "record", "apps", "debut"];
+const ORDER: TrophyKind[] = ["ximedal", "xipennant", "xicard", "matchball", "potm", "totm", "motm", "record", "apps", "debut"];
 const LABEL: Record<TrophyKind, [string, string]> = {
   matchball: ["Match ball", "Match balls"],
   potm: ["Player of the Month", "Player of the Month"],
+  totm: ["Team of the Month", "Team of the Month"],
   xipennant: ["First XI pennant", "First XI pennant"],
   ximedal: ["First XI medal", "First XI medal"],
   xicard: ["First XI card", "First XI card"],
@@ -78,6 +79,24 @@ export function TrophyIcon({ kind, n }: { kind: TrophyKind; n?: number }) {
           <rect x="16" y="31" width="16" height="4" rx="1" fill="#c9a24a" />
           <rect x="13" y="35" width="22" height="6" rx="1.5" fill="#4a3614" />
           <path d="M20 12l1.2 2.5 2.8.4-2 2 .5 2.8L20 18.4l-2.5 1.3.5-2.8-2-2 2.8-.4z" fill="#fff8dc" opacity=".8" />
+        </svg>
+      );
+    case "totm":
+      // A gold shield with the eight as dots in their lines (2-3-3).
+      return (
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M24 4l16 5.5v12C40 32 33 40 24 44 15 40 8 32 8 21.5v-12z" fill="#b8902a" />
+          <path d="M24 7.5l13 4.5v9.6c0 8.6-5.6 15-13 18.6-7.4-3.6-13-10-13-18.6V12z" fill="#f5d97a" />
+          <g fill="#5a4210">
+            <circle cx="20.5" cy="15.5" r="2" />
+            <circle cx="27.5" cy="15.5" r="2" />
+            <circle cx="17" cy="23" r="2" />
+            <circle cx="24" cy="23" r="2.4" fill="#e63946" />
+            <circle cx="31" cy="23" r="2" />
+            <circle cx="18" cy="30.5" r="2" />
+            <circle cx="24" cy="31.5" r="2" />
+            <circle cx="30" cy="30.5" r="2" />
+          </g>
         </svg>
       );
     case "motm":

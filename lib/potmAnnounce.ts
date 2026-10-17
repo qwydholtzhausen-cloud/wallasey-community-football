@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendPushBroadcast } from "./push";
 import { kickoffCutoff, previousMonthKey, monthReleaseAt, nextMonthStart, MOTM_VOTE_WINDOW_MINUTES } from "./time";
 import { motmWinners, goalsLookup } from "./motm";
+import { TOTM_REVEAL_FROM } from "./clubPolicy";
 
 // Player of the Month announcement (push to everyone), once per month.
 // Announced when the month's last published game is played and its vote has
@@ -75,11 +76,22 @@ export async function announcePlayerOfMonth(
         const monthLabel = new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 
         if (names) {
-          await sendPushBroadcast({
-            title: "Player of the Month 🏅",
-            body: `${names} is Player of the Month for ${monthLabel}.`,
-            url: "/",
-          });
+          // From October 2026 the same push carries Team of the Month, which
+          // Player of the Month captains - one push, not two.
+          const joint = (winners ?? []).length > 1;
+          await sendPushBroadcast(
+            monthKey >= TOTM_REVEAL_FROM
+              ? {
+                  title: `${monthLabel.split(" ")[0]}'s Team of the Month is in`,
+                  body: `${names} ${joint ? "are Players of the Month and captain" : "is Player of the Month and captains"} the eight. See who made it.`,
+                  url: "/",
+                }
+              : {
+                  title: "Player of the Month 🏅",
+                  body: `${names} is Player of the Month for ${monthLabel}.`,
+                  url: "/",
+                }
+          );
         }
       }
     }

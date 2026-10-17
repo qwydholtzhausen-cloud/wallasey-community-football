@@ -3,7 +3,7 @@
 // club records). Pure and DB-free, like lib/records.ts.
 import type { ClubRecords } from "./records";
 
-export type TrophyKind = "debut" | "matchball" | "motm" | "potm" | "record" | "apps" | "xipennant" | "ximedal" | "xicard";
+export type TrophyKind = "debut" | "matchball" | "motm" | "potm" | "totm" | "record" | "apps" | "xipennant" | "ximedal" | "xicard";
 
 export interface Trophy {
   kind: TrophyKind;
@@ -36,6 +36,7 @@ export function computeCabinet(input: {
   // The First XI (lib/firstXI.ts): a pennant for everyone who played once the
   // result's in, and the one-of-one medal for its Man of the Match.
   firstXi?: { date: string; played: string[]; motm: string[] } | null;
+  totmMonths?: { monthKey: string; playerIds: string[]; captainIds: string[] }[]; // announced months only
   records: ClubRecords | null; // this season's club records
   team: (t: "white" | "red") => string; // "Whites" / "Reds"
 }): Trophy[] {
@@ -72,6 +73,10 @@ export function computeCabinet(input: {
     out.push({ kind: "xicard", key: "xicard", title: "Your First XI card", detail: `One of 22 · the club's first 11-a-side · ${shortDate(xi.date)}`, date: xi.date });
   if (xi && xi.motm.includes(playerId))
     out.push({ kind: "ximedal", key: "ximedal", title: "The First XI medal", detail: `Man of the Match, the club's first 11-a-side · one of one`, date: xi.date });
+  for (const m of input.totmMonths ?? []) {
+    if (m.playerIds.includes(playerId))
+      out.push({ kind: "totm", key: `totm-${m.monthKey}`, title: "Team of the Month", detail: monthName(m.monthKey) + (m.captainIds.includes(playerId) ? " · Captain" : ""), date: `${m.monthKey}-28` });
+  }
 
   const r = input.records;
   if (r) {

@@ -104,6 +104,7 @@ export type ResultsTabProps = {
   setResultsView: React.Dispatch<React.SetStateAction<"fixtures" | "season" | "table" | "records" | "history" | "pot">>;
   // Results › History ("Our story"), drawn by app/ui/history.tsx.
   historyView: React.ReactNode;
+  totmCard: React.ReactNode;
   setShowAllHatTricks: React.Dispatch<React.SetStateAction<boolean>>;
   setStatsOpenId: React.Dispatch<React.SetStateAction<string | null>>;
   setStatsSeasonYear: React.Dispatch<React.SetStateAction<number | null>>;
@@ -118,6 +119,7 @@ export type ResultsTabProps = {
 
 export function ResultsTab({
   historyView,
+  totmCard,
   activeStatsYear,
   addingPotEntry,
   addPotEntry,
@@ -409,6 +411,7 @@ export function ResultsTab({
                     </div>
                   );
                 })()}
+              {totmCard}
               {awards.map((a) => (
                 <div key={a.id} className="wcf-shoutout">
                   {a.title} — <strong>{a.value}</strong>

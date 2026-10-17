@@ -91,3 +91,9 @@ export const SEASON_CARDS_OPEN_TO_ALL_FROM = "2026-10-17";
 // can preview any of them with ?occasion=christmas|milestone|finale|wrapped.
 // Opened to every member 2026-10-17 (the owner's call after admin previews).
 export const OCCASIONS_OPEN_TO_ALL_FROM = "2026-10-17";
+
+// Team of the Month (lib/teamOfMonth.ts). Trophies and the Season card
+// go back to TOTM_FIRST_MONTH quietly; the push and the full-screen reveal
+// start with TOTM_REVEAL_FROM (October's, out Fri 30 Oct 2026).
+export const TOTM_FIRST_MONTH = "2026-08";
+export const TOTM_REVEAL_FROM = "2026-10";

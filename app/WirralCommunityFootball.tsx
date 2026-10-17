@@ -22,6 +22,8 @@ import {
   MOVEMENT_OPEN_TO_ALL_FROM,
   SEASON_CARDS_OPEN_TO_ALL_FROM,
   OCCASIONS_OPEN_TO_ALL_FROM,
+  TOTM_FIRST_MONTH,
+  TOTM_REVEAL_FROM,
 } from "../lib/clubPolicy";
 import { findOccasion } from "../lib/occasions";
 import { OccasionHero, OccasionRibbon, OccasionTimeline, occVars, occasionCss, type OccInfo } from "./ui/occasion";
@@ -69,6 +71,8 @@ import { FIRST_XI_GAME_ID, FIRST_XI_OPEN_TO_ALL_FROM } from "../lib/firstXI";
 import { MatchdayProgramme, type ProgrammeAd } from "./ui/programme";
 import { FirstXiMotmReveal, FirstXiPennant } from "./ui/firstxi";
 import { MatchdayHero, MatchdayIntro, MatchdayRibbon, MatchdayTeamCards, MatchdayTimeline, matchdayCss } from "./ui/matchdayxi";
+import { computeTeamOfMonth } from "../lib/teamOfMonth";
+import { TotmCard, TotmReveal, type TotmMonth } from "./ui/totm";
 import { ClubOdometer, DebutCard, MilestoneShirt, MotmWinCard, PotmMine, PotmNight, RecordCard } from "./ui/premium";
 import { MatchDayClock, MatchDayTeam, dayWord, isLiveNow, isMatchDay } from "./ui/matchday";
 import { scorersForSide } from "../lib/goalSides";
@@ -1670,6 +1674,10 @@ function App({ session }: { session: Session }) {
   const [envelope, setEnvelope] = useState<{ ids: string[]; items: { from: string; text: string; when: string }[] } | null>(null);
   const [predLockShown, setPredLockShown] = useState<string | null>(null);
   const [potmShow, setPotmShow] = useState<"everyone" | "winner" | null>(null);
+  // Team of the Month: the once-a-month reveal (moment queue), and replays
+  // from the Season card ("instant" opens on the points table).
+  const [totmShow, setTotmShow] = useState<string | null>(null);
+  const [totmReplay, setTotmReplay] = useState<{ monthKey: string; instant: boolean } | null>(null);
   const [potmLand, setPotmLand] = useState(false);
   const [recordFalls, setRecordFalls] = useState<Record<string, { v: number; who: string }>>({});
   const [recordMomentDone, setRecordMomentDone] = useState(false);
@@ -4695,6 +4703,52 @@ function App({ session }: { session: Session }) {
         }))
       );
   }
+  // Team of the Month for every announced month from TOTM_FIRST_MONTH,
+  // captained by that month's Player of the Month (lib/teamOfMonth.ts).
+  const totmMonths = useMemo(() => {
+    const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
+    const closedGames = pastGames.filter((g) => closedMotmTallies[g.id] || !motmVotingOpen(g));
+    return potmHistory
+      .filter((m) => m.monthKey >= TOTM_FIRST_MONTH)
+      .map((m) => {
+        const team = computeTeamOfMonth({
+          monthKey: m.monthKey,
+          games: closedGames,
+          goals: goalRows,
+          motmWinnerIdsByGame: Object.fromEntries(Object.entries(motmWinnerIdsByGame).filter(([id]) => closedMotmTallies[id])),
+          motmTallyByGame: closedMotmTallies,
+          captainIds: m.winnerIds,
+          name: (id) => nameById.get(id) ?? "",
+        });
+        return team
+          ? ({ monthKey: m.monthKey, monthLabel: new Date(m.monthKey + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }), team } as TotmMonth)
+          : null;
+      })
+      .filter((m): m is TotmMonth => !!m);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [potmHistory, pastGames, goalRows, motmWinnerIdsByGame, closedMotmTallies, profiles]);
+  // The reveal: once per phone for the newest month (from TOTM_REVEAL_FROM),
+  // within a week of its release, queued straight after Player of the Month.
+  useEffect(() => {
+    const latest = totmMonths[totmMonths.length - 1];
+    if (loading || !latest || totmShow || !myId || latest.monthKey < TOTM_REVEAL_FROM) return;
+    if (latest.monthKey !== playerOfMonth?.monthKey) return;
+    if (kickoffCutoff(nextMonthStart(latest.monthKey), "08:00", 7 * 24 * 60) <= nowUk) return;
+    const key = `wcf-totm-intro-${myId}-${latest.monthKey}`;
+    try {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, "1");
+    } catch {
+      return;
+    }
+    if (!motionOk()) return;
+    setTotmShow(latest.monthKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totmMonths, loading, myId]);
+  const totmWho = useCallback(
+    (id: string) => ({ name: profiles.find((p) => p.id === id)?.display_name ?? "Former player", avatarUrl: avatarByPlayerId.get(id) }),
+    [profiles, avatarByPlayerId]
+  );
   const seasonRecords = useMemo(() => {
     const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
     return computeRecords({
@@ -4713,10 +4767,11 @@ function App({ session }: { session: Session }) {
         motmWinnerIdsByGame: Object.fromEntries(Object.entries(motmWinnerIdsByGame).filter(([id]) => closedMotmTallies[id])),
         potmMonths: potmHistory,
         firstXi: firstXiCabinet,
+        totmMonths: totmMonths.map((m) => ({ monthKey: m.monthKey, playerIds: m.team.team.map((p) => p.id), captainIds: m.team.team.filter((p) => p.captain).map((p) => p.id) })),
         records: seasonRecords,
         team: (t) => (t === "white" ? cs.team_white_name : cs.team_red_name),
       }),
-    [pastGames, goalRows, motmWinnerIdsByGame, closedMotmTallies, potmHistory, firstXiCabinet, seasonRecords, cs.team_white_name, cs.team_red_name]
+    [pastGames, goalRows, motmWinnerIdsByGame, closedMotmTallies, potmHistory, firstXiCabinet, totmMonths, seasonRecords, cs.team_white_name, cs.team_red_name]
   );
 
   // Your new match ball: a hat-trick (or better) from the last week this
@@ -6037,6 +6092,7 @@ function App({ session }: { session: Session }) {
   if (myMotmMoment && motmMomentClosed !== myMotmMoment.game.id) momentCandidates.push("motm:" + myMotmMoment.game.id);
   if (potmShow) momentCandidates.push("potm:" + potmShow);
   if (xiShow) momentCandidates.push("firstxi:" + xiShow);
+  if (totmShow) momentCandidates.push("totm:" + totmShow);
   if (myRecordMoment && !recordMomentDone) momentCandidates.push("record:" + myRecordMoment.seenKey);
   if (nextBigMoment) momentCandidates.push("big:" + nextBigMoment.key);
   if (ticketShow && ticketShow.mode !== "booked" && ticketShow.mode !== "credit" && ticketGames.length > 0) momentCandidates.push("ticket:" + ticketShow.mode + ticketShow.gameIds.join(","));
@@ -6046,7 +6102,7 @@ function App({ session }: { session: Session }) {
   const [ftBand, setFtBand] = useState<string | null>(null);
   // Anything else full-screen on top: nothing new pops up over it.
   const momentsPaused =
-    !splashGone || !!npStep || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || ticketShow?.mode === "credit" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand || programmeOpen;
+    !splashGone || !!npStep || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || ticketShow?.mode === "credit" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand || programmeOpen || !!totmReplay;
   const [momentNow, setMomentNow] = useState<string | null>(null);
   const [momentsPlayed, setMomentsPlayed] = useState(0);
   const momentKey = momentCandidates.join("|");
@@ -6703,6 +6759,9 @@ function App({ session }: { session: Session }) {
 
         {tab === "results" && (
           <ResultsTab
+            totmCard={
+              <TotmCard months={totmMonths} myId={myId} who={totmWho} onWatch={(monthKey, instant) => setTotmReplay({ monthKey, instant })} openPlayerCard={openPlayerCard} />
+            }
             historyView={
               <HistoryPage
                 data={historyData}
@@ -7234,6 +7293,25 @@ function App({ session }: { session: Session }) {
             onClose={() => setProgrammeOpen(false)}
           />
         );
+      })()}
+      {totmShow && showMoment("totm") && (() => {
+        const m = totmMonths.find((x) => x.monthKey === totmShow);
+        return m ? (
+          <TotmReveal
+            month={m}
+            myId={myId}
+            who={totmWho}
+            onDone={() => {
+              setTotmShow(null);
+              setTab("results");
+              setResultsView("season");
+            }}
+          />
+        ) : null;
+      })()}
+      {totmReplay && (() => {
+        const m = totmMonths.find((x) => x.monthKey === totmReplay.monthKey);
+        return m ? <TotmReveal key={totmReplay.monthKey + String(totmReplay.instant)} month={m} myId={myId} who={totmWho} instant={totmReplay.instant} onDone={() => setTotmReplay(null)} /> : null;
       })()}
 
       {myMotmMoment && motmMomentClosed !== myMotmMoment.game.id && showMoment("motm") && (
@@ -8546,7 +8624,7 @@ function PlayerCardModal({
               in the app (Scores, Records), just gathered on one card. */}
           {season && season.W + season.D + season.L > 0 && (
             <div className="wcf-pcard-season">
-              <div className="wcf-pcard-sec-head wcf-rv" style={{ ["--d" as string]: ".35s" }}><span>Season record</span><span>{season.W + season.D + season.L} games</span></div>
+              <div className="wcf-pcard-sec-head wcf-rv" style={{ ["--d" as string]: ".35s" }}><span>Season record</span><span>{season.W + season.D + season.L} {season.W + season.D + season.L === 1 ? "game" : "games"}</span></div>
               {/* Won, drawn, lost: each part of the bar fills in turn, then the counts. */}
               <div className="wcf-pcard-wdl">
                 {(["w", "d", "l"] as const).map((k, i) => {
