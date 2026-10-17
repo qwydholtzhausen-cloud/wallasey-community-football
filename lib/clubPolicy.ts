@@ -97,6 +97,10 @@ export const OCCASIONS_OPEN_TO_ALL_FROM = "2026-10-17";
 // start with TOTM_REVEAL_FROM (October's, out Fri 30 Oct 2026).
 export const TOTM_FIRST_MONTH = "2026-08";
 export const TOTM_REVEAL_FROM = "2026-10";
+// Hidden from everyone (card, cabinet trophies, Wrapped-day card) until
+// October's release, UK time - the owner's call 2026-10-17. August and
+// September appear alongside October then. "" = show straight away.
+export const TOTM_VISIBLE_FROM = "2026-10-30T08:00";
 
 // Calmer Fixtures (2026-10-17): one line per game in a month card, the
 // actions behind a tap, a slim called-off notice, the reminder ask in For

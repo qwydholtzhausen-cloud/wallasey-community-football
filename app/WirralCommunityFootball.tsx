@@ -26,6 +26,7 @@ import {
   CALM_FEED_OPEN_TO_ALL_FROM,
   TOTM_FIRST_MONTH,
   TOTM_REVEAL_FROM,
+  TOTM_VISIBLE_FROM,
 } from "../lib/clubPolicy";
 import { findOccasion } from "../lib/occasions";
 import { OccasionHero, OccasionRibbon, OccasionTimeline, ReleaseAlso, occVars, occasionCss, type OccInfo } from "./ui/occasion";
@@ -4803,7 +4804,9 @@ function App({ session }: { session: Session }) {
   }
   // Team of the Month for every announced month from TOTM_FIRST_MONTH,
   // captained by that month's Player of the Month (lib/teamOfMonth.ts).
+  const totmVisible = nowUk >= TOTM_VISIBLE_FROM;
   const totmMonths = useMemo(() => {
+    if (!totmVisible) return [] as TotmMonth[];
     const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
     const closedGames = pastGames.filter((g) => closedMotmTallies[g.id] || !motmVotingOpen(g));
     return potmHistory
@@ -4824,7 +4827,7 @@ function App({ session }: { session: Session }) {
       })
       .filter((m): m is TotmMonth => !!m);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [potmHistory, pastGames, goalRows, motmWinnerIdsByGame, closedMotmTallies, profiles]);
+  }, [totmVisible, potmHistory, pastGames, goalRows, motmWinnerIdsByGame, closedMotmTallies, profiles]);
   // The reveal: once per phone for the newest month (from TOTM_REVEAL_FROM),
   // within a week of its release, queued straight after Player of the Month.
   useEffect(() => {
