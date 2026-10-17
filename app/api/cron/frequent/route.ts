@@ -561,13 +561,10 @@ export async function GET(req: Request) {
   // month). No backfill needed: WRAPPED_FIRST_MONTH_FOR_ALL means no
   // month before September 2026 can ever qualify.
   const nowHour = Number(nowUkStr.slice(11, 13));
-  if (nowHour >= MONTH_RELEASE_HOUR && nowHour < 21) {
-    try {
-      await announcePlayerOfMonth(admin, nowUkStr, notifiedKeys, markNotified);
-    } catch (err) {
-      console.error("Player of the Month announcement failed", err);
-    }
-  }
+  // Work out the month's Wrapped first, so on a release morning that also
+  // brings Player of the Month and Team of the Month (from October 2026)
+  // everyone gets one notification instead of two (lib/potmAnnounce.ts).
+  let wrappedRelease: { monthKey: string; key: string; recipients: string[]; monthName: string } | null = null;
   if (nowUkStr.slice(0, 10) >= WRAPPED_OPEN_TO_ALL_FROM && nowHour >= MONTH_RELEASE_HOUR && nowHour < 21) {
     const thisMonth = nowUkStr.slice(0, 7);
     const { data: monthRows } = await admin
@@ -593,17 +590,38 @@ export async function GET(req: Request) {
         if (g.team_white_score == null) continue;
         for (const b of (g.bookings ?? []) as Booking[]) if (!b.waiting && b.team) apps[b.player_id] = (apps[b.player_id] ?? 0) + 1;
       }
-      const recipients = Object.keys(apps).filter((id) => apps[id] >= 2);
-      if (recipients.length > 0) {
-        const monthName = new Date(monthKey + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
-        await sendPushToUsers(recipients, {
-          title: wrappedThemeFor(monthKey)?.push.title ?? `Your ${monthName}, wrapped 🎁`,
-          body: wrappedThemeFor(monthKey)?.push.body ?? "Your games, goals, who you win with and your nemesis. Tap to watch.",
-          url: "/",
-        });
-      }
-      await markNotified(key);
+      wrappedRelease = {
+        monthKey,
+        key,
+        recipients: Object.keys(apps).filter((id) => apps[id] >= 2),
+        monthName: new Date(monthKey + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" }),
+      };
     }
+  }
+  let combined = false;
+  if (nowHour >= MONTH_RELEASE_HOUR && nowHour < 21) {
+    try {
+      combined = await announcePlayerOfMonth(admin, nowUkStr, notifiedKeys, markNotified, wrappedRelease);
+    } catch (err) {
+      console.error("Player of the Month announcement failed", err);
+    }
+  }
+  // --- "Your September, wrapped": one push per month, when it goes live ---
+  // Same rule as the app's banner: a month's Wrapped goes live once every
+  // published game in it has been played, scored and had its MOTM vote
+  // close, released at 8am the next morning (lib/time.ts monthReleaseAt).
+  // Only to players who actually have one (2+ games that month). Skipped
+  // when it already went out inside the combined release-day push above.
+  if (wrappedRelease) {
+    if (!combined && wrappedRelease.recipients.length > 0) {
+      const theme = wrappedThemeFor(wrappedRelease.monthKey);
+      await sendPushToUsers(wrappedRelease.recipients, {
+        title: theme?.push.title ?? `Your ${wrappedRelease.monthName}, wrapped 🎁`,
+        body: theme?.push.body ?? "Your games, goals, who you win with and your nemesis. Tap to watch.",
+        url: "/",
+      });
+    }
+    await markNotified(wrappedRelease.key);
   }
 
   // --- Monzo: keep the access token fresh, retry webhook registration ---

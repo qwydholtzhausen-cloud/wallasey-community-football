@@ -13,8 +13,29 @@ const THEMES: Record<OccKind, { acc: string; rgb: string; dark: string; ink: str
   finale: { acc: "#c4b5fd", rgb: "196,181,253", dark: "#140b2b", ink: "#12052a", photo: "/floodlight-haze.jpg", name: "SEASON FINALE" },
   wrapped: { acc: "#fdba74", rgb: "253,186,116", dark: "#24120a", ink: "#2a1203", photo: "/wrapped/glance.jpg", name: "WRAPPED DAY" },
 };
-export const occVars = (k: OccKind) =>
-  ({ ["--oc-acc" as string]: THEMES[k].acc, ["--oc-rgb" as string]: THEMES[k].rgb, ["--oc-dark" as string]: THEMES[k].dark, ["--oc-ink" as string]: THEMES[k].ink }) as CSSProperties;
+export const occVars = (k: OccKind, r?: ReleaseInfo | null) => {
+  const c = r ?? THEMES[k];
+  return { ["--oc-acc" as string]: c.acc, ["--oc-rgb" as string]: c.rgb, ["--oc-dark" as string]: c.dark, ["--oc-ink" as string]: c.ink } as CSSProperties;
+};
+
+// Wrapped day takes its look from that month's Wrapped theme
+// (lib/wrappedThemes.ts): colour, photo, word, edition, tap line and effect.
+// The same morning brings Player of the Month and Team of the Month.
+export type ReleaseInfo = {
+  acc: string;
+  rgb: string;
+  dark: string;
+  ink: string;
+  photo: string;
+  word: string; // "Fright Lights", or the month for an unthemed month
+  edition: string; // "HALLOWEEN EDITION"
+  tap: string; // "Tap if you dare"
+  effect: "fog" | "sparks" | null;
+  watched: boolean;
+  firstName: string;
+  potm: { name: string; avatarUrl?: string | null; isNew: boolean } | null;
+  totm: { faces: { name: string; avatarUrl?: string | null }[]; isNew: boolean; mine: boolean } | null;
+};
 
 function useNow() {
   const [now, setNow] = useState(() => Date.now());
@@ -36,31 +57,40 @@ export type OccInfo = {
   seasonPlayed: number;
   year: string;
   month: string; // Wrapped day: "October"
+  release?: ReleaseInfo | null; // Wrapped day only
 };
 
 export function OccasionRibbon({ o, onOpen }: { o: OccInfo; onOpen: () => void }) {
   const now = useNow();
   const left = o.kickoffMs ? Math.max(0, Math.floor((o.kickoffMs - now) / 1000)) : 0;
   const h = Math.floor(left / 3600), m = Math.floor((left % 3600) / 60);
+  const r = o.release;
   const label =
     o.kind === "wrapped"
-      ? `Your ${o.month} is out`
+      ? r?.watched
+        ? "You've watched yours"
+        : `Your ${o.month} is out`
       : o.scored
         ? "Full time · vote for Man of the Match"
         : left > 0
           ? `Kick-off in ${h ? `${h}h ` : ""}${m}m`
           : `Under way at ${o.venue}`;
   return (
-    <button className={"occ-ribbon " + o.kind} style={occVars(o.kind)} onClick={onOpen}>
+    <button className={"occ-ribbon " + o.kind} style={occVars(o.kind, r)} onClick={onOpen}>
       <i />
-      <b>{o.kind === "milestone" ? `GAME Nº ${o.number}` : o.kind === "wrapped" ? `${o.month.toUpperCase()}, WRAPPED` : THEMES[o.kind].name}</b>
+      <b>{o.kind === "milestone" ? `GAME Nº ${o.number}` : o.kind === "wrapped" ? (r ? r.word.toUpperCase() : `${o.month.toUpperCase()}, WRAPPED`) : THEMES[o.kind].name}</b>
       <span>{label}</span>
-      <em>{o.kind === "wrapped" ? "Watch ›" : "Fixtures ›"}</em>
+      <em>{o.kind === "wrapped" ? (r?.watched ? "Share ›" : "Watch ›") : "Fixtures ›"}</em>
     </button>
   );
 }
 
-export function OccasionHero({ o, onPrimary, onSecondary, secondaryLabel }: { o: OccInfo; onPrimary: () => void; onSecondary: () => void; secondaryLabel: string }) {
+export function OccasionHero(props: { o: OccInfo; onPrimary: () => void; onSecondary: () => void; secondaryLabel: string; onShare?: () => void }) {
+  if (props.o.kind === "wrapped" && props.o.release) return <ReleaseHero o={props.o} r={props.o.release} onWatch={props.onPrimary} onShare={props.onShare ?? props.onPrimary} />;
+  return <GameOccasionHero {...props} />;
+}
+
+function GameOccasionHero({ o, onPrimary, onSecondary, secondaryLabel }: { o: OccInfo; onPrimary: () => void; onSecondary: () => void; secondaryLabel: string }) {
   const now = useNow();
   const left = o.kickoffMs ? Math.max(0, Math.floor((o.kickoffMs - now) / 1000)) : 0;
   const [envOpen, setEnvOpen] = useState(false);
@@ -210,6 +240,115 @@ export function OccasionHero({ o, onPrimary, onSecondary, secondaryLabel }: { o:
   );
 }
 
+function ReleaseHero({ o, r, onWatch, onShare }: { o: OccInfo; r: ReleaseInfo; onWatch: () => void; onShare: () => void }) {
+  const [opening, setOpening] = useState(false);
+  const open = r.watched || opening;
+  const watch = () => {
+    if (r.watched) return onWatch();
+    setOpening(true);
+    window.setTimeout(onWatch, 1000);
+  };
+  return (
+    <div className="occ-rd" style={occVars("wrapped", r)}>
+      <div className="occ-rd-photo" style={{ backgroundImage: `url(${r.photo})` }} />
+      {r.effect === "fog" && (
+        <>
+          <div className="occ-rd-fog a" />
+          <div className="occ-rd-fog b" />
+          {[
+            [12, 30, 0],
+            [30, 22, 2.2],
+            [55, 36, 4.1],
+          ].map(([x, y, d], i) => (
+            <i key={i} className="occ-rd-bat" style={{ left: `${x}%`, top: `${y}%`, animationDelay: `-${d}s` }} />
+          ))}
+        </>
+      )}
+      {r.effect === "sparks" &&
+        Array.from({ length: 22 }, (_, k) => (
+          <i key={k} className="occ-rd-spark" style={{ left: `${(k * 37) % 100}%`, ["--dx" as string]: `${((k % 5) - 2) * 14}px`, animationDuration: `${3 + (k % 4)}s`, animationDelay: `-${(k * 0.47) % 4}s` }} />
+        ))}
+      <div className="occ-rd-hk">
+        <small>{r.edition}</small>
+        <h3>{r.word}</h3>
+        <p>{r.watched ? `You've watched your ${o.month}.` : `${r.firstName ? r.firstName + ", your" : "Your"} ${o.month} is out.`}</p>
+      </div>
+      <button className={"occ-rd-env" + (open ? " open" : "")} onClick={watch} aria-label={`Open your ${o.month} Wrapped`}>
+        <span className="env">
+          <span className="back" />
+          <span className="card">
+            <small>{r.firstName ? `${r.firstName.toUpperCase()}'S` : "YOUR"}</small>
+            <b>{o.month}</b>
+            <small>WRAPPED</small>
+          </span>
+          <span className="front" />
+          <span className="lbl">{o.month}</span>
+          {r.firstName && <span className="for">for {r.firstName}</span>}
+          <span className="flap" />
+          <span className="seal">
+            <img src="/crest.png" alt="" />
+          </span>
+        </span>
+      </button>
+      {r.watched ? (
+        <div className="occ-rd-done">✓ Watched</div>
+      ) : (
+        <>
+          <div className="occ-rd-tap">{r.tap}</div>
+          <div className="occ-rd-in">Inside: your goals, your votes and who you win with</div>
+        </>
+      )}
+      <div className={"occ-rd-acts" + (r.watched ? "" : " one")}>
+        {r.watched ? (
+          <>
+            <button className="main" onClick={onShare}>
+              Share my card
+            </button>
+            <button onClick={onWatch}>Watch again</button>
+          </>
+        ) : (
+          <button className="main" onClick={watch}>
+            Watch my {o.month}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Player of the Month and Team of the Month, out the same morning.
+export function ReleaseAlso({ o, onPotm, onTotm }: { o: OccInfo; onPotm: () => void; onTotm: () => void }) {
+  const r = o.release;
+  if (!r || (!r.potm && !r.totm)) return null;
+  const av = (p: { name: string; avatarUrl?: string | null }, cls: string) =>
+    p.avatarUrl ? <img className={cls} src={p.avatarUrl} alt="" /> : <span className={cls + " ini"}>{p.name.charAt(0).toUpperCase()}</span>;
+  return (
+    <div className="occ-rd-also" style={occVars("wrapped", r)}>
+      <h5>ALSO OUT THIS MORNING</h5>
+      <div className="row">
+        {r.potm && (
+          <button className="occ-rd-mini" onClick={onPotm}>
+            <span className="bg" style={{ backgroundImage: "url(/wrapped/motm.jpg)" }} />
+            {r.potm.isNew && <span className="new">NEW</span>}
+            {av(r.potm, "big")}
+            <small>PLAYER OF THE MONTH</small>
+            <b>{r.potm.name}</b>
+          </button>
+        )}
+        {r.totm && (
+          <button className="occ-rd-mini" onClick={onTotm}>
+            <span className="bg" style={{ backgroundImage: "url(/season-hero.jpg)" }} />
+            {r.totm.isNew && <span className="new">NEW</span>}
+            <span className="fc">{r.totm.faces.slice(0, 6).map((f, i) => <span key={i}>{av(f, "")}</span>)}</span>
+            <small>TEAM OF THE MONTH</small>
+            <b>{r.totm.mine ? "You're in the eight" : "The eight"}</b>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function OccasionTimeline({ o }: { o: OccInfo }) {
   const rows: [string, string][] =
     o.kind === "wrapped"
@@ -324,5 +463,60 @@ export const occasionCss = `
 .occ-env.open .seal{transform:scale(1.4) rotate(20deg);opacity:0}
 .occ-env.open .flap{transform:scaleY(-1);z-index:0}
 .occ-env.open .card{transform:translateY(-24px)}
+.occ-rd{position:relative;border-radius:24px;overflow:hidden;border:1.5px solid var(--oc-acc);box-shadow:0 0 50px -12px rgba(var(--oc-rgb),.75);margin:0 0 14px;background:#06070d;color:#fff;padding-bottom:16px}
+.occ-rd-photo{position:absolute;inset:0;background-size:cover;background-position:60% 70%}
+.occ-rd-photo::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(6,6,10,.15),rgba(6,6,10,.35) 35%,rgba(6,6,10,.94) 82%)}
+.occ-rd-fog{position:absolute;left:-60%;width:220%;height:40%;pointer-events:none;background:radial-gradient(ellipse at 30% 50%,rgba(230,232,240,.16),transparent 60%),radial-gradient(ellipse at 70% 60%,rgba(230,232,240,.11),transparent 55%);filter:blur(14px)}
+.occ-rd-fog.a{top:28%;animation:occRdFog 18s linear infinite}
+.occ-rd-fog.b{top:48%;animation:occRdFog 26s linear infinite reverse;opacity:.8}
+@keyframes occRdFog{to{transform:translateX(30%)}}
+.occ-rd-bat{position:absolute;width:16px;height:7px;background:#05050a;clip-path:polygon(0 30%,20% 0,40% 35%,50% 10%,60% 35%,80% 0,100% 30%,75% 60%,50% 100%,25% 60%);animation:occRdBat 7s ease-in-out infinite}
+@keyframes occRdBat{0%{transform:translate(0,0) scale(1)}50%{transform:translate(60px,-14px) scale(.85)}100%{transform:translate(120px,4px) scale(.7);opacity:0}}
+.occ-rd-spark{position:absolute;bottom:20%;width:3px;height:3px;border-radius:50%;background:#ffd08a;box-shadow:0 0 8px 2px rgba(255,140,60,.9);animation:occRdRise linear infinite}
+@keyframes occRdRise{to{transform:translate(var(--dx),-260px);opacity:0}}
+.occ-rd-hk{position:relative;text-align:center;padding:26px 14px 0}
+.occ-rd-hk small{display:inline-block;font:600 10px var(--font-oswald),sans-serif;letter-spacing:.24em;color:var(--oc-ink);background:var(--oc-acc);padding:3px 9px;border-radius:4px}
+.occ-rd-hk h3{margin:10px 0 0;font:700 52px/.88 var(--font-oswald),sans-serif;text-transform:uppercase;color:#fff;text-shadow:0 0 30px rgba(var(--oc-rgb),.55),0 4px 20px rgba(0,0,0,.7)}
+.occ-rd-hk p{margin:8px 0 0;font:600 13.5px var(--sans);color:#e2e8f0}
+.occ-rd-env{position:relative;display:block;margin:20px auto 0;padding:0;border:0;background:none;cursor:pointer;color:inherit}
+.occ-rd-env .env{position:relative;display:block;width:220px;height:140px;margin:0 auto}
+.occ-rd-env:not(.open) .env{animation:occRdBob 2.6s ease-in-out infinite}
+@keyframes occRdBob{50%{transform:translateY(-6px) rotate(-1.5deg)}}
+.occ-rd-env .back{position:absolute;inset:0;border-radius:10px;background:linear-gradient(160deg,#2a2018,#120c08);box-shadow:0 18px 30px -12px #000}
+.occ-rd-env .card{position:absolute;z-index:1;left:14px;right:14px;top:12px;height:114px;border-radius:7px;background:linear-gradient(160deg,#fff7ed,#fde6c8);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#3a1a05;opacity:0;transition:transform .8s cubic-bezier(.2,1,.3,1) .3s,opacity .25s .25s}
+.occ-rd-env .card small{font:600 9.5px var(--font-oswald),sans-serif;letter-spacing:.24em}
+.occ-rd-env .card b{font:700 24px/1 var(--font-oswald),sans-serif;text-transform:uppercase;margin:3px 0}
+.occ-rd-env .front{position:absolute;z-index:2;inset:0;border-radius:10px;background:linear-gradient(160deg,#3a2b1e,#1a120b);clip-path:polygon(0 30%,50% 62%,100% 30%,100% 100%,0 100%);border:1px solid rgba(var(--oc-rgb),.25)}
+.occ-rd-env .lbl{position:absolute;z-index:3;left:0;right:0;bottom:16px;text-align:center;font:700 19px/1 var(--font-oswald),sans-serif;letter-spacing:.32em;text-transform:uppercase;background:linear-gradient(180deg,#fff3c4,var(--oc-acc) 60%,#8a4a12);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 1px 0 rgba(0,0,0,.6));transition:opacity .3s}
+.occ-rd-env .for{position:absolute;z-index:3;right:18px;bottom:44px;font:700 17px/1 var(--font-caveat),cursive;color:#f1e3cf;opacity:.85;transform:rotate(-6deg);transition:opacity .3s}
+.occ-rd-env .flap{position:absolute;z-index:3;left:0;right:0;top:0;height:62%;background:linear-gradient(180deg,#4a3826,#22170e);clip-path:polygon(0 0,100% 0,50% 100%);transform-origin:50% 0;transition:transform .5s cubic-bezier(.5,0,.3,1),opacity .25s .3s}
+.occ-rd-env .seal{position:absolute;z-index:4;left:50%;top:52%;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#ffd29a,var(--oc-acc) 55%,#8a3d0a);box-shadow:0 0 18px rgba(var(--oc-rgb),.8),0 3px 8px rgba(0,0,0,.6);display:grid;place-items:center;transition:transform .4s,opacity .4s}
+.occ-rd-env .seal img{width:26px;opacity:.85;filter:brightness(.25) sepia(1)}
+.occ-rd-env.open .seal{transform:scale(1.4) rotate(20deg);opacity:0}
+.occ-rd-env.open .flap{transform:scaleY(-1);opacity:0}
+.occ-rd-env.open .card{transform:translateY(-30px);opacity:1}
+.occ-rd-env.open .lbl,.occ-rd-env.open .for{opacity:0}
+.occ-rd-tap{position:relative;text-align:center;margin-top:12px;font:600 11px var(--font-oswald),sans-serif;letter-spacing:.26em;text-transform:uppercase;color:var(--oc-acc)}
+.occ-rd-in{position:relative;text-align:center;margin-top:8px;font:500 12px var(--sans);color:#cbd5e1}
+.occ-rd-done{position:relative;text-align:center;margin-top:10px;font:700 13px var(--sans);color:#86efac}
+.occ-rd-acts{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 12px 0}
+.occ-rd-acts.one{grid-template-columns:1fr}
+.occ-rd-acts button{height:44px;border-radius:12px;border:1px solid rgba(var(--oc-rgb),.45);background:rgba(var(--oc-rgb),.1);color:#fff;font:800 12.5px var(--sans);cursor:pointer}
+.occ-rd-acts button.main{background:var(--oc-acc);color:var(--oc-ink);border-color:var(--oc-acc)}
+.occ-rd-also{margin:0 0 14px}
+.occ-rd-also h5{margin:0 2px 8px;font:600 10.5px var(--font-oswald),sans-serif;letter-spacing:.22em;color:var(--oc-acc)}
+.occ-rd-also .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.occ-rd-mini{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(var(--oc-rgb),.35);background:#10131f;padding:12px;min-height:128px;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;cursor:pointer;text-align:left;color:#fff;font:inherit}
+.occ-rd-mini .bg{position:absolute;inset:0;background-size:cover;background-position:center;opacity:.4}
+.occ-rd-mini .bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent,rgba(10,12,20,.95) 70%)}
+.occ-rd-mini>*:not(.bg){position:relative}
+.occ-rd-mini .new{position:absolute;top:10px;right:10px;font:800 9px var(--sans);letter-spacing:.12em;padding:3px 7px;border-radius:999px;background:var(--oc-acc);color:var(--oc-ink)}
+.occ-rd-mini small{font:600 9.5px var(--font-oswald),sans-serif;letter-spacing:.2em;color:var(--oc-acc)}
+.occ-rd-mini b{display:block;font:700 18px/1.05 var(--font-oswald),sans-serif;text-transform:uppercase;margin-top:3px}
+.occ-rd-mini .fc{display:flex;margin-bottom:8px}
+.occ-rd-mini .fc img,.occ-rd-mini .fc .ini{width:24px;height:24px;border-radius:50%;object-fit:cover;border:2px solid #10131f;margin-left:-7px;display:grid;place-items:center;font:800 9px var(--display);color:#fff;background:#475569}
+.occ-rd-mini .fc>:first-child>*{margin-left:0}
+.occ-rd-mini .big{width:46px;height:46px;border-radius:50%;object-fit:cover;border:2px solid var(--oc-acc);margin-bottom:8px;display:grid;place-items:center;font:800 16px var(--display);color:#fff;background:#475569}
+@media (prefers-reduced-motion: reduce){.occ-rd-fog,.occ-rd-bat,.occ-rd-spark,.occ-rd-env .env{animation:none!important}}
 @media (prefers-reduced-motion: reduce){.occ-snow,.occ-lights i,.occ-env .env,.wcf-top.occ::after{animation:none!important}}
 `;

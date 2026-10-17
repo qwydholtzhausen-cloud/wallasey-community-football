@@ -26,7 +26,7 @@ import {
   TOTM_REVEAL_FROM,
 } from "../lib/clubPolicy";
 import { findOccasion } from "../lib/occasions";
-import { OccasionHero, OccasionRibbon, OccasionTimeline, occVars, occasionCss, type OccInfo } from "./ui/occasion";
+import { OccasionHero, OccasionRibbon, OccasionTimeline, ReleaseAlso, occVars, occasionCss, type OccInfo } from "./ui/occasion";
 import { CardFan, SeasonCard, TierLadder, TierUnlock, seasonCardCss, tierFor, type CardTier } from "./ui/seasoncard";
 import { houseStyleCss } from "./ui/houseStyle";
 import { computeWrapped } from "../lib/wrapped";
@@ -4404,6 +4404,10 @@ function App({ session }: { session: Session }) {
   }
   function openWrapped() {
     trackWrapped("opened");
+    try {
+      localStorage.setItem(`wcf-wrapped-watched-${myId}-${wrappedMonthKey}`, "1");
+    } catch {}
+    setWrappedWatched(true);
     let seen = false;
     try {
       seen = localStorage.getItem(`wcf-wrapped-intro-${myId}-${wrappedMonthKey}`) === "true";
@@ -4623,6 +4627,16 @@ function App({ session }: { session: Session }) {
   // (lib/occasions.ts). The First XI outranks them. Admins first, and admins
   // can preview one with ?occasion=christmas|milestone|finale|wrapped.
   const occasionsOn = isAdmin || nowUk.slice(0, 10) >= OCCASIONS_OPEN_TO_ALL_FROM;
+  // ...and ?theme=2026-10 previews that month's Wrapped theme on Wrapped day.
+  const [occThemePreview] = useState<string | null>(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get("theme");
+      if (q && /^\d{4}-\d{2}$/.test(q)) sessionStorage.setItem("wcf-occ-theme", q);
+      return sessionStorage.getItem("wcf-occ-theme");
+    } catch {
+      return null;
+    }
+  });
   const [occPreview] = useState<string | null>(() => {
     try {
       const q = new URLSearchParams(window.location.search).get("occasion");
@@ -4632,6 +4646,14 @@ function App({ session }: { session: Session }) {
       return null;
     }
   });
+  // Wrapped day: has this phone watched this month's Wrapped yet?
+  const watchedKey = `wcf-wrapped-watched-${myId}-${wrappedMonthKey}`;
+  const [wrappedWatched, setWrappedWatched] = useState(false);
+  useEffect(() => {
+    try {
+      setWrappedWatched(localStorage.getItem(watchedKey) === "1");
+    } catch {}
+  }, [watchedKey]);
   const occInfo: OccInfo | null = (() => {
     if (!occasionsOn || isMatchday) return null;
     const today = nowUk.slice(0, 10);
@@ -4749,6 +4771,52 @@ function App({ session }: { session: Session }) {
     (id: string) => ({ name: profiles.find((p) => p.id === id)?.display_name ?? "Former player", avatarUrl: avatarByPlayerId.get(id) }),
     [profiles, avatarByPlayerId]
   );
+  // Wrapped day's look comes from that month's Wrapped theme; the same
+  // morning's Player of the Month and Team of the Month sit under it.
+  const occ: OccInfo | null = (() => {
+    if (!occInfo || occInfo.kind !== "wrapped") return occInfo;
+    const themeMonth = (isAdmin && occThemePreview) || wrappedMonthKey;
+    const th = wrapped && !wrapped.soFar ? wrappedThemeFor(themeMonth) : null;
+    const monthName = new Date(themeMonth + "-15T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+    const acc = th?.accent ?? "#f5d97a";
+    const rgb = [1, 3, 5].map((i) => parseInt(acc.slice(i, i + 2), 16)).join(",");
+    const seenKey = (k: string) => {
+      try {
+        return !!localStorage.getItem(k);
+      } catch {
+        return true;
+      }
+    };
+    const potm = playerOfMonth && playerOfMonth.monthKey === wrappedMonthKey && playerOfMonth.winners.length > 0 ? playerOfMonth : null;
+    const totm = totmMonths.find((m) => m.monthKey === wrappedMonthKey) ?? null;
+    return {
+      ...occInfo,
+      month: monthName,
+      release: {
+        acc,
+        rgb,
+        dark: th ? "#110907" : "#0e0c07",
+        ink: th ? "#1a0d03" : "#1a1405",
+        photo: th ? th.bannerPhoto ?? th.introPhoto : "/wrapped/glance.jpg",
+        word: th ? th.word.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : monthName,
+        edition: th ? th.edition.toUpperCase() : "YOUR MONTH, WRAPPED",
+        tap: th?.copy?.tap ?? "Tap to open",
+        effect: th?.effect ?? null,
+        watched: wrappedWatched,
+        firstName: myProfile ? myProfile.display_name.split(" ")[0].replace(/[()]/g, "") : "",
+        potm: potm
+          ? { name: potm.winners.map((w) => w.name.split(" ")[0]).join(" & "), avatarUrl: avatarByPlayerId.get(potm.winners[0].id), isNew: !seenKey(`wcf-potm-intro-${myId}-${potm.monthKey}`) }
+          : null,
+        totm: totm
+          ? {
+              faces: totm.team.team.map((p) => totmWho(p.id)),
+              isNew: !seenKey(`wcf-totm-intro-${myId}-${totm.monthKey}`),
+              mine: totm.team.team.some((p) => p.id === myId),
+            }
+          : null,
+      },
+    };
+  })();
   const seasonRecords = useMemo(() => {
     const nameById = new Map(profiles.map((p) => [p.id, p.display_name]));
     return computeRecords({
@@ -5720,7 +5788,7 @@ function App({ session }: { session: Session }) {
         },
       });
     }
-    if (showWrappedBanner && wrapped) {
+    if (showWrappedBanner && wrapped && occInfo?.kind !== "wrapped") {
       const th = wrappedThemeFor(wrapped.periodKey);
       const themed = !!th && !wrapped.soFar;
       out.push({
@@ -6232,8 +6300,8 @@ function App({ session }: { session: Session }) {
       {houseStyleOn && <style>{houseStyleCss}</style>}
       {isMatchday && <style>{matchdayCss}</style>}
       {mdIntro && <MatchdayIntro onDone={() => setMdIntro(false)} />}
-      {occInfo && <style>{occasionCss}</style>}
-      <header className={"wcf-top" + (isMatchday ? " mdx" : "") + (occInfo ? " occ" : "")} style={occInfo ? occVars(occInfo.kind) : undefined}>
+      {occ && <style>{occasionCss}</style>}
+      <header className={"wcf-top" + (isMatchday ? " mdx" : "") + (occ ? " occ" : "")} style={occ ? occVars(occ.kind, occ.release) : undefined}>
         <button className="wcf-brand" onClick={() => setTab("fixtures")} aria-label="Go to fixtures">
           <span className="wcf-logo">
             <img src="/crest.png" alt="Wirral Community Football crest" />
@@ -6254,7 +6322,7 @@ function App({ session }: { session: Session }) {
       </header>
 
       {isMatchday && programme && tab !== "fixtures" && <MatchdayRibbon kickoffMs={kickoffMs} phase={mdPhase} onOpen={openProgramme} />}
-      {occInfo && tab !== "fixtures" && <OccasionRibbon o={occInfo} onOpen={() => (occInfo.kind === "wrapped" ? openWrapped() : goTab("fixtures"))} />}
+      {occ && tab !== "fixtures" && <OccasionRibbon o={occ} onOpen={() => (occ.kind === "wrapped" ? (occ.release?.watched ? void shareWrapped() : openWrapped()) : goTab("fixtures"))} />}
       {isOffline && <div className="wcf-offline-banner">Offline · showing what was last loaded</div>}
 
       {updateAvailable && (
@@ -6298,15 +6366,27 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
-            {occInfo && (
+            {occ && (
               <>
                 <OccasionHero
-                  o={occInfo}
-                  onPrimary={() => (occInfo.kind === "wrapped" ? openWrapped() : occInfo.scored && occGameId ? goToResult(occGameId) : occGameId && openFixture(occGameId))}
-                  onSecondary={() => goTab(occInfo.kind === "christmas" ? "feed" : "results")}
-                  secondaryLabel={occInfo.kind === "christmas" ? "Club feed" : occInfo.kind === "finale" ? "Season so far" : "Results"}
+                  o={occ}
+                  onPrimary={() => (occ.kind === "wrapped" ? openWrapped() : occ.scored && occGameId ? goToResult(occGameId) : occGameId && openFixture(occGameId))}
+                  onSecondary={() => goTab(occ.kind === "christmas" ? "feed" : "results")}
+                  secondaryLabel={occ.kind === "christmas" ? "Club feed" : occ.kind === "finale" ? "Season so far" : "Results"}
+                  onShare={() => void shareWrapped()}
                 />
-                <OccasionTimeline o={occInfo} />
+                {occ.kind === "wrapped" ? (
+                  <ReleaseAlso
+                    o={occ}
+                    onPotm={() => {
+                      setResultsView("season");
+                      goTab("results");
+                    }}
+                    onTotm={() => occ.release?.totm && setTotmReplay({ monthKey: wrappedMonthKey, instant: false })}
+                  />
+                ) : (
+                  <OccasionTimeline o={occ} />
+                )}
               </>
             )}
             {isMatchday && programme && (
@@ -6936,8 +7016,8 @@ function App({ session }: { session: Session }) {
       </main>
 
       <nav
-        className={"wcf-nav" + (isMatchday ? " mdx" : "") + (occInfo ? " occ" : "") + (movementOn && !isMatchday ? " has-pill" : "")}
-        style={{ ["--n" as string]: TABS.length, ["--i" as string]: Math.max(0, TABS.findIndex((t) => t.k === tab)), ...(occInfo ? occVars(occInfo.kind) : {}) }}
+        className={"wcf-nav" + (isMatchday ? " mdx" : "") + (occ ? " occ" : "") + (movementOn && !isMatchday ? " has-pill" : "")}
+        style={{ ["--n" as string]: TABS.length, ["--i" as string]: Math.max(0, TABS.findIndex((t) => t.k === tab)), ...(occ ? occVars(occ.kind, occ.release) : {}) }}
       >
         {movementOn && !isMatchday && TABS.some((t) => t.k === tab) && <span className="wcf-nav-pill" ref={navPillRef} aria-hidden="true" />}
         {TABS.map((t) => (

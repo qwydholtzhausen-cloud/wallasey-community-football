@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { sendPushBroadcast } from "./push";
+import { sendPushBroadcast, sendPushToUsers } from "./push";
+import { wrappedThemeFor } from "./wrappedThemes";
 import { kickoffCutoff, previousMonthKey, monthReleaseAt, nextMonthStart, MOTM_VOTE_WINDOW_MINUTES } from "./time";
 import { motmWinners, goalsLookup } from "./motm";
 import { TOTM_REVEAL_FROM } from "./clubPolicy";
@@ -14,8 +15,12 @@ export async function announcePlayerOfMonth(
   admin: SupabaseClient,
   nowUk: string,
   notifiedKeys: Set<string>,
-  markNotified: (key: string) => Promise<void>
-) {
+  markNotified: (key: string) => Promise<void>,
+  // The same morning's Wrapped, when it's for the same month: then it's one
+  // notification for everyone instead of two (returns true if it was sent).
+  wrapped?: { monthKey: string; recipients: string[]; monthName: string } | null
+): Promise<boolean> {
+  let combined = false;
   const { data: games } = await admin
     .from("games")
     .select("id, date, kickoff, published, team_white_score, team_red_score")
@@ -75,7 +80,32 @@ export async function announcePlayerOfMonth(
         const names = (winners ?? []).map((w) => w.display_name).join(" & ");
         const monthLabel = new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 
-        if (names) {
+        if (names && wrapped && wrapped.monthKey === monthKey && monthKey >= TOTM_REVEAL_FROM) {
+          // Release day: Wrapped, Player of the Month and Team of the Month in
+          // one notification, in the month's own voice and with no names, so
+          // the reveals still happen in the app. Players without a Wrapped
+          // (under 2 games) get the winners-only version.
+          const theme = wrappedThemeFor(monthKey);
+          const word = theme ? theme.word.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : null;
+          const first = monthKey === TOTM_REVEAL_FROM ? "the first " : "";
+          const tap = theme?.copy?.tap ? `${theme.copy.tap}.` : "Tap to watch.";
+          const withWrapped = new Set(wrapped.recipients);
+          if (withWrapped.size > 0)
+            await sendPushToUsers([...withWrapped], {
+              title: word ? `${word} is out` : `Your ${wrapped.monthName} is out`,
+              body: `Your ${wrapped.monthName} Wrapped, Player of the Month and ${first}Team of the Month. ${tap}`,
+              url: "/",
+            });
+          const { data: everyone } = await admin.from("profiles").select("id");
+          const rest = (everyone ?? []).map((p) => p.id as string).filter((id) => !withWrapped.has(id));
+          if (rest.length > 0)
+            await sendPushToUsers(rest, {
+              title: `${wrapped.monthName}'s Player of the Month and Team of the Month are in`,
+              body: "See who made the eight.",
+              url: "/",
+            });
+          combined = true;
+        } else if (names) {
           // From October 2026 the same push carries Team of the Month, which
           // Player of the Month captains - one push, not two.
           const joint = (winners ?? []).length > 1;
@@ -97,4 +127,5 @@ export async function announcePlayerOfMonth(
     }
     await markNotified(potmKey);
   }
+  return combined;
 }

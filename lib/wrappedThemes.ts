@@ -27,7 +27,7 @@ export interface WrappedTheme {
   // intro drawn in code (fog and bats for Halloween).
   photos?: Partial<Record<WrappedPhotoKey | "treat", string>>;
   bannerPhoto?: string;
-  effect?: "fog";
+  effect?: "fog" | "sparks"; // fog: the story intro and release day; sparks: release day only
   // Themed copy: card labels by card key, the intro's tap line, and the
   // closing card's headline and line.
   copy?: { labels?: Partial<Record<string, string>>; quips?: Partial<Record<string, string>>; tap?: string; endTitle?: [string, string]; endLine?: string };
@@ -108,6 +108,8 @@ const THEMES: Record<string, WrappedTheme> = {
     edition: "Bonfire Night edition",
     accent: "#ff7a45",
     introPhoto: "/wrapped/bank/november-bonfire.jpg",
+    effect: "sparks",
+    copy: { tap: "Light the fuse" },
     push: { title: "Bangers: your November Wrapped", body: "Your November, lit up: goals, votes, best nights and who you win with. Tap to watch." },
     line: (w) =>
       w.goals >= 3 ? "your November, lit up."
