@@ -69,3 +69,8 @@ export const FOR_YOU_OPEN_TO_ALL_FROM = "9999-12-31";
 // edges across the app (app/ui/houseStyle.ts). Admins first, every member
 // from this UK date. Far future = admins only.
 export const HOUSE_STYLE_OPEN_TO_ALL_FROM = "9999-12-31";
+
+// Movement (2026-10-17): swipe between the nav tabs, a pill that slides
+// along the nav, and a game card that grows into its squad list. Admins
+// first, every member from this UK date. Off for "reduce motion" anyway.
+export const MOVEMENT_OPEN_TO_ALL_FROM = "9999-12-31";

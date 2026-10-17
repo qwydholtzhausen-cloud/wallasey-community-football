@@ -1,7 +1,7 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/client";
 import { motmWinners, goalsLookup } from "../lib/motm";
@@ -19,6 +19,7 @@ import {
   GAME_CREDITS_LIVE,
   FOR_YOU_OPEN_TO_ALL_FROM,
   HOUSE_STYLE_OPEN_TO_ALL_FROM,
+  MOVEMENT_OPEN_TO_ALL_FROM,
 } from "../lib/clubPolicy";
 import { houseStyleCss } from "./ui/houseStyle";
 import { computeWrapped } from "../lib/wrapped";
@@ -1976,14 +1977,18 @@ function App({ session }: { session: Session }) {
     const el = mainRef.current;
     if (!el || !["fixtures", "feed", "results"].includes(tab)) return;
     let y0: number | null = null;
+    let x0 = 0;
     let pull = 0;
     const start = (e: TouchEvent) => {
       if (ptrBusy.current || el.scrollTop > 0 || e.touches.length !== 1) return;
       y0 = e.touches[0].clientY;
+      x0 = e.touches[0].clientX;
     };
     const move = (e: TouchEvent) => {
       if (y0 == null) return;
       const dy = e.touches[0].clientY - y0;
+      // A sideways drag is a tab swipe, not a pull.
+      if (!pull && Math.abs(e.touches[0].clientX - x0) > Math.abs(dy)) return;
       if (dy <= 0 || el.scrollTop > 0) {
         if (pull) { pull = 0; setPtr({ pull: 0, phase: "pull" }); }
         return;
@@ -2020,6 +2025,7 @@ function App({ session }: { session: Session }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, loading]);
+
 
   // PWAs/mobile browsers often suspend the page in the background and just
   // resume the same in-memory state when reopened, rather than reloading -
@@ -5381,6 +5387,99 @@ function App({ session }: { session: Session }) {
   // existing "hide" switches).
   const forYouOn = isAdmin || nowUk.slice(0, 10) >= FOR_YOU_OPEN_TO_ALL_FROM;
   const houseStyleOn = isAdmin || nowUk.slice(0, 10) >= HOUSE_STYLE_OPEN_TO_ALL_FROM;
+
+  // Movement: swipe sideways between the nav tabs. The page follows the
+  // finger, the nav pill tracks it, and the next tab slides in from that
+  // side. Horizontal scrollers (story rings, For you, chips) keep their own
+  // swipes. Admins first (MOVEMENT_OPEN_TO_ALL_FROM), never with reduce motion.
+  const movementOn = (isAdmin || nowUk.slice(0, 10) >= MOVEMENT_OPEN_TO_ALL_FROM) && motionOk();
+  const [slideIn, setSlideIn] = useState<"l" | "r" | null>(null);
+  const navPillRef = useRef<HTMLSpanElement>(null);
+  const navOrder: (typeof tab)[] = ["fixtures", "feed", "lineup", "results", ...(isAdmin ? (["admin"] as const) : [])];
+  function goTab(k: typeof tab) {
+    const a = navOrder.indexOf(tab), b = navOrder.indexOf(k);
+    setSlideIn(movementOn && a >= 0 && b >= 0 && a !== b ? (b > a ? "r" : "l") : null);
+    setTab(k);
+  }
+  useEffect(() => {
+    const el = mainRef.current;
+    const order: (typeof tab)[] = ["fixtures", "feed", "lineup", "results", ...(isAdmin ? (["admin"] as const) : [])];
+    const i = order.indexOf(tab);
+    if (!el || !movementOn || i < 0) return;
+    let x0: number | null = null;
+    let y0 = 0;
+    let dx = 0;
+    let lock: "x" | "y" | null = null;
+    const blocked = (t: EventTarget | null) => {
+      for (let n = t as HTMLElement | null; n && n !== el; n = n.parentElement) {
+        if (n.matches("input,textarea,select,.wcf-fy-stage,[data-noswipe]")) return true;
+        const ox = getComputedStyle(n).overflowX;
+        if ((ox === "auto" || ox === "scroll") && n.scrollWidth > n.clientWidth + 2) return true;
+      }
+      return false;
+    };
+    const pill = () => navPillRef.current;
+    const start = (e: TouchEvent) => {
+      x0 = e.touches.length === 1 && !blocked(e.target) ? e.touches[0].clientX : null;
+      y0 = e.touches[0]?.clientY ?? 0;
+      dx = 0;
+      lock = null;
+    };
+    const move = (e: TouchEvent) => {
+      if (x0 == null) return;
+      const ddx = e.touches[0].clientX - x0, ddy = e.touches[0].clientY - y0;
+      if (!lock && (Math.abs(ddx) > 10 || Math.abs(ddy) > 10)) lock = Math.abs(ddx) > Math.abs(ddy) * 1.2 ? "x" : "y";
+      if (lock !== "x") return;
+      e.preventDefault();
+      dx = ddx;
+      const edge = (dx > 0 && i === 0) || (dx < 0 && i === order.length - 1);
+      const d = edge ? dx * 0.25 : dx;
+      el.style.transition = "none";
+      el.style.transform = `translateX(${d}px)`;
+      el.style.opacity = String(1 - Math.min(0.5, Math.abs(d) / 600));
+      const p = pill();
+      if (p) {
+        p.style.transition = "none";
+        p.style.transform = `translateX(${(i - d / el.clientWidth) * 100}%)`;
+      }
+    };
+    const end = () => {
+      if (x0 == null) return;
+      x0 = null;
+      if (lock !== "x") return;
+      const w = el.clientWidth;
+      const next = dx < -w * 0.22 ? i + 1 : dx > w * 0.22 ? i - 1 : i;
+      const p = pill();
+      if (p) {
+        p.style.transition = "";
+        p.style.transform = next !== i && next >= 0 && next < order.length ? `translateX(${next * 100}%)` : "";
+      }
+      if (next !== i && next >= 0 && next < order.length) {
+        el.style.transition = "transform .18s ease-in, opacity .18s";
+        el.style.transform = `translateX(${dx < 0 ? -40 : 40}%)`;
+        el.style.opacity = "0";
+        window.setTimeout(() => {
+          if (p) p.style.transform = "";
+          setSlideIn(dx < 0 ? "r" : "l");
+          setTab(order[next]);
+        }, 170);
+      } else {
+        el.style.transition = "transform .3s cubic-bezier(.2,.9,.3,1), opacity .3s";
+        el.style.transform = "";
+        el.style.opacity = "";
+      }
+    };
+    el.addEventListener("touchstart", start, { passive: true });
+    el.addEventListener("touchmove", move, { passive: false });
+    el.addEventListener("touchend", end);
+    el.addEventListener("touchcancel", end);
+    return () => {
+      el.removeEventListener("touchstart", start);
+      el.removeEventListener("touchmove", move);
+      el.removeEventListener("touchend", end);
+      el.removeEventListener("touchcancel", end);
+    };
+  }, [tab, movementOn, isAdmin, loading, !!myProfile]); // eslint-disable-line react-hooks/exhaustive-deps
   const fyKey = `wcf-fy-hidden-${myId}`;
   const [fyHidden, setFyHidden] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -6058,7 +6157,7 @@ function App({ session }: { session: Session }) {
         </button>
       )}
 
-      <main className={"wcf-main" + (isAdmin ? " has-fab" : "")} key={tab} ref={mainRef}>
+      <main className={"wcf-main" + (isAdmin ? " has-fab" : "") + (movementOn && slideIn ? " slide-" + slideIn : "")} key={tab} ref={mainRef}>
         {ptr.pull > 0 && (
           <div className={"wcf-ptr " + ptr.phase} style={{ height: ptr.pull }} aria-live="polite">
             {motionOk() ? (
@@ -6304,6 +6403,7 @@ function App({ session }: { session: Session }) {
                     {nmShown.map((g, i) => (
                       <GameCard
                         key={g.id}
+                        grow={movementOn}
                         featured
                         alt={i % 2 === 1}
                         teams={{ white: { name: cs.team_white_name, color: cs.team_white_color }, red: { name: cs.team_red_name, color: cs.team_red_color } }}
@@ -6353,6 +6453,7 @@ function App({ session }: { session: Session }) {
                       {games.map((g) => (
                         <GameCard
                           key={g.id}
+                          grow={movementOn}
                           isNew={fxNewIds.has(g.id)}
                           cascadeIndex={fxCascade.includes(g.id) ? fxCascade.indexOf(g.id) : undefined}
                           game={g}
@@ -6714,9 +6815,13 @@ function App({ session }: { session: Session }) {
         )}
       </main>
 
-      <nav className={"wcf-nav" + (isMatchday ? " mdx" : "")}>
+      <nav
+        className={"wcf-nav" + (isMatchday ? " mdx" : "") + (movementOn && !isMatchday ? " has-pill" : "")}
+        style={{ ["--n" as string]: TABS.length, ["--i" as string]: Math.max(0, TABS.findIndex((t) => t.k === tab)) }}
+      >
+        {movementOn && !isMatchday && TABS.some((t) => t.k === tab) && <span className="wcf-nav-pill" ref={navPillRef} aria-hidden="true" />}
         {TABS.map((t) => (
-          <button key={t.k} className={"wcf-navbtn " + (tab === t.k ? "active" : "")} onClick={() => setTab(t.k)}>
+          <button key={t.k} className={"wcf-navbtn " + (tab === t.k ? "active" : "")} onClick={() => goTab(t.k)}>
             {t.icon}
             <span>{t.label}</span>
           </button>
@@ -11844,7 +11949,11 @@ function GameCard({
   queueOdds,
   spotsUsuallyOpen,
   push,
+  grow,
 }: {
+  // Movement: the card grows into its squad sheet (and back) instead of
+  // the sheet sliding up on its own.
+  grow?: boolean;
   // Waiting-list history and notifications, for the "Next match" card.
   queueOdds?: Record<number, QueueOdds>;
   spotsUsuallyOpen?: { games: number; lo: number; hi: number } | null;
@@ -11889,7 +11998,53 @@ function GameCard({
   const spotsLeft = Math.max(0, game.max_players - confirmed.length);
   const fillPct = Math.min(100, (confirmed.length / game.max_players) * 100);
   const countChanged = useChanged(confirmed.length);
-  const openSheet = () => { setSheetTab("playing"); setShowSheet(true); };
+  const growFrom = useRef<HTMLElement | null>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const openSheet = (e?: React.MouseEvent) => {
+    growFrom.current = grow && e ? ((e.currentTarget as HTMLElement).closest(".wcf-fx-row, .wcf-card") as HTMLElement | null) : null;
+    setSheetTab("playing");
+    setShowSheet(true);
+  };
+  // The sheet starts as the card's own rectangle (moved up to it and
+  // clipped to its size), then opens out to full size.
+  const growRects = () => {
+    const from = growFrom.current?.getBoundingClientRect(), sh = sheetRef.current;
+    if (!from || !sh) return null;
+    sh.style.transition = "none";
+    sh.style.transform = "";
+    sh.style.clipPath = "";
+    const to = sh.getBoundingClientRect();
+    return {
+      y: `translateY(${from.top - to.top}px)`,
+      clip: `inset(0px ${Math.max(0, to.right - from.right)}px ${Math.max(0, to.height - from.height)}px ${Math.max(0, from.left - to.left)}px round 16px)`,
+    };
+  };
+  useLayoutEffect(() => {
+    if (!showSheet || !growFrom.current) return;
+    const r = growRects(), sh = sheetRef.current, ov = overlayRef.current;
+    if (!r || !sh || !ov) return;
+    sh.style.transform = r.y;
+    sh.style.clipPath = r.clip;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        sh.style.transition = "transform .5s cubic-bezier(.2,.9,.3,1), clip-path .5s cubic-bezier(.2,.9,.3,1)";
+        sh.style.transform = "translateY(0)";
+        sh.style.clipPath = "inset(0px 0px 0px 0px round 24px)";
+        ov.classList.add("in");
+      })
+    );
+  }, [showSheet]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closeSheet = () => {
+    const sh = sheetRef.current, ov = overlayRef.current;
+    if (!growFrom.current || !sh || !ov || !growFrom.current.isConnected) return setShowSheet(false);
+    const from = growFrom.current.getBoundingClientRect(), to = sh.getBoundingClientRect();
+    sh.style.transition = "transform .45s cubic-bezier(.2,.9,.3,1), clip-path .45s cubic-bezier(.2,.9,.3,1)";
+    sh.style.transform = `translateY(${from.top - to.top}px)`;
+    sh.style.clipPath = `inset(0px ${Math.max(0, to.right - from.right)}px ${Math.max(0, to.height - from.height)}px ${Math.max(0, from.left - to.left)}px round 16px)`;
+    ov.classList.remove("in");
+    window.setTimeout(() => setShowSheet(false), 440);
+  };
   // Red/amber/green glow (via the .in.<status> CSS below) replaces what used
   // to be a separate "Payment confirmed" card - it tells the viewer their
   // own payment state at a glance without needing to read anything, only
@@ -12219,10 +12374,18 @@ function GameCard({
       )}
 
       {showSheet && (
-        <div className="wcf-sheet-overlay" onClick={() => setShowSheet(false)}>
-          <div className="wcf-squad-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className={"wcf-sheet-overlay" + (growFrom.current ? " grow" : "")} ref={overlayRef} onClick={closeSheet}>
+          <div className="wcf-squad-sheet" ref={sheetRef} onClick={(e) => e.stopPropagation()}>
+            {growFrom.current && (
+              <div className="wcf-grow-hero">
+                {myBooking && !myBooking.waiting && <span className="pill">YOU&apos;RE IN</span>}
+                <small>{fmtDate(game.date).replace(",", "").toUpperCase()} · {game.venue.toUpperCase()}</small>
+                <b>{game.kickoff}</b>
+                <span>{game.pitch} · £{game.price} · {confirmed.length}/{game.max_players}</span>
+              </div>
+            )}
             <div className="wcf-sheet-handle-wrap"><div className="wcf-sheet-handle" /></div>
-            <button className="wcf-sheet-close" onClick={() => setShowSheet(false)} aria-label="Close">×</button>
+            <button className="wcf-sheet-close" onClick={closeSheet} aria-label="Close">×</button>
             <div className="wcf-sheet-head">
               <div className="wcf-sheet-kicker">{fmtDate(game.date).replace(",", "").toUpperCase()} · {game.venue.toUpperCase()}</div>
               <div className="wcf-sheet-title">Squad &amp; waiting list</div>
@@ -15495,6 +15658,21 @@ a.wcf-set-link{text-decoration:none}
 @keyframes wcfNavBounce{30%{transform:translateY(-4px) scale(1.15)}100%{transform:none}}
 .wcf-main{animation:wcfViewIn .28s ease-out}
 @keyframes wcfViewIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* Movement (admins first): tab slides, the nav pill, the card that grows into its sheet */
+.wcf-main.slide-r{animation:wcfSlideR .32s cubic-bezier(.2,.9,.3,1)}
+.wcf-main.slide-l{animation:wcfSlideL .32s cubic-bezier(.2,.9,.3,1)}
+@keyframes wcfSlideR{from{opacity:0;transform:translateX(48px)}}
+@keyframes wcfSlideL{from{opacity:0;transform:translateX(-48px)}}
+.wcf-nav.has-pill .wcf-navbtn{position:relative;z-index:1}
+.wcf-nav-pill{position:absolute;top:6px;bottom:6px;left:6px;width:calc((100% - 12px) / var(--n));transform:translateX(calc(var(--i) * 100%));border-radius:14px;background:radial-gradient(120% 140% at 50% 0%,rgba(230,57,70,.3),rgba(230,57,70,.06));border:1px solid rgba(230,57,70,.5);box-shadow:0 0 22px -6px rgba(230,57,70,.85),inset 0 1px 0 rgba(255,255,255,.12);transition:transform .38s cubic-bezier(.2,.9,.3,1);pointer-events:none}
+.wcf-sheet-overlay.grow{animation:none;background:rgba(6,7,14,0);-webkit-backdrop-filter:none;backdrop-filter:none;transition:background .45s}
+.wcf-sheet-overlay.grow.in{background:rgba(6,7,14,.6)}
+.wcf-sheet-overlay.grow .wcf-squad-sheet{animation:none;will-change:transform,clip-path}
+.wcf-grow-hero{position:relative;flex:none;height:150px;margin:-1px -1px 0;border-radius:24px 24px 0 0;background:linear-gradient(180deg,rgba(13,13,26,.05),rgba(19,22,38,.55) 55%,rgba(30,41,59,1)),url(/pitch-night.jpg) center 60%/cover;display:flex;flex-direction:column;justify-content:flex-end;padding:14px 20px 12px;overflow:hidden}
+.wcf-grow-hero small{font:600 10.5px var(--font-oswald),sans-serif;letter-spacing:.24em;color:#cbd5e1}
+.wcf-grow-hero b{font:800 44px/1 var(--display);color:#fff;letter-spacing:-.02em;margin-top:4px;text-shadow:0 4px 20px rgba(0,0,0,.6)}
+.wcf-grow-hero span{font:600 12px var(--sans);color:#cbd5e1;margin-top:4px}
+.wcf-grow-hero .pill{position:absolute;top:14px;left:20px;margin:0;font:800 10px var(--sans);letter-spacing:.12em;padding:4px 9px;border-radius:999px;background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.5);color:#86efac}
 .wcf-sheet-overlay .wcf-squad-sheet{animation:wcfSpringUp .55s cubic-bezier(.2,1.25,.35,1) both}
 @keyframes wcfSpringUp{from{transform:translateY(100%)}to{transform:none}}
 .wcf-squad-sheet .wcf-sheet-row{animation:wcfViewIn .3s both;animation-delay:calc(.2s + var(--i,0) * 35ms)}
