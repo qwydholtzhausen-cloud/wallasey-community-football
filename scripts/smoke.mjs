@@ -56,6 +56,8 @@ page.on("console", (m) => {
 });
 page.on("response", (r) => {
   if (r.status() >= 400 && r.url().includes(".supabase.co")) problems.push(`HTTP ${r.status()} from ${new URL(r.url()).pathname}`);
+  // Any other server error, named, so a bare "Failed to load resource" console line can be traced.
+  else if (r.status() >= 500) problems.push(`HTTP ${r.status()} from ${new URL(r.url()).host}${new URL(r.url()).pathname}`);
 });
 
 const results = [];

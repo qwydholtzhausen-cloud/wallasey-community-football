@@ -97,3 +97,9 @@ export const OCCASIONS_OPEN_TO_ALL_FROM = "2026-10-17";
 // start with TOTM_REVEAL_FROM (October's, out Fri 30 Oct 2026).
 export const TOTM_FIRST_MONTH = "2026-08";
 export const TOTM_REVEAL_FROM = "2026-10";
+
+// Calmer Fixtures (2026-10-17): one line per game in a month card, the
+// actions behind a tap, a slim called-off notice, the reminder ask in For
+// you (app/ui/calmfixtures.tsx). Admins first, every member from this UK
+// date. Far future = admins only.
+export const CALM_FIXTURES_OPEN_TO_ALL_FROM = "9999-12-31";

@@ -22,6 +22,7 @@ import {
   MOVEMENT_OPEN_TO_ALL_FROM,
   SEASON_CARDS_OPEN_TO_ALL_FROM,
   OCCASIONS_OPEN_TO_ALL_FROM,
+  CALM_FIXTURES_OPEN_TO_ALL_FROM,
   TOTM_FIRST_MONTH,
   TOTM_REVEAL_FROM,
 } from "../lib/clubPolicy";
@@ -79,6 +80,7 @@ import { scorersForSide } from "../lib/goalSides";
 import { GameStory, StoryRings, type StoryGame } from "./ui/stories";
 import { OweBar, PaySheet, PAY_SOON_MS, untilLabel, type DueGame } from "./ui/pay";
 import { ForYou, ForYouIcon, ForYouMeter, type ForYouItem } from "./ui/foryou";
+import { CalmBadge, CalmCalledOff, CalmIcon, CalmMonth, CalmRow, CalmSheet, CalmTicket, calmFixturesCss, type CalmState } from "./ui/calmfixtures";
 import { CreditsContext, CreditChip, useCredits, dropOutNote, type CreditsApi } from "./ui/credits";
 import { CREDIT_SELECT, amountDue, creditsByBooking, creditLabel, type CreditRow } from "../lib/credits";
 import { LineupTab } from "./ui/lineup";
@@ -5667,6 +5669,24 @@ function App({ session }: { session: Session }) {
       return next;
     });
   }
+  // Calmer Fixtures (app/ui/calmfixtures.tsx), admins first.
+  const calmOn = isAdmin || nowUk.slice(0, 10) >= CALM_FIXTURES_OPEN_TO_ALL_FROM;
+  const coKey = `wcf-co-seen-${myId}`;
+  const [coSeen, setCoSeen] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    try {
+      setCoSeen(JSON.parse(localStorage.getItem(coKey) || "{}"));
+    } catch {}
+  }, [coKey]);
+  function seeCalledOff(id: string) {
+    setCoSeen((cur) => {
+      const next = { ...cur, [id]: true };
+      try {
+        localStorage.setItem(coKey, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
   function forYouItems(): ForYouItem[] {
     const today = nowUk.slice(0, 10);
     const out: { rank: number; item: ForYouItem }[] = [];
@@ -5811,9 +5831,39 @@ function App({ session }: { session: Session }) {
         },
       });
     }
-    if (showRatingNudge) {
+    // The calm list moves "Get a reminder before kick-off" off the Next
+    // match card and into here.
+    if (
+      calmOn &&
+      !myPushGranted &&
+      !pushNudgeDismissed &&
+      typeof window !== "undefined" &&
+      "PushManager" in window &&
+      upcomingGames.some((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting))
+    ) {
       out.push({
         rank: 6,
+        item: {
+          id: "remind",
+          accent: "#93c5fd",
+          photo: "/pitch-floodlit.jpg",
+          chip: "Reminders",
+          lead: (
+            <ForYouIcon>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
+            </ForYouIcon>
+          ),
+          eyebrow: "Never miss kick-off",
+          title: "Get a reminder before each game",
+          sub: "And a notification the moment a spot opens.",
+          primary: { label: "Turn on", onClick: () => void enablePush() },
+          onRemove: dismissPushNudge,
+        },
+      });
+    }
+    if (showRatingNudge) {
+      out.push({
+        rank: 7,
         item: {
           id: "rateself",
           accent: "#93c5fd",
@@ -6567,6 +6617,21 @@ function App({ session }: { session: Session }) {
                   const mine = g.bookings.find((b) => b.player_id === myId && !b.waiting);
                   const paid = !!mine && (mine.status === "confirmed" || credits.some((c) => c.player_id === myId && c.source_game_id === g.id));
                   const weekday = new Date(g.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" });
+                  if (calmOn) {
+                    if (coSeen[g.id]) return null;
+                    const d = new Date(g.date + "T12:00:00Z");
+                    return (
+                      <CalmCalledOff
+                        key={g.id}
+                        day={d.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" })}
+                        num={String(d.getUTCDate())}
+                        month={d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" })}
+                        reason={g.called_off_reason || `No game on ${weekday}`}
+                        credited={!!mine && !mine.pot_exempt_reason && paid}
+                        onDone={() => seeCalledOff(g.id)}
+                      />
+                    );
+                  }
                   return (
                     <div key={g.id} className="wcf-co" role="alert" aria-label={`${fmtDate(g.date)}: game called off`}>
                       <div className="wcf-co-photo" aria-hidden="true" />
@@ -6623,6 +6688,7 @@ function App({ session }: { session: Session }) {
                         queueOdds={queueOdds}
                         spotsUsuallyOpen={spotsUsuallyOpen}
                         push={{ on: myPushGranted, dismissed: pushNudgeDismissed, enable: enablePush, dismiss: dismissPushNudge }}
+                        calm={calmOn}
                       />
                     ))}
                   </>
@@ -6641,15 +6707,15 @@ function App({ session }: { session: Session }) {
                   const visibleMonths = upcomingByMonth.filter((grp) => grp.games.some((g) => !nextMatchIds.has(g.id) && shown(g)));
                   return (
                     <>
-                {visibleMonths.map((group) => {
+                {calmOn && <style>{calmFixturesCss}</style>}
+                {visibleMonths.map((group, gi) => {
                   const games = group.games.filter((g) => !nextMatchIds.has(g.id) && shown(g));
                   if (games.length === 0) return null;
-                  return (
-                    <div key={group.key}>
-                      {visibleMonths.length > 1 && <h4 className="wcf-month-head">{group.label}</h4>}
-                      {games.map((g) => (
+                  const cards = games.map((g) => (
                         <GameCard
                           key={g.id}
+                          calm={calmOn}
+                          onProgramme={g.id === FIRST_XI_GAME_ID && programme ? openProgramme : undefined}
                           grow={movementOn}
                           isNew={fxNewIds.has(g.id)}
                           cascadeIndex={fxCascade.includes(g.id) ? fxCascade.indexOf(g.id) : undefined}
@@ -6669,13 +6735,37 @@ function App({ session }: { session: Session }) {
                           weather={weatherFor(g.date, g.kickoff)}
                           askConfirm={askConfirm}
                         />
-                      ))}
+                  ));
+                  if (calmOn) {
+                    const mineCount = games.filter((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting)).length;
+                    const owed = games.reduce((s, g) => {
+                      const b = g.bookings.find((x) => x.player_id === myId && !x.waiting);
+                      return b && b.status === "unpaid" && !b.pot_exempt_reason ? s + g.price : s;
+                    }, 0);
+                    return (
+                      <CalmMonth
+                        key={group.key}
+                        label={group.label.replace(/ \d{4}$/, "")}
+                        photo={["/pitch-floodlit.jpg", "/pitch-night.jpg", "/floodlight-haze.jpg", "/net-rain.jpg"][gi % 4]}
+                        summary={[
+                          `${games.length} ${games.length === 1 ? "game" : "games"}`,
+                          owed > 0 ? `you're in ${mineCount} · £${owed} to pay` : mineCount === games.length ? "you're in all of them" : `you're in ${mineCount}`,
+                        ]}
+                      >
+                        {cards}
+                      </CalmMonth>
+                    );
+                  }
+                  return (
+                    <div key={group.key}>
+                      {visibleMonths.length > 1 && <h4 className="wcf-month-head">{group.label}</h4>}
+                      {cards}
                     </div>
                   );
                 })}
                 {laterCount > 0 && (
-                  <button className="wcf-ghost wcf-later-fixtures" onClick={() => setShowLaterFixtures(true)}>
-                    Show {laterCount} later fixture{laterCount === 1 ? "" : "s"}
+                  <button className={"wcf-ghost wcf-later-fixtures" + (calmOn ? " cf-more" : "")} onClick={() => setShowLaterFixtures(true)}>
+                    {calmOn ? `Rest of the season · ${laterCount} more ›` : `Show ${laterCount} later fixture${laterCount === 1 ? "" : "s"}`}
                   </button>
                 )}
                 {showLaterFixtures && (
@@ -12211,7 +12301,13 @@ function GameCard({
   spotsUsuallyOpen,
   push,
   grow,
+  calm,
+  onProgramme,
 }: {
+  // The calmer list (app/ui/calmfixtures.tsx): one line per game, actions
+  // in a sheet. On the featured card it only moves the reminder ask out.
+  calm?: boolean;
+  onProgramme?: () => void;
   // Movement: the card grows into its squad sheet (and back) instead of
   // the sheet sliding up on its own.
   grow?: boolean;
@@ -12245,6 +12341,7 @@ function GameCard({
 }) {
   const [form, setForm] = useState<GameRow>(game);
   const [showSheet, setShowSheet] = useState(false);
+  const [actOpen, setActOpen] = useState(false);
   const [sheetTab, setSheetTab] = useState<"playing" | "waiting">("playing");
 
   useEffect(() => setForm(game), [game, editing]);
@@ -12438,7 +12535,7 @@ function GameCard({
       </div>
     ) : null;
   const remindAsk =
-    featured && push && !push.on && !push.dismissed && pushSupported && myBooking && !myBooking.waiting && !isLiveNow(game.date, game.kickoff) ? (
+    featured && !calm && push && !push.on && !push.dismissed && pushSupported && myBooking && !myBooking.waiting && !isLiveNow(game.date, game.kickoff) ? (
       <div className="wcf-ask">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
         <span>Get a reminder before kick-off</span>
@@ -12446,38 +12543,29 @@ function GameCard({
         <button className="x" aria-label="Not now" onClick={push.dismiss}>×</button>
       </div>
     ) : null;
-  const cta = (
-    <div className="wcf-card-actions">
-      {matchDay && isLiveNow(game.date, game.kickoff) ? null : !myBooking && overdue ? (
-        <p className="wcf-overdue-note">Overdue payment — speak to an admin before booking your next game.</p>
-      ) : (
-        <button
-          className={"wcf-book " + (myBooking ? "cancel" : full ? "waitlist" : "")}
-          disabled={!myBooking && full && waitingList.length >= 10}
-          onClick={async () => {
-            if (!myBooking) return onBook();
-            if (!myBooking.waiting && motionAllowed())
-              return setHandover({
-                bookingId: myBooking.id,
-                day: new Date(game.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long" }),
-                nextName: waitingList[0]?.player.display_name.split(" ")[0] ?? null,
-                shirtColor: myBooking.team === "white" ? "#F5F6F8" : "#e63946",
-                initial: (myBooking.player.display_name.trim()[0] || "?").toUpperCase(),
-                note: dropOutNote(myBooking.status, !!myCredit, credits.live),
-              });
-            const ok = myBooking.waiting
-              ? await askConfirm("Leave the waiting list?", "You'll lose your place in the queue.", "Leave")
-              : await askConfirm("Give up your spot?", `${game.venue} · ${fmtDate(game.date)}. Someone from the waiting list will be offered it.${dropOutNote(myBooking.status, !!myCredit, credits.live) ? " " + dropOutNote(myBooking.status, !!myCredit, credits.live)!.text : ""}`, "Give up spot");
-            if (ok) onCancel(myBooking.id);
-          }}
-        >
-          {myBooking
-            ? myBooking.waiting ? "Leave waiting list" : "Give up spot"
-            : full ? (waitingList.length >= 10 ? "Waiting list full" : "Join waiting list") : "Grab a spot"}
-        </button>
-      )}
-      {handover && typeof document !== "undefined" &&
-        createPortal(
+  // Book, join the waiting list, give up your spot or leave the list - the
+  // card's main button and the calm list's sheet both use this.
+  const leaveOrBook = async () => {
+    if (!myBooking) return onBook();
+    if (!myBooking.waiting && motionAllowed())
+      return setHandover({
+        bookingId: myBooking.id,
+        day: new Date(game.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long" }),
+        nextName: waitingList[0]?.player.display_name.split(" ")[0] ?? null,
+        shirtColor: myBooking.team === "white" ? "#F5F6F8" : "#e63946",
+        initial: (myBooking.player.display_name.trim()[0] || "?").toUpperCase(),
+        note: dropOutNote(myBooking.status, !!myCredit, credits.live),
+      });
+    const ok = myBooking.waiting
+      ? await askConfirm("Leave the waiting list?", "You'll lose your place in the queue.", "Leave")
+      : await askConfirm("Give up your spot?", `${game.venue} · ${fmtDate(game.date)}. Someone from the waiting list will be offered it.${dropOutNote(myBooking.status, !!myCredit, credits.live) ? " " + dropOutNote(myBooking.status, !!myCredit, credits.live)!.text : ""}`, "Give up spot");
+    if (ok) onCancel(myBooking.id);
+  };
+  const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+  const calHref = isAndroid ? googleCalendarUrl(game) : `/api/calendar/${game.id}`;
+  const handoverPortal =
+    handover && typeof document !== "undefined"
+      ? createPortal(
           <ShirtHandover
             day={handover.day}
             nextName={handover.nextName}
@@ -12488,7 +12576,116 @@ function GameCard({
             onClose={() => setHandover(null)}
           />,
           document.querySelector(".wcf-root") ?? document.body
-        )}
+        )
+      : null;
+  // The calm list's line, badge and sheet.
+  const calmState: CalmState = !myBooking
+    ? full
+      ? "full"
+      : "open"
+    : myBooking.waiting
+      ? "waiting"
+      : myBooking.status === "confirmed" || myBooking.pot_exempt_reason
+        ? "paid"
+        : myBooking.status === "pending"
+          ? "pending"
+          : "unpaid";
+  const paySoon = msToKickoff <= PAY_SOON_MS;
+  const sideName = myBooking?.team === "red" ? "Reds" : myBooking?.team === "white" ? "Whites" : undefined;
+  const calmBadge = (
+    <CalmBadge state={calmState} soon={paySoon} credit={!!myCredit} due={due} pos={queuePos} queueLen={waitingList.length} left={spotsLeft} side={game.special ? sideName : undefined} />
+  );
+  const dDay = new Date(game.date + "T12:00:00Z");
+  const dw = dDay.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }).toUpperCase();
+  const dNum = String(dDay.getUTCDate());
+  const dMon = dDay.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }).toUpperCase();
+  const isFirstXi = game.id === FIRST_XI_GAME_ID;
+  const calmNote: string | null =
+    calmState === "unpaid"
+      ? paySoon
+        ? `Kick-off's ${msToKickoff > 0 ? `in ${untilLabel(msToKickoff)}` : dayWord(game.kickoff)}, so it's time to pay. Pay, then tap I've paid once it's sent.`
+        : "Payment's due in the week of the game. You can pay early if you like."
+      : calmState === "pending"
+        ? "You said you've paid. An admin ticks it off once it lands in the bank."
+        : calmState === "waiting"
+          ? `You're ${queuePos === 1 ? "next" : nth(queuePos)} in line. If a spot opens it's yours, and you'll get a notification.`
+          : calmState === "open" && !myBooking && overdue
+            ? "Overdue payment: speak to an admin before booking your next game."
+            : null;
+  const calmSheet =
+    actOpen && typeof document !== "undefined"
+      ? createPortal(
+          <CalmSheet
+            photo={isFirstXi ? "/first-xi/cover.jpg" : "/pitch-night.jpg"}
+            badge={calmBadge}
+            kicker={`${dw} ${dNum} ${dMon} · ${game.venue.toUpperCase()}`}
+            time={game.kickoff}
+            meta={`${game.pitch} · £${game.price} · ${confirmed.length}/${game.max_players}${waitingList.length ? ` · ${waitingList.length} waiting` : ""}`}
+            note={calmNote}
+            onClose={() => setActOpen(false)}
+          >
+            {isFirstXi && onProgramme && (
+              <button className="gold" onClick={() => { setActOpen(false); onProgramme(); }}>
+                {CalmIcon.book}Read the matchday programme
+              </button>
+            )}
+            {calmState === "unpaid" && myBooking && (
+              <>
+                {canSpendCredit ? (
+                  <button className="gold" onClick={() => { credits.spendCredit(myBooking.id); setActOpen(false); }}>
+                    {CalmIcon.pay}Pay with a game credit
+                  </button>
+                ) : PAYMENT_LINK ? (
+                  <a className="pay" href={PAYMENT_LINK} target="_blank" rel="noreferrer">
+                    {CalmIcon.pay}Pay £{due}
+                  </a>
+                ) : null}
+                <button onClick={() => { onMarkPaid(myBooking.id); setActOpen(false); }}>{CalmIcon.tick}I&apos;ve paid</button>
+              </>
+            )}
+            {(calmState === "open" || calmState === "full") && !overdue && (
+              <button className={calmState === "open" ? "go" : ""} disabled={calmState === "full" && waitingList.length >= 10} onClick={() => { setActOpen(false); void leaveOrBook(); }}>
+                {CalmIcon.plus}
+                {calmState === "open" ? `Book my spot · £${game.price}` : waitingList.length >= 10 ? "Waiting list full" : "Join the waiting list"}
+              </button>
+            )}
+            <button onClick={() => { setActOpen(false); openSheet(); }}>{CalmIcon.who}Who&apos;s playing</button>
+            {(myBooking && !myBooking.waiting) || isAdmin ? (
+              <div className="two" style={!(myBooking && !myBooking.waiting) || !isAdmin ? { gridTemplateColumns: "1fr" } : undefined}>
+                {myBooking && !myBooking.waiting && (CALENDAR_BUTTON_OPEN_TO_ALL || isAdmin) && (
+                  <a href={calHref} target={isAndroid ? "_blank" : undefined} rel="noreferrer">
+                    {CalmIcon.cal}Calendar
+                  </a>
+                )}
+                {isAdmin && <button onClick={() => { setActOpen(false); onEdit(); }}>{CalmIcon.edit}Edit</button>}
+              </div>
+            ) : null}
+            {myBooking && (
+              <button className="dn" onClick={() => { setActOpen(false); void leaveOrBook(); }}>
+                {CalmIcon.out}
+                {myBooking.waiting ? "Leave the waiting list" : "Give up my spot"}
+              </button>
+            )}
+          </CalmSheet>,
+          document.querySelector(".wcf-root") ?? document.body
+        )
+      : null;
+  const cta = (
+    <div className="wcf-card-actions">
+      {matchDay && isLiveNow(game.date, game.kickoff) ? null : !myBooking && overdue ? (
+        <p className="wcf-overdue-note">Overdue payment — speak to an admin before booking your next game.</p>
+      ) : (
+        <button
+          className={"wcf-book " + (myBooking ? "cancel" : full ? "waitlist" : "")}
+          disabled={!myBooking && full && waitingList.length >= 10}
+          onClick={leaveOrBook}
+        >
+          {myBooking
+            ? myBooking.waiting ? "Leave waiting list" : "Give up spot"
+            : full ? (waitingList.length >= 10 ? "Waiting list full" : "Join waiting list") : "Grab a spot"}
+        </button>
+      )}
+      {handoverPortal}
       {/* Once you've got a spot. People book about a month ahead, so a
           calendar entry is what stops the "forgot I was playing" no-shows.
           Android gets Google Calendar (where Android calendars live);
@@ -12497,12 +12694,8 @@ function GameCard({
       {myBooking && !myBooking.waiting && !(matchDay && isLiveNow(game.date, game.kickoff)) && (CALENDAR_BUTTON_OPEN_TO_ALL || isAdmin) && (
         <a
           className="wcf-cal-btn"
-          href={
-            typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)
-              ? googleCalendarUrl(game)
-              : `/api/calendar/${game.id}`
-          }
-          target={typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent) ? "_blank" : undefined}
+          href={calHref}
+          target={isAndroid ? "_blank" : undefined}
           rel="noreferrer"
           aria-label="Add to calendar"
           title="Add to calendar"
@@ -12519,9 +12712,38 @@ function GameCard({
     <article
       id={"fx-" + game.id}
       className={featured ? "wcf-card featured " + (alt ? "alt " : "") + (game.special ? "special" : bookedClass) : cascadeIndex !== undefined ? "wcf-fx-cascade" : ""}
-      style={featured ? undefined : { marginBottom: 18, ...(cascadeIndex !== undefined ? { animationDelay: `${cascadeIndex * 200}ms` } : {}) }}
+      style={featured || calm ? undefined : { marginBottom: 18, ...(cascadeIndex !== undefined ? { animationDelay: `${cascadeIndex * 200}ms` } : {}) }}
     >
-      {featured ? (
+      {!featured && calm ? (
+        <>
+          {game.special ? (
+            <CalmTicket
+              day={dw}
+              num={dNum}
+              month={dMon}
+              tag={(isFirstXi ? "THE FIRST XI · " : "SPECIAL · ") + game.pitch.toUpperCase()}
+              title={`${game.kickoff} · ${game.venue}`}
+              meta={`Reds v Whites · ${confirmed.length}/${game.max_players}`}
+              kickoffMs={Date.now() + msToKickoff}
+              badge={calmBadge}
+              photo={isFirstXi ? "/first-xi/cover.jpg" : "/pitch-floodlit.jpg"}
+              onOpen={() => setActOpen(true)}
+            />
+          ) : (
+            <CalmRow
+              day={dw}
+              num={dNum}
+              title={`${game.kickoff} · ${game.venue}`}
+              meta={`${game.pitch} · £${game.price} · ${confirmed.length}/${game.max_players}${waitingList.length ? ` · ${waitingList.length} waiting` : ""}`}
+              badge={calmBadge}
+              state={calmState}
+              onOpen={() => setActOpen(true)}
+            />
+          )}
+          {calmSheet}
+          {handoverPortal}
+        </>
+      ) : featured ? (
         <>
           {game.special && <span className="wcf-special-ribbon">★ {fmtDate(game.date).split(",")[0]} {game.pitch}</span>}
           <div className="wcf-hero-top">
