@@ -8,7 +8,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 // the next game off the first screen. It stays put: swiping or tapping the
 // bars browses, doing the thing clears it, and the × removes it after a
 // few seconds to undo. With nothing left it keeps its size and says when
-// the next game is.
+// the next game is. While it's on screen and untouched it turns the page
+// by itself every few seconds (the bar fills like a story) so people see
+// there's more; any touch hands control back for good.
 
 export type ForYouItem = {
   id: string;
@@ -35,6 +37,9 @@ export function ForYou({ items, caughtUp }: { items: ForYouItem[]; caughtUp: str
   const pending = useRef<{ item: ForYouItem; t: number } | null>(null);
   const drag = useRef<{ x: number; dx: number; moved: boolean } | null>(null);
   const itemRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLElement>(null);
+  const [auto, setAuto] = useState(true);
+  const [seen, setSeen] = useState(false);
 
   // A removal only sticks once the undo window has passed (or the screen
   // changes), so Undo never has to put anything back.
@@ -52,6 +57,32 @@ export function ForYou({ items, caughtUp }: { items: ForYouItem[]; caughtUp: str
   const live = items.filter((i) => !hidden.includes(i.id));
   const cur = Math.max(0, Math.min(idx, live.length - 1));
   const it = live[cur];
+
+  // Auto-turn: only while visible, untouched, more than one card, and not
+  // mid-stamp or mid-undo. Reduced motion never auto-turns.
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => setSeen(e.isIntersecting && document.visibilityState === "visible"), { threshold: 0.6 });
+    io.observe(el);
+    const vis = () => document.visibilityState !== "visible" && setSeen(false);
+    document.addEventListener("visibilitychange", vis);
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) setAuto(false);
+    return () => {
+      io.disconnect();
+      document.removeEventListener("visibilitychange", vis);
+    };
+  }, []);
+  const running = auto && seen && live.length > 1 && !stamp && !undo;
+  useEffect(() => {
+    if (!running) return;
+    const t = window.setTimeout(() => {
+      setDir(1);
+      setIdx((cur + 1) % live.length);
+    }, AUTO_MS);
+    return () => window.clearTimeout(t);
+  }, [running, cur, live.length]);
+  const stop = () => setAuto(false);
 
   function go(k: number) {
     if (k === cur || k < 0 || k >= live.length) return;
@@ -85,6 +116,7 @@ export function ForYou({ items, caughtUp }: { items: ForYouItem[]; caughtUp: str
   }
 
   function onDown(e: React.PointerEvent) {
+    stop();
     if (!it) return;
     drag.current = { x: e.clientX, dx: 0, moved: false };
   }
@@ -120,7 +152,7 @@ export function ForYou({ items, caughtUp }: { items: ForYouItem[]; caughtUp: str
 
   const acc = it ? it.accent : "#4ade80";
   return (
-    <section className={"wcf-fy" + (it ? "" : " empty")} style={{ ["--acc" as string]: acc }} aria-label="For you">
+    <section ref={boxRef} onPointerDownCapture={stop} onFocusCapture={stop} className={"wcf-fy" + (it ? "" : " empty") + (running ? " auto" : "")} style={{ ["--acc" as string]: acc }} aria-label="For you">
       <style>{forYouCss}</style>
       <div className="wcf-fy-bg" key={it ? it.id : "empty"} style={{ backgroundImage: `url(${it ? it.photo : "/pitch-goal-night.jpg"})` }} />
       <div className="wcf-fy-top">
@@ -129,7 +161,7 @@ export function ForYou({ items, caughtUp }: { items: ForYouItem[]; caughtUp: str
         {live.length > 1 && (
           <div className="wcf-fy-segs">
             {live.map((x, i) => (
-              <button key={x.id} className={i === cur ? "cur" : ""} onClick={() => go(i)} aria-label={x.chip} />
+              <button key={x.id + (i === cur ? "-" + cur : "")} className={i === cur ? "cur" : ""} onClick={() => go(i)} aria-label={x.chip} />
             ))}
           </div>
         )}
@@ -215,6 +247,8 @@ export function ForYouMeter({ onRate }: { onRate: (n: number) => void }) {
   );
 }
 
+const AUTO_MS = 6000;
+
 export const forYouCss = `
 .wcf-fy{--acc:#f5d97a;position:relative;border-radius:22px;overflow:hidden;margin:0 0 18px;border:1px solid color-mix(in srgb,var(--acc) 45%,transparent);background:#0f1424;box-shadow:0 22px 44px -26px rgba(0,0,0,.9),0 0 34px -16px var(--acc);transition:box-shadow .5s,border-color .5s}
 .wcf-fy.empty{border-color:rgba(34,197,94,.4);box-shadow:0 0 30px -18px #22c55e}
@@ -227,7 +261,10 @@ export const forYouCss = `
 .wcf-fy-segs{margin-left:auto;display:flex;gap:4px;width:40%}
 .wcf-fy-segs button{flex:1;height:3px;padding:0;border:0;border-radius:2px;background:rgba(255,255,255,.16);cursor:pointer;position:relative}
 .wcf-fy-segs button::before{content:"";position:absolute;left:0;right:0;top:-8px;bottom:-8px}
-.wcf-fy-segs button.cur{background:var(--acc);box-shadow:0 0 8px var(--acc)}
+.wcf-fy-segs button.cur{background:var(--acc);box-shadow:0 0 8px var(--acc);overflow:hidden}
+.wcf-fy.auto .wcf-fy-segs button.cur{background:rgba(255,255,255,.16);box-shadow:none}
+.wcf-fy.auto .wcf-fy-segs button.cur::after{content:"";position:absolute;inset:0;border-radius:2px;background:var(--acc);box-shadow:0 0 8px var(--acc);transform-origin:left;animation:wcfFyFill 6s linear both}
+@keyframes wcfFyFill{from{transform:scaleX(0)}}
 .wcf-fy-stage{position:relative;height:150px;touch-action:pan-y}
 .wcf-fy-item{position:absolute;inset:0;padding:12px 15px 14px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .35s cubic-bezier(.2,.9,.3,1),opacity .3s}
 .wcf-fy-item.in{animation:wcfFyIn .4s cubic-bezier(.2,.9,.3,1) both}
