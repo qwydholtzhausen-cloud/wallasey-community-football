@@ -58,3 +58,9 @@ export const MONZO_MATCHING_LIVE = false;
 // 9 Oct 2026 and passed a live check, so it's on. Setting this to false
 // hides credits in the app again (the database keeps earning them).
 export const GAME_CREDITS_LIVE = true;
+
+// "For you" (2026-10-17): the cards at the top of Fixtures (MOTM vote, rate
+// the game, money owed, the programme, Wrapped, rate yourself) as one
+// carousel. Admins-only while tested on real phones; opens to every member
+// on this UK date. Far future = admins only.
+export const FOR_YOU_OPEN_TO_ALL_FROM = "9999-12-31";

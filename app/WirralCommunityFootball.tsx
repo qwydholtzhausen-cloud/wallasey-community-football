@@ -17,6 +17,7 @@ import {
   WRAPPED_FIRST_MONTH_FOR_ALL,
   MONZO_MATCHING_LIVE,
   GAME_CREDITS_LIVE,
+  FOR_YOU_OPEN_TO_ALL_FROM,
 } from "../lib/clubPolicy";
 import { computeWrapped } from "../lib/wrapped";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
@@ -65,6 +66,7 @@ import { MatchDayClock, MatchDayTeam, dayWord, isLiveNow, isMatchDay } from "./u
 import { scorersForSide } from "../lib/goalSides";
 import { GameStory, StoryRings, type StoryGame } from "./ui/stories";
 import { OweBar, PaySheet, PAY_SOON_MS, untilLabel, type DueGame } from "./ui/pay";
+import { ForYou, ForYouIcon, ForYouMeter, type ForYouItem } from "./ui/foryou";
 import { CreditsContext, CreditChip, useCredits, dropOutNote, type CreditsApi } from "./ui/credits";
 import { CREDIT_SELECT, amountDue, creditsByBooking, creditLabel, type CreditRow } from "../lib/credits";
 import { LineupTab } from "./ui/lineup";
@@ -5369,6 +5371,200 @@ function App({ session }: { session: Session }) {
       ) ?? null,
     [scoredPastGames, nowUk, myId]
   );
+
+  // "For you": the top of Fixtures as one carousel (app/ui/foryou.tsx).
+  // Admins first, everyone from FOR_YOU_OPEN_TO_ALL_FROM. The × on an item
+  // is remembered on this phone: money owed comes back the next day, the
+  // rest stay gone for that game (Wrapped and Rate yourself reuse their
+  // existing "hide" switches).
+  const forYouOn = isAdmin || nowUk.slice(0, 10) >= FOR_YOU_OPEN_TO_ALL_FROM;
+  const fyKey = `wcf-fy-hidden-${myId}`;
+  const [fyHidden, setFyHidden] = useState<Record<string, string>>({});
+  useEffect(() => {
+    try {
+      setFyHidden(JSON.parse(localStorage.getItem(fyKey) || "{}"));
+    } catch {}
+  }, [fyKey]);
+  function fyHide(k: string) {
+    setFyHidden((cur) => {
+      const next = { ...cur, [k]: nowUk.slice(0, 10) };
+      try {
+        localStorage.setItem(fyKey, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
+  function forYouItems(): ForYouItem[] {
+    const today = nowUk.slice(0, 10);
+    const out: { rank: number; item: ForYouItem }[] = [];
+    const g = motmVoteGame;
+    if (g && !myMotmVoteByGame[g.id] && !fyHidden[`vote:${g.id}`]) {
+      const goalsIn = (pid: string) => goalRows.reduce((n, r) => (r.game_id === g.id && r.player_id === pid ? n + r.goals : n), 0);
+      const cands = g.bookings
+        .filter((b) => !b.waiting && b.player_id !== myId)
+        .map((b) => ({ id: b.player_id, name: profiles.find((p) => p.id === b.player_id)?.display_name ?? "Player", goals: goalsIn(b.player_id) }))
+        .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name));
+      out.push({
+        rank: 0,
+        item: {
+          id: "vote",
+          accent: "#f5d97a",
+          photo: "/wrapped/motm.jpg",
+          chip: "Vote",
+          lead: (
+            <ForYouIcon>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" /><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></svg>
+            </ForYouIcon>
+          ),
+          eyebrow: "Man of the Match",
+          title: `Who was best ${dayWord(g.kickoff)}?`,
+          sub: `${cs.team_white_name} ${g.team_white_score}–${g.team_red_score} ${cs.team_red_name} · closes ${motmClosesLabel(g)}`,
+          body: (done) => (
+            <>
+              <div className="wcf-fy-faces">
+                {cands.slice(0, 4).map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={(e) => {
+                      e.currentTarget.classList.add("on");
+                      done(`You voted for ${c.name.split(" ")[0]}`, () => void castMotmVote(g.id, c.id, c.name));
+                    }}
+                  >
+                    <Avatar name={c.name} avatarUrl={avatarByPlayerId.get(c.id)} className="wcf-fy-av" background={avatarFor(c.name).gradient} />
+                    <span>{c.name.split(" ")[0]}</span>
+                  </button>
+                ))}
+              </div>
+              <button className="wcf-fy-all" onClick={() => goToResult(g.id)}>
+                All {cands.length} ›<small>see goals</small>
+              </button>
+            </>
+          ),
+          onRemove: () => fyHide(`vote:${g.id}`),
+        },
+      });
+    }
+    const rg = rateGame;
+    if (rg && !myRatings[rg.id] && rateDismissed[rg.id] && !fyHidden[`rate:${rg.id}`]) {
+      out.push({
+        rank: 2,
+        item: {
+          id: "rate",
+          accent: "#4ade80",
+          photo: "/pitch-floodlit.jpg",
+          chip: "Rate",
+          lead: (
+            <ForYouIcon>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2.5l2.9 6.2 6.6.7-4.9 4.5 1.4 6.6L12 17.2l-6 3.3 1.4-6.6-4.9-4.5 6.6-.7z" /></svg>
+            </ForYouIcon>
+          ),
+          eyebrow: "Rate the game",
+          title: `Rate ${new Date(rg.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" })}'s game`,
+          sub: `${cs.team_white_name} ${rg.team_white_score}–${rg.team_red_score} ${cs.team_red_name}`,
+          body: () => (
+            <ForYouMeter
+              onRate={(n) => {
+                submitRating(rg.id, n);
+                setRateSheetFor(rg.id);
+              }}
+            />
+          ),
+          onRemove: () => fyHide(`rate:${rg.id}`),
+        },
+      });
+    }
+    const unpaid = myDue.filter((d) => d.status === "unpaid");
+    if (unpaid.length > 0 && fyHidden.pay !== today) {
+      const total = unpaid.reduce((s, d) => s + d.price, 0);
+      const next = unpaid[0];
+      out.push({
+        rank: next.msToKickoff <= 3 * 86400000 ? 1 : 3,
+        item: {
+          id: "pay",
+          accent: "#ff5a66",
+          photo: "/pitch-night.jpg",
+          chip: `£${total} to pay`,
+          lead: <div className="wcf-fy-amt">£{total}</div>,
+          eyebrow: "To pay",
+          title: `${unpaid.length} ${unpaid.length === 1 ? "game" : "games"} to pay for`,
+          sub: `Next: ${new Date(next.date + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}${next.msToKickoff <= PAY_SOON_MS ? " · pay before kick-off" : ""}`,
+          primary: { label: `Pay £${total}`, red: true, onClick: () => setPaySheetOpen(true) },
+          onRemove: () => fyHide("pay"),
+        },
+      });
+    }
+    if (!isMatchday && programme && programme.game.date >= today && !fyHidden[`prog:${programme.game.id}`]) {
+      const pid = programme.game.id;
+      out.push({
+        rank: 4,
+        item: {
+          id: "prog",
+          accent: "#f5d97a",
+          photo: "/first-xi/cover.jpg",
+          chip: "Programme",
+          lead: (
+            <ForYouIcon>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 5.5C4 4.5 7 4.3 12 6c5-1.7 8-1.5 10-.5V19c-2-1-5-1.2-10 .5C7 17.8 4 18 2 19z" /><path d="M12 6v13.5" /></svg>
+            </ForYouIcon>
+          ),
+          eyebrow: `The First XI · ${fmtDate(programme.game.date)}`,
+          title: "Read the matchday programme",
+          sub: "Teams, captains, form and the story so far",
+          primary: { label: "Read it", onClick: openProgramme },
+          onRemove: () => fyHide(`prog:${pid}`),
+        },
+      });
+    }
+    if (showWrappedBanner && wrapped) {
+      const th = wrappedThemeFor(wrapped.periodKey);
+      const themed = !!th && !wrapped.soFar;
+      out.push({
+        rank: 5,
+        item: {
+          id: "wrap",
+          accent: themed ? th!.accent : "#f8b3b8",
+          photo: themed ? th!.bannerPhoto ?? th!.introPhoto : "/wrapped/glance.jpg",
+          chip: "Wrapped",
+          lead: (
+            <ForYouIcon>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5.5v13l11-6.5z" /></svg>
+            </ForYouIcon>
+          ),
+          eyebrow: (themed ? `${wrapped.periodShort} · ${th!.edition}` : "Wrapped") + (wrappedOpenToAll ? "" : " · admins"),
+          title: themed ? th!.word : `Your ${wrapped.periodShort}${wrapped.soFar ? " so far" : ""}`,
+          sub: `${wrapped.data.apps} games · ${wrapped.data.goals} ${wrapped.data.goals === 1 ? "goal" : "goals"}`,
+          primary: { label: "Watch", onClick: openWrapped },
+          onRemove: dismissWrapped,
+        },
+      });
+    }
+    if (showRatingNudge) {
+      out.push({
+        rank: 6,
+        item: {
+          id: "rateself",
+          accent: "#93c5fd",
+          photo: "/bench-kit.jpg",
+          chip: "Rate yourself",
+          lead: (
+            <ForYouIcon>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M12 3l2.6 5.6 6 .7-4.4 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.4 9.3l6-.7z" /></svg>
+            </ForYouIcon>
+          ),
+          eyebrow: "Fairer teams",
+          title: "Rate yourself",
+          sub: "Helps admins pick fairer teams. It takes 30 seconds.",
+          primary: { label: "Rate now", onClick: () => setTab("account") },
+          onRemove: dismissRatingNudge,
+        },
+      });
+    }
+    return out.sort((a, b) => a.rank - b.rank).map((o) => o.item);
+  }
+  function forYouCaughtUp() {
+    const nb = upcomingGames.find((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting));
+    return nb ? `Your next game: ${fmtDate(nb.date)} · ${nb.kickoff.slice(0, 5)}` : "Nothing needs you right now";
+  }
   // App icon badge: what needs you - unread messages, games to pay for in
   // the next 7 days, and a Man of the Match vote you haven't cast. The
   // service worker bumps it by one when a push lands with the app closed;
@@ -5907,94 +6103,104 @@ function App({ session }: { session: Session }) {
                 <MatchdayTimeline kickoff={programme.game.kickoff} phase={mdPhase} kickoffMs={kickoffMs} />
               </>
             )}
-            <CreditChip />
-            <OweBar due={myDue} onOpen={() => setPaySheetOpen(true)} />
-            {rateGame && !myRatings[rateGame.id] && rateDismissed[rateGame.id] && (
-              <div className="wcf-rate-card">
-                <div>
-                  <div className="wcf-rate-card-t">Rate {new Date(rateGame.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" })}&apos;s game</div>
-                  <div className="wcf-rate-card-s">{cs.team_white_name} {rateGame.team_white_score}–{rateGame.team_red_score} {cs.team_red_name}</div>
+            {forYouOn ? (
+              <>
+                <ForYou items={forYouItems()} caughtUp={forYouCaughtUp()} />
+                <CreditChip />
+                {!myDue.some((d) => d.status === "unpaid") && <OweBar due={myDue} onOpen={() => setPaySheetOpen(true)} />}
+              </>
+            ) : (
+              <>
+              <CreditChip />
+              <OweBar due={myDue} onOpen={() => setPaySheetOpen(true)} />
+              {rateGame && !myRatings[rateGame.id] && rateDismissed[rateGame.id] && (
+                <div className="wcf-rate-card">
+                  <div>
+                    <div className="wcf-rate-card-t">Rate {new Date(rateGame.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" })}&apos;s game</div>
+                    <div className="wcf-rate-card-s">{cs.team_white_name} {rateGame.team_white_score}–{rateGame.team_red_score} {cs.team_red_name}</div>
+                  </div>
+                  <RateGameMeter small value={0} onRate={(n) => { submitRating(rateGame.id, n); setRateSheetFor(rateGame.id); }} />
                 </div>
-                <RateGameMeter small value={0} onRate={(n) => { submitRating(rateGame.id, n); setRateSheetFor(rateGame.id); }} />
-              </div>
-            )}
-            {motmVoteGame && (() => {
-              const g = motmVoteGame;
-              const myPick = myMotmVoteByGame[g.id];
-              const pickName = myPick ? profiles.find((p) => p.id === myPick)?.display_name : null;
-              return myPick ? (
-                <button className="wcf-vote-prompt done" onClick={() => goToResult(g.id)}>
-                  <span className="wcf-vote-prompt-text">
-                    You voted for <b>{pickName ?? "a teammate"}</b> · change it until {motmClosesLabel(g)}
-                  </span>
-                  <span className="wcf-vote-prompt-chev" aria-hidden="true">›</span>
-                </button>
-              ) : (
-                <button className="wcf-vote-prompt" onClick={() => goToResult(g.id)}>
-                  <span className="wcf-vote-prompt-ic" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" /><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></svg>
-                  </span>
-                  <span className="wcf-vote-prompt-text">
-                    <span className="wcf-vote-prompt-k">Man of the Match</span>
-                    <span className="wcf-vote-prompt-t">Who was best {dayWord(g.kickoff)}?</span>
-                    <span className="wcf-vote-prompt-s">
-                      {cs.team_white_name} {g.team_white_score}–{g.team_red_score} {cs.team_red_name} · closes {motmClosesLabel(g)}
+              )}
+              {motmVoteGame && (() => {
+                const g = motmVoteGame;
+                const myPick = myMotmVoteByGame[g.id];
+                const pickName = myPick ? profiles.find((p) => p.id === myPick)?.display_name : null;
+                return myPick ? (
+                  <button className="wcf-vote-prompt done" onClick={() => goToResult(g.id)}>
+                    <span className="wcf-vote-prompt-text">
+                      You voted for <b>{pickName ?? "a teammate"}</b> · change it until {motmClosesLabel(g)}
                     </span>
-                  </span>
-                  <span className="wcf-vote-prompt-btn">Vote</span>
-                </button>
-              );
-            })()}
-            {showWrappedBanner && wrapped && (
-              <div className="wr-banner-wrap">
-                <style>{wrappedBannerCss}</style>
-                <button
-                  className={"wr-banner" + (wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar ? " themed" : "")}
-                  onClick={openWrapped}
-                  aria-label={`Open your ${wrapped.periodLabel} Wrapped`}
-                  style={(() => {
-                    const t = wrappedThemeFor(wrapped.periodKey);
-                    return (t ? { "--acc": t.accent, "--bimg": `url(${t.bannerPhoto ?? t.introPhoto})` } : {}) as React.CSSProperties;
-                  })()}
-                >
-                  <span className="row">
-                    <span className="play" aria-hidden="true">
-                      <svg width="18" height="18" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5v9l7-4.5z" /></svg>
+                    <span className="wcf-vote-prompt-chev" aria-hidden="true">›</span>
+                  </button>
+                ) : (
+                  <button className="wcf-vote-prompt" onClick={() => goToResult(g.id)}>
+                    <span className="wcf-vote-prompt-ic" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" /><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></svg>
                     </span>
-                    <span className="copy">
-                      <span className="k">
-                        {wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar ? `${wrapped.periodShort} · ${wrappedThemeFor(wrapped.periodKey)!.edition}` : "Wrapped"}
-                        {!wrappedOpenToAll && <span className="tag">ADMINS</span>}
-                      </span>
-                      <span className="h">
-                        {wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar
-                          ? wrappedThemeFor(wrapped.periodKey)!.word
-                          : `Your ${wrapped.periodShort}${wrapped.soFar ? " so far" : ""}`}
-                      </span>
-                      <span className="s">
-                        {wrapped.data.apps} games · {wrapped.data.goals} {wrapped.data.goals === 1 ? "goal" : "goals"}
-                        {" · tap to watch"}
+                    <span className="wcf-vote-prompt-text">
+                      <span className="wcf-vote-prompt-k">Man of the Match</span>
+                      <span className="wcf-vote-prompt-t">Who was best {dayWord(g.kickoff)}?</span>
+                      <span className="wcf-vote-prompt-s">
+                        {cs.team_white_name} {g.team_white_score}–{g.team_red_score} {cs.team_red_name} · closes {motmClosesLabel(g)}
                       </span>
                     </span>
+                    <span className="wcf-vote-prompt-btn">Vote</span>
+                  </button>
+                );
+              })()}
+              {showWrappedBanner && wrapped && (
+                <div className="wr-banner-wrap">
+                  <style>{wrappedBannerCss}</style>
+                  <button
+                    className={"wr-banner" + (wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar ? " themed" : "")}
+                    onClick={openWrapped}
+                    aria-label={`Open your ${wrapped.periodLabel} Wrapped`}
+                    style={(() => {
+                      const t = wrappedThemeFor(wrapped.periodKey);
+                      return (t ? { "--acc": t.accent, "--bimg": `url(${t.bannerPhoto ?? t.introPhoto})` } : {}) as React.CSSProperties;
+                    })()}
+                  >
+                    <span className="row">
+                      <span className="play" aria-hidden="true">
+                        <svg width="18" height="18" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5v9l7-4.5z" /></svg>
+                      </span>
+                      <span className="copy">
+                        <span className="k">
+                          {wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar ? `${wrapped.periodShort} · ${wrappedThemeFor(wrapped.periodKey)!.edition}` : "Wrapped"}
+                          {!wrappedOpenToAll && <span className="tag">ADMINS</span>}
+                        </span>
+                        <span className="h">
+                          {wrappedThemeFor(wrapped.periodKey) && !wrapped.soFar
+                            ? wrappedThemeFor(wrapped.periodKey)!.word
+                            : `Your ${wrapped.periodShort}${wrapped.soFar ? " so far" : ""}`}
+                        </span>
+                        <span className="s">
+                          {wrapped.data.apps} games · {wrapped.data.goals} {wrapped.data.goals === 1 ? "goal" : "goals"}
+                          {" · tap to watch"}
+                        </span>
+                      </span>
+                    </span>
+                  </button>
+                  <button className="wr-banner-x" onClick={dismissWrapped} aria-label="Hide this month's Wrapped">×</button>
+                </div>
+              )}
+              {showRatingNudge && (
+                <div className="wcf-nudge-banner">
+                  <span className="wcf-nudge-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M12 3l2.6 5.6 6 .7-4.4 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.4 9.3l6-.7z" /></svg>
                   </span>
-                </button>
-                <button className="wr-banner-x" onClick={dismissWrapped} aria-label="Hide this month's Wrapped">×</button>
-              </div>
-            )}
-            {showRatingNudge && (
-              <div className="wcf-nudge-banner">
-                <span className="wcf-nudge-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M12 3l2.6 5.6 6 .7-4.4 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.4 9.3l6-.7z" /></svg>
-                </span>
-                <div className="wcf-nudge-body">
-                  <strong>Rate yourself</strong>
-                  <p>Helps admins pick fairer teams. It takes 30 seconds.</p>
-                  <div className="wcf-nudge-actions">
-                    <button onClick={() => setTab("account")}>Rate now</button>
-                    <button className="wcf-ghost" onClick={dismissRatingNudge}>Not now</button>
+                  <div className="wcf-nudge-body">
+                    <strong>Rate yourself</strong>
+                    <p>Helps admins pick fairer teams. It takes 30 seconds.</p>
+                    <div className="wcf-nudge-actions">
+                      <button onClick={() => setTab("account")}>Rate now</button>
+                      <button className="wcf-ghost" onClick={dismissRatingNudge}>Not now</button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
+              </>
             )}
             {iAmOverdue && (
               <div className="wcf-overdue-banner">
@@ -6044,7 +6250,7 @@ function App({ session }: { session: Session }) {
               />
             ) : (
               <>
-                {!isMatchday && programme && programme.game.date >= nowUk.slice(0, 10) && (
+                {!forYouOn && !isMatchday && programme && programme.game.date >= nowUk.slice(0, 10) && (
                   <button className="wcf-prog-card" onClick={openProgramme}>
                     <span className="cv" aria-hidden="true" />
                     <span className="tx">
