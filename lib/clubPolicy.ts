@@ -112,3 +112,8 @@ export const CALM_FIXTURES_OPEN_TO_ALL_FROM = "9999-12-31";
 // Results instead of repeating it (app/ui/calmfeed.tsx). Admins first,
 // every member from this UK date. Far future = admins only.
 export const CALM_FEED_OPEN_TO_ALL_FROM = "9999-12-31";
+
+// Calm Results (2026-10-17): Scores, Season and History; Stats and Records
+// fold into Season, the Pot opens from Account and Admin
+// (app/ui/calmresults.tsx). Admins first, every member from this UK date.
+export const CALM_RESULTS_OPEN_TO_ALL_FROM = "9999-12-31";

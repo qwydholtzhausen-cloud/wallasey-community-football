@@ -4,6 +4,7 @@ import { CountUp, MotmReveal, PointsPill, PotAmountJar } from "./motion";
 import { VoteMedal } from "./celebrate";
 import { Icon } from "./icons";
 import { EmptyScene } from "./EmptyScene";
+import { calmResultsCss } from "./calmresults";
 import { GoalBalls, MotmPoll, monthPhoto, scoresCss } from "./scores";
 import { MOTM_TAGS } from "../motmTags";
 import { MOTM_VOTE_WINDOW_MINUTES, kickoffCutoff } from "../../lib/time";
@@ -115,6 +116,13 @@ export type ResultsTabProps = {
   showAllHatTricks: boolean;
   statsOpenId: string | null;
   statsSort: "apps" | "goals";
+  // Calm Results (admins first, app/ui/calmresults.tsx): Scores, Season
+  // and History only; Stats and Records fold into Season, the Pot opens
+  // from Account and Admin.
+  calm?: boolean;
+  // The Record book card scrolled into view (calm Season), so a record
+  // that fell plays there rather than on a Records tab.
+  onRecordsSeen?: (seen: boolean) => void;
 };
 
 export function ResultsTab({
@@ -197,6 +205,8 @@ export function ResultsTab({
   showAllHatTricks,
   statsOpenId,
   statsSort,
+  calm = false,
+  onRecordsSeen,
 }: ResultsTabProps) {
   // A gold dot on the History tab until it's been opened once on this phone.
   const [historyNew, setHistoryNew] = useState(false);
@@ -205,6 +215,41 @@ export function ResultsTab({
       setHistoryNew(!localStorage.getItem("wcf-history-seen"));
     } catch {}
   }, [resultsView]);
+  // Calm Season: the leaderboard and Record book cards report when they're
+  // first on screen, so their moments play there.
+  const [lbSeen, setLbSeen] = useState(false);
+  const lbRef = useRef<HTMLElement | null>(null);
+  const recRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!calm || resultsView !== "season") {
+      setLbSeen(false);
+      onRecordsSeen?.(false);
+      return;
+    }
+    if (typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (es) => {
+        for (const e of es) {
+          if (!e.isIntersecting) continue;
+          if (e.target === lbRef.current) setLbSeen(true);
+          if (e.target === recRef.current) onRecordsSeen?.(true);
+        }
+      },
+      { threshold: 0.35 },
+    );
+    const t = setTimeout(() => {
+      if (lbRef.current) io.observe(lbRef.current);
+      if (recRef.current) io.observe(recRef.current);
+    }, 50);
+    return () => {
+      clearTimeout(t);
+      io.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calm, resultsView]);
+  const [lbAll, setLbAll] = useState(false);
+  const [recAll, setRecAll] = useState(false);
+  const [rivAll, setRivAll] = useState(false);
   // ── Climbing the Stats table ──
   // The first open of Stats (this season, within a week) after a game that
   // moved you up the table that's open: the rank card ticks, then your row
@@ -234,7 +279,7 @@ export function ResultsTab({
   const sRows = useRef(new Map<string, HTMLDivElement>());
   const sTops = useRef(new Map<string, number>());
   useEffect(() => {
-    if (!statsClimb || resultsView !== "table" || !motionAllowed()) return;
+    if (!statsClimb || !(resultsView === "table" || (calm && resultsView === "season" && lbSeen)) || !motionAllowed()) return;
     try {
       if (localStorage.getItem(statsClimb.key)) return;
       localStorage.setItem(statsClimb.key, "1");
@@ -256,7 +301,7 @@ export function ResultsTab({
       timers.forEach(clearTimeout);
       setSPhase((p) => (p ? "done" : p));
     };
-  }, [statsClimb, resultsView, myId]);
+  }, [statsClimb, resultsView, myId, lbSeen]);
   useLayoutEffect(() => {
     if (sPhase !== "move") return;
     const ease = "cubic-bezier(.5,0,.2,1)";
@@ -274,8 +319,409 @@ export function ResultsTab({
   }, [sPhase, myId]);
   const sBefore = !!statsClimb && (sPhase === "before" || sPhase === "rank" || sPhase === "points");
 
+  // Record rows, shared by Records and the calm Record book, so a record
+  // that falls plays the same way in both.
+  // Up to three names, each tappable to their player card,
+  // then "+N more" rather than a wall of names on a tie.
+  const who = (holders: Holder[], withDate = false) => (
+    <>
+      {holders.slice(0, 3).map((h, i) => (
+        <span key={h.playerId + (h.date ?? "") + i}>
+          {i > 0 ? ", " : ""}
+          <button className="wcf-name-link" onClick={() => openPlayerCard(h.playerId)}>
+            {h.name}
+          </button>
+          {withDate && h.date ? <span className="wcf-rec-date"> · {fmtDate(h.date)}</span> : null}
+        </span>
+      ))}
+      {holders.length > 3 && <span className="wcf-rec-date"> +{holders.length - 3} more</span>}
+    </>
+  );
+  // Holders' faces on the right, and a gold glow on anything you hold.
+  const row = (key: string, value: React.ReactNode, label: string, detail: React.ReactNode, holders: Holder[] = []) => {
+    const faces = holders.filter((h, i, all) => all.findIndex((x) => x.playerId === h.playerId) === i).slice(0, 3);
+    const mine = holders.some((h) => h.playerId === myId);
+    const fell = recordFalls[key];
+    const was = fell && (key === "win" ? `+${fell.v}` : fell.v);
+    return (
+      <div key={key} className={"wcf-rec-row" + (faces.length ? " has-faces" : "") + (mine ? " mine" : "") + (fell ? " wcf-rb-play" : "")}>
+        <div className="wcf-rec-val">
+          {fell ? (
+            <>
+              <span className="wcf-rb-old">{was}</span>
+              <span className="wcf-rb-new">{value}</span>
+            </>
+          ) : (
+            value
+          )}
+        </div>
+        <div className="wcf-rec-body">
+          {label && (
+            <div className="wcf-rec-label">
+              {label}
+              {mine && <span className="wcf-rec-you">You</span>}
+              {fell && <span className="wcf-rb-chip">NEW</span>}
+            </div>
+          )}
+          <div className="wcf-rec-who">
+            {fell ? (
+              <>
+                <span className="wcf-rb-was">{fell.who}</span>
+                <span className="wcf-rb-now">{detail}</span>
+              </>
+            ) : (
+              detail
+            )}
+          </div>
+        </div>
+        {fell && <div className="wcf-rb-shine" />}
+        {faces.length > 0 && (
+          <div className="wcf-rec-faces">
+            {faces.map((h) => (
+              <Avatar
+                key={h.playerId}
+                name={h.name}
+                avatarUrl={avatarByPlayerId.get(h.playerId)}
+                className="wcf-rec-face"
+                background={avatarFor(h.name).gradient}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+  const scoreLine = (x: { date: string; white: number; red: number }) => (
+    <>
+      {cs.team_white_name} {x.white}–{x.red} {cs.team_red_name}
+      <span className="wcf-rec-date"> · {fmtDate(x.date)}</span>
+    </>
+  );
+
+  // ── Calm Season (admins first) ──
+  // Whites v Reds as one card, one leaderboard (Goals | Apps) with your
+  // climb, your season in a row, and the record book - each record row is
+  // the Records row, so a record that falls plays the same.
+  const calmSeasonCards = () => {
+    const h = headToHead;
+    const wName = cs.team_white_name;
+    const rName = cs.team_red_name;
+    const sorted = [...playerStats].sort(statsSortFn);
+    const myIdx = sorted.findIndex((x) => x.id === myId);
+    const shown =
+      statsClimb && sBefore
+        ? [...sorted.slice(0, statsClimb.to), ...sorted.slice(statsClimb.to + 1, statsClimb.from + 1), sorted[statsClimb.to], ...sorted.slice(statsClimb.from + 1)]
+        : sorted;
+    const oldMe = statsClimb && (sPhase === "before" || sPhase === "points" || sPhase === "rank") ? statsClimb.before : null;
+    const climbOn = !!statsClimb && !!sPhase && sPhase !== "done";
+    const limit = lbAll ? shown.length : climbOn ? Math.max(8, statsClimb!.from + 1) : 8;
+    const pinMe = !lbAll && !climbOn && myIdx >= limit ? sorted[myIdx] : null;
+    const medal = ["#f5d97a", "#d6dbe3", "#d79a62"];
+    const ord = (n: number) => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : (["th", "st", "nd", "rd"][n % 10] ?? "th"));
+    const lbRow = (row: (typeof sorted)[number], i: number, pinned = false) => {
+      const isMe = row.id === myId;
+      const climbing = isMe && !!statsClimb && !!sPhase;
+      const pre = climbing && oldMe && sPhase !== "points" ? oldMe : null;
+      const apps = pre ? pre.apps : row.apps;
+      const goals = pre ? pre.goals : row.goals;
+      const top = i < 3 && !pinned;
+      return (
+        <div
+          key={row.id + (pinned ? "-pin" : "")}
+          ref={(el) => {
+            if (pinned) return;
+            if (el) sRows.current.set(row.id, el);
+            else sRows.current.delete(row.id);
+          }}
+          className={"cr-lr" + (top ? " top" : "") + (isMe ? " me" : "") + (climbing && sPhase !== "done" ? " wcf-sclimb" : "")}
+          style={top ? ({ "--m": medal[i], "--i": i } as React.CSSProperties) : undefined}
+          onClick={() => openPlayerCard(row.id)}
+        >
+          <span className="rk">{i + 1}</span>
+          <Avatar name={row.name} avatarUrl={avatarByPlayerId.get(row.id)} className="av" background={avatarFor(row.name).gradient} />
+          <span className="nm">
+            <b>
+              {row.name}
+              {isMe && <em>YOU</em>}
+              {climbing && sPhase === "done" && (
+                <span className="wcf-climb-up">
+                  ▲ {statsClimb!.from - statsClimb!.to} {statsClimb!.from - statsClimb!.to === 1 ? "place" : "places"}
+                </span>
+              )}
+            </b>
+            <small>{statsSort === "goals" ? `${apps} ${apps === 1 ? "app" : "apps"}` : `${goals || 0} ${goals === 1 ? "goal" : "goals"}`}</small>
+          </span>
+          {climbing && sPhase === "points" && (
+            <span className="wcf-sclimb-plus">
+              +{statsClimb!.gained} {statsSort === "goals" ? (statsClimb!.gained === 1 ? "goal" : "goals") : "app"}
+            </span>
+          )}
+          <span className="v">
+            <span className={climbing && sPhase === "points" ? "wcf-tick" : undefined} key={pre ? "o" : "n"}>
+              {statsSort === "goals" ? goals || "—" : apps}
+            </span>
+          </span>
+        </div>
+      );
+    };
+    const rec = clubRecords;
+    const shownKeys = ["goals", "win", "high", "votes1", "ws"];
+    const recOpen = recAll || Object.keys(recordFalls).some((k) => !shownKeys.includes(k));
+    const b = myBests;
+    const tiles: { k: string; v: number | string; label: string; record: boolean }[] = [
+      { k: "g", v: b.mostGoals?.goals ?? 0, label: "Goals in a game", record: !!b.mostGoals && b.mostGoals.goals === rec.mostGoalsInGame?.goals },
+      { k: "w", v: b.winStreak, label: "Win streak", record: b.winStreak > 0 && b.winStreak === rec.winStreak?.n },
+      { k: "u", v: b.unbeaten, label: "Unbeaten run", record: b.unbeaten > 0 && b.unbeaten === rec.unbeaten?.n },
+      { k: "r", v: b.gamesInARow, label: "Games in a row", record: b.gamesInARow > 0 && b.gamesInARow === rec.gamesInARow?.n },
+    ];
+    const meName = myProfile?.display_name ?? "You";
+    return (
+      <>
+        {h.white.played > 0 && (
+          <article className={"cr-card cr-riv" + (rivAll ? " open" : "")} style={{ "--ph": "url(/lineup-teams.jpg)" } as React.CSSProperties}>
+            <div className="cr-ch">
+              <h4>
+                {wName} v {rName}
+              </h4>
+              <span>{h.white.played} games</span>
+            </div>
+            <div className="cr-rule" />
+            <div className="cr-vs">
+              <div className="s">
+                <small>{wName}</small>
+                <b>{h.white.won}</b>
+                <span>{h.white.won === 1 ? "win" : "wins"}</span>
+              </div>
+              <div className="mid">
+                <b>{h.white.drawn}</b>
+                <span>{h.white.drawn === 1 ? "draw" : "draws"}</span>
+              </div>
+              <div className="s r">
+                <small>{rName}</small>
+                <b>{h.red.won}</b>
+                <span>{h.red.won === 1 ? "win" : "wins"}</span>
+              </div>
+            </div>
+            <div className="cr-bar">
+              {h.white.won > 0 && <i className="w" style={{ flex: h.white.won }} />}
+              {h.white.drawn > 0 && <i className="d" style={{ flex: h.white.drawn }} />}
+              {h.red.won > 0 && <i className="r" style={{ flex: h.red.won }} />}
+            </div>
+            <div className="cr-goals">
+              <span>{h.white.goals} goals</span>
+              <span>{h.red.goals} goals</span>
+            </div>
+            {rivalryStreak && (
+              <div className={"cr-run " + rivalryStreak.winner}>
+                <i aria-hidden="true" />
+                <span>
+                  <b>
+                    {rivalryStreak.winner === "white" ? wName : rName} have won {rivalryStreak.count} in a row
+                  </b>
+                  <small>
+                    {rivalryStreak.otherLastWon
+                      ? `${rivalryStreak.winner === "white" ? rName : wName} haven't won since ${fmtDate(rivalryStreak.otherLastWon)}`
+                      : `${rivalryStreak.winner === "white" ? rName : wName} are still waiting for a win`}
+                  </small>
+                </span>
+              </div>
+            )}
+            <div className="cr-x">
+              <div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th />
+                      <th>P</th>
+                      <th>W</th>
+                      <th>D</th>
+                      <th>L</th>
+                      <th>GF</th>
+                      <th>GA</th>
+                      <th>Pts</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(
+                      [
+                        ["white", h.white, h.red.goals, wName],
+                        ["red", h.red, h.white.goals, rName],
+                      ] as const
+                    )
+                      .slice()
+                      .sort((a, z) => z[1].points - a[1].points || z[1].goals - z[2] - (a[1].goals - a[2]))
+                      .map(([k, row, against, name]) => (
+                        <tr key={k}>
+                          <td>
+                            <i className={"dot " + k} />
+                            {name}
+                          </td>
+                          <td>{row.played}</td>
+                          <td>{row.won}</td>
+                          <td>{row.drawn}</td>
+                          <td>{row.lost}</td>
+                          <td>{row.goals}</td>
+                          <td>{against}</td>
+                          <td>
+                            <b>{row.points}</b>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <button className="cr-all" onClick={() => setRivAll((v) => !v)}>
+              {rivAll ? "Show less" : "Full table"} <u>›</u>
+            </button>
+          </article>
+        )}
+
+        {sorted.length > 0 && (
+          <article ref={lbRef} className={"cr-card cr-lb" + (lbSeen ? " seen" : "")} style={{ "--ph": "url(/floodlight-haze.jpg)" } as React.CSSProperties}>
+            <div className="cr-ch">
+              <h4>Leaderboard</h4>
+              <div className="cr-seg" role="tablist">
+                {(["goals", "apps"] as const).map((s) => (
+                  <button
+                    key={s}
+                    role="tab"
+                    aria-selected={statsSort === s}
+                    className={statsSort === s ? "on" : ""}
+                    onClick={() => {
+                      setStatsSort(s);
+                      setStatsOpenId(null);
+                    }}
+                  >
+                    {s === "goals" ? "Goals" : "Apps"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="cr-rule" />
+            <div className="cr-rows" key={statsSort}>
+              {shown.slice(0, limit).map((row, i) => lbRow(row, i))}
+              {pinMe && (
+                <>
+                  <div className="cr-gap">···</div>
+                  {lbRow(pinMe, myIdx, true)}
+                </>
+              )}
+            </div>
+            {sorted.length > 8 && (
+              <button className="cr-all" onClick={() => setLbAll((v) => !v)}>
+                {lbAll ? "Show less" : `All ${sorted.length} players`} <u>›</u>
+              </button>
+            )}
+          </article>
+        )}
+
+        {b.games > 0 && (
+          <article className="cr-card cr-you">
+            <div className="cr-youh">
+              <Avatar name={meName} avatarUrl={avatarByPlayerId.get(myId)} className="cr-youf" background={avatarFor(meName).gradient} />
+              <span>
+                <small>Your season</small>
+                <b>{meName}</b>
+                <i>
+                  {b.games} {b.games === 1 ? "game" : "games"} played
+                  {myIdx >= 0 ? ` · ${ord(myIdx + 1)} for ${statsSort === "goals" ? "goals" : "apps"}` : ""}
+                </i>
+              </span>
+            </div>
+            <div className="cr-cells">
+              {tiles.map((x) => (
+                <div key={x.k} className={x.record ? "rec" : undefined}>
+                  <b>{x.v}</b>
+                  <small>{x.label}</small>
+                  {x.record && <em>Club record</em>}
+                </div>
+              ))}
+            </div>
+          </article>
+        )}
+
+        {rec.highestScoring && (
+          <article ref={recRef} className={"cr-card cr-recs" + (recOpen ? " open" : "")} style={{ "--ph": "url(/potm-bg.jpg)" } as React.CSSProperties}>
+            <div className="cr-ch">
+              <h4>Record book</h4>
+              <span>
+                Season {activeStatsYear - SEASON_EPOCH_YEAR + 1} · {activeStatsYear}
+              </span>
+            </div>
+            <div className="cr-rule" />
+            {rec.mostGoalsInGame && row("goals", rec.mostGoalsInGame.goals, "Most goals by one player", who(rec.mostGoalsInGame.holders, true), rec.mostGoalsInGame.holders)}
+            {rec.biggestWin && row("win", `+${rec.biggestWin.margin}`, "Biggest win", scoreLine(rec.biggestWin))}
+            {rec.highestScoring && row("high", rec.highestScoring.total, "Highest-scoring game", scoreLine(rec.highestScoring))}
+            {rec.mostMotmVotesInGame && row("votes1", rec.mostMotmVotesInGame.votes, "Most MOTM votes in a game", who(rec.mostMotmVotesInGame.holders, true), rec.mostMotmVotesInGame.holders)}
+            {rec.winStreak && row("ws", rec.winStreak.n, "Longest winning run", who(rec.winStreak.holders), rec.winStreak.holders)}
+            {recOpen && (
+              <>
+                {rec.unbeaten && row("ub", rec.unbeaten.n, "Longest unbeaten run", who(rec.unbeaten.holders), rec.unbeaten.holders)}
+                {rec.gamesInARow && row("row", rec.gamesInARow.n, "Most games in a row", who(rec.gamesInARow.holders), rec.gamesInARow.holders)}
+                {rec.motmWins && row("mw", rec.motmWins.n, "Most Man of the Match wins", who(rec.motmWins.holders), rec.motmWins.holders)}
+                {rec.motmVotes && row("mv", rec.motmVotes.n, "Most MOTM votes", who(rec.motmVotes.holders), rec.motmVotes.holders)}
+                {rec.promotions && row("wl", rec.promotions.n, "Most times in off the waiting list", who(rec.promotions.holders), rec.promotions.holders)}
+                {rec.hatTricks.length > 0 && <div className="cr-sub">Hat-tricks · {rec.hatTricks.length}</div>}
+                {rec.hatTricks.map((ht, i) =>
+                  row(
+                    ht.playerId + ht.date + i,
+                    ht.goals,
+                    "",
+                    <>
+                      <button className="wcf-name-link wcf-rec-name" onClick={() => openPlayerCard(ht.playerId)}>
+                        {ht.name}
+                      </button>
+                      <span className="wcf-rec-date">
+                        {ht.goals} goals · {fmtDate(ht.date)}
+                      </span>
+                    </>,
+                    [{ playerId: ht.playerId, name: ht.name }],
+                  ),
+                )}
+              </>
+            )}
+            <button className="cr-all" onClick={() => setRecAll((v) => !v)}>
+              {recOpen ? "Show less" : `All records${rec.hatTricks.length ? ` & ${rec.hatTricks.length} hat-tricks` : ""}`} <u>›</u>
+            </button>
+          </article>
+        )}
+      </>
+    );
+  };
+
+  const openHistory = () => {
+    setResultsView("history");
+    try {
+      localStorage.setItem("wcf-history-seen", "1");
+    } catch {}
+  };
+  // Calm: Stats and Records live in Season now.
+  const view = calm && (resultsView === "table" || resultsView === "records") ? "season" : resultsView;
   return (
     <>
+      {calm && <style>{calmResultsCss}</style>}
+      {calm && view === "pot" && (
+        <div className="cr-back">
+          <button onClick={() => setResultsView("fixtures")}>‹ Results</button>
+          <span>Club pot</span>
+        </div>
+      )}
+      {calm && view !== "pot" && (
+        <div className="cr-tabs" role="tablist">
+          <button role="tab" aria-selected={view === "fixtures"} className={view === "fixtures" ? "on" : ""} onClick={() => setResultsView("fixtures")}>
+            Scores
+          </button>
+          <button role="tab" aria-selected={view === "season"} className={view === "season" ? "on" : ""} onClick={() => setResultsView("season")}>
+            Season
+          </button>
+          <button role="tab" aria-selected={view === "history"} className={view === "history" ? "on" : ""} onClick={openHistory}>
+            History
+            {historyNew && <i className="wcf-hist-dot" aria-hidden="true" />}
+          </button>
+        </div>
+      )}
+      {!calm && (
       <div className="wcf-subtabs">
         <button className={resultsView === "season" ? "active" : ""} onClick={() => setResultsView("season")}>
           Season
@@ -297,10 +743,11 @@ export function ResultsTab({
           Pot
         </button>
       </div>
+      )}
 
-      {resultsView === "history" && historyView}
+      {view === "history" && historyView}
 
-      {resultsView === "season" &&
+      {view === "season" &&
         (() => {
           const seasonGames = pastGames.filter((g) => g.date.slice(0, 4) === String(currentSeasonYear));
           const gamesThisSeason = seasonGames.length;
@@ -311,9 +758,11 @@ export function ResultsTab({
           return (
             <>
               <div className="wcf-season-hero">
-                <button type="button" className="wcf-story-pill" onClick={() => { setResultsView("history"); try { localStorage.setItem("wcf-history-seen", "1"); } catch {} }}>
-                  Our story ›
-                </button>
+                {!calm && (
+                  <button type="button" className="wcf-story-pill" onClick={openHistory}>
+                    Our story ›
+                  </button>
+                )}
                 <div className="wcf-season-hero-eyebrow">Season {currentSeasonYear - SEASON_EPOCH_YEAR + 1}</div>
                 <div className="wcf-season-hero-title">{currentSeasonYear}</div>
                 {scoredSeason.length > 0 ? (
@@ -421,7 +870,8 @@ export function ResultsTab({
                 </div>
               ))}
 
-              {rivalryStreak &&
+              {!calm &&
+                rivalryStreak &&
                 (() => {
                   const lead = rivalryStreak.winner === "white" ? cs.team_white_name : cs.team_red_name;
                   const other = rivalryStreak.winner === "white" ? cs.team_red_name : cs.team_white_name;
@@ -451,7 +901,9 @@ export function ResultsTab({
                   );
                 })()}
 
-              {headToHead.white.played > 0 &&
+              {calm && calmSeasonCards()}
+              {!calm &&
+                headToHead.white.played > 0 &&
                 (() => {
                   // One rivalry, not two mirrored table rows: results and
                   // goals as bars, then the last five actual scores.
@@ -575,7 +1027,7 @@ export function ResultsTab({
           );
         })()}
 
-      {resultsView === "table" &&
+      {view === "table" &&
         (() => {
           // Tied on goals favours fewer games, not more - the better
           // goals-per-game rate should rank above someone who just
@@ -792,85 +1244,9 @@ export function ResultsTab({
           );
         })()}
 
-      {resultsView === "records" &&
+      {view === "records" &&
         (() => {
           const r = clubRecords;
-          // Up to three names, each tappable to their player card,
-          // then "+N more" rather than a wall of names on a tie.
-          const who = (holders: Holder[], withDate = false) => (
-            <>
-              {holders.slice(0, 3).map((h, i) => (
-                <span key={h.playerId + (h.date ?? "") + i}>
-                  {i > 0 ? ", " : ""}
-                  <button className="wcf-name-link" onClick={() => openPlayerCard(h.playerId)}>
-                    {h.name}
-                  </button>
-                  {withDate && h.date ? <span className="wcf-rec-date"> · {fmtDate(h.date)}</span> : null}
-                </span>
-              ))}
-              {holders.length > 3 && <span className="wcf-rec-date"> +{holders.length - 3} more</span>}
-            </>
-          );
-          // Holders' faces on the right, and a gold glow on anything you hold.
-          const row = (key: string, value: React.ReactNode, label: string, detail: React.ReactNode, holders: Holder[] = []) => {
-            const faces = holders.filter((h, i, all) => all.findIndex((x) => x.playerId === h.playerId) === i).slice(0, 3);
-            const mine = holders.some((h) => h.playerId === myId);
-            const fell = recordFalls[key];
-            const was = fell && (key === "win" ? `+${fell.v}` : fell.v);
-            return (
-              <div key={key} className={"wcf-rec-row" + (faces.length ? " has-faces" : "") + (mine ? " mine" : "") + (fell ? " wcf-rb-play" : "")}>
-                <div className="wcf-rec-val">
-                  {fell ? (
-                    <>
-                      <span className="wcf-rb-old">{was}</span>
-                      <span className="wcf-rb-new">{value}</span>
-                    </>
-                  ) : (
-                    value
-                  )}
-                </div>
-                <div className="wcf-rec-body">
-                  {label && (
-                    <div className="wcf-rec-label">
-                      {label}
-                      {mine && <span className="wcf-rec-you">You</span>}
-                      {fell && <span className="wcf-rb-chip">NEW</span>}
-                    </div>
-                  )}
-                  <div className="wcf-rec-who">
-                    {fell ? (
-                      <>
-                        <span className="wcf-rb-was">{fell.who}</span>
-                        <span className="wcf-rb-now">{detail}</span>
-                      </>
-                    ) : (
-                      detail
-                    )}
-                  </div>
-                </div>
-                {fell && <div className="wcf-rb-shine" />}
-                {faces.length > 0 && (
-                  <div className="wcf-rec-faces">
-                    {faces.map((h) => (
-                      <Avatar
-                        key={h.playerId}
-                        name={h.name}
-                        avatarUrl={avatarByPlayerId.get(h.playerId)}
-                        className="wcf-rec-face"
-                        background={avatarFor(h.name).gradient}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          };
-          const scoreLine = (x: { date: string; white: number; red: number }) => (
-            <>
-              {cs.team_white_name} {x.white}–{x.red} {cs.team_red_name}
-              <span className="wcf-rec-date"> · {fmtDate(x.date)}</span>
-            </>
-          );
           const days = (d: number) => (d < 1 ? "less than a day" : `${Math.round(d)} day${Math.round(d) === 1 ? "" : "s"}`);
           const empty = !r.highestScoring;
           return (
@@ -1055,8 +1431,9 @@ export function ResultsTab({
           );
         })()}
 
-      {resultsView === "fixtures" && (
+      {view === "fixtures" && (
         <>
+          {!calm && (
           <PillChoice
             label="Which results"
             value={resultsMonth}
@@ -1066,6 +1443,7 @@ export function ResultsTab({
               ...resultsMonths.map((m) => ({ value: m, label: new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: m.slice(0, 4) === String(currentSeasonYear) ? undefined : "numeric" }), count: scoredPastGames.filter((g) => g.date.slice(0, 7) === m).length })),
             ]}
           />
+          )}
 
           {filteredResults.length === 0 &&
             (scoredPastGames.length === 0 ? (
@@ -1763,7 +2141,7 @@ export function ResultsTab({
         </>
       )}
 
-      {resultsView === "pot" &&
+      {view === "pot" &&
         (() => {
           const chronological = [...potLedger].sort((a, b) => a.date.localeCompare(b.date));
           const series = chronological.reduce<number[]>((acc, e) => {

@@ -24,6 +24,7 @@ import {
   OCCASIONS_OPEN_TO_ALL_FROM,
   CALM_FIXTURES_OPEN_TO_ALL_FROM,
   CALM_FEED_OPEN_TO_ALL_FROM,
+  CALM_RESULTS_OPEN_TO_ALL_FROM,
   TOTM_FIRST_MONTH,
   TOTM_REVEAL_FROM,
   TOTM_VISIBLE_FROM,
@@ -62,6 +63,7 @@ import { Icon } from "./ui/icons";
 import { EmptyScene } from "./ui/EmptyScene";
 import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
 import type { CalmMoment } from "./ui/calmfeed";
+import { calmResultsCss } from "./ui/calmresults";
 import { ResultsTab } from "./ui/results";
 import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
 import { WinMoment, type SeasonGame } from "./ui/celebrate";
@@ -1685,6 +1687,7 @@ function App({ session }: { session: Session }) {
   const [totmReplay, setTotmReplay] = useState<{ monthKey: string; instant: boolean } | null>(null);
   const [potmLand, setPotmLand] = useState(false);
   const [recordFalls, setRecordFalls] = useState<Record<string, { v: number; who: string }>>({});
+  const [recordsInView, setRecordsInView] = useState(false);
   const [recordMomentDone, setRecordMomentDone] = useState(false);
   const [promoShow, setPromoShow] = useState<string | null>(null);
   const [momentsDone, setMomentsDone] = useState<string[]>([]);
@@ -3953,6 +3956,14 @@ function App({ session }: { session: Session }) {
   // sign-ups as one; a game night's milestones as one. Pot posts are left
   // to Results › Pot.
   const calmFeedOn = isAdmin || nowUk.slice(0, 10) >= CALM_FEED_OPEN_TO_ALL_FROM;
+  // Calm Results (admins first): opens on Scores, once, when it turns on.
+  const calmResultsOn = isAdmin || nowUk.slice(0, 10) >= CALM_RESULTS_OPEN_TO_ALL_FROM;
+  const calmResultsDefaulted = useRef(false);
+  useEffect(() => {
+    if (!calmResultsOn || calmResultsDefaulted.current) return;
+    calmResultsDefaulted.current = true;
+    setResultsView((v) => (v === "season" ? "fixtures" : v));
+  }, [calmResultsOn]);
   const calmMoments = useMemo((): CalmMoment[] => {
     if (!calmFeedOn) return [];
     const since = Date.now() - 14 * 86400000;
@@ -4989,7 +5000,10 @@ function App({ session }: { session: Session }) {
   // The first look on a phone just records where things stand.
   const recordTeam = (w: number, rd: number) => `${cs.team_white_name} ${w}–${rd} ${cs.team_red_name}`;
   useEffect(() => {
-    if (resultsView !== "records" || tab !== "results") {
+    // Calm Results has no Records tab: the Record book card on Season
+    // coming into view counts as opening it.
+    const recordsOpen = resultsView === "records" || (calmResultsOn && resultsView === "season" && recordsInView);
+    if (!recordsOpen || tab !== "results") {
       if (Object.keys(recordFalls).length) setRecordFalls({});
       return;
     }
@@ -5009,7 +5023,7 @@ function App({ session }: { session: Session }) {
     for (const [k, x] of Object.entries(now)) if (before[k] && x.v > before[k].v) fell[k] = before[k];
     if (Object.keys(fell).length) setRecordFalls(fell);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resultsView, tab, loading, myId, activeStatsYear, clubRecords]);
+  }, [resultsView, tab, loading, myId, activeStatsYear, clubRecords, recordsInView, calmResultsOn]);
 
   // Your own record: a single-game record you set in the last 3 days that
   // beat the one before it (not just equalled it), once per phone.
@@ -6865,6 +6879,25 @@ function App({ session }: { session: Session }) {
           </>
         )}
 
+        {tab === "admin" && isAdmin && calmResultsOn && (
+          <>
+            <style>{calmResultsCss}</style>
+            <button
+              className="cr-pot"
+              onClick={() => {
+                setTab("results");
+                setResultsView("pot");
+              }}
+            >
+              <span>
+                <small>Club pot</small>
+                <b>£{Math.round(potTotal)}</b>
+                <i>Match fees in, pitch hire out, and where it goes</i>
+              </span>
+              <em>›</em>
+            </button>
+          </>
+        )}
         {tab === "admin" && isAdmin && (
           <AdminConsole
             upcoming={upcomingGames}
@@ -7092,6 +7125,8 @@ function App({ session }: { session: Session }) {
             potLedger={potLedger}
             potmLand={potmLand}
             potTotal={potTotal}
+            calm={calmResultsOn}
+            onRecordsSeen={setRecordsInView}
             profiles={profiles}
             recordFalls={recordFalls}
             resultsMonth={resultsMonth}
@@ -7125,6 +7160,25 @@ function App({ session }: { session: Session }) {
           />
         )}
 
+        {tab === "account" && calmResultsOn && (
+          <>
+            <style>{calmResultsCss}</style>
+            <button
+              className="cr-pot"
+              onClick={() => {
+                setTab("results");
+                setResultsView("pot");
+              }}
+            >
+              <span>
+                <small>Club pot</small>
+                <b>£{Math.round(potTotal)}</b>
+                <i>Match fees in, pitch hire out, and where it goes</i>
+              </span>
+              <em>›</em>
+            </button>
+          </>
+        )}
         {tab === "account" && (
           <AccountPanel
             profile={myProfile}
