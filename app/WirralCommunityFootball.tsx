@@ -21,7 +21,10 @@ import {
   HOUSE_STYLE_OPEN_TO_ALL_FROM,
   MOVEMENT_OPEN_TO_ALL_FROM,
   SEASON_CARDS_OPEN_TO_ALL_FROM,
+  OCCASIONS_OPEN_TO_ALL_FROM,
 } from "../lib/clubPolicy";
+import { findOccasion } from "../lib/occasions";
+import { OccasionHero, OccasionRibbon, OccasionTimeline, occVars, occasionCss, type OccInfo } from "./ui/occasion";
 import { CardFan, SeasonCard, TierLadder, TierUnlock, seasonCardCss, tierFor, type CardTier } from "./ui/seasoncard";
 import { houseStyleCss } from "./ui/houseStyle";
 import { computeWrapped } from "../lib/wrapped";
@@ -4607,6 +4610,48 @@ function App({ session }: { session: Session }) {
       : kickoffCutoff(programme.game.date, programme.game.kickoff, 0) <= nowUk
         ? "live"
         : "pre";
+  // Occasions: the Christmas game, every 50th club game, the year's last
+  // game and Wrapped day get the takeover frame in their own colours
+  // (lib/occasions.ts). The First XI outranks them. Admins first, and admins
+  // can preview one with ?occasion=christmas|milestone|finale|wrapped.
+  const occasionsOn = isAdmin || nowUk.slice(0, 10) >= OCCASIONS_OPEN_TO_ALL_FROM;
+  const [occPreview] = useState<string | null>(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get("occasion");
+      if (q) sessionStorage.setItem("wcf-occ-preview", q);
+      return sessionStorage.getItem("wcf-occ-preview");
+    } catch {
+      return null;
+    }
+  });
+  const occInfo: OccInfo | null = (() => {
+    if (!occasionsOn || isMatchday) return null;
+    const today = nowUk.slice(0, 10);
+    let wrappedDay = false;
+    if (showWrappedBanner && wrapped && !wrapped.soFar) {
+      const last = games.filter((g) => g.published && g.date.startsWith(wrappedMonthKey)).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)).at(-1);
+      if (last) {
+        const rel = monthReleaseAt(last.date, last.kickoff);
+        wrappedDay = nowUk >= rel && today === rel.slice(0, 10);
+      }
+    }
+    const occ = findOccasion({ games, today, wrappedDay, preview: isAdmin ? occPreview : null });
+    if (!occ) return null;
+    const g = occ.game;
+    const monthName = new Date((wrappedMonthKey || today.slice(0, 7)) + "-15T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+    return {
+      kind: occ.kind,
+      number: occ.number,
+      kickoffMs: g ? Date.now() + (toMs(kickoffCutoff(g.date, g.kickoff, 0)) - toMs(nowUk)) : null,
+      kickoff: g ? g.kickoff.slice(0, 5) : "08:00",
+      venue: g ? g.venue : "",
+      scored: !!g && g.team_white_score != null && g.team_red_score != null,
+      seasonPlayed: pastGames.filter((x) => x.date.startsWith(today.slice(0, 4)) && x.date < (g ? g.date : today) && x.team_white_score != null && x.team_red_score != null).length,
+      year: (g ? g.date : today).slice(0, 4),
+      month: monthName,
+    };
+  })();
+  const occGameId = occInfo && occInfo.kind !== "wrapped" ? findOccasion({ games, today: nowUk.slice(0, 10), wrappedDay: false, preview: isAdmin ? occPreview : null })?.game?.id ?? null : null;
   // On matchday the hero is the First XI's card, so its usual Next match card would repeat it.
   const nmShown = isMatchday && programme ? nextMatchGames.filter((g) => g.id !== programme.game.id) : nextMatchGames;
   const [mdIntro, setMdIntro] = useState(false);
@@ -6131,7 +6176,8 @@ function App({ session }: { session: Session }) {
       {houseStyleOn && <style>{houseStyleCss}</style>}
       {isMatchday && <style>{matchdayCss}</style>}
       {mdIntro && <MatchdayIntro onDone={() => setMdIntro(false)} />}
-      <header className={"wcf-top" + (isMatchday ? " mdx" : "")}>
+      {occInfo && <style>{occasionCss}</style>}
+      <header className={"wcf-top" + (isMatchday ? " mdx" : "") + (occInfo ? " occ" : "")} style={occInfo ? occVars(occInfo.kind) : undefined}>
         <button className="wcf-brand" onClick={() => setTab("fixtures")} aria-label="Go to fixtures">
           <span className="wcf-logo">
             <img src="/crest.png" alt="Wirral Community Football crest" />
@@ -6152,6 +6198,7 @@ function App({ session }: { session: Session }) {
       </header>
 
       {isMatchday && programme && tab !== "fixtures" && <MatchdayRibbon kickoffMs={kickoffMs} phase={mdPhase} onOpen={openProgramme} />}
+      {occInfo && tab !== "fixtures" && <OccasionRibbon o={occInfo} onOpen={() => (occInfo.kind === "wrapped" ? openWrapped() : goTab("fixtures"))} />}
       {isOffline && <div className="wcf-offline-banner">Offline · showing what was last loaded</div>}
 
       {updateAvailable && (
@@ -6195,6 +6242,17 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
+            {occInfo && (
+              <>
+                <OccasionHero
+                  o={occInfo}
+                  onPrimary={() => (occInfo.kind === "wrapped" ? openWrapped() : occInfo.scored && occGameId ? goToResult(occGameId) : occGameId && openFixture(occGameId))}
+                  onSecondary={() => goTab(occInfo.kind === "christmas" ? "feed" : "results")}
+                  secondaryLabel={occInfo.kind === "christmas" ? "Club feed" : occInfo.kind === "finale" ? "Season so far" : "Results"}
+                />
+                <OccasionTimeline o={occInfo} />
+              </>
+            )}
             {isMatchday && programme && (
               <>
                 <MatchdayHero
@@ -6819,8 +6877,8 @@ function App({ session }: { session: Session }) {
       </main>
 
       <nav
-        className={"wcf-nav" + (isMatchday ? " mdx" : "") + (movementOn && !isMatchday ? " has-pill" : "")}
-        style={{ ["--n" as string]: TABS.length, ["--i" as string]: Math.max(0, TABS.findIndex((t) => t.k === tab)) }}
+        className={"wcf-nav" + (isMatchday ? " mdx" : "") + (occInfo ? " occ" : "") + (movementOn && !isMatchday ? " has-pill" : "")}
+        style={{ ["--n" as string]: TABS.length, ["--i" as string]: Math.max(0, TABS.findIndex((t) => t.k === tab)), ...(occInfo ? occVars(occInfo.kind) : {}) }}
       >
         {movementOn && !isMatchday && TABS.some((t) => t.k === tab) && <span className="wcf-nav-pill" ref={navPillRef} aria-hidden="true" />}
         {TABS.map((t) => (

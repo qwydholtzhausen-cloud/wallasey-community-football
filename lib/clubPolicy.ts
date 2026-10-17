@@ -63,20 +63,31 @@ export const GAME_CREDITS_LIVE = true;
 // the game, money owed, the programme, Wrapped, rate yourself) as one
 // carousel. Admins-only while tested on real phones; opens to every member
 // on this UK date. Far future = admins only.
-export const FOR_YOU_OPEN_TO_ALL_FROM = "9999-12-31";
+// Opened to every member 2026-10-17 (the owner's call after admin previews).
+export const FOR_YOU_OPEN_TO_ALL_FROM = "2026-10-17";
 
 // One house style (2026-10-17): one set of labels, tabs, buttons and card
 // edges across the app (app/ui/houseStyle.ts). Admins first, every member
 // from this UK date. Far future = admins only.
-export const HOUSE_STYLE_OPEN_TO_ALL_FROM = "9999-12-31";
+// Opened to every member 2026-10-17 (the owner's call after admin previews).
+export const HOUSE_STYLE_OPEN_TO_ALL_FROM = "2026-10-17";
 
 // Movement (2026-10-17): swipe between the nav tabs, a pill that slides
 // along the nav, and a game card that grows into its squad list. Admins
 // first, every member from this UK date. Off for "reduce motion" anyway.
-export const MOVEMENT_OPEN_TO_ALL_FROM = "9999-12-31";
+// Opened to every member 2026-10-17 (the owner's call after admin previews).
+export const MOVEMENT_OPEN_TO_ALL_FROM = "2026-10-17";
 
 // Season cards (2026-10-17): the top of a player's profile as a
 // collectible that levels up with games (Bronze, Silver 5+, Gold 15+;
 // Golden Boot and Squad's Pick editions). Admins first, every member from
 // this UK date. Far future = admins only.
-export const SEASON_CARDS_OPEN_TO_ALL_FROM = "9999-12-31";
+// Opened to every member 2026-10-17 (the owner's call after admin previews).
+export const SEASON_CARDS_OPEN_TO_ALL_FROM = "2026-10-17";
+
+// Occasions (2026-10-17): the matchday takeover reused for the Christmas
+// game, every 50th club game, the year's last game and Wrapped day
+// (lib/occasions.ts). Admins first, every member from this UK date. Admins
+// can preview any of them with ?occasion=christmas|milestone|finale|wrapped.
+// Opened to every member 2026-10-17 (the owner's call after admin previews).
+export const OCCASIONS_OPEN_TO_ALL_FROM = "2026-10-17";
