@@ -74,3 +74,9 @@ export const HOUSE_STYLE_OPEN_TO_ALL_FROM = "9999-12-31";
 // along the nav, and a game card that grows into its squad list. Admins
 // first, every member from this UK date. Off for "reduce motion" anyway.
 export const MOVEMENT_OPEN_TO_ALL_FROM = "9999-12-31";
+
+// Season cards (2026-10-17): the top of a player's profile as a
+// collectible that levels up with games (Bronze, Silver 5+, Gold 15+;
+// Golden Boot and Squad's Pick editions). Admins first, every member from
+// this UK date. Far future = admins only.
+export const SEASON_CARDS_OPEN_TO_ALL_FROM = "9999-12-31";

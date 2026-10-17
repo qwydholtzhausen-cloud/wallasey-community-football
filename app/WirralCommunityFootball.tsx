@@ -20,7 +20,9 @@ import {
   FOR_YOU_OPEN_TO_ALL_FROM,
   HOUSE_STYLE_OPEN_TO_ALL_FROM,
   MOVEMENT_OPEN_TO_ALL_FROM,
+  SEASON_CARDS_OPEN_TO_ALL_FROM,
 } from "../lib/clubPolicy";
+import { CardFan, SeasonCard, TierLadder, TierUnlock, seasonCardCss, tierFor, type CardTier } from "./ui/seasoncard";
 import { houseStyleCss } from "./ui/houseStyle";
 import { computeWrapped } from "../lib/wrapped";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
@@ -5387,6 +5389,7 @@ function App({ session }: { session: Session }) {
   // existing "hide" switches).
   const forYouOn = isAdmin || nowUk.slice(0, 10) >= FOR_YOU_OPEN_TO_ALL_FROM;
   const houseStyleOn = isAdmin || nowUk.slice(0, 10) >= HOUSE_STYLE_OPEN_TO_ALL_FROM;
+  const seasonCardsOn = isAdmin || nowUk.slice(0, 10) >= SEASON_CARDS_OPEN_TO_ALL_FROM;
 
   // Movement: swipe sideways between the nav tabs. The page follows the
   // finger, the nav pill tracks it, and the next tab slides in from that
@@ -6911,6 +6914,14 @@ function App({ session }: { session: Session }) {
             team={playerCardTeam}
             season={cardSeason}
             appsMilestone={appsMilestoneFor(playerCardId)}
+            seasonCard={
+              seasonCardsOn
+                ? (() => {
+                    const topMotm = Math.max(0, ...Object.values(playerCardStats).map((s) => s.motm));
+                    return { special: cardSeason.topScorer ? ("boot" as const) : topMotm > 0 && stats.motm === topMotm ? ("star" as const) : null };
+                  })()
+                : null
+            }
             trophies={trophiesFor(playerCardId)}
             highlightTrophy={cabinetHighlight}
             onClose={() => { setPlayerCardId(null); setPlayerCardTeam(null); setCabinetHighlight(null); }}
@@ -8343,11 +8354,14 @@ function PlayerCardModal({
   team,
   season,
   appsMilestone,
+  seasonCard,
   trophies,
   highlightTrophy,
   onClose,
 }: {
   appsMilestone?: number | null;
+  // The season card on top (null = today's avatar header).
+  seasonCard?: { special: "boot" | "star" | null } | null;
   trophies: Trophy[];
   highlightTrophy?: string | null;
   profile: Profile;
@@ -8384,8 +8398,25 @@ function PlayerCardModal({
     setCardSize({ w: el.offsetWidth, h: el.offsetHeight });
   }, [walkout]);
   const at = (s: number) => WALKOUT_T0 + s * 1000; // content clock, matches --d in the CSS
+  // Your own card moving up a tier gets its moment once per phone.
+  const myTier: CardTier | null = seasonCard ? seasonCard.special ?? tierFor(stats.apps) : null;
+  const [unlock, setUnlock] = useState<CardTier | null>(null);
+  useEffect(() => {
+    if (!isOwnCard || !myTier) return;
+    const key = `wcf-card-tier-${profile.id}`;
+    let seen: string | null = null;
+    try {
+      seen = localStorage.getItem(key);
+      localStorage.setItem(key, myTier);
+    } catch {}
+    if (seen === myTier || (!seen && myTier === "bronze")) return;
+    const t = window.setTimeout(() => setUnlock(myTier), walkout ? 1300 : 200);
+    return () => window.clearTimeout(t);
+  }, [isOwnCard, myTier, profile.id, walkout]);
   return (
     <div className={"wcf-lightbox" + (walkout ? " wcf-walkout" : "") + (skipped ? " skipped" : "")} onClick={onClose}>
+      {seasonCard && <style>{seasonCardCss}</style>}
+      {unlock && <TierUnlock tier={unlock} onDone={() => setUnlock(null)} />}
       {walkout && <div className="wcf-beam l" />}
       {walkout && <div className="wcf-beam r" />}
       <button className="wcf-lightbox-close" onClick={onClose} aria-label="Close">×</button>
@@ -8409,10 +8440,18 @@ function PlayerCardModal({
               {isOwnCard ? "YOUR CARD" : "ADMIN VIEW"}
             </span>
           )}
-          <div className="wcf-pcard-avatar-wrap wcf-rv" style={{ ["--d" as string]: "-.15s" }}>
-            <Avatar name={profile.display_name} avatarUrl={profile.avatar_url} className="wcf-pcard-avatar" background={a.gradient} />
-          </div>
-          <div className="wcf-pcard-name wcf-rv">{profile.display_name}</div>
+          {seasonCard ? (
+            <div className="wcf-rv" style={{ ["--d" as string]: "-.15s" }}>
+              <SeasonCard name={profile.display_name} avatarUrl={profile.avatar_url ?? null} gradient={a.gradient} stats={stats} special={seasonCard.special} />
+            </div>
+          ) : (
+            <>
+              <div className="wcf-pcard-avatar-wrap wcf-rv" style={{ ["--d" as string]: "-.15s" }}>
+                <Avatar name={profile.display_name} avatarUrl={profile.avatar_url} className="wcf-pcard-avatar" background={a.gradient} />
+              </div>
+              <div className="wcf-pcard-name wcf-rv">{profile.display_name}</div>
+            </>
+          )}
           <div className="wcf-pcard-badges wcf-rv" style={{ ["--d" as string]: ".05s" }}>
             {season?.topScorer && <span className="wcf-pcard-honour">Top scorer</span>}
             {appsMilestone && <span className="wcf-pcard-ms">{appsMilestone}+ apps</span>}
@@ -8434,7 +8473,12 @@ function PlayerCardModal({
         </div>
 
         <div className="wcf-pcard-body">
-          <div className="wcf-pcard-stats wcf-rv" style={{ ["--d" as string]: ".1s" }}>
+          {seasonCard && (
+            <div className="wcf-rv" style={{ ["--d" as string]: ".1s" }}>
+              <TierLadder apps={stats.apps} special={seasonCard.special} avatarUrl={profile.avatar_url ?? null} initial={profile.display_name.charAt(0).toUpperCase()} isOwn={isOwnCard} />
+            </div>
+          )}
+          <div className="wcf-pcard-stats wcf-rv" style={{ ["--d" as string]: ".1s", ...(seasonCard ? { display: "none" } : {}) }}>
             <div className="wcf-pcard-stat"><b><CountUp to={stats.apps} delay={at(0.15)} run={animate} /></b><span>Apps</span></div>
             <div className="wcf-pcard-stat"><b><CountUp to={stats.goals} delay={at(0.15)} run={animate} /></b><span>Goals</span></div>
             <div className="wcf-pcard-stat"><b><CountUp to={stats.motm} delay={at(0.15)} run={animate} /></b><span>MOTM</span></div>
@@ -8490,6 +8534,7 @@ function PlayerCardModal({
           )}
 
           <style>{cabinetCss}</style>
+          {seasonCard && <CardFan apps={stats.apps} special={seasonCard.special} />}
           <TrophyCabinet trophies={trophies} isOwn={isOwnCard} firstName={firstName} highlight={highlightTrophy} />
 
           {canSeeRating && rating ? (
