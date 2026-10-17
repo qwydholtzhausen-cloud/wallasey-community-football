@@ -298,7 +298,7 @@ export const totmCss = `
 .wcf-totm-lrow strong{font-family:var(--display);color:#f5d97a}
 .wcf-totm-lrow.out{opacity:.55}
 .wcf-totm-cut{font-size:10px;letter-spacing:.16em;color:#94a3b8;text-align:center;padding:6px 0;border-top:1px dashed rgba(245,217,122,.35)}
-.wcf-totm-cardbox{margin-top:14px;border-radius:20px;overflow:hidden;border:1px solid rgba(245,217,122,.45);background:#070a12;box-shadow:0 24px 40px -26px rgba(245,217,122,.45)}
+.wcf-totm-cardbox{margin-top:14px;margin-bottom:16px;border-radius:20px;overflow:hidden;border:1px solid rgba(245,217,122,.45);background:#070a12;box-shadow:0 24px 40px -26px rgba(245,217,122,.45)}
 .wcf-totm-ch{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;padding:14px 14px 8px}
 .wcf-totm-ch small{font-size:10px;letter-spacing:.2em;color:#f5d97a;font-weight:800}
 .wcf-totm-ch b{display:block;font-family:var(--display);font-size:18px;margin-top:3px;color:#fff}

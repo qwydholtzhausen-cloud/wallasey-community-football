@@ -23,6 +23,7 @@ import {
   SEASON_CARDS_OPEN_TO_ALL_FROM,
   OCCASIONS_OPEN_TO_ALL_FROM,
   CALM_FIXTURES_OPEN_TO_ALL_FROM,
+  CALM_FEED_OPEN_TO_ALL_FROM,
   TOTM_FIRST_MONTH,
   TOTM_REVEAL_FROM,
 } from "../lib/clubPolicy";
@@ -59,6 +60,7 @@ import { CountUp } from "./ui/motion";
 import { Icon } from "./ui/icons";
 import { EmptyScene } from "./ui/EmptyScene";
 import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
+import type { CalmMoment } from "./ui/calmfeed";
 import { ResultsTab } from "./ui/results";
 import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
 import { WinMoment, type SeasonGame } from "./ui/celebrate";
@@ -3688,6 +3690,7 @@ function App({ session }: { session: Session }) {
         key: `game-${g.id}-fulltime`,
         ts: toMs(kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES)),
         kind: "derived",
+        gameId: g.id,
         icon: (
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">
             <circle cx="12" cy="12" r="9" />
@@ -3752,6 +3755,7 @@ function App({ session }: { session: Session }) {
             key: `motm-${g.id}`,
             ts: toMs(kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES)),
             kind: "derived",
+            gameId: g.id,
             icon: (
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M7 4h10v5a5 5 0 0 1-10 0z" strokeLinejoin="round" />
@@ -3884,6 +3888,8 @@ function App({ session }: { session: Session }) {
             key: `records-${g.id}`,
             ts,
             kind: "derived",
+            gameId: g.id,
+            lines,
             icon: trophy,
             tone: "amber",
             text: (
@@ -3925,6 +3931,7 @@ function App({ session }: { session: Session }) {
             ),
             group: "apps",
             groupLabel: `${b.player.display_name} (${count})`,
+            gameId: g.id,
           });
         }
       }
@@ -3939,6 +3946,73 @@ function App({ session }: { session: Session }) {
     // ones, so they can be reviewed and restored rather than lost.
     return feedItems.filter((item) => showArchived === hiddenFeedKeys.includes(item.key));
   }, [feedItems, hiddenFeedKeys, showArchived]);
+
+  // Calm Feed (admins first): the last two weeks of visible posts folded
+  // into moments - a game's result, MOTM and records as one; a day's
+  // sign-ups as one; a game night's milestones as one. Pot posts are left
+  // to Results › Pot.
+  const calmFeedOn = isAdmin || nowUk.slice(0, 10) >= CALM_FEED_OPEN_TO_ALL_FROM;
+  const calmMoments = useMemo((): CalmMoment[] => {
+    if (!calmFeedOn) return [];
+    const since = Date.now() - 14 * 86400000;
+    const recent = visibleFeedItems.filter((i) => i.ts >= since);
+    const byKey = new Map(visibleFeedItems.map((i) => [i.key, i]));
+    const day = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" }).toUpperCase();
+    const gameDay = (d: string) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase();
+    const out: CalmMoment[] = [];
+    for (const i of recent) {
+      if (!i.key.endsWith("-fulltime") || !i.gameId) continue;
+      const g = games.find((x) => x.id === i.gameId);
+      if (!g || g.team_white_score == null || g.team_red_score == null) continue;
+      const open = motmVotingOpen(g);
+      const winners = open
+        ? []
+        : (motmWinnerIdsByGame[g.id] ?? []).map((id) => g.bookings.find((b) => b.player_id === id)?.player?.display_name).filter((n): n is string => !!n);
+      const rec = byKey.get(`records-${g.id}`);
+      out.push({
+        kind: "game",
+        key: i.key,
+        archiveKeys: [i.key, `motm-${g.id}`, `records-${g.id}`].filter((k) => byKey.has(k)),
+        ts: i.ts + 2,
+        gameId: g.id,
+        dateLabel: gameDay(g.date),
+        white: g.team_white_score,
+        red: g.team_red_score,
+        whiteName: cs.team_white_name,
+        redName: cs.team_red_name,
+        redColor: cs.team_red_color,
+        motm: winners,
+        voteOpen: open && playedIn(g, myId) ? { voted: !!myMotmVoteByGame[g.id], closes: motmClosesLabel(g) } : null,
+        highlights: (rec?.lines ?? []) as React.ReactNode[],
+      });
+    }
+    const joins = new Map<string, FeedItem[]>();
+    const apps = new Map<string, FeedItem[]>();
+    for (const i of recent) {
+      if (i.group === "join") {
+        const d = day(i.ts);
+        joins.set(d, [...(joins.get(d) ?? []), i]);
+      } else if (i.group === "apps" && i.gameId) apps.set(i.gameId, [...(apps.get(i.gameId) ?? []), i]);
+    }
+    for (const [d, list] of joins)
+      out.push({
+        kind: "join",
+        key: list[0].key,
+        archiveKeys: list.map((x) => x.key),
+        ts: list[0].ts,
+        dateLabel: d,
+        people: list.map((x) => {
+          const id = x.key.slice(5);
+          return { name: x.groupLabel ?? "", avatarUrl: profiles.find((p) => p.id === id)?.avatar_url ?? null };
+        }),
+      });
+    for (const [gid, list] of apps) {
+      const g = games.find((x) => x.id === gid);
+      out.push({ kind: "apps", key: list[0].key, archiveKeys: list.map((x) => x.key), ts: list[0].ts + 1, dateLabel: g ? gameDay(g.date) : day(list[0].ts), labels: list.map((x) => x.groupLabel ?? "") });
+    }
+    return out.sort((a, b) => b.ts - a.ts);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calmFeedOn, visibleFeedItems, games, motmWinnerIdsByGame, myMotmVoteByGame, myId, cs.team_white_name, cs.team_red_name, cs.team_red_color, profiles]);
 
   const feedReactionTally = useMemo(() => {
     const map: Record<string, Record<string, number>> = {};
@@ -6861,6 +6935,23 @@ function App({ session }: { session: Session }) {
             toggleReaction={toggleReaction}
             feedFresh={feedFresh}
             feedFreshLabel={feedFreshLabel}
+            calm={
+              calmFeedOn
+                ? {
+                    moments: calmMoments,
+                    openGame: goToResult,
+                    openStats: () => {
+                      setTab("results");
+                      setResultsView("table");
+                    },
+                    openResults: () => {
+                      setTab("results");
+                      setResultsMonth("all");
+                      setResultsView("fixtures");
+                    },
+                  }
+                : null
+            }
           />
         )}
 

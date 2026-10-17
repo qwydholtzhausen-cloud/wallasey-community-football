@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Avatar, TickNum, avatarFor, listNames, motionAllowed } from "./shared";
 import { EmptyScene } from "./EmptyScene";
+import { CalmFeed, CalmFeedTabs, type CalmFeedProps } from "./calmfeed";
 
 export const FEED_REACTION_EMOJI = ["👍", "🔥"] as const;
 
@@ -15,6 +16,10 @@ export type FeedItem = {
   // one card per week (see foldFeedRows).
   group?: "join" | "apps";
   groupLabel?: string;
+  // The game a result / MOTM / records post belongs to, and a records
+  // post's lines, so the calm Feed can fold them into one moment.
+  gameId?: string;
+  lines?: React.ReactNode[];
 };
 
 export type FeedRow = { type: "item"; item: FeedItem } | { type: "group"; group: "join" | "apps"; items: FeedItem[] };
@@ -302,6 +307,7 @@ export function FeedTab({
   toggleReaction,
   feedFresh,
   feedFreshLabel,
+  calm,
 }: {
   // Game Stories rings, shown at the top of the Feed.
   stories?: React.ReactNode;
@@ -326,6 +332,9 @@ export function FeedTab({
   toggleReaction: (key: string, emoji: string) => void;
   feedFresh: { keys: Set<string>; since: number; band: boolean } | null;
   feedFreshLabel: string;
+  // Calm Feed (admins first): the last two weeks as moments, the record
+  // itself left to Results. Null = the classic Feed.
+  calm?: CalmFeedProps | null;
 }) {
   const reactionRow = (item: FeedItem) => {
     const tally = feedReactionTally[item.key] ?? {};
@@ -361,7 +370,8 @@ export function FeedTab({
     <>
       {feedView === "feed" && !showArchived && <PullNet onRefresh={onRefresh} />}
       {feedView === "feed" && !showArchived && stories}
-      {!showArchived && (
+      {calm && !showArchived && bootRoomVisible && <CalmFeedTabs view={feedView} setView={setFeedView} />}
+      {!calm && !showArchived && (
         <div className={"wcf-feed-hero" + (feedView === "bootroom" ? " compact" : "")}>
           <div className="wcf-feed-hero-eyebrow">Community Feed</div>
           <div className="wcf-feed-hero-title">{bootRoomVisible ? <>Goals, shoutouts &amp; the Boot Room</> : <>Goals &amp; shoutouts</>}</div>
@@ -382,13 +392,28 @@ export function FeedTab({
 
       {feedView === "bootroom" && bootRoomVisible && !showArchived && myId && bootRoom}
 
-      {feedView === "feed" && isAdmin && (
+      {feedView === "feed" && calm && !showArchived && (
+        <CalmFeed
+          {...calm}
+          freshKeys={feedFresh ? feedFresh.keys : new Set()}
+          reactions={(key) => reactionRow({ key } as FeedItem)}
+          isAdmin={isAdmin}
+          onArchive={async (keys) => {
+            if (await askConfirm("Archive this from the feed?", 'You can restore it later from "Show archived".', "Archive", false)) hideFeedItems(keys);
+          }}
+          onShowArchived={() => setShowArchived(true)}
+          archivedCount={hiddenFeedKeys.length}
+        />
+      )}
+
+      {feedView === "feed" && isAdmin && !(calm && !showArchived) && (
         <button className="wcf-ghost wcf-archive-toggle" onClick={() => setShowArchived((v) => !v)}>
           {showArchived ? "Back to feed" : `Show archived${hiddenFeedKeys.length ? ` (${hiddenFeedKeys.length})` : ""}`}
         </button>
       )}
 
       {feedView === "feed" &&
+        !(calm && !showArchived) &&
         visibleFeedItems.length === 0 &&
         (showArchived ? (
           <p className="wcf-empty">Nothing archived.</p>
@@ -397,6 +422,7 @@ export function FeedTab({
         ))}
 
       {feedView === "feed" &&
+        !(calm && !showArchived) &&
         visibleFeedItems.length > 0 &&
         (() => {
           const groups: { label: string; items: typeof visibleFeedItems }[] = [];

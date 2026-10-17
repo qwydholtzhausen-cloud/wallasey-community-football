@@ -103,3 +103,8 @@ export const TOTM_REVEAL_FROM = "2026-10";
 // you (app/ui/calmfixtures.tsx). Admins first, every member from this UK
 // date. Far future = admins only.
 export const CALM_FIXTURES_OPEN_TO_ALL_FROM = "9999-12-31";
+
+// Calm Feed (2026-10-17): the last two weeks as moments that link to
+// Results instead of repeating it (app/ui/calmfeed.tsx). Admins first,
+// every member from this UK date. Far future = admins only.
+export const CALM_FEED_OPEN_TO_ALL_FROM = "9999-12-31";
