@@ -48,6 +48,9 @@ export type LineupTabProps = {
   // Calm Line-up (admins first, app/ui/calmlineup.tsx): one screen, no
   // tabs; the generator and the predictor league open over it.
   calm?: boolean;
+  // Where the predictor league's back button goes (it opens from Line-up
+  // and from Results › Season).
+  predictBack?: { label: string; go: () => void } | null;
   movePlayerTo: (playerId: string, clientX: number, clientY: number) => void;
   myId: string;
   nextConfirmed: BookingRow[];
@@ -172,6 +175,7 @@ export function LineupTab({
   teamFairness,
   teamStats,
   calm = false,
+  predictBack = null,
 }: LineupTabProps) {
   // Someone's free birthday game: bunting on the team sheet.
   const bdays = nextConfirmed.filter((b) => b.pot_exempt_reason === "birthday");
@@ -253,7 +257,9 @@ export function LineupTab({
           onClose={() => setLineupView("sheet")}
         />
       )}
-      {calm && lineupView === "predict" && <CalmSheetBar back eyebrow="Predictor league" title="Season 1 · 2026" onClose={() => setLineupView("sheet")} />}
+      {calm && lineupView === "predict" && (
+        <CalmSheetBar back backLabel={predictBack?.label ?? "Line-up"} eyebrow="Predictor league" title="Season 1 · 2026" onClose={() => (predictBack ? predictBack.go() : setLineupView("sheet"))} />
+      )}
       {!calm && (
       <div className="wcf-subtabs">
         <button className={lineupView === "sheet" ? "active" : ""} onClick={() => setLineupView("sheet")}>
@@ -1432,6 +1438,11 @@ export function LineupTab({
                 </button>
               )}
               <style>{predictFaceCss}</style>
+              {calm && (
+                <button className="cl-backbtn" onClick={() => (predictBack ? predictBack.go() : setLineupView("sheet"))}>
+                  ‹ Back to {predictBack?.label ?? "Line-up"}
+                </button>
+              )}
             </>
           );
         })()}

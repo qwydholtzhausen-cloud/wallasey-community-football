@@ -1689,6 +1689,12 @@ function App({ session }: { session: Session }) {
   const [potmLand, setPotmLand] = useState(false);
   const [recordFalls, setRecordFalls] = useState<Record<string, { v: number; who: string }>>({});
   const [recordsInView, setRecordsInView] = useState(false);
+  // The predictor league opened from Results › Season: its back button
+  // returns there. Any other way into Line-up clears it.
+  const [predictFromResults, setPredictFromResults] = useState(false);
+  useEffect(() => {
+    if (tab !== "lineup" || lineupView !== "predict") setPredictFromResults(false);
+  }, [tab, lineupView]);
   const [recordMomentDone, setRecordMomentDone] = useState(false);
   const [promoShow, setPromoShow] = useState<string | null>(null);
   const [momentsDone, setMomentsDone] = useState<string[]>([]);
@@ -7022,6 +7028,18 @@ function App({ session }: { session: Session }) {
             setLineupGameId={setLineupGameId}
             lineupView={lineupView}
             calm={calmLineupOn}
+            predictBack={
+              predictFromResults
+                ? {
+                    label: "Results",
+                    go: () => {
+                      setPredictFromResults(false);
+                      setLineupView("sheet");
+                      setTab("results");
+                    },
+                  }
+                : null
+            }
             movePlayerTo={movePlayerTo}
             myId={myId}
             nextConfirmed={nextConfirmed}
@@ -7138,6 +7156,7 @@ function App({ session }: { session: Session }) {
                       return i >= 0 ? i + 1 : null;
                     })(),
                     open: () => {
+                      setPredictFromResults(true);
                       setTab("lineup");
                       setLineupView("predict");
                     },

@@ -130,13 +130,13 @@ export function CalmAdminCard({ status, children }: { status: string; children: 
   );
 }
 
-export function CalmSheetBar({ eyebrow, title, onClose, back = false }: { eyebrow: string; title: string; onClose: () => void; back?: boolean }) {
+export function CalmSheetBar({ eyebrow, title, onClose, back = false, backLabel = "Line-up" }: { eyebrow: string; title: string; onClose: () => void; back?: boolean; backLabel?: string }) {
   return (
-    <div className="cl-sh">
+    <div className={"cl-sh" + (back ? " has-back" : "")}>
       <style>{calmLineupCss}</style>
       {back && (
-        <button className="back" onClick={onClose} aria-label="Back to the line-up">
-          ‹
+        <button className="back" onClick={onClose}>
+          <em aria-hidden="true">‹</em> {backLabel}
         </button>
       )}
       <span>
@@ -224,7 +224,13 @@ export const calmLineupCss = `
 .cl-sh small{display:block;font:600 9.5px var(--font-oswald),sans-serif;letter-spacing:.26em;text-transform:uppercase;color:#f5d97a}
 .cl-sh b{display:block;font:800 15px var(--display);color:#fff}
 .cl-sh button{width:34px;height:34px;flex:none;border-radius:50%;border:1px solid rgba(255,255,255,.16);background:rgba(0,0,0,.3);color:#fff;font:800 14px var(--sans);cursor:pointer}
+.cl-sh button.back{width:auto;height:38px;padding:0 14px 0 10px;border-radius:12px;border:0;background:linear-gradient(180deg,#fff3c4,#f5d97a);color:#1a1405;font:800 13px var(--display);display:flex;align-items:center;gap:4px;box-shadow:0 8px 18px -10px rgba(245,217,122,.9)}
+.cl-sh button.back em{font-style:normal;font-size:20px;line-height:1;margin-top:-2px}
+.cl-backbtn{display:block;width:100%;margin:16px 0 8px;padding:13px;border-radius:14px;border:1px solid rgba(245,217,122,.45);background:rgba(245,217,122,.08);color:#f5d97a;font:800 13.5px var(--display);cursor:pointer}
 .cl-sheet{animation:clUp .45s cubic-bezier(.2,.9,.3,1) both}
 @keyframes clUp{from{opacity:0;transform:translateY(40px)}}
-@media (prefers-reduced-motion: reduce){.cl-hat,.cl-hat *,.cl-confetti,.cl-head i.live::before,.cl-sh,.cl-sheet{animation:none!important}}
+@media (prefers-reduced-motion: reduce){.cl-hat,.cl-hat *,.cl-confetti,.cl-head i.live::before,.cl-sh,.cl-sh button.back{width:auto;height:38px;padding:0 14px 0 10px;border-radius:12px;border:0;background:linear-gradient(180deg,#fff3c4,#f5d97a);color:#1a1405;font:800 13px var(--display);display:flex;align-items:center;gap:4px;box-shadow:0 8px 18px -10px rgba(245,217,122,.9)}
+.cl-sh button.back em{font-style:normal;font-size:20px;line-height:1;margin-top:-2px}
+.cl-backbtn{display:block;width:100%;margin:16px 0 8px;padding:13px;border-radius:14px;border:1px solid rgba(245,217,122,.45);background:rgba(245,217,122,.08);color:#f5d97a;font:800 13.5px var(--display);cursor:pointer}
+.cl-sheet{animation:none!important}}
 `;
