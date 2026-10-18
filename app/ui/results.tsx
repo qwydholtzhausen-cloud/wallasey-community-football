@@ -5,6 +5,7 @@ import { VoteMedal } from "./celebrate";
 import { Icon } from "./icons";
 import { EmptyScene } from "./EmptyScene";
 import { calmResultsCss } from "./calmresults";
+import { PredictorLeagueLink } from "./calmlineup";
 import { GoalBalls, MotmPoll, monthPhoto, scoresCss } from "./scores";
 import { MOTM_TAGS } from "../motmTags";
 import { MOTM_VOTE_WINDOW_MINUTES, kickoffCutoff } from "../../lib/time";
@@ -123,6 +124,8 @@ export type ResultsTabProps = {
   // The Record book card scrolled into view (calm Season), so a record
   // that fell plays there rather than on a Records tab.
   onRecordsSeen?: (seen: boolean) => void;
+  // Calm Line-up: the predictor league table opens from a card here too.
+  predictorLeague?: { rank: number | null; open: () => void } | null;
 };
 
 export function ResultsTab({
@@ -207,6 +210,7 @@ export function ResultsTab({
   statsSort,
   calm = false,
   onRecordsSeen,
+  predictorLeague,
 }: ResultsTabProps) {
   // A gold dot on the History tab until it's been opened once on this phone.
   const [historyNew, setHistoryNew] = useState(false);
@@ -686,6 +690,7 @@ export function ResultsTab({
             </button>
           </article>
         )}
+        {predictorLeague && <PredictorLeagueLink rank={predictorLeague.rank} onOpen={predictorLeague.open} />}
       </>
     );
   };

@@ -1,6 +1,7 @@
 import { PillChoice, Avatar, motionAllowed, POSITION_LABEL, TeamCallout, avatarFor, fmtDate, readableTextColor, teamGradient, type PlayerPosition } from "./shared";
 import { EmptyScene } from "./EmptyScene";
 import { BirthdayBunting, BirthdayTag, PartyHat } from "./celebrate";
+import { BirthdayHat, CalmAdminCard, CalmLineupHead, CalmSheetBar, PredictorLeagueLink } from "./calmlineup";
 import { PredictPanel, PredictPodium, PredictTicket, predictFaceCss } from "./predict";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { buildLeaderboard, predictionPoints, topScorers, type LeaderboardRow, type ScoredPrediction } from "../../lib/predictions";
@@ -44,6 +45,9 @@ export type LineupTabProps = {
   lineupGames: GameRow[];
   setLineupGameId: (id: string) => void;
   lineupView: "sheet" | "fairness" | "predict";
+  // Calm Line-up (admins first, app/ui/calmlineup.tsx): one screen, no
+  // tabs; the generator and the predictor league open over it.
+  calm?: boolean;
   movePlayerTo: (playerId: string, clientX: number, clientY: number) => void;
   myId: string;
   nextConfirmed: BookingRow[];
@@ -167,6 +171,7 @@ export function LineupTab({
   teamDraft,
   teamFairness,
   teamStats,
+  calm = false,
 }: LineupTabProps) {
   // Someone's free birthday game: bunting on the team sheet.
   const bdays = nextConfirmed.filter((b) => b.pot_exempt_reason === "birthday");
@@ -234,8 +239,22 @@ export function LineupTab({
     });
   }, [climbPhase, myId]);
 
+  const posted = nextGrouped.white.length > 0 || nextGrouped.red.length > 0;
+  const myLeagueRank = (() => {
+    const i = predictionSeasonLeaderboard.findIndex((x) => x.playerId === myId);
+    return i >= 0 ? i + 1 : null;
+  })();
   return (
     <>
+      {calm && lineupView === "fairness" && isAdmin && nextGame && (
+        <CalmSheetBar
+          eyebrow={`Pick teams · ${fmtDate(nextGame.date)}`}
+          title={posted ? "Make a new split" : `Split the ${nextConfirmed.length} into two teams`}
+          onClose={() => setLineupView("sheet")}
+        />
+      )}
+      {calm && lineupView === "predict" && <CalmSheetBar back eyebrow="Predictor league" title="Season 1 · 2026" onClose={() => setLineupView("sheet")} />}
+      {!calm && (
       <div className="wcf-subtabs">
         <button className={lineupView === "sheet" ? "active" : ""} onClick={() => setLineupView("sheet")}>
           Team Sheet
@@ -249,6 +268,7 @@ export function LineupTab({
           Predict
         </button>
       </div>
+      )}
 
       {/* Two (or more) games on the next match day: pick which one. Starts
           on the one you're booked on. */}
@@ -270,7 +290,7 @@ export function LineupTab({
       )}
 
       {lineupView === "fairness" && isAdmin && (
-        <>
+        <div className={calm ? "cl-sheet" : undefined}>
           {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
 
           {nextGame &&
@@ -604,7 +624,7 @@ export function LineupTab({
                 </div>
               );
             })()}
-        </>
+        </div>
       )}
 
       {lineupView === "sheet" && (
@@ -612,6 +632,72 @@ export function LineupTab({
           {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
           {nextGame && (
             <>
+              {calm && (
+                <CalmLineupHead
+                  date={nextGame.date}
+                  kickoff={nextGame.kickoff}
+                  venue={nextGame.venue}
+                  birthdayNames={bdays.map((b) => (b.player_id === myId ? "You" : b.player.display_name.split(" ")[0]))}
+                />
+              )}
+              {calm && isAdmin && nextConfirmed.length > 0 && (
+                <CalmAdminCard
+                  status={
+                    editingLineup
+                      ? "Editing the line-up"
+                      : editingPositions
+                        ? "Arranging the pitch: drag any shirt"
+                        : posted
+                          ? "Teams posted · players can see them"
+                          : "Teams not picked yet"
+                  }
+                >
+                  {editingLineup ? (
+                    <>
+                      <button onClick={cancelEditingLineup}>Cancel</button>
+                      <button className="go" onClick={saveLineup}>
+                        Save
+                      </button>
+                    </>
+                  ) : editingPositions ? (
+                    <>
+                      <button onClick={cancelEditingPositions}>Cancel</button>
+                      {nextGame.lineup_positions && (
+                        <button className="danger" onClick={resetPositions}>
+                          Reset to auto
+                        </button>
+                      )}
+                      <button className="go" onClick={savePositions}>
+                        Lock in
+                      </button>
+                    </>
+                  ) : posted ? (
+                    <>
+                      <button className="split" onClick={() => setLineupView("fairness")}>
+                        New split
+                      </button>
+                      <button
+                        onClick={() => {
+                          setLineupDisplayView("pitch");
+                          startEditingPositions();
+                        }}
+                      >
+                        Arrange
+                      </button>
+                      <button onClick={startEditingLineup}>Edit</button>
+                      <button onClick={copyLineup}>WhatsApp</button>
+                    </>
+                  ) : (
+                    <>
+                      <button className="go split" onClick={() => setLineupView("fairness")}>
+                        Pick teams
+                      </button>
+                      <button onClick={startEditingLineup}>Edit squad</button>
+                    </>
+                  )}
+                </CalmAdminCard>
+              )}
+              {!calm && (
               <div className={"wcf-lineup-head" + (bdays.length ? " bday" : "") + (!editingLineup && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 ? " pre" : "")}>
                 {bdays.length > 0 && <BirthdayBunting />}
                 <div className="wcf-lineup-eyebrow">Line-up</div>
@@ -649,6 +735,7 @@ export function LineupTab({
                   </div>
                 )}
               </div>
+              )}
               {nextConfirmed.length === 0 && (
                 <EmptyScene kind="sheet" title="No one's booked in yet" text="Be first on the team sheet.">
                   <button className="wcf-book" onClick={() => setTab("fixtures")}>
@@ -798,7 +885,12 @@ export function LineupTab({
                     return (
                       <button
                         key={t.booking.id}
-                        className={"wcf-lineup-token" + (draggable ? " draggable" : "") + (draggingPlayerId === t.booking.player_id ? " dragging" : "")}
+                        className={
+                          "wcf-lineup-token" +
+                          (draggable ? " draggable" : "") +
+                          (draggingPlayerId === t.booking.player_id ? " dragging" : "") +
+                          (calm && t.booking.pot_exempt_reason === "birthday" ? " bday" : "")
+                        }
                         data-red={t.isRed ? "1" : "0"}
                         data-me={me ? "1" : "0"}
                         style={{ left: `${t.x}%`, top: `${t.y}%` }}
@@ -824,6 +916,7 @@ export function LineupTab({
                         }
                         onPointerUp={draggable ? () => setDraggingPlayerId(null) : undefined}
                       >
+                        {calm && t.booking.pot_exempt_reason === "birthday" && <BirthdayHat />}
                         <Avatar
                           name={t.booking.player.display_name}
                           avatarUrl={t.booking.player.avatar_url}
@@ -838,7 +931,7 @@ export function LineupTab({
 
                   return (
                     <>
-                      {lineupDisplayView === "pitch" && isAdmin && (
+                      {lineupDisplayView === "pitch" && isAdmin && !calm && (
                         <div className="wcf-lineup-position-controls">
                           {editingPositions ? (
                             <>
@@ -963,6 +1056,16 @@ export function LineupTab({
                 })()}
 
               {!editingLineup && nextGrouped.unassigned.length > 0 && (
+                <div className={calm ? "cl-card" : undefined}>
+                {calm && (
+                  <>
+                    <div className="cl-ch">
+                      <h4>{posted ? "Still to pick" : "Who's in"}</h4>
+                      <span>{nextGrouped.unassigned.length} {posted ? "left" : "booked"}</span>
+                    </div>
+                    <div className="cl-rule" />
+                  </>
+                )}
                 <div className={"wcf-lineup-group" + (nextGrouped.white.length === 0 && nextGrouped.red.length === 0 ? " pre" : "")}>
                   {/* "Unassigned" is admin language. Before any teams are
                         picked this is simply who's playing. */}
@@ -980,12 +1083,18 @@ export function LineupTab({
                         className={"wcf-lineup-chip" + (b.player_id === myId ? " me" : "") + (b.pot_exempt_reason === "birthday" ? " bday" : "")}
                         onClick={() => openPlayerCard(b.player_id)}
                       >
-                        {b.pot_exempt_reason === "birthday" && <PartyHat />}
+                        {b.pot_exempt_reason === "birthday" && (calm ? <BirthdayHat /> : <PartyHat />)}
                         <Avatar name={b.player.display_name} avatarUrl={b.player.avatar_url} className="wcf-lineup-chip-avatar" />
                         <span className="wcf-lineup-chip-name">{b.player_id === myId ? "You" : b.player.display_name}</span>
                       </button>
                     ))}
                   </div>
+                </div>
+                {calm && !posted && (
+                  <div className="cl-note">
+                    Teams land here before kick-off. <b>Predict the score</b> once they&apos;re out.
+                  </div>
+                )}
                 </div>
               )}
 
@@ -1000,7 +1109,7 @@ export function LineupTab({
                   onSave={savePrediction}
                 />
               )}
-              {!editingLineup && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && nextConfirmed.length > 0 && (
+              {!calm && !editingLineup && nextGrouped.white.length === 0 && nextGrouped.red.length === 0 && nextConfirmed.length > 0 && (
                 <div className="wcf-predict">
                   <div className="wcf-predict-gate">
                     <div className="wcf-predict-gate-icon">
@@ -1016,6 +1125,7 @@ export function LineupTab({
                   </div>
                 </div>
               )}
+              {calm && !editingLineup && !editingPositions && <PredictorLeagueLink rank={myLeagueRank} onOpen={() => setLineupView("predict")} />}
             </>
           )}
         </>

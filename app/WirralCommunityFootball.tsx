@@ -25,6 +25,7 @@ import {
   CALM_FIXTURES_OPEN_TO_ALL_FROM,
   CALM_FEED_OPEN_TO_ALL_FROM,
   CALM_RESULTS_OPEN_TO_ALL_FROM,
+  CALM_LINEUP_OPEN_TO_ALL_FROM,
   TOTM_FIRST_MONTH,
   TOTM_REVEAL_FROM,
   TOTM_VISIBLE_FROM,
@@ -3958,6 +3959,7 @@ function App({ session }: { session: Session }) {
   const calmFeedOn = isAdmin || nowUk.slice(0, 10) >= CALM_FEED_OPEN_TO_ALL_FROM;
   // Calm Results (admins first): opens on Scores, once, when it turns on.
   const calmResultsOn = isAdmin || nowUk.slice(0, 10) >= CALM_RESULTS_OPEN_TO_ALL_FROM;
+  const calmLineupOn = isAdmin || nowUk.slice(0, 10) >= CALM_LINEUP_OPEN_TO_ALL_FROM;
   const calmResultsDefaulted = useRef(false);
   useEffect(() => {
     if (!calmResultsOn || calmResultsDefaulted.current) return;
@@ -7019,6 +7021,7 @@ function App({ session }: { session: Session }) {
             lineupGames={lineupGames}
             setLineupGameId={setLineupGameId}
             lineupView={lineupView}
+            calm={calmLineupOn}
             movePlayerTo={movePlayerTo}
             myId={myId}
             nextConfirmed={nextConfirmed}
@@ -7127,6 +7130,20 @@ function App({ session }: { session: Session }) {
             potTotal={potTotal}
             calm={calmResultsOn}
             onRecordsSeen={setRecordsInView}
+            predictorLeague={
+              calmLineupOn
+                ? {
+                    rank: (() => {
+                      const i = predictionSeasonLeaderboard.findIndex((x) => x.playerId === myId);
+                      return i >= 0 ? i + 1 : null;
+                    })(),
+                    open: () => {
+                      setTab("lineup");
+                      setLineupView("predict");
+                    },
+                  }
+                : null
+            }
             profiles={profiles}
             recordFalls={recordFalls}
             resultsMonth={resultsMonth}

@@ -117,3 +117,9 @@ export const CALM_FEED_OPEN_TO_ALL_FROM = "9999-12-31";
 // fold into Season, the Pot opens from Account and Admin
 // (app/ui/calmresults.tsx). Admins first, every member from this UK date.
 export const CALM_RESULTS_OPEN_TO_ALL_FROM = "9999-12-31";
+
+// Calm Line-up (2026-10-18): one screen about the next game, the admin
+// tools on an ADMIN card, the generator and the predictor league opening
+// over it, the new birthday hat (app/ui/calmlineup.tsx). Admins first,
+// every member from this UK date.
+export const CALM_LINEUP_OPEN_TO_ALL_FROM = "9999-12-31";

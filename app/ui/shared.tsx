@@ -47,8 +47,11 @@ export function Avatar({
   background?: string;
   style?: React.CSSProperties;
 }) {
-  if (avatarUrl) {
-    return <img className={className} src={avatarUrl} alt={name} style={style} />;
+  // A photo that fails to load falls back to the initial, rather than
+  // the browser printing the alt text inside the circle.
+  const [broken, setBroken] = useState<string | null>(null);
+  if (avatarUrl && broken !== avatarUrl) {
+    return <img className={className} src={avatarUrl} alt={name} style={style} onError={() => setBroken(avatarUrl)} />;
   }
   const initial = (name.trim()[0] || "?").toUpperCase();
   return (
