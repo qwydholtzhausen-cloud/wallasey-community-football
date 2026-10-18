@@ -108,8 +108,9 @@ await step("Player card", async () => {
 await step("Feed", async () => {
   await page.locator(".wcf-lightbox-close").first().dispatchEvent("click").catch(() => {});
   await tab("Feed", "Club feed");
-  if (!(await page.locator(".wcf-feed-item, .wcf-es").count())) throw new Error("Feed shows neither posts nor the empty screen");
-  const testPost = await page.locator(".wcf-feed-item", { hasText: "Qwyd Test Account" }).count();
+  // Calm Feed (.cfe-m moments) or the classic Feed (.wcf-feed-item).
+  if (!(await page.locator(".wcf-feed-item, .wcf-es, .cfe-m, .cfe-quiet").count())) throw new Error("Feed shows neither posts nor the empty screen");
+  const testPost = await page.locator(".wcf-feed-item, .cfe-m", { hasText: "Qwyd Test Account" }).count();
   if (testPost) throw new Error("The test account is showing on the Feed");
 });
 await step("Game Stories", async () => {
@@ -124,14 +125,30 @@ await step("Game Stories", async () => {
   if (await page.locator(".wcf-story").count()) throw new Error("The story didn't close after its last card");
 });
 await step("Boot Room", async () => {
-  await page.locator(".wcf-feed-hero-tabs button", { hasText: "Boot Room" }).first().dispatchEvent("click");
+  await page.locator(".wcf-feed-hero-tabs button, .cfe-tabs button", { hasText: "Boot Room" }).first().dispatchEvent("click");
   await page.waitForSelector("[class^='wcf-br-'], [class*=' wcf-br-']", { timeout: 8000 });
   await page.waitForTimeout(600);
-  await page.locator(".wcf-feed-hero-tabs button", { hasText: "Feed" }).first().dispatchEvent("click");
+  await page.locator(".wcf-feed-hero-tabs button, .cfe-tabs button", { hasText: "Feed" }).first().dispatchEvent("click");
 });
 await step("Line-up", async () => tab("Line-up", "Next game line-up"));
+// Calm Line-up has no tabs: the team sheet is the screen, and the
+// predictor league opens from its link with a back button.
 for (const sub of ["Team Sheet", "Predict"]) {
   await step(`Line-up: ${sub}`, async () => {
+    if (!(await page.locator(".wcf-subtabs").count())) {
+      if (sub === "Team Sheet") {
+        await page.locator(".cl-head, .wcf-empty, .wcf-es").first().waitFor({ timeout: 8000 });
+      } else {
+        await page.locator(".cl-league").first().dispatchEvent("click");
+        await page.locator(".cl-sh button.back").first().waitFor({ timeout: 8000 });
+        await page.waitForTimeout(900);
+        await page.locator(".cl-sh button.back").first().dispatchEvent("click");
+        await page.locator(".cl-head").first().waitFor({ timeout: 8000 });
+      }
+      await page.waitForTimeout(600);
+      await page.evaluate(() => document.querySelector(".wcf-main")?.scrollTo(0, 0));
+      return;
+    }
     await page.locator(".wcf-subtabs button", { hasText: sub }).first().dispatchEvent("click");
     await page.waitForFunction((t) => document.querySelector(".wcf-subtabs button.active")?.textContent?.trim() === t, sub, { timeout: 8000 });
     await page.waitForTimeout(900);
@@ -143,7 +160,7 @@ await step("Line-up: second game", async () => {
   await tab("Line-up", "Next game line-up");
   const picks = page.locator(".wcf-gamepick button");
   if ((await picks.count()) < 2) return;
-  await page.locator(".wcf-subtabs button", { hasText: "Team Sheet" }).first().dispatchEvent("click");
+  if (await page.locator(".wcf-subtabs").count()) await page.locator(".wcf-subtabs button", { hasText: "Team Sheet" }).first().dispatchEvent("click");
   const before = await page.locator(".wcf-main").innerText();
   await picks.nth(1).dispatchEvent("click");
   await page.waitForFunction(() => document.querySelectorAll(".wcf-gamepick button")[1]?.classList.contains("active"), null, { timeout: 8000 });
@@ -151,8 +168,30 @@ await step("Line-up: second game", async () => {
   if ((await page.locator(".wcf-main").innerText()) === before) throw new Error("Switching game didn't change the Line-up");
 });
 await step("Results", async () => tab("Results", "Results"));
+// Calm Results: Scores / Season / History, with Stats and Records as
+// cards on Season and the Pot opening from Account.
 for (const sub of ["Season", "Stats", "Records", "Scores", "Pot"]) {
   await step(`Results: ${sub}`, async () => {
+    if (await page.locator(".cr-tabs").count()) {
+      if (sub === "Pot") {
+        await page.locator(".wcf-role").first().dispatchEvent("click");
+        await page.locator(".cr-pot").first().waitFor({ timeout: 8000 });
+        await page.locator(".cr-pot").first().dispatchEvent("click");
+        await page.locator(".cr-back").first().waitFor({ timeout: 8000 });
+        await page.waitForTimeout(900);
+        await page.locator(".cr-back button").first().dispatchEvent("click");
+        await page.locator(".cr-tabs").first().waitFor({ timeout: 8000 });
+        return;
+      }
+      const label = sub === "Scores" ? "Scores" : "Season";
+      await page.locator(".cr-tabs button", { hasText: label }).first().dispatchEvent("click");
+      await page.waitForFunction((t) => document.querySelector(".cr-tabs button.on")?.textContent?.trim().startsWith(t), label, { timeout: 8000 });
+      await page.waitForTimeout(900);
+      const card = sub === "Stats" ? ".cr-lb" : sub === "Records" ? ".cr-recs" : null;
+      if (card) await page.locator(card).first().scrollIntoViewIfNeeded();
+      else await page.evaluate(() => document.querySelector(".wcf-main")?.scrollTo(0, 0));
+      return;
+    }
     await page.locator(".wcf-subtabs button", { hasText: sub }).first().dispatchEvent("click");
     await page.waitForFunction((t) => document.querySelector(".wcf-subtabs button.active")?.textContent?.trim() === t, sub, { timeout: 8000 });
     await page.waitForTimeout(900);

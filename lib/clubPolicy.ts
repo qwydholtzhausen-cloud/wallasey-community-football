@@ -106,23 +106,27 @@ export const TOTM_VISIBLE_FROM = "2026-10-30T08:00";
 // actions behind a tap, a slim called-off notice, the reminder ask in For
 // you (app/ui/calmfixtures.tsx). Admins first, every member from this UK
 // date. Far future = admins only.
-export const CALM_FIXTURES_OPEN_TO_ALL_FROM = "9999-12-31";
+// Opened to every member 2026-10-18 (the owner's call after admin previews).
+export const CALM_FIXTURES_OPEN_TO_ALL_FROM = "2026-10-18";
 
 // Calm Feed (2026-10-17): the last two weeks as moments that link to
 // Results instead of repeating it (app/ui/calmfeed.tsx). Admins first,
 // every member from this UK date. Far future = admins only.
-export const CALM_FEED_OPEN_TO_ALL_FROM = "9999-12-31";
+// Opened to every member 2026-10-18 (the owner's call after admin previews).
+export const CALM_FEED_OPEN_TO_ALL_FROM = "2026-10-18";
 
 // Calm Results (2026-10-17): Scores, Season and History; Stats and Records
 // fold into Season, the Pot opens from Account and Admin
 // (app/ui/calmresults.tsx). Admins first, every member from this UK date.
-export const CALM_RESULTS_OPEN_TO_ALL_FROM = "9999-12-31";
+// Opened to every member 2026-10-18 (the owner's call after admin previews).
+export const CALM_RESULTS_OPEN_TO_ALL_FROM = "2026-10-18";
 
 // Calm Line-up (2026-10-18): one screen about the next game, the admin
 // tools on an ADMIN card, the generator and the predictor league opening
 // over it, the new birthday hat (app/ui/calmlineup.tsx). Admins first,
 // every member from this UK date.
-export const CALM_LINEUP_OPEN_TO_ALL_FROM = "9999-12-31";
+// Opened to every member 2026-10-18 (the owner's call after admin previews).
+export const CALM_LINEUP_OPEN_TO_ALL_FROM = "2026-10-18";
 
 // Calm Admin (2026-10-18): Today as one inbox, Games by what needs doing,
 // the pot under Money (app/ui/calmadmin.tsx). Admin is admins-only anyway;
