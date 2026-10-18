@@ -207,8 +207,16 @@ if (process.env.SMOKE_ADMIN !== "0" && serviceKey) {
     }
     await step("Admin: Line-up Teams", async () => {
       await tab("Line-up", "Next game line-up");
-      await page.locator(".wcf-subtabs button", { hasText: "Teams" }).first().dispatchEvent("click");
-      await page.waitForFunction(() => document.querySelector(".wcf-subtabs button.active")?.textContent?.trim() === "Teams", null, { timeout: 8000 });
+      // Calm Line-up (admins) has no Teams tab: Pick teams / New split on
+      // the ADMIN card opens the generator as a sheet.
+      const calmSplit = page.locator(".cl-admin button.split").first();
+      if (await calmSplit.count()) {
+        await calmSplit.dispatchEvent("click");
+        await page.locator(".cl-sh").first().waitFor({ timeout: 8000 });
+      } else {
+        await page.locator(".wcf-subtabs button", { hasText: "Teams" }).first().dispatchEvent("click");
+        await page.waitForFunction(() => document.querySelector(".wcf-subtabs button.active")?.textContent?.trim() === "Teams", null, { timeout: 8000 });
+      }
       await page.waitForTimeout(900);
     });
     await step("Admin: Teams for the second game", async () => {
