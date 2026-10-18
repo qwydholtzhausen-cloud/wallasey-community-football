@@ -26,6 +26,7 @@ import {
   CALM_FEED_OPEN_TO_ALL_FROM,
   CALM_RESULTS_OPEN_TO_ALL_FROM,
   CALM_LINEUP_OPEN_TO_ALL_FROM,
+  CALM_ADMIN,
   TOTM_FIRST_MONTH,
   TOTM_REVEAL_FROM,
   TOTM_VISIBLE_FROM,
@@ -65,6 +66,7 @@ import { EmptyScene } from "./ui/EmptyScene";
 import { FeedTab, FlapNum, PotCount, type FeedItem } from "./ui/feed";
 import type { CalmMoment } from "./ui/calmfeed";
 import { calmResultsCss } from "./ui/calmresults";
+import { calmAdminCss } from "./ui/calmadmin";
 import { ResultsTab } from "./ui/results";
 import { QueueTicket, ShirtHandover, type QueueOdds } from "./ui/moments";
 import { WinMoment, type SeasonGame } from "./ui/celebrate";
@@ -6887,7 +6889,7 @@ function App({ session }: { session: Session }) {
           </>
         )}
 
-        {tab === "admin" && isAdmin && calmResultsOn && (
+        {tab === "admin" && isAdmin && calmResultsOn && !CALM_ADMIN && (
           <>
             <style>{calmResultsCss}</style>
             <button
@@ -6908,6 +6910,31 @@ function App({ session }: { session: Session }) {
         )}
         {tab === "admin" && isAdmin && (
           <AdminConsole
+            calm={CALM_ADMIN}
+            onGoToResults={() => {
+              setTab("results");
+              setResultsMonth("all");
+              setResultsView("fixtures");
+            }}
+            potCard={
+              <>
+                <style>{calmResultsCss}</style>
+                <button
+                  className="cr-pot"
+                  onClick={() => {
+                    setTab("results");
+                    setResultsView("pot");
+                  }}
+                >
+                  <span>
+                    <small>Club pot</small>
+                    <b>£{Math.round(potTotal)}</b>
+                    <i>Match fees in, pitch hire out, and where it goes</i>
+                  </span>
+                  <em>›</em>
+                </button>
+              </>
+            }
             upcoming={upcomingGames}
             previous={pastGames}
             overdue={overdueBookings}
@@ -10811,7 +10838,15 @@ function AdminConsole({
   onConfirmPayments,
   birthdaySuggest,
   askConfirm,
+  calm = false,
+  potCard,
+  onGoToResults,
 }: {
+  // Calm Admin (app/ui/calmadmin.tsx): Today as one inbox, Games by what
+  // needs doing, the club pot under Money.
+  calm?: boolean;
+  potCard?: React.ReactNode;
+  onGoToResults?: () => void;
   birthdaySuggest: Record<string, string>;
   upcoming: GameRow[];
   previous: GameRow[];
@@ -11101,8 +11136,67 @@ function AdminConsole({
     return () => clearTimeout(t);
   }, [todoCount, adminView]);
 
+  // ── Calm Admin ──
+  const [payOpen, setPayOpen] = useState(false);
+  const [showAllUnpaid, setShowAllUnpaid] = useState(false);
+  const calmTodos = todos.filter((t) => !t.key.startsWith("claim"));
+  const calmCount = calmTodos.length + (paymentClaims.length > 0 ? 1 : 0);
+  const claimAmount = (c: (typeof paymentClaims)[number]) => amountDue(c.game.price, credits.byBooking.get(c.booking.id));
+  const claimsTotal = paymentClaims.reduce((s, c) => s + claimAmount(c), 0);
+  const confirmAllClaims = async () => {
+    const names = paymentClaims.map((c) => c.booking.player.display_name.split(" ")[0]).join(", ");
+    if (await askConfirm(`Confirm all ${paymentClaims.length} payments?`, `£${claimsTotal} from ${names}. Check they're in the bank first.`, "Confirm all", false)) {
+      stampAll(paymentClaims.map((c) => c.booking.id), claimsTotal);
+    }
+  };
+  const gInfo = (g: GameRow) => {
+    const st = gameState(g);
+    const unpaid = st.confirmed.filter((b) => b.status !== "confirmed" && !b.pot_exempt_reason).length;
+    const waiting = g.bookings.filter((b) => b.waiting).length;
+    const days = (toMs(kickoffCutoff(g.date, g.kickoff, 0)) - toMs(nowInLondon())) / 86400000;
+    return { ...st, unpaid, waiting, booked: st.confirmed.length, paid: st.confirmed.length - unpaid, cap: g.max_players, days };
+  };
+  const dayNum = (g: GameRow) => +g.date.slice(8, 10);
+  const monShort = (g: GameRow) => new Date(g.date + "T12:00:00Z").toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
+  const dayShort = (g: GameRow) => new Date(g.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
+  const whenLabel = (d: number) => (d < 1 ? "Today" : d < 2 ? "Tomorrow" : `In ${Math.floor(d)} days`);
+  const calmBar = (i: ReturnType<typeof gInfo>) => (
+    <span className="ca-bar">
+      {i.paid > 0 && <i className="pd" style={{ flex: i.paid }} />}
+      {i.unpaid > 0 && <i className="np" style={{ flex: i.unpaid }} />}
+      {i.cap > i.booked && <i className="em" style={{ flex: i.cap - i.booked }} />}
+    </span>
+  );
+  const isXi = (g: GameRow) => g.max_players > 16;
+  const gameSteps = (g: GameRow) => {
+    const i = gInfo(g);
+    const s: { k: string; t: string; act: () => void }[] = [];
+    if (i.teamsDueSoon) s.push({ k: "go", t: "Pick teams", act: () => onGoToLineup(g.id) });
+    if (i.days <= 3 && i.unpaid > 0) s.push({ k: "red", t: `Chase ${i.unpaid}`, act: () => setAdminView("payments") });
+    return s;
+  };
+
   return (
     <>
+      {calm && <style>{calmAdminCss}</style>}
+      {calm && (
+        <div className="ca-tabs" role="tablist">
+          {(
+            [
+              ["today", "Today", calmCount],
+              ["fixtures", "Games", 0],
+              ["payments", "Money", 0],
+              ["messages", "Messages", 0],
+            ] as const
+          ).map(([k, label, n]) => (
+            <button key={k} role="tab" aria-selected={adminView === k} className={adminView === k ? "on" : ""} onClick={() => setAdminView(k)}>
+              {label}
+              {n > 0 && <i>{n}</i>}
+            </button>
+          ))}
+        </div>
+      )}
+      {!calm && (
       <div className="wcf-subtabs wcf-admin-tabs">
         {([
           ["today", "Today", todos.length],
@@ -11116,8 +11210,313 @@ function AdminConsole({
           </button>
         ))}
       </div>
+      )}
 
-      {adminView === "today" && (
+      {calm && adminView === "today" && (
+        <>
+          {nextDayGames.slice(0, 1).map((g) => {
+            const i = gInfo(g);
+            return (
+              <button key={g.id} className="ca-head" onClick={() => openFixture(g.id)}>
+                <small>Next game · {fmtDate(g.date)}</small>
+                <b>
+                  {g.venue} · {g.kickoff.slice(0, 5)}
+                </b>
+                <span className="ca-chips">
+                  <span className="g">
+                    {i.booked}/{g.max_players} booked
+                  </span>
+                  {i.waiting > 0 && <span className="w">{i.waiting} waiting</span>}
+                  <span className={i.teamsSet ? "g" : i.teamsDueSoon ? "r" : ""}>{i.noBookingsYet ? "no one booked" : i.teamsSet ? "teams set" : "teams not set"}</span>
+                  {i.unpaid > 0 && <span>{i.unpaid} not paid</span>}
+                </span>
+              </button>
+            );
+          })}
+          <article className="ca-card">
+            <div className="ca-ch">
+              <h4>{calmCount === 0 ? "All clear" : "Needs you"}</h4>
+              <span>{calmCount === 0 ? "nothing waiting" : `${calmCount} ${calmCount === 1 ? "thing" : "things"}`}</span>
+            </div>
+            <div className="ca-rule" />
+            {paymentClaims.length > 0 && (
+              <div className={"ca-pay" + (payOpen ? " open" : "")}>
+                <div className="ca-row gold">
+                  <span className="i">£</span>
+                  <span className="tx">
+                    <b>
+                      {paymentClaims.length} {paymentClaims.length === 1 ? "payment" : "payments"} to check · £{claimsTotal}
+                    </b>
+                    <small>{namesList(paymentClaims.map((c) => c.booking.player.display_name.split(" ")[0]), 4)}</small>
+                  </span>
+                  <button className="ca-btn gold" onClick={() => setPayOpen((v) => !v)}>
+                    Review <u>›</u>
+                  </button>
+                </div>
+                <div className="ca-x">
+                  <div>
+                    {paymentClaims.map((c) => (
+                      <div key={c.booking.id} className={"ca-cl" + (stamped.has(c.booking.id) ? " stamped" : "")}>
+                        <Avatar name={c.booking.player.display_name} avatarUrl={c.booking.player.avatar_url} className="ca-av" />
+                        <span className="tx">
+                          <b>{c.booking.player.display_name}</b>
+                          <small>
+                            {fmtDate(c.game.date)}
+                            {credits.byBooking.has(c.booking.id) ? " · rest paid by credit" : ""}
+                          </small>
+                        </span>
+                        <button className="ca-btn gold" onClick={() => stampConfirm(c.booking.id)}>
+                          £{claimAmount(c)}
+                        </button>
+                        <span className="stamp" aria-hidden="true">
+                          PAID
+                        </span>
+                      </div>
+                    ))}
+                    {paymentClaims.length >= 2 && (
+                      <button className="ca-all" onClick={confirmAllClaims}>
+                        Confirm all £{claimsTotal}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {calmTodos.map((t) => (
+              <div key={t.key} className={"ca-row " + t.tone}>
+                <span className="i">{t.icon}</span>
+                <span className="tx">
+                  <b>{t.title}</b>
+                  <small>{t.sub}</small>
+                </span>
+                <span className="btns">
+                  <button className={"ca-btn " + t.tone} onClick={t.act}>
+                    {t.label}
+                  </button>
+                  {t.alt && (
+                    <button className="ca-btn" onClick={t.alt.act}>
+                      {t.alt.label}
+                    </button>
+                  )}
+                </span>
+              </div>
+            ))}
+            {calmCount === 0 && (
+              <div className="ca-done">
+                <span>✓</span>Nothing waiting on an admin
+              </div>
+            )}
+          </article>
+          {paidSummary && (
+            <p className="ca-clear">
+              ✓ {paidSummary.n} {paidSummary.n === 1 ? "payment" : "payments"} confirmed · £{paidSummary.total}
+            </p>
+          )}
+          {upcoming.length > 0 && (
+            <article className="ca-card quiet">
+              <div className="ca-ch">
+                <h4>Coming up</h4>
+                <span>{upcoming.length} upcoming</span>
+              </div>
+              <div className="ca-rule" />
+              {upcoming.slice(0, 3).map((g) => {
+                const i = gInfo(g);
+                return (
+                  <button key={g.id} className="ca-wk" onClick={() => openFixture(g.id)}>
+                    <span className="ca-d">
+                      <b>{dayNum(g)}</b>
+                      <small>{monShort(g)}</small>
+                    </span>
+                    <span className="tx">
+                      <b>
+                        {dayShort(g)} · {g.kickoff.slice(0, 5)} · {g.venue}
+                        {isXi(g) && <i className="ca-xi">FIRST XI</i>}
+                      </b>
+                      {calmBar(i)}
+                      <small>
+                        {i.booked}/{i.cap} in · {i.paid} paid{i.waiting ? ` · ${i.waiting} waiting` : ""}
+                      </small>
+                    </span>
+                  </button>
+                );
+              })}
+              <div className="ca-key">
+                <span>
+                  <i className="pd" />
+                  paid
+                </span>
+                <span>
+                  <i className="np" />
+                  not paid yet
+                </span>
+                <span>
+                  <i className="em" />
+                  space
+                </span>
+              </div>
+            </article>
+          )}
+          {unscored.length === 0 && <p className="ca-clear">✓ All scores entered</p>}
+        </>
+      )}
+
+      {calm && adminView === "fixtures" &&
+        (() => {
+          const list = showLaterFixtures ? upcoming : soonUpcoming;
+          const need = list.filter((g) => gameSteps(g).length > 0);
+          const ok = list.filter((g) => gameSteps(g).length === 0);
+          const open = (g: GameRow, past = false) =>
+            expandedId === g.id && (
+              <div className="ca-open">
+                <AdminGameRow game={g} past={past} mainVenue={mainVenue} onEnterResult={setResultFor} {...shared} />
+              </div>
+            );
+          return (
+            <>
+              <article className="ca-card">
+                <div className="ca-ch">
+                  <h4>Needs you</h4>
+                  <span>{need.length + unscored.length === 0 ? "nothing" : `${need.length + unscored.length} ${need.length + unscored.length === 1 ? "game" : "games"}`}</span>
+                </div>
+                <div className="ca-rule" />
+                {unscored.map((g) => (
+                  <div key={g.id} className="ca-gw">
+                    <div className="ca-nd">
+                      <span className="ca-d">
+                        <b>{dayNum(g)}</b>
+                        <small>{monShort(g)}</small>
+                      </span>
+                      <span className="tx">
+                        <em>Played · {g.kickoff.slice(0, 5)}</em>
+                        <b>{g.venue}</b>
+                        <small>{g.bookings.filter((b) => !b.waiting).length} played · no score yet</small>
+                      </span>
+                    </div>
+                    <div className="ca-steps">
+                      <button className="go" onClick={() => setResultFor(g.id)}>
+                        Enter score
+                      </button>
+                      <button className="more" onClick={() => onToggleExpand(g.id)}>
+                        More ›
+                      </button>
+                    </div>
+                    {open(g, true)}
+                  </div>
+                ))}
+                {need.map((g) => {
+                  const i = gInfo(g);
+                  return (
+                    <div key={g.id} className="ca-gw">
+                      <div className="ca-nd">
+                        <span className="ca-d">
+                          <b>{dayNum(g)}</b>
+                          <small>{monShort(g)}</small>
+                        </span>
+                        <span className="tx">
+                          <em>
+                            {whenLabel(i.days)} · {g.kickoff.slice(0, 5)}
+                          </em>
+                          <b>
+                            {g.venue}
+                            {isXi(g) && <i className="ca-xi">FIRST XI</i>}
+                          </b>
+                          {calmBar(i)}
+                          <small>
+                            {i.booked}/{i.cap} in · {i.paid} paid{i.waiting ? ` · ${i.waiting} waiting` : ""}
+                          </small>
+                        </span>
+                      </div>
+                      <div className="ca-steps">
+                        {gameSteps(g).map((s) => (
+                          <button key={s.t} className={s.k} onClick={s.act}>
+                            {s.t}
+                          </button>
+                        ))}
+                        <button className="more" onClick={() => onToggleExpand(g.id)}>
+                          More ›
+                        </button>
+                      </div>
+                      {open(g)}
+                    </div>
+                  );
+                })}
+                {need.length + unscored.length === 0 && (
+                  <div className="ca-done">
+                    <span>✓</span>Every game is on track
+                  </div>
+                )}
+              </article>
+              {ok.length > 0 && (
+                <article className="ca-card quiet">
+                  <div className="ca-ch">
+                    <h4>On track</h4>
+                    <span>
+                      {ok.length} {ok.length === 1 ? "game" : "games"}
+                      {showLaterFixtures ? "" : " · next 4 weeks"}
+                    </span>
+                  </div>
+                  <div className="ca-rule" />
+                  {ok.map((g) => {
+                    const i = gInfo(g);
+                    return (
+                      <div key={g.id} className="ca-gw">
+                        <button className="ca-wk" onClick={() => onToggleExpand(g.id)}>
+                          <span className="ca-d">
+                            <b>{dayNum(g)}</b>
+                            <small>{monShort(g)}</small>
+                          </span>
+                          <span className="tx">
+                            <b>
+                              {dayShort(g)} · {g.kickoff.slice(0, 5)}
+                              {g.venue !== mainVenue ? ` · ${g.venue}` : ""}
+                              {isXi(g) && <i className="ca-xi">FIRST XI</i>}
+                            </b>
+                            {calmBar(i)}
+                          </span>
+                          <span className="n">
+                            {i.booked}/{i.cap}
+                          </span>
+                          <span className="ch">{expandedId === g.id ? "⌄" : "›"}</span>
+                        </button>
+                        {open(g)}
+                      </div>
+                    );
+                  })}
+                  <div className="ca-key">
+                    <span>
+                      <i className="pd" />
+                      paid
+                    </span>
+                    <span>
+                      <i className="np" />
+                      not paid yet
+                    </span>
+                    <span>
+                      <i className="em" />
+                      space
+                    </span>
+                  </div>
+                  {laterUpcoming.length > 0 && (
+                    <button className="ca-more" onClick={() => setShowLaterFixtures((v) => !v)}>
+                      {showLaterFixtures ? "Just the next 4 weeks" : `+ ${laterUpcoming.length} later ${laterUpcoming.length === 1 ? "game" : "games"} ›`}
+                    </button>
+                  )}
+                </article>
+              )}
+              {onGoToResults && (
+                <button className="ca-link" onClick={onGoToResults}>
+                  <span>
+                    <small>Results</small>
+                    <b>{unscored.length === 0 ? "All scores entered ✓ · every result is in Results" : "Every result is in Results"}</b>
+                  </span>
+                  <em>›</em>
+                </button>
+              )}
+            </>
+          );
+        })()}
+
+      {!calm && adminView === "today" && (
         <>
           <div className={"wcf-needs" + (todos.length === 0 ? " clear" : "") + (cleanSheet && todos.length === 0 ? " clean-sheet" : "")}>
             {cleanSheet && todos.length === 0 && (
@@ -11177,7 +11576,7 @@ function AdminConsole({
         </>
       )}
 
-      {adminView === "fixtures" && (
+      {!calm && adminView === "fixtures" && (
         <>
           <div className="wcf-admin-group"><span>Upcoming · next 4 weeks</span><span>{upcoming.length} in total</span></div>
           {upcoming.length === 0 && <p className="wcf-empty small">No upcoming fixtures.</p>}
@@ -11203,6 +11602,7 @@ function AdminConsole({
 
       {adminView === "payments" && (
         <>
+          {calm && potCard}
           <div className="wcf-admin-group">
             <span>To check</span>
             <b className="gold">{paymentClaims.length ? <TickNum value={paymentClaims.length} /> : ""}</b>
@@ -11389,9 +11789,11 @@ function AdminConsole({
               }, {})
             ).sort((a, b) => a.game.date.localeCompare(b.game.date));
             if (byGame.length === 0) return null;
+            const shownGames = calm && !showAllUnpaid ? byGame.slice(0, 4) : byGame;
             return (
+              <>
               <div className="wcf-admin-card">
-                {byGame.map(({ game: g, items }) => {
+                {shownGames.map(({ game: g, items }) => {
                   const open = openUnpaidGame === g.id;
                   return (
                     <div key={g.id}>
@@ -11422,6 +11824,12 @@ function AdminConsole({
                   );
                 })}
               </div>
+              {calm && byGame.length > 4 && (
+                <button className="wcf-rec-more" onClick={() => setShowAllUnpaid((v) => !v)}>
+                  {showAllUnpaid ? "Just the next 4" : `Show all ${byGame.length} games`}
+                </button>
+              )}
+              </>
             );
           })()}
         </>
@@ -11471,7 +11879,11 @@ function AdminConsole({
                   <button key={k} className={msgFilter === k ? "on" : ""} onClick={() => setMsgFilter(k)}>{label}</button>
                 ))}
               </div>
-              {shownSends.length === 0 && <p className="wcf-empty small">Nothing here.</p>}
+              {shownSends.length === 0 && (
+                <p className="wcf-empty small">
+                  {msgFilter === "all" && !showOlderMessages && olderMessageCount > 0 ? `No messages in the last ${RECENT_MESSAGE_DAYS} days.` : "Nothing here."}
+                </p>
+              )}
               {shownSends.map((g) => {
                 const read = g.to.filter((m) => m.read_at).length;
                 const open = openSend === g.key;

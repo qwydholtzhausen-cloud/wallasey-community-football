@@ -123,3 +123,8 @@ export const CALM_RESULTS_OPEN_TO_ALL_FROM = "9999-12-31";
 // over it, the new birthday hat (app/ui/calmlineup.tsx). Admins first,
 // every member from this UK date.
 export const CALM_LINEUP_OPEN_TO_ALL_FROM = "9999-12-31";
+
+// Calm Admin (2026-10-18): Today as one inbox, Games by what needs doing,
+// the pot under Money (app/ui/calmadmin.tsx). Admin is admins-only anyway;
+// false brings back the previous Admin tab.
+export const CALM_ADMIN = true;

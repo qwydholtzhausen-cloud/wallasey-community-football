@@ -197,10 +197,15 @@ if (process.env.SMOKE_ADMIN !== "0" && serviceKey) {
       await page.locator(".wcf-navbtn", { hasText: "Admin" }).first().waitFor({ timeout: 10000 });
     });
     await step("Admin tab", async () => tab("Admin", "Admin"));
-    for (const sub of ["Today", "Fixtures", "Payments", "Messages"]) {
+    // Calm Admin renames Fixtures to Games and Payments to Money (gold
+    // .ca-tabs); the old .wcf-admin-tabs keep the original names.
+    for (const [sub, calmSub] of [["Today", "Today"], ["Fixtures", "Games"], ["Payments", "Money"], ["Messages", "Messages"]]) {
       await step(`Admin: ${sub}`, async () => {
-        await page.locator(".wcf-admin-tabs button", { hasText: sub }).first().dispatchEvent("click");
-        await page.waitForFunction((t) => document.querySelector(".wcf-admin-tabs button.active")?.textContent?.trim().startsWith(t), sub, { timeout: 8000 });
+        const calm = (await page.locator(".ca-tabs").count()) > 0;
+        const bar = calm ? ".ca-tabs" : ".wcf-admin-tabs";
+        const label = calm ? calmSub : sub;
+        await page.locator(`${bar} button`, { hasText: label }).first().dispatchEvent("click");
+        await page.waitForFunction(([b, t, cls]) => document.querySelector(`${b} button.${cls}`)?.textContent?.trim().startsWith(t), [bar, label, calm ? "on" : "active"], { timeout: 8000 });
         await page.waitForTimeout(900);
         await page.evaluate(() => document.querySelector(".wcf-main")?.scrollTo(0, 0));
       });
