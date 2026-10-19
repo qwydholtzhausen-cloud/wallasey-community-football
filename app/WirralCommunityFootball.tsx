@@ -76,7 +76,7 @@ import { HistoryPage } from "./ui/history";
 import { computeHistory, type HMoment } from "../lib/history";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { computeProgramme } from "../lib/programme";
-import { FIRST_XI_GAME_ID, FIRST_XI_OPEN_TO_ALL_FROM } from "../lib/firstXI";
+import { FIRST_XI_GAME_ID, FIRST_XI_OPEN_TO_ALL_FROM, FIRST_XI_TAKEOVER_ADMINS_FROM, FIRST_XI_TAKEOVER_FROM } from "../lib/firstXI";
 import { MatchdayProgramme, type ProgrammeAd } from "./ui/programme";
 import { FirstXiMotmReveal, FirstXiPennant } from "./ui/firstxi";
 import { MatchdayHero, MatchdayIntro, MatchdayRibbon, MatchdayTeamCards, MatchdayTimeline, matchdayCss } from "./ui/matchdayxi";
@@ -4712,8 +4712,13 @@ function App({ session }: { session: Session }) {
   // Match vote closes. The countdown runs on the real clock, so the gap to
   // kick-off is worked out in pretend-UTC and added to Date.now().
   const isMatchday = !!programme && nowUk.slice(0, 10) === programme.game.date && !closedMotmTallies[programme.game.id];
+  // Match week: the same takeover in the days before, counting down in days.
+  const isXiWeek = !!programme && firstXiOpen && nowUk.slice(0, 10) >= (isAdmin ? FIRST_XI_TAKEOVER_ADMINS_FROM : FIRST_XI_TAKEOVER_FROM) && nowUk.slice(0, 10) < programme.game.date;
+  const xiTakeover = isMatchday || isXiWeek;
   const kickoffMs = programme ? Date.now() + (toMs(kickoffCutoff(programme.game.date, programme.game.kickoff, 0)) - toMs(nowUk)) : 0;
-  const mdPhase: "pre" | "live" | "ft" = !programme
+  const mdPhase: "week" | "pre" | "live" | "ft" = isXiWeek
+    ? "week"
+    : !programme
     ? "pre"
     : programme.game.team_white_score != null && programme.game.team_red_score != null
       ? "ft"
@@ -4753,7 +4758,7 @@ function App({ session }: { session: Session }) {
     } catch {}
   }, [watchedKey]);
   const occInfo: OccInfo | null = (() => {
-    if (!occasionsOn || isMatchday) return null;
+    if (!occasionsOn || xiTakeover) return null;
     const today = nowUk.slice(0, 10);
     let wrappedDay = false;
     if (showWrappedBanner && wrapped && !wrapped.soFar) {
@@ -4781,11 +4786,12 @@ function App({ session }: { session: Session }) {
   })();
   const occGameId = occInfo && occInfo.kind !== "wrapped" ? findOccasion({ games, today: nowUk.slice(0, 10), wrappedDay: false, preview: isAdmin ? occPreview : null })?.game?.id ?? null : null;
   // On matchday the hero is the First XI's card, so its usual Next match card would repeat it.
-  const nmShown = isMatchday && programme ? nextMatchGames.filter((g) => g.id !== programme.game.id) : nextMatchGames;
+  const nmShown = xiTakeover && programme ? nextMatchGames.filter((g) => g.id !== programme.game.id) : nextMatchGames;
   const [mdIntro, setMdIntro] = useState(false);
+  // The curtain: once for match week, then again on the day.
   useEffect(() => {
-    if (!isMatchday || !myId) return;
-    const key = `wcf-matchday-intro-${myId}-${programme!.game.date}`;
+    if (!xiTakeover || !myId) return;
+    const key = isXiWeek ? `wcf-xiweek-intro-${myId}-${programme!.game.date}` : `wcf-matchday-intro-${myId}-${programme!.game.date}`;
     try {
       if (localStorage.getItem(key)) return;
       localStorage.setItem(key, "1");
@@ -4794,7 +4800,7 @@ function App({ session }: { session: Session }) {
     }
     if (motionOk()) setMdIntro(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMatchday, myId]);
+  }, [xiTakeover, isXiWeek, myId]);
   const xiStatOf = (id: string) => {
     let apps = 0;
     let motm = 0;
@@ -5887,7 +5893,7 @@ function App({ session }: { session: Session }) {
         },
       });
     }
-    if (!isMatchday && programme && programme.game.date >= today && !fyHidden[`prog:${programme.game.id}`]) {
+    if (!xiTakeover && programme && programme.game.date >= today && !fyHidden[`prog:${programme.game.id}`]) {
       const pid = programme.game.id;
       out.push({
         rank: 4,
@@ -6321,7 +6327,7 @@ function App({ session }: { session: Session }) {
   const [ftBand, setFtBand] = useState<string | null>(null);
   // Anything else full-screen on top: nothing new pops up over it.
   const momentsPaused =
-    !splashGone || !!npStep || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || ticketShow?.mode === "credit" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand || programmeOpen || !!totmReplay;
+    !splashGone || !!npStep || !!rateSheetFor || wrappedOpen || !!playerCardId || ticketShow?.mode === "booked" || ticketShow?.mode === "credit" || !!queueTicket || !!storyOpen || paySheetOpen || !!ftBand || programmeOpen || !!totmReplay || mdIntro;
   const [momentNow, setMomentNow] = useState<string | null>(null);
   const [momentsPlayed, setMomentsPlayed] = useState(0);
   const momentKey = momentCandidates.join("|");
@@ -6449,10 +6455,10 @@ function App({ session }: { session: Session }) {
         </div>
       )}
       {houseStyleOn && <style>{houseStyleCss}</style>}
-      {isMatchday && <style>{matchdayCss}</style>}
-      {mdIntro && <MatchdayIntro onDone={() => setMdIntro(false)} />}
+      {xiTakeover && <style>{matchdayCss}</style>}
+      {mdIntro && <MatchdayIntro week={isXiWeek} onDone={() => setMdIntro(false)} />}
       {occ && <style>{occasionCss}</style>}
-      <header className={"wcf-top" + (isMatchday ? " mdx" : "") + (occ ? " occ" : "")} style={occ ? occVars(occ.kind, occ.release) : undefined}>
+      <header className={"wcf-top" + (xiTakeover ? " mdx" : "") + (occ ? " occ" : "")} style={occ ? occVars(occ.kind, occ.release) : undefined}>
         <button className="wcf-brand" onClick={() => setTab("fixtures")} aria-label="Go to fixtures">
           <span className="wcf-logo">
             <img src="/crest.png" alt="Wirral Community Football crest" />
@@ -6472,7 +6478,7 @@ function App({ session }: { session: Session }) {
         </button>
       </header>
 
-      {isMatchday && programme && tab !== "fixtures" && <MatchdayRibbon kickoffMs={kickoffMs} phase={mdPhase} onOpen={openProgramme} />}
+      {xiTakeover && programme && tab !== "fixtures" && <MatchdayRibbon kickoffMs={kickoffMs} phase={mdPhase} onOpen={openProgramme} />}
       {occ && tab !== "fixtures" && <OccasionRibbon o={occ} onOpen={() => (occ.kind === "wrapped" ? (occ.release?.watched ? void shareWrapped() : openWrapped()) : goTab("fixtures"))} />}
       {isOffline && <div className="wcf-offline-banner">Offline · showing what was last loaded</div>}
 
@@ -6540,7 +6546,7 @@ function App({ session }: { session: Session }) {
                 )}
               </>
             )}
-            {isMatchday && programme && (
+            {xiTakeover && programme && (
               <>
                 <MatchdayHero
                   prog={programme}
@@ -6551,7 +6557,7 @@ function App({ session }: { session: Session }) {
                   onCards={() => setTab("lineup")}
                   onVote={() => goToResult(programme.game.id)}
                 />
-                <MatchdayTimeline kickoff={programme.game.kickoff} phase={mdPhase} kickoffMs={kickoffMs} />
+                {isMatchday && <MatchdayTimeline kickoff={programme.game.kickoff} phase={mdPhase} kickoffMs={kickoffMs} />}
               </>
             )}
             {forYouOn ? (
@@ -6708,7 +6714,7 @@ function App({ session }: { session: Session }) {
               />
             ) : (
               <>
-                {!forYouOn && !isMatchday && programme && programme.game.date >= nowUk.slice(0, 10) && (
+                {!forYouOn && !xiTakeover && programme && programme.game.date >= nowUk.slice(0, 10) && (
                   <button className="wcf-prog-card" onClick={openProgramme}>
                     <span className="cv" aria-hidden="true" />
                     <span className="tx">
@@ -7026,7 +7032,7 @@ function App({ session }: { session: Session }) {
           />
         )}
 
-        {tab === "lineup" && isMatchday && programme && (
+        {tab === "lineup" && xiTakeover && programme && (
           <div className="mdx-teamwrap">
             <MatchdayTeamCards prog={programme} statOf={xiStatOf} avatarOf={(id) => avatarByPlayerId.get(id)} myId={myId} />
           </div>
@@ -7324,10 +7330,10 @@ function App({ session }: { session: Session }) {
       </main>
 
       <nav
-        className={"wcf-nav" + (isMatchday ? " mdx" : "") + (occ ? " occ" : "") + (movementOn && !isMatchday ? " has-pill" : "")}
+        className={"wcf-nav" + (xiTakeover ? " mdx" : "") + (occ ? " occ" : "") + (movementOn && !xiTakeover ? " has-pill" : "")}
         style={{ ["--n" as string]: TABS.length, ["--i" as string]: Math.max(0, TABS.findIndex((t) => t.k === tab)), ...(occ ? occVars(occ.kind, occ.release) : {}) }}
       >
-        {movementOn && !isMatchday && TABS.some((t) => t.k === tab) && <span className="wcf-nav-pill" ref={navPillRef} aria-hidden="true" />}
+        {movementOn && !xiTakeover && TABS.some((t) => t.k === tab) && <span className="wcf-nav-pill" ref={navPillRef} aria-hidden="true" />}
         {TABS.map((t) => (
           <button key={t.k} className={"wcf-navbtn " + (tab === t.k ? "active" : "")} onClick={() => goTab(t.k)}>
             {t.icon}

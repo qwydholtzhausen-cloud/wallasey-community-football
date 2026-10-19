@@ -21,17 +21,21 @@ function useCountdown(targetMs: number) {
   return Math.max(0, Math.floor((targetMs - now) / 1000));
 }
 
-export type MdPhase = "pre" | "live" | "ft";
+// "week": the days before (match week, from FIRST_XI_TAKEOVER_FROM), then
+// the day itself: pre, live, ft.
+export type MdPhase = "week" | "pre" | "live" | "ft";
 
 export function MatchdayRibbon({ kickoffMs, phase, onOpen }: { kickoffMs: number; phase: MdPhase; onOpen: () => void }) {
   const left = useCountdown(kickoffMs);
   const h = Math.floor(left / 3600);
   const m = Math.floor((left % 3600) / 60);
+  const d = Math.floor(left / 86400);
+  const weekText = d >= 2 ? `Sunday · kick-off in ${d} days` : d === 1 ? `Sunday · kick-off in 1 day ${h - 24}h` : `Kick-off in ${h ? `${h}h ` : ""}${m}m`;
   return (
-    <button className="mdx-ribbon" onClick={onOpen}>
+    <button className={"mdx-ribbon" + (phase === "week" ? " week" : "")} onClick={onOpen}>
       <i />
       <b>THE FIRST XI</b>
-      <span>{phase === "ft" ? "Full time · vote for Man of the Match" : left > 0 ? `Kick-off in ${h ? `${h}h ` : ""}${m}m` : "Under way at The Oval"}</span>
+      <span>{phase === "week" ? weekText : phase === "ft" ? "Full time · vote for Man of the Match" : left > 0 ? `Kick-off in ${h ? `${h}h ` : ""}${m}m` : "Under way at The Oval"}</span>
       <em>Programme ›</em>
     </button>
   );
@@ -55,7 +59,10 @@ export function MatchdayHero({
   onVote: () => void;
 }) {
   const left = useCountdown(kickoffMs);
-  const parts = [Math.floor(left / 3600), Math.floor((left % 3600) / 60), left % 60].map((n) => String(n).padStart(2, "0"));
+  // More than a day out (match week): days, hours, minutes.
+  const long = left >= 86400;
+  const parts = (long ? [Math.floor(left / 86400), Math.floor((left % 86400) / 3600), Math.floor((left % 3600) / 60)] : [Math.floor(left / 3600), Math.floor((left % 3600) / 60), left % 60]).map((n) => String(n).padStart(2, "0"));
+  const dayLabel = new Date(prog.game.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
   const capR = prog.reds.find((p) => prog.captains.includes(p.id)) ?? prog.reds[0];
   const capW = prog.whites.find((p) => prog.captains.includes(p.id)) ?? prog.whites[0];
   const face = (p: ProgPerson, cls: string, style?: React.CSSProperties) => (
@@ -71,7 +78,7 @@ export function MatchdayHero({
       <span className="mdx-beam l" />
       <span className="mdx-beam r" />
       <div className="mdx-hk">
-        <small>MATCHDAY · THE OVAL LEISURE</small>
+        <small>{phase === "week" ? "MATCH WEEK" : "MATCHDAY"} · THE OVAL LEISURE</small>
         <h3>
           The <span>First</span> XI
         </h3>
@@ -110,7 +117,7 @@ export function MatchdayHero({
             <span>WHITES</span>
           </div>
         </div>
-      ) : phase === "pre" && left > 0 ? (
+      ) : (phase === "pre" || phase === "week") && left > 0 ? (
         <>
           <div className="mdx-flip">
             {parts.map((p, gi) => (
@@ -124,7 +131,17 @@ export function MatchdayHero({
               </span>
             ))}
           </div>
-          <div className="mdx-ko">to kick-off · {prog.game.kickoff}</div>
+          {long && (
+            <div className="mdx-units">
+              <span>days</span>
+              <span>hrs</span>
+              <span>mins</span>
+            </div>
+          )}
+          <div className="mdx-ko">
+            to kick-off · {long ? `${dayLabel} · ` : ""}
+            {prog.game.kickoff}
+          </div>
         </>
       ) : (
         <div className="mdx-ko live">
@@ -179,23 +196,23 @@ export function MatchdayTimeline({ kickoff, phase, kickoffMs }: { kickoff: strin
   );
 }
 
-export function MatchdayIntro({ onDone }: { onDone: () => void }) {
+export function MatchdayIntro({ onDone, week = false }: { onDone: () => void; week?: boolean }) {
   useEffect(() => {
     const t = setTimeout(onDone, 4200);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
-    <div className="mdx-intro" onClick={onDone} role="dialog" aria-label="It's matchday">
+    <div className="mdx-intro" onClick={onDone} role="dialog" aria-label={week ? "It's match week" : "It's matchday"}>
       <div className="cur l" />
       <div className="cur r" />
       <div className="badge">
         <img src="/crest.png" alt="" />
-        <small>SUNDAY · THE FIRST XI</small>
+        <small>{week ? "SUNDAY 25 OCT · THE FIRST XI" : "SUNDAY · THE FIRST XI"}</small>
         <b>
           It&apos;s
           <br />
-          Matchday
+          {week ? "Match week" : "Matchday"}
         </b>
       </div>
     </div>
@@ -299,6 +316,8 @@ export const matchdayCss = `
 .mdx-ribbon{position:sticky;top:0;z-index:4;display:flex;align-items:center;gap:8px;width:100%;padding:8px 14px;border:0;border-bottom:1px solid rgba(245,217,122,.35);background:#14100a;color:#f5f6f8;font:inherit;font-size:12px;cursor:pointer;text-align:left}
 .mdx-ribbon i{width:7px;height:7px;border-radius:50%;background:#e63946;flex:none;animation:mdxPulse 1.2s infinite}
 @keyframes mdxPulse{50%{opacity:.3}}
+.mdx-units{display:flex;justify-content:center;gap:42px;margin:-4px 0 4px;font:600 9.5px var(--font-oswald),sans-serif;letter-spacing:.24em;text-transform:uppercase;color:rgba(245,217,122,.75)}
+.mdx-ribbon.week i{background:#f5d97a}
 .mdx-ribbon b{font:700 12px var(--font-oswald),sans-serif;letter-spacing:.14em;color:#f5d97a}
 .mdx-ribbon span{color:#cbd5e1}
 .mdx-ribbon em{margin-left:auto;font-style:normal;font-weight:800;color:#f5d97a}

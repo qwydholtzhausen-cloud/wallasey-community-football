@@ -40,6 +40,10 @@ export interface Programme {
   goal100: string | null;
   h2h: { reds: number; whites: number; draws: number; redGoals: number; whiteGoals: number };
   form: { date: string; white: number; red: number }[];
+  // How many straight wins the other side had before the latest game, when
+  // the latest game was a win (0 otherwise). Counted over every game, not
+  // just the six in the form guide.
+  runEnded: number;
   tape: { reds: SideTape; whites: SideTape };
   watch: { goalscorer: Stat | null; squadsPick: Stat | null; everPresent: Stat | null };
   originals: ProgPerson[];
@@ -101,6 +105,15 @@ export function computeProgramme(input: {
     else h2h.draws++;
   }
   const form = scored.slice(-6).map((g) => ({ date: g.date, white: g.team_white_score!, red: g.team_red_score! }));
+  const winner = (g: (typeof scored)[number]) => (g.team_red_score! > g.team_white_score! ? "red" : g.team_white_score! > g.team_red_score! ? "white" : null);
+  let runEnded = 0;
+  const latestWin = scored.length ? winner(scored[scored.length - 1]) : null;
+  if (latestWin)
+    for (let i = scored.length - 2; i >= 0; i--) {
+      const w = winner(scored[i]);
+      if (w && w !== latestWin) runEnded++;
+      else break;
+    }
 
   // Per player.
   const stat = (p: ProgPerson): Stat => {
@@ -169,6 +182,7 @@ export function computeProgramme(input: {
     goal100,
     h2h,
     form,
+    runEnded,
     tape: { reds: side(reds), whites: side(whites) },
     watch: { goalscorer, squadsPick, everPresent },
     originals,

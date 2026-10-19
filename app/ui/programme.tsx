@@ -251,12 +251,25 @@ export function MatchdayProgramme({
               if (w && w === who) n++;
               else break;
             }
+            // A run of 3+ just broken by the latest game is the story too.
+            const other = who === "Reds" ? "Whites" : "Reds";
+            const run = prog.runEnded;
+            const ended = who && n === 1 && run >= 3;
+            const lastG = last[0];
+            const lastDay = lastG ? new Date(lastG.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" }) : "";
             return who && n >= 2 ? (
               <div className="pgm-streak">
                 <span>
                   {n} straight {who} wins.
                 </span>{" "}
-                Can {who === "Reds" ? "Whites" : "Reds"} stop the run?
+                Can {other} stop the run?
+              </div>
+            ) : ended ? (
+              <div className="pgm-streak">
+                <span>
+                  {who} ended it on {lastDay}, {Math.max(lastG.red, lastG.white)}–{Math.min(lastG.red, lastG.white)}.
+                </span>{" "}
+                {other} had won {run} in a row. Who carries it into {Day}?
               </div>
             ) : null;
           })()}
@@ -301,7 +314,7 @@ export function MatchdayProgramme({
               Reds have scored {h2h.redGoals} to Whites&apos; {h2h.whiteGoals}.
             </p>
             <p>
-              Every one of them was on a small pitch. <b>{Day} is the first on a full one:</b> more space, longer runs, heavier legs. All square.
+              Every one of them was on a small pitch. <b>{Day} is the first on a full one:</b> more space, longer runs, heavier legs. And it starts at 0–0.
             </p>
           </div>
           {folio("RIVALRY")}
@@ -476,6 +489,25 @@ export function MatchdayProgramme({
                 <span>Two pitches, both sold out.</span>
               </div>
             )}
+            {(() => {
+              // The last game before this one, and whether it ended a run.
+              const last = [...prog.form].reverse();
+              const lg = last[0];
+              if (!lg) return null;
+              const win = (g: { red: number; white: number }) => (g.red > g.white ? "Reds" : g.white > g.red ? "Whites" : null);
+              const who = win(lg);
+              const run = prog.runEnded;
+              return (
+                <div className="pgm-stop">
+                  <small>{short(lg.date).toUpperCase()}</small>
+                  <b>The last game before</b>
+                  <span>
+                    {who ? `${who} won ${Math.max(lg.red, lg.white)}–${Math.min(lg.red, lg.white)}` : `${lg.red}–${lg.white}, honours even`}
+                    {who && run >= 3 ? `, ending a run of ${run} ${who === "Reds" ? "Whites" : "Reds"} wins` : ""}.
+                  </span>
+                </div>
+              );
+            })()}
             <div className="pgm-stop now">
               <small>{isDay ? "TODAY" : short(prog.game.date).toUpperCase()}</small>
               <b>The First XI</b>

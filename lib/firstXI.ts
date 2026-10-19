@@ -28,3 +28,11 @@ export const FIRST_XI_DATE_LABEL = "25.10.26";
 // Admins see it first to test; everyone from this UK date (Tue 20 Oct, so
 // Monday 19th's game and its MOTM vote are in the story).
 export const FIRST_XI_OPEN_TO_ALL_FROM = "2026-10-20";
+
+// Match week (the owner's call, 19 Oct): the takeover runs from this UK date
+// up to the game, counting down in days, then the matchday version takes
+// over on the day. "9999-12-31" = the day only.
+// Players: "9999-12-31" until the owner's go-ahead (planned Tue 20 Oct
+// morning). Admins from FIRST_XI_TAKEOVER_ADMINS_FROM, to test first.
+export const FIRST_XI_TAKEOVER_FROM = "9999-12-31";
+export const FIRST_XI_TAKEOVER_ADMINS_FROM = "2026-10-19";

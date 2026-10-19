@@ -99,9 +99,16 @@ await step("Fixtures has games", async () => {
 });
 await step("Player card", async () => {
   await tab("Line-up", "Next game line-up");
+  // Before teams: tap a face in Who's in. Once teams are set: tap a shirt
+  // on the pitch, then the name on the card it brings up.
   const chip = page.locator(".wcf-lineup-chip").first();
-  if (!(await chip.count())) throw new Error("No players on the team sheet to open");
-  await chip.dispatchEvent("click");
+  const token = page.locator(".wcf-lineup-token").first();
+  if (await chip.count()) await chip.dispatchEvent("click");
+  else if (await token.count()) {
+    await token.dispatchEvent("click");
+    await page.locator(".wcf-lineup-selected-name.clickable").first().waitFor({ timeout: 8000 });
+    await page.locator(".wcf-lineup-selected-name.clickable").first().dispatchEvent("click");
+  } else throw new Error("No players on the team sheet to open");
   await page.waitForSelector(".wcf-pcard", { timeout: 8000 });
   await page.waitForTimeout(2200);
 });
