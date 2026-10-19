@@ -11,7 +11,7 @@ import { nowInLondon } from "../../lib/time";
 // History and behind everyone's pennant. Facts come from lib/programme.ts.
 
 export type ProgrammeAd = { company: string; description: string | null; tag: string | null; logoUrl: string | null; owner: string };
-export type ProgrammeResult = { white: number; red: number; scorers: string; motm: string | null };
+export type ProgrammeResult = { white: number; red: number; scorers: string; motm: string | null; redScorers?: string; whiteScorers?: string };
 
 const dt = (s: string, o: Intl.DateTimeFormatOptions) => new Date(s + "T12:00:00Z").toLocaleDateString("en-GB", { timeZone: "UTC", ...o });
 const short = (s: string) => dt(s, { day: "numeric", month: "short" });
@@ -26,6 +26,7 @@ export function MatchdayProgramme({
   avatarOf,
   result,
   onClose,
+  onSharePoster,
 }: {
   prog: Programme;
   members: number;
@@ -35,6 +36,7 @@ export function MatchdayProgramme({
   avatarOf: (id: string) => string | null | undefined;
   result: ProgrammeResult | null;
   onClose: () => void;
+  onSharePoster?: () => void;
 }) {
   const face = (p: ProgPerson, cls: string, style?: React.CSSProperties) => (
     <Avatar name={p.name} avatarUrl={avatarOf(p.id)} className={cls} background={avatarFor(p.name).gradient} style={style} />
@@ -688,7 +690,80 @@ export function MatchdayProgramme({
           {
             key: "ft",
             label: "Full time",
-            body: (
+            // Once it's all confirmed (score in, Man of the Match vote
+            // closed) the closing page is the full result sheet.
+            body: result.motm ? (
+              <div className="pgm-pg pgm-final">
+                <div className="pgm-fa-top">
+                  <img src="/crest.png" alt="" />
+                  <span>
+                    <small>WIRRAL COMMUNITY FOOTBALL</small>
+                    <b>The First XI</b>
+                  </span>
+                </div>
+                <div className="pgm-fa-k">FULL TIME</div>
+                <div className="pgm-fa-sc">
+                  <span className="t r">Reds</span>
+                  <span className="n">
+                    <b className="r">{result.red}</b>
+                    <i>–</i>
+                    <b>{result.white}</b>
+                  </span>
+                  <span className="t">Whites</span>
+                </div>
+                <div className="pgm-fa-gl">
+                  <span>{result.redScorers ?? ""}</span>
+                  <span>{result.whiteScorers ?? ""}</span>
+                </div>
+                <div className="pgm-fa-mo">
+                  <span className="medal" aria-hidden="true">
+                    ★
+                  </span>
+                  <span>
+                    <small>MAN OF THE MATCH</small>
+                    <b>{result.motm}</b>
+                  </span>
+                </div>
+                <div className="pgm-fa-xi">
+                  {(
+                    [
+                      ["REDS", prog.reds, "r"],
+                      ["WHITES", prog.whites, ""],
+                    ] as const
+                  ).map(([label, list, cls]) => (
+                    <div key={label}>
+                      <h4 className={cls}>{label}</h4>
+                      <ul>
+                        {[...list]
+                          .sort((a, b) => Number(cap(b.id)) - Number(cap(a.id)))
+                          .map((p) => (
+                            <li key={p.id}>
+                              {p.name}
+                              {cap(p.id) && <em>C</em>}
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+                {onSharePoster && (
+                  <button
+                    className="pgm-fa-share"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSharePoster();
+                    }}
+                  >
+                    Share the full-time poster ›
+                  </button>
+                )}
+                <div className="pgm-fa-foot">
+                  <span>{dt(prog.game.date, { weekday: "short", day: "numeric", month: "short", year: "numeric" }).toUpperCase()}</span>
+                  <span>THE OVAL LEISURE</span>
+                  <span>Nº1</span>
+                </div>
+              </div>
+            ) : (
               <div className="pgm-pg">
                 {stub("FULL TIME", "How it finished")}
                 <div className="pgm-score">
@@ -822,6 +897,30 @@ export function MatchdayProgramme({
 }
 
 export const programmeCss = `
+.pgm-final{display:flex;flex-direction:column;padding:22px 20px 16px !important}
+.pgm-fa-top{display:flex;align-items:center;gap:10px;border-bottom:3px solid var(--pgm-red);padding-bottom:10px}
+.pgm-fa-top img{width:40px}
+.pgm-fa-top small{display:block;font:600 10px var(--font-oswald),sans-serif;letter-spacing:.26em;color:var(--pgm-red)}
+.pgm-fa-top b{display:block;font:700 24px/1 var(--font-oswald),sans-serif;text-transform:uppercase;color:var(--pgm-ink)}
+.pgm-fa-k{margin-top:18px;text-align:center;font:700 14px var(--font-oswald),sans-serif;letter-spacing:.42em;color:var(--pgm-mute)}
+.pgm-fa-sc{display:grid;grid-template-columns:1fr auto 1fr;align-items:center}
+.pgm-fa-sc .t{font:700 20px var(--font-oswald),sans-serif;letter-spacing:.1em;text-transform:uppercase;text-align:center;color:var(--pgm-ink)}
+.pgm-fa-sc .t.r{color:var(--pgm-red)}
+.pgm-fa-sc .n{display:flex;align-items:center;gap:12px;font:700 92px/1 var(--font-oswald),sans-serif;color:var(--pgm-ink)}
+.pgm-fa-sc .n .r{color:var(--pgm-red)}
+.pgm-fa-sc .n i{font-style:normal;font-size:44px;color:#b8ab90}
+.pgm-fa-gl{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px;font:600 11.5px/1.45 var(--sans);text-align:center;color:#3a352b}
+.pgm-fa-mo{display:flex;align-items:center;gap:12px;margin:18px auto 0;padding:8px 18px 8px 8px;border:2px solid var(--pgm-ink);border-radius:100px}
+.pgm-fa-mo .medal{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 35% 28%,#fff6d1,#f5d97a 50%,#b8902a);color:#3a2a08;font-size:20px}
+.pgm-fa-mo small{display:block;font:600 9.5px var(--font-oswald),sans-serif;letter-spacing:.26em;color:var(--pgm-red)}
+.pgm-fa-mo b{display:block;font:700 20px/1.1 var(--font-oswald),sans-serif;text-transform:uppercase;color:var(--pgm-ink)}
+.pgm-fa-xi{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px;border-top:2px solid var(--pgm-ink);padding-top:12px}
+.pgm-fa-xi h4{margin:0 0 6px;font:700 11px var(--font-oswald),sans-serif;letter-spacing:.3em;color:var(--pgm-ink)}
+.pgm-fa-xi h4.r{color:var(--pgm-red)}
+.pgm-fa-xi ul{list-style:none;margin:0;padding:0;font:500 11.5px/1.6 var(--sans);color:#3a352b}
+.pgm-fa-xi em{display:inline-block;margin-left:5px;padding:0 4px;border-radius:3px;background:var(--pgm-red);color:#fff;font:700 8.5px/1.5 var(--font-oswald),sans-serif;font-style:normal;vertical-align:1px}
+.pgm-fa-share{align-self:center;margin-top:auto;padding:9px 18px;border-radius:999px;border:2px solid var(--pgm-ink);background:none;color:var(--pgm-ink);font:700 12px var(--font-oswald),sans-serif;letter-spacing:.16em;text-transform:uppercase;cursor:pointer}
+.pgm-fa-foot{display:flex;justify-content:space-between;margin-top:14px;padding-top:8px;border-top:2px solid var(--pgm-ink);font:600 9px var(--font-oswald),sans-serif;letter-spacing:.2em;color:var(--pgm-mute)}
 .pgm{--pgm-red:#d62839;--pgm-paper:#f3ead8;--pgm-ink:#1b1a17;--pgm-mute:#6f6450;position:fixed;inset:0;z-index:150;background:radial-gradient(80% 60% at 50% 40%,#1b2032,#07080d);display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top,0px) + 10px) 0 calc(env(safe-area-inset-bottom,0px) + 10px);animation:pgmIn .3s ease-out}
 @keyframes pgmIn{from{opacity:0}}
 .pgm-x{position:absolute;right:14px;top:calc(env(safe-area-inset-top,0px) + 14px);z-index:9;width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(6,8,14,.7);color:#fff;display:grid;place-items:center;cursor:pointer}

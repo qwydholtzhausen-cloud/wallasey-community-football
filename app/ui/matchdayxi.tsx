@@ -49,6 +49,8 @@ export function MatchdayHero({
   onProgramme,
   onCards,
   onVote,
+  onShare,
+  sharing = false,
 }: {
   prog: Programme;
   kickoffMs: number;
@@ -57,6 +59,8 @@ export function MatchdayHero({
   onProgramme: () => void;
   onCards: () => void;
   onVote: () => void;
+  onShare?: () => void;
+  sharing?: boolean;
 }) {
   const left = useCountdown(kickoffMs);
   // More than a day out (match week): days, hours, minutes.
@@ -159,6 +163,11 @@ export function MatchdayHero({
           </button>
         )}
         {phase === "ft" ? <button onClick={onProgramme}>The programme</button> : <button onClick={onCards}>The team cards</button>}
+        {phase === "ft" && onShare && (
+          <button className="main mdx-share" onClick={onShare} disabled={sharing}>
+            {sharing ? "Making the poster…" : "Share the full-time poster"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -354,6 +363,7 @@ export const matchdayCss = `
 .mdx-ko.live{font-weight:800;color:#fff;display:flex;justify-content:center;gap:6px;align-items:center;margin-top:16px}
 .mdx-ko.live i{width:8px;height:8px;border-radius:50%;background:#e63946;animation:mdxPulse 1.2s infinite}
 .mdx-acts{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 12px 0}
+.mdx-acts .mdx-share{grid-column:1/-1}
 .mdx-acts button{height:44px;border-radius:12px;border:1px solid rgba(245,217,122,.4);background:rgba(245,217,122,.1);color:#fff;font:800 12.5px var(--sans);cursor:pointer}
 .mdx-acts button.main{background:#f5d97a;color:#1a1405;border-color:#f5d97a}
 .mdx-tl{border-radius:16px;border:1px solid rgba(245,217,122,.3);background:#14100a;padding:12px 14px;margin-bottom:14px}

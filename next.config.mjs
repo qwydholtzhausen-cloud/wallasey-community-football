@@ -1,5 +1,9 @@
 const nextConfig = {
   reactStrictMode: true,
+  // The First XI poster reads its fonts and crest from disk at runtime.
+  outputFileTracingIncludes: {
+    "/api/xi-poster": ["./app/api/xi-poster/fonts/*.ttf", "./app/api/xi-poster/crest.png"],
+  },
   // Vercel sets VERCEL_GIT_COMMIT_SHA per deploy but doesn't expose it to
   // the client automatically - baking it in here lets the running app
   // compare itself against whatever's currently live (see /api/version)

@@ -76,7 +76,7 @@ import { HistoryPage } from "./ui/history";
 import { computeHistory, type HMoment } from "../lib/history";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { computeProgramme } from "../lib/programme";
-import { FIRST_XI_GAME_ID, FIRST_XI_OPEN_TO_ALL_FROM, FIRST_XI_TAKEOVER_ADMINS_FROM, FIRST_XI_TAKEOVER_FROM } from "../lib/firstXI";
+import { FIRST_XI_DATE_LABEL, FIRST_XI_GAME_ID, FIRST_XI_OPEN_TO_ALL_FROM, FIRST_XI_TAKEOVER_ADMINS_FROM, FIRST_XI_TAKEOVER_FROM } from "../lib/firstXI";
 import { MatchdayProgramme, type ProgrammeAd } from "./ui/programme";
 import { FirstXiMotmReveal, FirstXiPennant } from "./ui/firstxi";
 import { MatchdayHero, MatchdayIntro, MatchdayRibbon, MatchdayTeamCards, MatchdayTimeline, matchdayCss } from "./ui/matchdayxi";
@@ -2985,9 +2985,65 @@ function App({ session }: { session: Session }) {
     }
   }
 
+  // The First XI full-time poster: drawn by /api/xi-poster from what the app
+  // already has. Man of the Match only once the vote has closed; before
+  // that it asks people to vote.
+  const [posterBusy, setPosterBusy] = useState(false);
+  async function shareXiPoster() {
+    const prog = programme;
+    if (!prog || posterBusy) return;
+    const g = games.find((x) => x.id === prog.game.id);
+    if (!g || g.team_red_score == null || g.team_white_score == null) return;
+    setPosterBusy(true);
+    try {
+      const rows = goalRows.filter((r) => r.game_id === g.id && r.goals > 0);
+      const teamOf = (id: string) => g.bookings.find((b) => b.player_id === id)?.team;
+      const nameOf = (id: string) => profiles.find((p) => p.id === id)?.display_name ?? "A player";
+      const side = (s: "red" | "white") => scorersForSide(rows, s, teamOf).map((r) => ({ name: nameOf(r.player_id), goals: r.goals }));
+      const closed = !motmVotingOpen(g);
+      const winners = closed ? motmWinnerIdsByGame[g.id] ?? [] : [];
+      const goalsOf = (id: string) => rows.filter((r) => r.player_id === id).reduce((s, r) => s + r.goals, 0);
+      const person = (p: { id: string; name: string }) => ({ name: p.name, avatar: avatarByPlayerId.get(p.id) ?? null, captain: prog.captains.includes(p.id), goals: goalsOf(p.id), motm: winners.includes(p.id) });
+      const body = {
+        red: g.team_red_score,
+        white: g.team_white_score,
+        redScorers: side("red"),
+        whiteScorers: side("white"),
+        reds: prog.reds.map(person),
+        whites: prog.whites.map(person),
+        motm: winners.length ? { name: winners.map(nameOf).join(" & "), avatar: winners.length === 1 ? avatarByPlayerId.get(winners[0]) ?? null : null } : null,
+        voteCloses: closed ? null : motmClosesLabel(g),
+        dateLabel: new Date(g.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).toUpperCase(),
+        venue: g.venue,
+        stamp: FIRST_XI_DATE_LABEL,
+      };
+      const token = await getFreshAccessToken();
+      const res = await fetch("/api/xi-poster", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error("Couldn't make the poster");
+      const blob = await res.blob();
+      const file = new File([blob], `the-first-xi-${winners.length ? "final" : "full-time"}.png`, { type: "image/png" });
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file] });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name;
+        a.click();
+        URL.revokeObjectURL(url);
+        notifySuccess("Poster downloaded");
+      }
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) notifyError(err instanceof Error ? err.message : "Couldn't make the poster");
+    } finally {
+      setPosterBusy(false);
+    }
+  }
+
   // Admin-only, by design - keeps this as an official/curated post like the
   // WhatsApp lineup button, rather than something every player can trigger.
   async function shareResult(game: GameRow) {
+    if (game.id === FIRST_XI_GAME_ID && programme) return shareXiPoster();
     const scorers = goalRows.filter((r) => r.game_id === game.id && r.goals > 0);
     const teamOf = (playerId: string) => game.bookings.find((b) => b.player_id === playerId)?.team;
     const whiteScorers = scorersForSide(scorers, "white", teamOf).map((r) => ({ name: r.player.display_name, goals: r.goals }));
@@ -6556,6 +6612,8 @@ function App({ session }: { session: Session }) {
                   onProgramme={openProgramme}
                   onCards={() => setTab("lineup")}
                   onVote={() => goToResult(programme.game.id)}
+                  onShare={shareXiPoster}
+                  sharing={posterBusy}
                 />
                 {isMatchday && <MatchdayTimeline kickoff={programme.game.kickoff} phase={mdPhase} kickoffMs={kickoffMs} />}
               </>
@@ -7666,6 +7724,15 @@ function App({ session }: { session: Session }) {
           .map((r) => `${nameOf(r.player_id).split(" ")[0]}${r.goals > 1 ? ` ${r.goals}` : ""}`)
           .join(", ");
         const motm = closedMotmTallies[g.id] ? (motmWinnerIdsByGame[g.id] ?? []).map(nameOf).join(" & ") || null : null;
+        const teamOfP = (id: string) => g.bookings.find((b) => b.player_id === id)?.team;
+        const sideScorers = (s: "red" | "white") =>
+          scorersForSide(
+            goalRows.filter((r) => r.game_id === g.id && r.goals > 0),
+            s,
+            teamOfP,
+          )
+            .map((r) => `${nameOf(r.player_id)}${r.goals > 1 ? ` ×${r.goals}` : ""}`)
+            .join(" · ");
         const firstGoal = historyMoments.find((m) => m.kind === "goal" && /first ever goal/i.test(m.title));
         return (
           <MatchdayProgramme
@@ -7683,7 +7750,8 @@ function App({ session }: { session: Session }) {
             firstGoal={firstGoal?.player_ids[0] ? nameOf(firstGoal.player_ids[0]) : null}
             ads={programmeAds}
             avatarOf={(id) => avatarByPlayerId.get(id)}
-            result={scored ? { white: g.team_white_score!, red: g.team_red_score!, scorers, motm } : null}
+            result={scored ? { white: g.team_white_score!, red: g.team_red_score!, scorers, motm, redScorers: sideScorers("red"), whiteScorers: sideScorers("white") } : null}
+            onSharePoster={shareXiPoster}
             onClose={() => setProgrammeOpen(false)}
           />
         );
