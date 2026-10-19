@@ -32,7 +32,7 @@ export const FIRST_XI_OPEN_TO_ALL_FROM = "2026-10-20";
 // Match week (the owner's call, 19 Oct): the takeover runs from this UK date
 // up to the game, counting down in days, then the matchday version takes
 // over on the day. "9999-12-31" = the day only.
-// Players: "9999-12-31" until the owner's go-ahead (planned Tue 20 Oct
-// morning). Admins from FIRST_XI_TAKEOVER_ADMINS_FROM, to test first.
-export const FIRST_XI_TAKEOVER_FROM = "9999-12-31";
+// Players from the same UK date the programme opens to everyone (the
+// owner's call, 19 Oct). Admins from FIRST_XI_TAKEOVER_ADMINS_FROM.
+export const FIRST_XI_TAKEOVER_FROM = "2026-10-20";
 export const FIRST_XI_TAKEOVER_ADMINS_FROM = "2026-10-19";
