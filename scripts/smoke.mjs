@@ -94,7 +94,8 @@ await step("Open the app", async () => {
   if (!h?.startsWith("Upcoming fixtures")) throw new Error(`Expected Fixtures, got "${h}"`);
 });
 await step("Fixtures has games", async () => {
-  const cards = await page.locator(".wcf-card").count();
+  // Next match cards, calm month rows, or the First XI hero in match week.
+  const cards = await page.locator(".wcf-card, .cf-r, .cf-tk, .mdx-hero").count();
   if (cards === 0 && !(await page.locator(".wcf-es").count())) throw new Error("No fixture cards and no empty screen");
 });
 await step("Player card", async () => {
