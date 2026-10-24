@@ -4,6 +4,7 @@ import { wrappedThemeFor } from "./wrappedThemes";
 import { kickoffCutoff, previousMonthKey, monthReleaseAt, nextMonthStart, MOTM_VOTE_WINDOW_MINUTES } from "./time";
 import { motmWinners, goalsLookup } from "./motm";
 import { TOTM_REVEAL_FROM } from "./clubPolicy";
+import { isPostponed } from "./postponed";
 
 // Player of the Month announcement (push to everyone), once per month.
 // Announced when the month's last published game is played and its vote has
@@ -23,11 +24,11 @@ export async function announcePlayerOfMonth(
   let combined = false;
   const { data: games } = await admin
     .from("games")
-    .select("id, date, kickoff, published, team_white_score, team_red_score")
+    .select("id, date, kickoff, published, team_white_score, team_red_score, postponed_at")
     .is("called_off_at", null) // a called-off game never gets a score, so it can't hold the month up
     .gte("date", `${previousMonthKey(nowUk)}-01`)
     .lt("date", nextMonthStart(nowUk.slice(0, 7)));
-  const all = (games ?? []) as { id: string; date: string; kickoff: string; published: boolean; team_white_score: number | null; team_red_score: number | null }[];
+  const all = ((games ?? []) as { id: string; date: string; kickoff: string; published: boolean; team_white_score: number | null; team_red_score: number | null; postponed_at?: string | null }[]).filter((g) => !isPostponed(g));
   const typedGames = all.filter((g) => g.team_white_score != null && g.team_red_score != null);
   const { data: votes } = await admin.from("motm_votes").select("game_id, candidate_id").in("game_id", typedGames.map((g) => g.id));
   const allVotes = votes ?? [];

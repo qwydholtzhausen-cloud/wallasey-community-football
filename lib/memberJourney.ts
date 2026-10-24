@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { kickoffCutoff, nowInLondon, MATCH_DURATION_MINUTES } from "./time";
+import { isPostponed } from "./postponed";
 
 // Where each member is in their journey with the club - signed up, first
 // booking, first game, regular, drifting away - worked out fresh from the
@@ -48,7 +49,11 @@ export async function computeJourney(admin: SupabaseClient) {
   const [{ data: allProfiles }, { data: usersPage }, { data: games }] = await Promise.all([
     admin.from("profiles").select("*"),
     admin.auth.admin.listUsers({ perPage: 1000 }),
-    admin.from("games").select("id, date, kickoff, venue, pitch, price, max_players, published, team_white_score, bookings(player_id, waiting)").is("called_off_at", null),
+    admin
+      .from("games")
+      .select("id, date, kickoff, venue, pitch, price, max_players, published, team_white_score, postponed_at, bookings(player_id, waiting)")
+      .is("called_off_at", null)
+      .then((r) => ({ ...r, data: (r.data ?? []).filter((g) => !isPostponed(g)) })),
   ]);
   // Members only: people waiting for approval have their own GaffAI nudge.
   const profiles = ((allProfiles ?? []) as { id: string; display_name: string; created_at: string; status?: string; is_test?: boolean }[]).filter(

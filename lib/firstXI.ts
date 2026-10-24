@@ -36,3 +36,4 @@ export const FIRST_XI_OPEN_TO_ALL_FROM = "2026-10-20";
 // owner's call, 19 Oct). Admins from FIRST_XI_TAKEOVER_ADMINS_FROM.
 export const FIRST_XI_TAKEOVER_FROM = "2026-10-20";
 export const FIRST_XI_TAKEOVER_ADMINS_FROM = "2026-10-19";
+

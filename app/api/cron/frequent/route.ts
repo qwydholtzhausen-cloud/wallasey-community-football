@@ -9,6 +9,7 @@ import { nextOpenGame, fmtJourneyDate, type JourneyGame } from "../../../../lib/
 import { sendWelcome } from "../../../../lib/welcome";
 import { announcePlayerOfMonth } from "../../../../lib/potmAnnounce";
 import { recordHeartbeat } from "../../../../lib/gaffai/health";
+import { isPostponed } from "../../../../lib/postponed";
 
 // Both sides of this comparison come from the same "pretend UTC" trick in
 // lib/time.ts (real UK wall-clock digits, formatted as if they were UTC) -
@@ -29,6 +30,7 @@ interface Booking {
 
 interface GameRef {
   id: string;
+  postponed_at?: string | null;
   venue: string;
   date: string;
   price: number;
@@ -74,8 +76,9 @@ export async function GET(req: Request) {
   const nowMs = toMs(nowUkStr);
   const { data: games } = await admin
     .from("games")
-    .select("id, date, kickoff, venue, pitch, price, published, max_players, team_white_score, team_red_score, bookings(id, player_id, status, waiting, team, pot_exempt_reason)")
-    .is("called_off_at", null); // a called-off game gets no reminders or nudges
+    .select("id, date, kickoff, venue, pitch, price, published, max_players, team_white_score, team_red_score, postponed_at, bookings(id, player_id, status, waiting, team, pot_exempt_reason)")
+    .is("called_off_at", null) // a called-off game gets no reminders or nudges
+    .then((r) => ({ ...r, data: (r.data ?? []).filter((g) => !isPostponed(g)) })); // nor a postponed one
   const { data: settings } = await admin.from("club_settings").select("team_white_name, team_red_name").single();
   const whiteLabel = settings?.team_white_name || "Whites";
   const redLabel = settings?.team_red_name || "Reds";
@@ -173,7 +176,7 @@ export async function GET(req: Request) {
   // needless nag at all.
   const { data: unpaidBookings } = await admin
     .from("bookings")
-    .select("id, player_id, created_at, game:games(id, venue, date, price)")
+    .select("id, player_id, created_at, game:games(id, venue, date, price, postponed_at)")
     .eq("status", "unpaid")
     .eq("waiting", false);
 
@@ -189,6 +192,7 @@ export async function GET(req: Request) {
       await markNotified(key);
       continue;
     }
+    if (isPostponed(game)) continue; // reminders wait for the new date
 
     await sendPushToUsers([b.player_id], {
       title: "Payment needed",
@@ -244,7 +248,7 @@ export async function GET(req: Request) {
   const { data: staleUnpaid } = await admin
     .from("bookings")
     .select(
-      "id, player_id, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name), game:games(id, venue, date, kickoff, price)"
+      "id, player_id, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name), game:games(id, venue, date, kickoff, price, postponed_at)"
     )
     .eq("status", "unpaid")
     .eq("waiting", false);
@@ -252,6 +256,7 @@ export async function GET(req: Request) {
   for (const b of staleUnpaid ?? []) {
     const game = (Array.isArray(b.game) ? b.game[0] : b.game) as GameRefWithKickoff | null;
     if (!game) continue;
+    if (isPostponed(game)) continue;
     const kickoffMs = toMs(kickoffCutoff(game.date, game.kickoff, 0));
     if (kickoffMs <= nowMs) continue; // already past - overdue flow below handles it instead
 
@@ -331,7 +336,7 @@ export async function GET(req: Request) {
   // - so it's a heads-up, not just a restatement of a block that's already active.
   const { data: unconfirmedBookings } = await admin
     .from("bookings")
-    .select("id, player_id, game:games(id, venue, date, kickoff, price)")
+    .select("id, player_id, game:games(id, venue, date, kickoff, price, postponed_at)")
     .neq("status", "confirmed")
     .eq("waiting", false);
 
@@ -344,6 +349,7 @@ export async function GET(req: Request) {
       await markNotified(key);
       continue;
     }
+    if (isPostponed(game)) continue; // not owed while the game has no date
     if (toMs(kickoffCutoff(game.date, game.kickoff, MATCH_DURATION_MINUTES)) > nowMs) continue;
 
     await sendPushToUsers([b.player_id], {
@@ -569,11 +575,12 @@ export async function GET(req: Request) {
     const thisMonth = nowUkStr.slice(0, 7);
     const { data: monthRows } = await admin
       .from("games")
-      .select("date, kickoff, published, team_white_score, team_red_score, bookings(player_id, waiting, team)")
+      .select("id, date, kickoff, published, team_white_score, team_red_score, postponed_at, bookings(player_id, waiting, team)")
       .is("called_off_at", null)
       .gte("date", `${previousMonthKey(nowUkStr)}-01`)
       .lt("date", nextMonthStart(thisMonth));
-    const inMonth = (key: string) => (monthRows ?? []).filter((g) => g.published && g.date.startsWith(key));
+    // A postponed game never gets a score on its old date, so it can't hold the month up.
+    const inMonth = (key: string) => (monthRows ?? []).filter((g) => g.published && g.date.startsWith(key) && !isPostponed(g));
     const thisMonthGames = inMonth(thisMonth);
     const lastGame = [...thisMonthGames].sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)).at(-1);
     const thisMonthDone =

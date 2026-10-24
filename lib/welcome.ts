@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { kickoffCutoff, nowInLondon } from "./time";
 import { nextOpenGame, fmtJourneyDate, type JourneyGame } from "./memberJourney";
 import { sendPushToUsers } from "./push";
+import { isPostponed } from "./postponed";
 
 // The welcome message a new member gets in their inbox (plus a push).
 // Sent straight from the app once they've told us their name (POST
@@ -54,7 +55,7 @@ export async function sendWelcome(admin: SupabaseClient, profileId: string, game
   const { data: p } = await admin.from("profiles").select("*").eq("id", profileId).single();
   const rows =
     games ??
-    (((await admin.from("games").select("id, date, kickoff, venue, pitch, price, max_players, published, team_white_score, bookings(player_id, waiting)").is("called_off_at", null)).data ?? []) as unknown as JourneyGame[]);
+    (((await admin.from("games").select("id, date, kickoff, venue, pitch, price, max_players, published, team_white_score, postponed_at, bookings(player_id, waiting)").is("called_off_at", null)).data ?? []) as unknown as (JourneyGame & { postponed_at?: string | null })[]).filter((g) => !isPostponed(g));
   const c = welcomeContent(String(p?.display_name ?? "").split(" ")[0], rows, nowInLondon());
   await admin.from("admin_messages").insert({ recipient_id: profileId, sender_id: null, message: c.message });
   await sendPushToUsers([profileId], { title: c.title, body: c.body, url: "/" });

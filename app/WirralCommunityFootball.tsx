@@ -76,6 +76,7 @@ import { HistoryPage } from "./ui/history";
 import { computeHistory, type HMoment } from "../lib/history";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { computeProgramme } from "../lib/programme";
+import { isPostponed } from "../lib/postponed";
 import { FIRST_XI_DATE_LABEL, FIRST_XI_GAME_ID, FIRST_XI_OPEN_TO_ALL_FROM, FIRST_XI_TAKEOVER_ADMINS_FROM, FIRST_XI_TAKEOVER_FROM } from "../lib/firstXI";
 import { MatchdayProgramme, type ProgrammeAd } from "./ui/programme";
 import { FirstXiMotmReveal, FirstXiPennant } from "./ui/firstxi";
@@ -169,6 +170,7 @@ export interface GameRow {
   // paid players credited. Out of every other list.
   called_off_at?: string | null;
   called_off_reason?: string | null;
+  postponed_at?: string | null;
   bookings: BookingRow[];
 }
 
@@ -1769,6 +1771,9 @@ function App({ session }: { session: Session }) {
   }, []);
 
   const [calledOff, setCalledOff] = useState<GameRow[]>([]);
+  // Postponed games (lib/postponed.ts): out of every list, shown only as
+  // a POSTPONED card to the players booked on them and to admins.
+  const [postponed, setPostponed] = useState<GameRow[]>([]);
   const loadGames = useCallback(async () => {
     const { data } = await supabase
       .from("games")
@@ -1780,8 +1785,9 @@ function App({ session }: { session: Session }) {
       // A called-off game is kept apart, so nothing else (results, stats,
       // the pot, Player of the Month, Wrapped) ever counts it.
       const rows = data as unknown as GameRow[];
-      setGames(rows.filter((g) => !g.called_off_at));
+      setGames(rows.filter((g) => !g.called_off_at && !isPostponed(g)));
       setCalledOff(rows.filter((g) => g.called_off_at));
+      setPostponed(rows.filter((g) => !g.called_off_at && isPostponed(g)));
     }
   }, []);
 
@@ -2578,18 +2584,25 @@ function App({ session }: { session: Session }) {
   }
   async function saveGame(id: string, patch: Partial<GameRow>) {
     const { bookings: _bookings, published: _published, ...rest } = patch as GameRow;
-    const wasPublished = games.find((g) => g.id === id)?.published;
+    const before = games.find((g) => g.id === id) ?? postponed.find((g) => g.id === id);
+    const wasPublished = before?.published;
+    // A postponed game given a new date is back on (lib/postponed.ts).
+    const unpostpone = before?.postponed_at && rest.date && rest.date !== before.date ? { postponed_at: null } : {};
     // published_at (not published itself) is what the frequent cron uses
     // to decide when to actually announce this - confirming a whole batch
     // of drafts in one sitting sends one digest push ~30 min later
     // instead of one push per confirm. See frequent/route.ts.
     const publishPatch = wasPublished ? {} : { published_at: new Date().toISOString() };
-    const { error } = await supabase.from("games").update({ ...rest, ...publishPatch, published: true }).eq("id", id);
+    const { error } = await supabase.from("games").update({ ...rest, ...publishPatch, ...unpostpone, published: true }).eq("id", id);
     if (error) return notifyError(error.message);
     await loadGames();
     setEditingId(null);
     if (!wasPublished) {
       logAction("Posted fixture", `${rest.venue} — ${fmtDate(rest.date)}`);
+    }
+    if ("postponed_at" in unpostpone) {
+      logAction("New date for postponed fixture", `${rest.venue} — ${fmtDate(rest.date)}`);
+      notifySuccess(`Back on: ${fmtDate(rest.date)}. Bookings and payments kept.`);
     }
   }
   // From the fixture sheet: one or more new fixtures, as drafts or posted.
@@ -2635,6 +2648,14 @@ function App({ session }: { session: Session }) {
     if (game) logAction("Called off fixture", `${game.venue} — ${fmtDate(game.date)}${reason.trim() ? ` (${reason.trim()})` : ""}`);
     const n = typeof data === "number" ? data : 0;
     notifySuccess(`Game called off · ${n} ${n === 1 ? "credit" : "credits"} given`);
+  }
+  async function postponeGame(id: string) {
+    const game = games.find((g) => g.id === id);
+    const { error } = await supabase.from("games").update({ postponed_at: new Date().toISOString() }).eq("id", id);
+    if (error) return notifyError(error.message);
+    await loadGames();
+    if (game) logAction("Postponed fixture", `${game.venue} — ${fmtDate(game.date)} (new date TBC)`);
+    notifySuccess("Postponed · new date TBC. Bookings and payments kept.");
   }
   async function deleteGame(id: string) {
     const game = games.find((g) => g.id === id);
@@ -6783,6 +6804,44 @@ function App({ session }: { session: Session }) {
                     <em aria-hidden="true">›</em>
                   </button>
                 )}
+                {postponed.map((pg) => {
+                  const live = pg.bookings.filter((b) => !b.waiting);
+                  const mine = live.some((b) => b.player_id === myId);
+                  // Only the people booked on it (and admins) hear about it;
+                  // everyone else sees it once it has a new date.
+                  if (!isAdmin && !mine) return null;
+                  const paid = live.filter((b) => b.status === "confirmed").length;
+                  const claimed = live.filter((b) => b.status === "pending").length;
+                  const was = new Date(pg.date + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+                  const day = new Date(pg.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
+                  const title = pg.id === FIRST_XI_GAME_ID ? `The First XI · ${pg.venue}` : `${day} ${pg.kickoff.slice(0, 5)} · ${pg.venue}`;
+                  return (
+                    <div key={pg.id} className="xpp-card" role="status">
+                      <div className="xpp-stub">
+                        <small>DATE</small>
+                        <b>TBC</b>
+                        <em>was {was}</em>
+                      </div>
+                      <div className="xpp-tx">
+                        <span className="xpp-stamp">POSTPONED</span>
+                        <b>{title}</b>
+                        {isAdmin ? (
+                          <>
+                            <span>
+                              {live.length} booked · {paid} paid{claimed ? ` · ${claimed} say they've paid` : ""}, all kept. Only the players booked on it see this card, without these numbers.
+                            </span>
+                            <button onClick={() => setFixtureSheet({ mode: "edit", id: pg.id })}>Set the new date ›</button>
+                          </>
+                        ) : (
+                          <>
+                            <span>Your spot and your payment are kept. We&apos;ll let you know the new date.</span>
+                            <i className="xpp-in">✓ You&apos;re in</i>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
                 {calledOffGames.map((g) => {
                   // The usual match card, switched off: drained photo, red
                   // border, CALLED OFF where the kick-off time would be.
@@ -7803,16 +7862,17 @@ function App({ session }: { session: Session }) {
         />
       )}
 
-      {fixtureSheet && (fixtureSheet.mode === "add" || games.some((g) => g.id === fixtureSheet.id)) && (
+      {fixtureSheet && (fixtureSheet.mode === "add" || games.some((g) => g.id === fixtureSheet.id) || postponed.some((g) => g.id === fixtureSheet.id)) && (
         <FixtureSheet
           mode={fixtureSheet.mode}
-          game={fixtureSheet.mode === "edit" ? games.find((g) => g.id === fixtureSheet.id) : undefined}
+          game={fixtureSheet.mode === "edit" ? (games.find((g) => g.id === fixtureSheet.id) ?? postponed.find((g) => g.id === fixtureSheet.id)) : undefined}
           cs={cs}
           games={games}
           onCreate={createFixtures}
           onSave={saveFixture}
           onDelete={deleteGame}
           onCallOff={callOffGame}
+          onPostpone={postponeGame}
           onClose={() => setFixtureSheet(null)}
           askConfirm={askConfirm}
         />
@@ -7927,6 +7987,7 @@ function FixtureSheet({
   onSave,
   onDelete,
   onCallOff,
+  onPostpone,
   onClose,
   askConfirm,
 }: {
@@ -7938,11 +7999,13 @@ function FixtureSheet({
   onSave: (id: string, patch: FixtureDraft, post: boolean) => Promise<void>;
   onDelete: (id: string) => void;
   onCallOff: (id: string, reason: string) => Promise<void>;
+  onPostpone: (id: string) => Promise<void>;
   onClose: () => void;
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
 }) {
   const todayStr = nowInLondon().slice(0, 10);
   const [callOff, setCallOff] = useState<string | null>(null);
+  const [postponing, setPostponing] = useState(false);
   const addDays = (d: string, n: number) => {
     const x = new Date(d + "T12:00:00Z");
     x.setUTCDate(x.getUTCDate() + n);
@@ -8327,7 +8390,46 @@ function FixtureSheet({
             </>
           )}
         </div>
-        {mode === "edit" && game && game.published && !game.called_off_at && game.team_white_score == null && kickoffCutoff(game.date, game.kickoff, MATCH_DURATION_MINUTES) > nowInLondon() &&
+        {mode === "edit" && game && game.postponed_at && (
+          <div className="wcf-fxs-pp on">
+            <div className="wcf-fxs-pp-h">Postponed · new date TBC</div>
+            <p>Pick the new date above and save. Bookings, teams and payments come back with it.</p>
+          </div>
+        )}
+        {mode === "edit" && game && game.published && !game.called_off_at && !game.postponed_at && game.team_white_score == null && kickoffCutoff(game.date, game.kickoff, MATCH_DURATION_MINUTES) > nowInLondon() &&
+          (postponing ? (
+            <div className="wcf-fxs-pp">
+              <div className="wcf-fxs-pp-h">Postpone {fmtDate(game.date)}</div>
+              <p>
+                The date becomes <b>TBC</b>. Bookings, teams and payments stay exactly as they are, and nobody gets a credit. The players booked on it see a <b>POSTPONED</b> card instead
+                of the game, everyone else stops seeing it, and no reminders go out until you set a new date.
+              </p>
+              <div className="wcf-fxs-co-row">
+                <button className="wcf-fxs-btn g" onClick={() => setPostponing(false)}>
+                  Keep it on
+                </button>
+                <button
+                  className="wcf-fxs-btn pp"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    await onPostpone(game.id);
+                    setBusy(false);
+                    onClose();
+                  }}
+                >
+                  Postpone
+                </button>
+              </div>
+            </div>
+          ) : (
+            callOff === null && (
+              <button className="wcf-fxs-pp-btn" onClick={() => setPostponing(true)}>
+                Postpone · new date TBC
+              </button>
+            )
+          ))}
+        {mode === "edit" && game && game.published && !game.called_off_at && !game.postponed_at && !postponing && game.team_white_score == null && kickoffCutoff(game.date, game.kickoff, MATCH_DURATION_MINUTES) > nowInLondon() &&
           (callOff === null ? (
             <button className="wcf-fxs-calloff" onClick={() => setCallOff("")}>
               Call off this game
@@ -16223,6 +16325,13 @@ a.wcf-set-link{text-decoration:none}
 .wcf-prog-card .tx span{display:block;font-size:12px;color:#cbd5e1;margin-top:2px}
 .wcf-prog-card em{margin-left:auto;font-style:normal;font-size:24px;color:#f5d97a}
 .wcf-fxs-calloff{display:block;width:100%;padding:12px 0 4px;background:#131624;border:0;color:#fca5a5;font-weight:800;font-size:13px;cursor:pointer}
+.wcf-fxs-pp-btn{display:block;width:100%;padding:14px 0 4px;background:#131624;border:0;color:#f5d97a;font-weight:800;font-size:13px;cursor:pointer}
+.wcf-fxs-pp{margin:10px 16px 6px;padding:14px;border-radius:16px;border:1px solid rgba(245,217,122,.5);background:rgba(245,217,122,.08)}
+.wcf-fxs-pp-h{font:800 15px var(--display);color:#fff}
+.wcf-fxs-pp p{margin:6px 0 10px;font-size:12.5px;line-height:1.5;color:#cbd5e1}
+.wcf-fxs-pp p b{color:#f5d97a}
+.wcf-fxs-pp.on p{margin-bottom:0}
+.wcf-fxs-btn.pp{background:linear-gradient(180deg,#fff3c4,#f5d97a);color:#1a1405;border:0}
 .wcf-fxs-co{margin:10px 16px 6px;padding:14px;border-radius:16px;border:1px solid rgba(230,57,70,.45);background:rgba(230,57,70,.08)}
 .wcf-fxs-co-h{font:800 15px var(--display);color:#fff}
 .wcf-fxs-co p{margin:6px 0 10px;font-size:12.5px;line-height:1.5;color:#cbd5e1}
@@ -16231,6 +16340,21 @@ a.wcf-set-link{text-decoration:none}
 .wcf-fxs-co-row .wcf-fxs-btn{flex:1}
 .wcf-fxs-btn.danger{background:#e63946;color:#fff;border-color:#e63946}
 .wcf-fxs-btn.danger:disabled{opacity:.6}
+/* The First XI, postponed: a quiet bar for players, a card for admins. */
+.xpp-bar{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:10px 14px;border-radius:14px;background:rgba(245,217,122,.07);border:1px solid rgba(245,217,122,.28);font:500 12.5px var(--sans);color:#cbd5e1}
+.xpp-bar i{width:7px;height:7px;border-radius:50%;background:#f5d97a;flex:none}
+.xpp-bar b{color:#fff;font-weight:700}
+.xpp-card{display:flex;gap:14px;margin:0 0 14px;padding:14px;border-radius:20px;background:linear-gradient(110deg,rgba(40,30,10,.95),#0f1424 70%);border:1px solid rgba(245,217,122,.45);box-shadow:0 22px 44px -28px rgba(0,0,0,.9)}
+.xpp-stub{flex:none;width:76px;display:grid;justify-items:center;align-content:center;gap:2px;border-right:1px dashed rgba(245,217,122,.4);padding-right:12px}
+.xpp-stub small{font:600 9.5px var(--font-oswald),sans-serif;letter-spacing:.24em;color:#94a3b8}
+.xpp-stub b{font:700 30px/1 var(--font-oswald),sans-serif;color:#f5d97a}
+.xpp-stub em{font:500 10.5px var(--sans);font-style:normal;color:#64748b;text-decoration:line-through}
+.xpp-tx{flex:1;min-width:0;display:grid;gap:4px;justify-items:start}
+.xpp-stamp{padding:3px 10px;border:2px solid #e63946;border-radius:6px;color:#ff5a66;font:700 17px var(--font-oswald),sans-serif;letter-spacing:.22em;transform:rotate(-3deg)}
+.xpp-tx b{font:800 15px var(--display);color:#fff}
+.xpp-tx span{font:500 12px/1.4 var(--sans);color:#94a3b8}
+.xpp-in{margin-top:4px;padding:3px 10px;border-radius:999px;background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.35);color:#86efac;font:700 11.5px var(--sans);font-style:normal}
+.xpp-tx button{margin-top:4px;height:34px;padding:0 14px;border-radius:11px;border:0;background:linear-gradient(180deg,#fff3c4,#f5d97a);color:#1a1405;font:800 12.5px var(--display);cursor:pointer}
 .wcf-co{position:relative;overflow:hidden;border-radius:22px;border:2px solid #e63946;min-height:290px;display:flex;flex-direction:column;margin-bottom:14px;box-shadow:0 0 0 4px rgba(230,57,70,.12),0 20px 40px -20px rgba(230,57,70,.55);animation:wcfCoIn .5s cubic-bezier(.2,.9,.3,1.1) backwards}
 @keyframes wcfCoIn{from{opacity:0;transform:scale(.97)}}
 .wcf-co-photo{position:absolute;inset:0;background:url('/net-rain.jpg') center/cover;filter:grayscale(1) brightness(.45)}
