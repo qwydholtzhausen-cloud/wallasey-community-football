@@ -6271,8 +6271,21 @@ function App({ session }: { session: Session }) {
         moments: historyMoments,
         teams: { white: cs.team_white_name, red: cs.team_red_name },
         upcoming: upcomingGames,
+        // totmMonths stays empty until TOTM_VISIBLE_FROM, so this can't show early.
+        totm: (() => {
+          const t = [...totmMonths].sort((a, b) => a.monthKey.localeCompare(b.monthKey))[0];
+          return t
+            ? {
+                launched: TOTM_VISIBLE_FROM.slice(0, 10),
+                monthLabel: t.monthLabel.split(" ")[0],
+                qualified: t.team.qualified,
+                table: t.team.table.map((p) => ({ id: p.id, rating: p.rating })),
+                team: t.team.team.map((p) => ({ id: p.id, line: p.line, captain: p.captain, rating: p.rating })),
+              }
+            : null;
+        })(),
       }),
-    [pastGames, goalRows, profiles, motmWinnerIdsByGame, motmVotes, potmHistory, historyMoments, cs.team_white_name, cs.team_red_name, upcomingGames]
+    [pastGames, goalRows, profiles, motmWinnerIdsByGame, motmVotes, potmHistory, historyMoments, cs.team_white_name, cs.team_red_name, upcomingGames, totmMonths]
   );
   const historyPeople = useMemo(() => new Map(profiles.map((p) => [p.id, { name: p.display_name, avatar: p.avatar_url ?? null }])), [profiles]);
   async function addHistoryMoment(m: { happened_on: string; title: string; body: string | null; kind: "note" | "goal"; player_ids: string[] }) {

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Avatar, avatarFor, motionAllowed } from "./shared";
 import type { Chapter, HEvent, Scene } from "../../lib/history";
 
@@ -152,7 +152,7 @@ export function HistoryPage({
     if (!host) return;
     const list = Array.from(host.querySelectorAll<HTMLElement>(".wcf-hs-tot, .wcf-hs-ev"));
     const wait = (el: HTMLElement) =>
-      el.querySelector(".wcf-hs-mc, .wcf-hs-gv") ? 6000 : el.querySelector(".wcf-hs-mb") ? 5200 : el.querySelector(".wcf-hs-chain") ? 3600 : el.querySelector(".wcf-hs-mosaic") ? 2600 : el.querySelector(".wcf-hs-goal, .wcf-hs-board, .wcf-hs-big, .wcf-hs-twin") ? 2400 : 1500;
+      el.querySelector(".wcf-hs-mc, .wcf-hs-gv, .wcf-hs-v4") ? 6200 : el.querySelector(".wcf-hs-mb") ? 5200 : el.querySelector(".wcf-hs-chain") ? 3600 : el.querySelector(".wcf-hs-mosaic") ? 2600 : el.querySelector(".wcf-hs-goal, .wcf-hs-board, .wcf-hs-big, .wcf-hs-twin") ? 2400 : 1500;
     let k = Math.max(0, list.findIndex((el) => el.getBoundingClientRect().top > 120 && !el.classList.contains("wcf-hs-tot")));
     let timer = 0;
     const next = () => {
@@ -245,6 +245,15 @@ export function HistoryPage({
         return <MotmCount s={s} name={(id) => people.get(id)?.name ?? "A player"} face={face} />;
       case "glove":
         return <GloveScene name={people.get(s.id)?.name ?? "A player"} face={face(s.id)} />;
+      case "live":
+      case "callup":
+      case "potm":
+      case "totm":
+      case "goals":
+      case "xi":
+      case "ft":
+      case "award":
+        return <V4Scene s={s} people={people} />;
       case "twin":
         return (
           <div className="wcf-hs-card wcf-hs-twin">
@@ -499,6 +508,474 @@ function GloveScene({ name, face }: { name: string; face: React.ReactNode }) {
   );
 }
 
+// ── The premium scenes (V4): one look for every big moment - a faint club
+// photo drifting behind near-black, gold hairlines that draw themselves,
+// names and numbers rising out of a mask, faces opening in a gold ring that
+// draws round. Act one builds up, then fades for act two's payoff. They
+// play when the moment's .wcf-hs-ev gets "in" (the reveal above).
+type V4 = Extract<Scene, { type: "live" | "callup" | "potm" | "totm" | "goals" | "xi" | "ft" | "award" }>;
+const v4Photo: Record<string, string> = {
+  live: "/wrapped/bank/app-opens-bench.jpg",
+  callup: "/bench-kit.jpg",
+  potm: "/potm-bg.jpg",
+  totm: "/lineup-teams.jpg",
+  goals: "/wrapped/bank/goals-net-rain.jpg",
+  xi: "/splash-tunnel.jpg",
+  ft: "/floodlight-haze.jpg",
+  pots: "/season-hero.jpg",
+  pp: "/wrapped/bank/motm-walk-off.jpg",
+  gs: "/wrapped/bank/playstyle-strike.jpg",
+};
+const cssVars = (o: Record<string, string | number>) => Object.fromEntries(Object.entries(o).map(([k, v]) => ["--" + k, v])) as React.CSSProperties;
+function A({ d, children, style }: { d: number; children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div className="a" style={{ ...cssVars({ d: d + "s" }), ...style }}>
+      {children}
+    </div>
+  );
+}
+const Ey = ({ d, children, muted }: { d: number; children: React.ReactNode; muted?: boolean }) => (
+  <A d={d}>
+    <div className={"ey" + (muted ? " mu" : "")}>{children}</div>
+  </A>
+);
+const Big = ({ d, gold, children }: { d: number; gold?: boolean; children: React.ReactNode }) => (
+  <span className="m" style={cssVars({ d: d + "s" })}>
+    <span className={gold ? "g" : undefined}>{children}</span>
+  </span>
+);
+const Rule = ({ d, w = 220 }: { d: number; w?: number }) => <div className="rule" style={cssVars({ d: d + "s", w: w + "px" })} />;
+const Gap = ({ h }: { h?: number }) => <div style={h ? { height: h, flex: "none" } : { flex: 1 }} />;
+function Ring({ p, size, d, big }: { p: Person | undefined; size: number; d: number; big?: boolean }) {
+  const r = size / 2 - 1.5;
+  const name = p?.name ?? "?";
+  return (
+    <div className={"pt" + (big ? " big" : "")} style={cssVars({ sz: size + "px", d: d + "s", c: (2 * Math.PI * r).toFixed(1) })}>
+      <div className="im">
+        <Avatar name={name} avatarUrl={p?.avatar} className="ph-av" background={avatarFor(name).gradient} />
+      </div>
+      <svg viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={r} />
+      </svg>
+    </div>
+  );
+}
+const Stats = ({ d, items }: { d: number; items: [number, string, boolean?][] }) => (
+  <A d={d}>
+    <div className="stats">
+      {items.map(([n, l, g]) => (
+        <div key={l}>
+          <b className={g ? "g" : undefined}>{n}</b>
+          <small>{l}</small>
+        </div>
+      ))}
+    </div>
+  </A>
+);
+const Dot = ({ p }: { p: Person | undefined }) => <Avatar name={p?.name ?? "?"} avatarUrl={p?.avatar} className="ff" background={avatarFor(p?.name ?? "?").gradient} />;
+const PITCH = {
+  full: (
+    <>
+      <rect x="14" y="40" width="318" height="346" />
+      <path d="M14 213 H332" />
+      <circle cx="173" cy="213" r="38" />
+      <rect x="103" y="40" width="140" height="52" />
+      <rect x="103" y="334" width="140" height="52" />
+    </>
+  ),
+  side: (
+    <>
+      <rect x="14" y="40" width="318" height="320" />
+      <path d="M173 40 V360" />
+      <circle cx="173" cy="200" r="40" />
+      <rect x="14" y="140" width="50" height="120" />
+      <rect x="282" y="140" width="50" height="120" />
+    </>
+  ),
+  box: (
+    <>
+      <rect x="14" y="40" width="318" height="320" />
+      <rect x="263" y="110" width="69" height="130" />
+      <rect x="306" y="145" width="26" height="60" />
+    </>
+  ),
+};
+const V4Pitch = ({ k }: { k: keyof typeof PITCH }) => (
+  <svg className="pitch" viewBox="0 0 346 400" preserveAspectRatio="none" aria-hidden="true">
+    {PITCH[k]}
+  </svg>
+);
+
+function V4Scene({ s, people }: { s: V4; people: Map<string, Person> }) {
+  const who = (id: string) => people.get(id);
+  const fname = (id: string) => firstName(who(id)?.name ?? "");
+  const photo = v4Photo[s.type === "award" ? s.award : s.type];
+  let body: React.ReactNode = null;
+  if (s.type === "live") {
+    body = (
+      <>
+        <div className="s1">
+          <Ey d={0.2}>The app goes live</Ey>
+          <Gap h={64} />
+          <Big d={0.45}>Day one</Big>
+          <Gap h={16} />
+          <Rule d={1.1} />
+          <Gap h={16} />
+          <A d={1.5}>
+            <p className="sub">Wirral Community Football opens its doors.</p>
+          </A>
+        </div>
+        <div className="s2">
+          <Gap h={30} />
+          <Ey d={3.1}>{s.ids.length === 1 ? "The first member" : "The first two members"}</Ey>
+          <Gap h={24} />
+          <div className="duo">
+            {s.ids.map((id, i) => (
+              <div key={id} className="col">
+                <Ring p={who(id)} size={96} d={3.3 + i * 0.35} />
+                <A d={3.8 + i * 0.35}>
+                  <div className="nm">
+                    <small>MEMBER Nº{i + 1}</small>
+                    {who(id)?.name}
+                  </div>
+                </A>
+              </div>
+            ))}
+          </div>
+          <Gap />
+          <Rule d={4.4} />
+          <Gap h={16} />
+          <Stats d={4.6} items={[[s.total, "MEMBERS TODAY", true]]} />
+        </div>
+        <div className="sweep" style={cssVars({ d: "4.8s" })} />
+      </>
+    );
+  } else if (s.type === "callup") {
+    const n = s.ids.length;
+    body = (
+      <div className="s0">
+        <Ey d={0.2}>{s.head} · The squad</Ey>
+        <Gap h={18} />
+        <div className="swap">
+          <b className="a1">
+            {s.max}/{s.max}
+          </b>
+          <b className="a2">
+            {s.max - n}/{s.max}
+          </b>
+          <b className="a3">
+            {s.max}/{s.max}
+          </b>
+        </div>
+        <Gap h={14} />
+        <div className="dots">
+          {Array.from({ length: s.max }, (_, i) => {
+            // The last n seats open up, then fill gold one by one.
+            const open = i >= s.max - n;
+            return <i key={i} className={open ? "o" : undefined} style={open ? cssVars({ fd: 4.2 + (i - (s.max - n)) * 0.2 + "s" }) : undefined} />;
+          })}
+        </div>
+        <Gap h={34} />
+        <Ey d={3}>Off the waiting list</Ey>
+        <Gap h={18} />
+        <div className="duo">
+          {s.ids.map((id, i) => (
+            <div key={id} className="col">
+              <Ring p={who(id)} size={84} d={3.2 + i * 0.4} />
+              <A d={3.7 + i * 0.4}>
+                <div className="nm">
+                  <small>{["1ST", "2ND", "3RD"][i]} IN LINE</small>
+                  {who(id)?.name}
+                </div>
+              </A>
+            </div>
+          ))}
+        </div>
+        <Gap />
+        <A d={4.8}>
+          <p className="sub">{n > 1 ? `${n === 2 ? "Two" : "Three"} spots opened up, and the first ${n === 2 ? "two" : "three"} in the queue got their game.` : "A spot opened up, and the first in the queue got their game."}</p>
+        </A>
+      </div>
+    );
+  } else if (s.type === "potm") {
+    body = (
+      <>
+        <div className="s1">
+          <Ey d={0.2}>{s.month} · The race</Ey>
+          <div className="tbl">
+            <div className="hd a" style={cssVars({ d: "0.35s" })}>
+              <span />
+              <span />
+              <span />
+              <span>WINS</span>
+              <span>VOTES</span>
+            </div>
+            {s.rows.map((r, i) => (
+              <div key={r.id} className={"row a" + (i ? " dim" : " w")} style={cssVars({ d: 0.5 + i * 0.15 + "s" })}>
+                <span className="r">{i + 1}</span>
+                <Dot p={who(r.id)} />
+                <span className="n">{who(r.id)?.name}</span>
+                <b>{r.wins}</b>
+                <b>{r.votes}</b>
+              </div>
+            ))}
+          </div>
+          {s.note && (
+            <A d={1.8}>
+              <div className="note">{s.note}</div>
+            </A>
+          )}
+        </div>
+        <div className="s2">
+          <Gap h={8} />
+          <Ring p={who(s.id)} size={128} d={3.2} big />
+          <Gap h={18} />
+          <Ey d={3.7}>Player of the Month · {s.month}</Ey>
+          <Gap h={6} />
+          <Big d={3.9} gold>
+            {who(s.id)?.name}
+          </Big>
+          <Gap h={16} />
+          <Rule d={4.3} />
+          <Gap h={16} />
+          <Stats d={4.6} items={[[s.stats.wins, "MOTM WINS"], [s.stats.votes, "VOTES"], [s.stats.goals, "GOALS"]]} />
+        </div>
+        <div className="sweep" style={cssVars({ d: "4.6s" })} />
+      </>
+    );
+  } else if (s.type === "totm") {
+    const eight = new Set(s.team.map((t) => t.id));
+    const spots = { front: { y: 108, xs: [36, 64] }, mid: { y: 196, xs: [20, 50, 80] }, back: { y: 284, xs: [20, 50, 80] } };
+    const used = { front: 0, mid: 0, back: 0 };
+    body = (
+      <>
+        <div className="s1">
+          <Ey d={0.2}>
+            {s.month} · {s.qualified} qualified · match rating
+          </Ey>
+          <div className="tbl" style={{ marginTop: 12 }}>
+            {s.table.map((r, i) => (
+              <Fragment key={r.id}>
+                {i === s.team.length && (
+                  <div className="cutl">
+                    <span>THE EIGHT</span>
+                  </div>
+                )}
+                <div className={"row c a" + (eight.has(r.id) ? "" : " dim")} style={cssVars({ d: 0.4 + i * 0.08 + "s", dd: "2.3s" })}>
+                  <span className="r">{i + 1}</span>
+                  <Dot p={who(r.id)} />
+                  <span className="n">{who(r.id)?.name}</span>
+                  <b>{r.rating.toFixed(1)}</b>
+                </div>
+              </Fragment>
+            ))}
+          </div>
+        </div>
+        <div className="s2 bare">
+          <V4Pitch k="full" />
+          <div className="top">
+            <Ey d={3.1}>Team of the Month · {s.month}</Ey>
+          </div>
+          {s.team.map((t, k) => {
+            const L = spots[t.line];
+            const x = L.xs[Math.min(used[t.line]++, L.xs.length - 1)];
+            const d = 3.3 + k * 0.14;
+            return (
+              <div key={t.id} className="pos" style={{ left: x + "%", top: L.y - 30 }}>
+                <Ring p={who(t.id)} size={52} d={d} />
+                {t.captain && <span className="cap">C</span>}
+                <A d={d + 0.3}>
+                  <div className="nm">
+                    {fname(t.id)} <em>{t.rating.toFixed(1)}</em>
+                  </div>
+                </A>
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
+  } else if (s.type === "goals") {
+    body = (
+      <>
+        <div className="s1">
+          <Ey d={0.2}>Club goals</Ey>
+          <Gap h={70} />
+          <A d={0.3}>
+            <b className="huge" data-to={s.n}>
+              {s.n}
+            </b>
+          </A>
+          <Gap h={22} />
+          <Rule d={1.6} />
+          <Gap h={16} />
+          <A d={2}>
+            <p className="sub">Reached in game {s.game}.</p>
+          </A>
+        </div>
+        <div className="s2">
+          <Ey d={3.1}>The game it came in</Ey>
+          <Gap h={14} />
+          <Big d={3.3}>{s.head}</Big>
+          <Gap h={10} />
+          <A d={3.6}>
+            <div className="score">{s.score}</div>
+          </A>
+          <Gap h={22} />
+          <Rule d={3.9} />
+          <Gap h={22} />
+          <div className="duo tight">
+            {s.scorers.map((x, i) => (
+              <div key={x.id} className="col">
+                <Ring p={who(x.id)} size={54} d={4.1 + i * 0.15} />
+                <A d={4.4 + i * 0.15}>
+                  <div className="nm">
+                    {fname(x.id)} <em>×{x.goals}</em>
+                  </div>
+                </A>
+              </div>
+            ))}
+          </div>
+        </div>
+      </>
+    );
+  } else if (s.type === "xi") {
+    const xw = [9, 21, 21, 21, 21, 33, 33, 33, 33, 44, 44];
+    const ys = [200, 85, 160, 240, 315, 85, 160, 240, 315, 165, 235];
+    body = (
+      <>
+        <div className="s1">
+          <Gap h={70} />
+          <Ey d={0.3}>Eleven-a-side</Ey>
+          <Gap h={14} />
+          <Big d={0.5} gold>
+            The First XI
+          </Big>
+          <Gap h={16} />
+          <Rule d={1.2} />
+          <Gap h={16} />
+          <A d={1.6}>
+            <p className="sub">The club&apos;s first full-size game.</p>
+          </A>
+        </div>
+        <div className="s2 bare">
+          <V4Pitch k="side" />
+          {[0, 1].flatMap((side) =>
+            xw.map((x0, i) => <i key={side + "-" + i} className={"xi" + (side ? " red" : "")} style={{ left: (side ? 100 - x0 : x0) + "%", top: ys[i], ...cssVars({ d: 3.3 + i * 0.09 + side * 0.05 + "s" }) }} />)
+          )}
+          <div className="foot">
+            <Ey d={4.6}>11 v 11 · {s.foot}</Ey>
+          </div>
+        </div>
+      </>
+    );
+  } else if (s.type === "ft") {
+    body = (
+      <>
+        <div className="s1">
+          <Gap h={80} />
+          <Ey d={0.3}>Season {s.season}</Ey>
+          <Gap h={14} />
+          <Big d={0.5}>Full time.</Big>
+        </div>
+        <div className="s2">
+          <Gap h={40} />
+          <Stats d={3.2} items={[[s.stats.games, "GAMES"], [s.stats.goals, "GOALS"], [s.stats.players, "PLAYERS"], [s.stats.members, "MEMBERS"]]} />
+          <Gap h={30} />
+          <Rule d={3.8} />
+          <Gap h={30} />
+          <Ey d={4.2}>That was</Ey>
+          <Gap h={8} />
+          <Big d={4.4} gold>
+            Season {["", "One", "Two", "Three", "Four", "Five"][s.season] ?? s.season}
+          </Big>
+          <Gap />
+          <Ey d={5.2} muted>
+            Season {["", "One", "Two", "Three", "Four", "Five", "Six"][s.season + 1] ?? s.season + 1}
+          </Ey>
+        </div>
+      </>
+    );
+  } else if (s.type === "award") {
+    const [win, ...rest] = s.ids;
+    const name = { pots: "Player of the Season", pp: "Players' Player of the Season", gs: "Goal of the Season" }[s.award];
+    body = (
+      <>
+        <div className="s1">
+          <Gap h={30} />
+          <Ey d={0.2}>{rest.length ? `${name} · ${s.award === "gs" ? "the nominees" : "the shortlist"}` : "Season awards"}</Ey>
+          <Gap h={rest.length ? 50 : 80} />
+          {rest.length ? (
+            <div className="duo tight">
+              {s.ids.map((id, i) => (
+                <div key={id} className="col">
+                  <Ring p={who(id)} size={60} d={0.5 + i * 0.18} />
+                  <A d={0.8 + i * 0.18}>
+                    <div className="nm">{fname(id)}</div>
+                  </A>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Big d={0.45} gold>
+              {name}
+            </Big>
+          )}
+        </div>
+        {s.award === "gs" ? (
+          <div className="s2 bare">
+            <V4Pitch k="box" />
+            <svg className="runs" viewBox="0 0 346 400" preserveAspectRatio="none" aria-hidden="true">
+              <path className="run" d="M60 330 C 120 300, 150 230, 210 215 S 300 150, 318 175" />
+            </svg>
+            <div className="corner">
+              <Ring p={who(win)} size={52} d={3.2} />
+              <A d={3.5}>
+                <div className="ey">Goal of the Season</div>
+                <div className="cn">{who(win)?.name}</div>
+              </A>
+            </div>
+            {s.line && (
+              <div className="foot">
+                <Ey d={5} muted>
+                  {s.line}
+                </Ey>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="s2">
+            <Gap h={6} />
+            <Ring p={who(win)} size={132} d={3.2} big />
+            <Gap h={18} />
+            <Ey d={3.7}>{name}</Ey>
+            <Gap h={6} />
+            <Big d={3.9} gold>
+              {who(win)?.name}
+            </Big>
+            <Gap h={16} />
+            <Rule d={4.3} />
+            <Gap h={14} />
+            {s.line && (
+              <Ey d={4.6} muted>
+                {s.line}
+              </Ey>
+            )}
+          </div>
+        )}
+        <div className="sweep" style={cssVars({ d: "4.8s" })} />
+      </>
+    );
+  }
+  return (
+    <div className={"wcf-hs-card wcf-hs-v4 v4-" + s.type}>
+      <div className={"ph" + (s.type === "ft" ? " lights" : "")} style={{ backgroundImage: `url(${photo})` }} />
+      <div className="vg" />
+      {body}
+    </div>
+  );
+}
+
 function Flip({ to, delay }: { to: number; delay: number }) {
   return (
     <span className="wcf-hs-flip" style={{ ["--fd" as string]: `${delay}s` }}>
@@ -683,6 +1160,11 @@ function AddMoment({ people, today, onClose, onAdd }: { people: Map<string, Pers
           <button type="button" className={kind === "note" ? "on" : ""} onClick={() => setKind("note")}>Moment</button>
           <button type="button" className={kind === "goal" ? "on" : ""} onClick={() => { setKind("goal"); setPicked((p) => p.slice(0, 1)); }}>A goal (with the goal scene)</button>
         </div>
+        {kind === "note" && (
+          <p className="sub">
+            For an award, title it Player of the Season, Players&apos; Player of the Season, Goal of the Season or Golden Glove, and pick the winner first (anyone after them is the shortlist).
+          </p>
+        )}
         <label>
           <span>Title</span>
           <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} placeholder={kind === "goal" ? "e.g. The first ever goal" : "e.g. New club kit arrives"} required />
@@ -1030,6 +1512,107 @@ const historyCss = `
 @keyframes wcfHsSpin{to{transform:rotate(360deg)}}
 @keyframes wcfHsRise{to{opacity:1;transform:none}}
 @keyframes wcfHsShine{to{transform:translateX(140%)}}
+/* The premium scenes (V4Scene) */
+.wcf-hs-v4{position:relative;height:400px;padding:0;overflow:hidden;background:#07090f;border-color:rgba(245,217,122,.22)}
+.wcf-hs-v4 .ph{position:absolute;inset:0;background-size:cover;background-position:center;opacity:.34;transform:scale(1.12);-webkit-mask:linear-gradient(180deg,#000,rgba(0,0,0,.65) 45%,transparent);mask:linear-gradient(180deg,#000,rgba(0,0,0,.65) 45%,transparent)}
+.wcf-hs-ev.in .wcf-hs-v4 .ph{animation:v4Kb 9s cubic-bezier(.2,.75,.2,1) forwards}
+.wcf-hs-ev.in .wcf-hs-v4 .ph.lights{animation:v4Kb 9s cubic-bezier(.2,.75,.2,1) forwards,v4Lights 2.4s cubic-bezier(.2,.75,.2,1) 3.4s forwards}
+.wcf-hs-v4 .vg{position:absolute;inset:0;background:radial-gradient(120% 80% at 50% 0%,transparent 30%,rgba(7,9,15,.85) 80%)}
+.wcf-hs-v4 .s0,.wcf-hs-v4 .s1,.wcf-hs-v4 .s2{position:absolute;inset:0;padding:26px 22px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.wcf-hs-v4 .s2.bare{padding:0;display:block}
+.wcf-hs-ev.in .wcf-hs-v4 .s1{animation:v4Out .7s cubic-bezier(.2,.75,.2,1) 2.9s forwards}
+.wcf-hs-v4 .ey{font:600 10px var(--font-oswald),sans-serif;letter-spacing:.32em;text-transform:uppercase;color:#f5d97a}
+.wcf-hs-v4 .ey.mu{color:#8b95a9}
+.wcf-hs-v4 .a{opacity:0}
+.wcf-hs-ev.in .wcf-hs-v4 .a{animation:v4In 1s cubic-bezier(.2,.75,.2,1) var(--d,0s) forwards}
+.wcf-hs-v4 .m{display:block;overflow:hidden;padding-bottom:.08em;font:800 31px/1.05 var(--display);letter-spacing:-.02em;color:#fff}
+.wcf-hs-v4 .m>span{display:block;transform:translateY(110%)}
+.wcf-hs-v4 .m>span.g{background:linear-gradient(100deg,#c9a24a,#fff3c4 45%,#f5d97a 60%,#c9a24a);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wcf-hs-ev.in .wcf-hs-v4 .m>span{animation:v4Rise 1.1s cubic-bezier(.2,.75,.2,1) var(--d,0s) forwards}
+.wcf-hs-v4 .sub{margin:0;font:500 13px/1.45 var(--sans);color:#aab3c5;max-width:30ch}
+.wcf-hs-v4 .rule{height:1px;width:0;flex:none;background:linear-gradient(90deg,transparent,#f5d97a,transparent)}
+.wcf-hs-ev.in .wcf-hs-v4 .rule{animation:v4Draw 1.3s cubic-bezier(.2,.75,.2,1) var(--d,0s) forwards}
+.wcf-hs-v4 .stats{display:flex;justify-content:center;gap:26px}
+.wcf-hs-v4 .stats b{display:block;font:800 30px/1 var(--display);color:#fff;letter-spacing:-.02em}
+.wcf-hs-v4 .stats b.g{background:linear-gradient(100deg,#c9a24a,#fff3c4 45%,#f5d97a 60%,#c9a24a);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wcf-hs-v4 .stats small{display:block;margin-top:6px;font:600 9px var(--font-oswald),sans-serif;letter-spacing:.26em;color:#8b95a9}
+.wcf-hs-v4 .pt{position:relative;width:var(--sz);height:var(--sz);flex:none}
+.wcf-hs-v4 .pt .im{position:absolute;inset:5px;border-radius:50%;overflow:hidden;clip-path:circle(0% at 50% 50%)}
+.wcf-hs-ev.in .wcf-hs-v4 .pt .im{animation:v4Iris 1.1s cubic-bezier(.2,.75,.2,1) var(--d,0s) forwards}
+.wcf-hs-v4 .pt .ph-av{width:100%;height:100%;border-radius:50%;object-fit:cover;display:grid;place-items:center;font:800 calc(var(--sz) * .34) var(--display);color:#fff}
+.wcf-hs-v4 .pt svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}
+.wcf-hs-v4 .pt circle{fill:none;stroke:#f5d97a;stroke-width:1.4;stroke-dasharray:var(--c);stroke-dashoffset:var(--c)}
+.wcf-hs-ev.in .wcf-hs-v4 .pt circle{animation:v4Ring 1.4s cubic-bezier(.2,.75,.2,1) calc(var(--d,0s) + .15s) forwards}
+.wcf-hs-v4 .pt.big .im{box-shadow:0 0 50px rgba(245,217,122,.18)}
+.wcf-hs-v4 .sweep{position:absolute;inset:0;pointer-events:none;background:linear-gradient(105deg,transparent 40%,rgba(255,243,196,.10) 50%,transparent 60%);transform:translateX(-130%)}
+.wcf-hs-ev.in .wcf-hs-v4 .sweep{animation:v4Sweep 1.8s cubic-bezier(.2,.75,.2,1) var(--d,4s) forwards}
+.wcf-hs-v4 .duo{display:flex;gap:36px;justify-content:center}
+.wcf-hs-v4 .duo.tight{gap:12px}
+.wcf-hs-v4 .col{display:flex;flex-direction:column;align-items:center;min-width:0;max-width:110px}
+.wcf-hs-v4 .nm{font:700 12px var(--sans);color:#e2e8f0;margin-top:8px}
+.wcf-hs-v4 .nm small{display:block;font:600 8.5px var(--font-oswald),sans-serif;letter-spacing:.24em;color:#f5d97a;margin-bottom:3px}
+.wcf-hs-v4 .nm em{font:800 10.5px var(--display);font-style:normal;color:#f5d97a}
+.wcf-hs-v4 .tbl{width:100%;margin-top:16px;text-align:left}
+.wcf-hs-v4 .row,.wcf-hs-v4 .hd{display:grid;grid-template-columns:22px 30px 1fr 44px 44px;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px solid rgba(255,255,255,.07)}
+.wcf-hs-v4 .hd{padding:0 2px 6px;border:0;font:600 8.5px var(--font-oswald),sans-serif;letter-spacing:.24em;color:#8b95a9}
+.wcf-hs-v4 .hd span:nth-child(n+4),.wcf-hs-v4 .row b{text-align:right}
+.wcf-hs-v4 .row .r{font:700 11px var(--display);color:#8b95a9}
+.wcf-hs-v4 .ff{width:30px;height:30px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font:800 11px var(--display);color:#fff}
+.wcf-hs-v4 .row .n{font:600 13px var(--sans);color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-hs-v4 .row b{font:800 15px var(--display);color:#fff}
+.wcf-hs-v4 .row.w b,.wcf-hs-v4 .row.w .n{color:#f5d97a}
+.wcf-hs-ev.in .wcf-hs-v4 .row.dim{animation:v4In 1s cubic-bezier(.2,.75,.2,1) var(--d) forwards,v4Dim .8s cubic-bezier(.2,.75,.2,1) var(--dd,2.2s) forwards}
+.wcf-hs-v4 .note{margin-top:14px;font:600 10px var(--font-oswald),sans-serif;letter-spacing:.24em;text-transform:uppercase;color:#f5d97a}
+.wcf-hs-v4 .row.c{grid-template-columns:22px 26px 1fr 40px;padding:6px 2px}
+.wcf-hs-v4 .row.c .ff{width:26px;height:26px;font-size:10px}
+.wcf-hs-v4 .row.c .n{font-size:12px}
+.wcf-hs-v4 .cutl{position:relative;height:1px;margin:2px 0;background:#f5d97a;transform:scaleX(0);transform-origin:left}
+.wcf-hs-ev.in .wcf-hs-v4 .cutl{animation:v4Sx 1s cubic-bezier(.2,.75,.2,1) 1.8s forwards}
+.wcf-hs-v4 .cutl span{position:absolute;right:0;top:-15px;font:600 8.5px var(--font-oswald),sans-serif;letter-spacing:.26em;color:#f5d97a;opacity:0}
+.wcf-hs-ev.in .wcf-hs-v4 .cutl span{animation:v4In .8s cubic-bezier(.2,.75,.2,1) 2.2s forwards}
+.wcf-hs-v4 .pitch{position:absolute;inset:0;width:100%;height:100%}
+.wcf-hs-v4 .pitch *{fill:none;stroke:rgba(255,255,255,.14);stroke-width:1;stroke-dasharray:1400;stroke-dashoffset:1400}
+.wcf-hs-ev.in .wcf-hs-v4 .pitch *{animation:v4Ring 2.2s cubic-bezier(.2,.75,.2,1) 3s forwards}
+.wcf-hs-v4 .top{position:absolute;top:16px;left:0;right:0;text-align:center}
+.wcf-hs-v4 .foot{position:absolute;left:0;right:0;bottom:18px;text-align:center}
+.wcf-hs-v4 .pos{position:absolute;width:76px;margin-left:-38px;display:flex;flex-direction:column;align-items:center}
+.wcf-hs-v4 .pos .nm{margin-top:5px;font-size:10.5px;white-space:nowrap}
+.wcf-hs-v4 .cap{position:absolute;right:16px;top:-2px;width:15px;height:15px;border-radius:50%;background:#f5d97a;color:#111;font:900 8.5px/15px var(--display);text-align:center;opacity:0}
+.wcf-hs-ev.in .wcf-hs-v4 .cap{animation:v4In .6s cubic-bezier(.2,.75,.2,1) 4.6s forwards}
+.wcf-hs-v4 .dots{display:flex;gap:6px;justify-content:center;flex-wrap:nowrap}
+.wcf-hs-v4 .dots i{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.75)}
+.wcf-hs-ev.in .wcf-hs-v4 .dots i.o{animation:v4Empty .8s cubic-bezier(.2,.75,.2,1) 1.4s forwards,v4FillGold .8s cubic-bezier(.2,.75,.2,1) var(--fd,4.2s) forwards}
+.wcf-hs-v4 .swap{position:relative;height:66px;width:200px;flex:none}
+.wcf-hs-v4 .swap b{position:absolute;inset:0;font:800 60px/66px var(--display);letter-spacing:-.03em;color:#fff;opacity:0}
+.wcf-hs-ev.in .wcf-hs-v4 .swap b.a1{animation:v4In .8s cubic-bezier(.2,.75,.2,1) .3s forwards,v4Out .5s cubic-bezier(.2,.75,.2,1) 1.5s forwards}
+.wcf-hs-ev.in .wcf-hs-v4 .swap b.a2{animation:v4In .6s cubic-bezier(.2,.75,.2,1) 1.8s forwards,v4Out .5s cubic-bezier(.2,.75,.2,1) 4s forwards}
+.wcf-hs-v4 .swap b.a3{background:linear-gradient(100deg,#c9a24a,#fff3c4 45%,#f5d97a 60%,#c9a24a);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wcf-hs-ev.in .wcf-hs-v4 .swap b.a3{animation:v4In .8s cubic-bezier(.2,.75,.2,1) 4.3s forwards}
+.wcf-hs-v4 .huge{display:block;font:800 110px/1 var(--display);letter-spacing:-.05em;background:linear-gradient(100deg,#c9a24a,#fff3c4 45%,#f5d97a 60%,#c9a24a);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wcf-hs-v4 .score{font:800 22px var(--display);color:#fff}
+.wcf-hs-v4 .xi{position:absolute;width:10px;height:10px;margin:-5px;border-radius:50%;background:#f8fafc;box-shadow:0 0 12px rgba(255,255,255,.6);opacity:0;transform:scale(.4)}
+.wcf-hs-v4 .xi.red{background:#e42a36;box-shadow:0 0 12px rgba(228,42,54,.7)}
+.wcf-hs-ev.in .wcf-hs-v4 .xi{animation:v4Pop .7s cubic-bezier(.2,.75,.2,1) var(--d) forwards}
+.wcf-hs-v4 .runs{position:absolute;inset:0;width:100%;height:100%}
+.wcf-hs-v4 .run{fill:none;stroke:#f5d97a;stroke-width:2;stroke-linecap:round;filter:drop-shadow(0 0 6px rgba(245,217,122,.7));stroke-dasharray:520;stroke-dashoffset:520}
+.wcf-hs-ev.in .wcf-hs-v4 .run{animation:v4Ring 1.8s cubic-bezier(.2,.75,.2,1) 3.4s forwards}
+.wcf-hs-v4 .corner{position:absolute;left:22px;top:22px;display:flex;align-items:center;gap:12px;text-align:left}
+.wcf-hs-v4 .cn{font:700 14px var(--sans);color:#fff;margin-top:4px}
+.wcf-hs.still .wcf-hs-v4 .ph{animation:none!important;transform:none}
+@keyframes v4Kb{to{transform:scale(1)}}
+@keyframes v4Lights{to{opacity:.08;filter:grayscale(.6)}}
+@keyframes v4Out{to{opacity:0;transform:translateY(-6px)}}
+@keyframes v4In{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes v4Rise{to{transform:none}}
+@keyframes v4Draw{to{width:var(--w,220px)}}
+@keyframes v4Iris{to{clip-path:circle(50% at 50% 50%)}}
+@keyframes v4Ring{to{stroke-dashoffset:0}}
+@keyframes v4Sweep{to{transform:translateX(130%)}}
+@keyframes v4Dim{to{opacity:.3}}
+@keyframes v4Sx{to{transform:none}}
+@keyframes v4Empty{to{background:transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.5)}}
+@keyframes v4FillGold{to{background:#f5d97a;box-shadow:0 0 10px rgba(245,217,122,.7)}}
+@keyframes v4Pop{to{opacity:1;transform:none}}
 .wcf-hs.still .wcf-hs-ev{opacity:1;transform:none;transition:none}
 .wcf-hs.still *{animation-duration:.01ms!important;animation-delay:0s!important;transition-duration:.01ms!important;transition-delay:0s!important}
 `;

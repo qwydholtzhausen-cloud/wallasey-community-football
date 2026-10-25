@@ -30,7 +30,16 @@ export type Scene =
   // The first Man of the Match: that game's count, then the medal.
   | { type: "motmcount"; top: { id: string; votes: number; goals: number }[]; total: number; rest: number; headline: string; stamp: string }
   // An admin-added "Golden Glove" moment: the save, then the trophy.
-  | { type: "glove"; id: string };
+  | { type: "glove"; id: string }
+  // The premium (V4) scenes: a build-up, then the payoff.
+  | { type: "live"; ids: string[]; total: number }
+  | { type: "callup"; ids: string[]; max: number; head: string }
+  | { type: "potm"; id: string; month: string; rows: { id: string; wins: number; votes: number }[]; note: string | null; stats: { wins: number; votes: number; goals: number } }
+  | { type: "totm"; month: string; qualified: number; table: { id: string; rating: number }[]; team: { id: string; line: "front" | "mid" | "back"; captain: boolean; rating: number }[] }
+  | { type: "goals"; n: number; head: string; game: number; score: string; scorers: { id: string; goals: number }[] }
+  | { type: "xi"; foot: string }
+  | { type: "ft"; season: number; stats: { games: number; goals: number; players: number; members: number } }
+  | { type: "award"; award: "pots" | "pp" | "gs"; ids: string[]; line: string };
 
 export type HEvent = {
   key: string;
@@ -63,6 +72,8 @@ export function computeHistory(input: {
   teams: { white: string; red: string };
   // Games still to come, for "Next: the first 11-a-side".
   upcoming?: HGame[];
+  // The first Team of the Month, once it's out (app/ui/totm.tsx data).
+  totm?: { launched: string; monthLabel: string; qualified: number; table: { id: string; rating: number }[]; team: { id: string; line: "front" | "mid" | "back"; captain: boolean; rating: number }[] } | null;
 }) {
   const { teams } = input;
   const name = new Map(input.people.map((p) => [p.id, p.display_name]));
@@ -82,7 +93,7 @@ export function computeHistory(input: {
   // Members, in the order they joined.
   const members = input.people.filter((p) => p.created_at).sort((a, b) => a.created_at!.localeCompare(b.created_at!));
   if (members.length >= 2)
-    ev.push({ key: "app-live", date: members[0].created_at!.slice(0, 10), order: 0, title: "The app goes live", text: "The first two members sign up.", scene: { type: "people", ids: members.slice(0, 2).map((m) => m.id) } });
+    ev.push({ key: "app-live", date: members[0].created_at!.slice(0, 10), order: 0, title: "The app goes live", text: "The first two members sign up.", scene: { type: "live", ids: members.slice(0, 2).map((m) => m.id), total: input.people.length } });
   for (const m of [50, 100, 150, 200, 300, 400, 500]) {
     if (members.length < m) break;
     const at = members[m - 1].created_at!.slice(0, 10);
@@ -122,7 +133,7 @@ export function computeHistory(input: {
   const promo = games.find((g) => g.bookings.some((b) => b.promoted_at));
   if (promo) {
     const ids = promo.bookings.filter((b) => b.promoted_at).map((b) => b.player_id);
-    ev.push({ key: "first-promotion", date: promo.date, order: 40, title: "First time off the waiting list", text: ids.length > 1 ? `${Num(ids.length)} spots opened up, and the first ${num(ids.length)} in the queue got their game.` : "A spot opened up, and the first in the queue got their game.", scene: { type: "people", ids: ids.slice(0, 3) } });
+    ev.push({ key: "first-promotion", date: promo.date, order: 40, title: "First time off the waiting list", text: ids.length > 1 ? `${Num(ids.length)} spots opened up, and the first ${num(ids.length)} in the queue got their game.` : "A spot opened up, and the first in the queue got their game.", scene: { type: "callup", ids: ids.slice(0, 2), max: promo.max_players, head: `${day(promo.date).toUpperCase()} · ${promo.kickoff}` } });
   }
 
   // Most goals by one player in a game: every time the record went up.
@@ -168,7 +179,9 @@ export function computeHistory(input: {
       const m = marks[mi];
       const prev = ev.filter((e) => e.key.startsWith("goals-")).at(-1);
       const gap = prev ? Math.round((Date.parse(g.date) - Date.parse(prev.date)) / 86400000) : 0;
-      ev.push({ key: "goals-" + m, date: g.date, order: 65, title: `${m} club goals`, text: prev ? `${gap <= 1 ? "A day" : `${Num(gap)} days`} after the ${prev.title.split(" ")[0]}th.` : `Reached in the club's ${nth(i + 1)} game.`, scene: { type: "count", n: m, label: "club goals" } });
+      const scorers = (goalsBy.get(g.id) ?? []).filter((x) => x.goals > 0).sort((a, b) => b.goals - a.goals).slice(0, 4).map((x) => ({ id: x.player_id, goals: x.goals }));
+      const long = new Date(g.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+      ev.push({ key: "goals-" + m, date: g.date, order: 65, title: `${m} club goals`, text: prev ? `${gap <= 1 ? "A day" : `${Num(gap)} days`} after the ${prev.title.split(" ")[0]}th.` : `Reached in the club's ${nth(i + 1)} game.`, scene: { type: "goals", n: m, head: long, game: i + 1, score: `${teams.white} ${g.team_white_score}–${g.team_red_score} ${teams.red}`, scorers } });
       mi++;
     }
   });
@@ -185,7 +198,7 @@ export function computeHistory(input: {
 
   // The first 11-a-side.
   const big = games.find((g) => g.max_players >= 20 || /11/.test(g.pitch));
-  if (big) ev.push({ key: "first-11", date: big.date, order: 12, title: "The first 11-a-side", text: `${playing(big).length} players, ${big.kickoff} kick-off.`, scene: scoreScene(big) });
+  if (big) ev.push({ key: "first-11", date: big.date, order: 12, title: "The first 11-a-side", text: `${playing(big).length} players, ${big.kickoff} kick-off.`, scene: { type: "xi", foot: `${teams.white} ${big.team_white_score}–${big.team_red_score} ${teams.red}` } });
 
   // Player of the Month, announced on the 1st of the next month.
   for (const p of input.potm) {
@@ -193,7 +206,49 @@ export function computeHistory(input: {
     const [y, m] = p.monthKey.split("-").map(Number);
     const ann = `${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, "0")}-01`;
     const label = new Date(Date.UTC(y, m - 1, 15)).toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
-    ev.push({ key: "potm-" + p.monthKey, date: ann, order: 5, title: `${label}'s Player of the Month`, text: p.winnerIds.length > 1 ? `Shared between ${p.winnerIds.map((id) => first(nm(id))).join(" and ")}.` : `${nm(p.winnerIds[0])}.`, scene: { type: "people", ids: p.winnerIds } });
+    // The month's table, the way it was decided: wins, then votes, then goals.
+    const st = new Map<string, { id: string; wins: number; votes: number; goals: number }>();
+    const row = (id: string) => st.get(id) ?? (st.set(id, { id, wins: 0, votes: 0, goals: 0 }), st.get(id)!);
+    const monthGames = games.filter((g) => g.date.startsWith(p.monthKey));
+    const ids = new Set(monthGames.map((g) => g.id));
+    for (const g of monthGames) (input.motmWinnerIdsByGame[g.id] ?? []).forEach((id) => row(id).wins++);
+    input.motmVotes.forEach((v) => ids.has(v.game_id) && row(v.candidate_id).votes++);
+    input.goals.forEach((x) => ids.has(x.game_id) && st.has(x.player_id) && (row(x.player_id).goals += x.goals));
+    const win = p.winnerIds[0];
+    const rows = [...st.values()].sort((a, b) => Number(b.id === win) - Number(a.id === win) || b.wins - a.wins || b.votes - a.votes || b.goals - a.goals).slice(0, 4);
+    const [a, b] = rows;
+    const note = !b || b.wins !== a.wins ? null : b.votes !== a.votes ? `Level on wins · decided on votes, ${a.votes}–${b.votes}` : `Level on wins and votes · decided on goals, ${a.goals}–${b.goals}`;
+    const one = p.winnerIds.length === 1 && rows[0]?.id === win;
+    ev.push({ key: "potm-" + p.monthKey, date: ann, order: 5, title: `${label}'s Player of the Month`, text: p.winnerIds.length > 1 ? `Shared between ${p.winnerIds.map((id) => first(nm(id))).join(" and ")}.` : `${nm(p.winnerIds[0])}.`, scene: one ? { type: "potm", id: win, month: label, rows: rows.map(({ id, wins, votes }) => ({ id, wins, votes })), note, stats: { wins: a.wins, votes: a.votes, goals: a.goals } } : { type: "people", ids: p.winnerIds } });
+  }
+
+  // The first Team of the Month, on the day Team of the Month launched.
+  if (input.totm)
+    ev.push({
+      key: "first-totm",
+      date: input.totm.launched,
+      order: 6,
+      title: "The first Team of the Month",
+      text: `${input.totm.monthLabel}'s best eight, by match rating, captained by the Player of the Month.`,
+      scene: {
+        type: "totm",
+        month: input.totm.monthLabel,
+        qualified: input.totm.qualified,
+        // The eight first (the captain is always in it), then the rest, each by rating.
+        table: [...input.totm.table].sort((a, b) => Number(input.totm!.team.some((t) => t.id === b.id)) - Number(input.totm!.team.some((t) => t.id === a.id)) || b.rating - a.rating).slice(0, 10),
+        team: input.totm.team,
+      },
+    });
+
+  // Full time on a season: its last game, once there are none left that year in December.
+  const years = [...new Set(games.map((g) => g.date.slice(0, 4)))];
+  for (const y of years) {
+    const yg = games.filter((g) => g.date.startsWith(y));
+    const lastG = yg[yg.length - 1];
+    if (!lastG.date.startsWith(`${y}-12`) || (input.upcoming ?? []).some((g) => g.date.startsWith(y))) continue;
+    const pl = new Set(yg.flatMap((g) => playing(g).map((b) => b.player_id)));
+    const season = Number(y) - 2025;
+    ev.push({ key: "season-ft-" + y, date: lastG.date, order: 95, title: `Season ${num(season).replace(/^./, (c) => c.toUpperCase())}: full time`, text: `The last game of ${y}.`, scene: { type: "ft", season, stats: { games: yg.length, goals: yg.reduce((t, g) => t + g.team_white_score! + g.team_red_score!, 0), players: pl.size, members: input.people.length } } });
   }
 
   // Moments added by admins, on the day they happened.
@@ -204,8 +259,22 @@ export function computeHistory(input: {
       order: m.kind === "goal" ? 18 : 25,
       title: m.title,
       text: m.body ?? "",
-      // "Golden Glove" in the title, with the keeper picked, gets the save scene.
-      scene: m.kind === "goal" ? { type: "goal", id: m.player_ids[0] ?? null, date: m.happened_on } : /golden glove/i.test(m.title) && m.player_ids.length === 1 ? { type: "glove", id: m.player_ids[0] } : m.player_ids.length ? { type: "people", ids: m.player_ids } : null,
+      // Award titles get their scenes: the winner is the first player picked
+      // (the rest are the shortlist). "Golden Glove" gets the save.
+      scene:
+        m.kind === "goal"
+          ? { type: "goal", id: m.player_ids[0] ?? null, date: m.happened_on }
+          : /golden glove/i.test(m.title) && m.player_ids.length === 1
+            ? { type: "glove", id: m.player_ids[0] }
+            : m.player_ids.length && /players.?\s*player/i.test(m.title)
+              ? { type: "award", award: "pp", ids: m.player_ids, line: m.body ?? "" }
+              : m.player_ids.length && /player of the season/i.test(m.title)
+                ? { type: "award", award: "pots", ids: m.player_ids, line: m.body ?? "" }
+                : m.player_ids.length && /goal of the season/i.test(m.title)
+                  ? { type: "award", award: "gs", ids: m.player_ids, line: m.body ?? "" }
+                  : m.player_ids.length
+                    ? { type: "people", ids: m.player_ids }
+                    : null,
       added: { id: m.id },
     });
 
