@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { kickoffCutoff, nowInLondon, previousMonthKey, nextMonthStart, monthReleaseAt, pseudoUtcFromRealInstant, MATCH_DURATION_MINUTES, MOTM_VOTE_WINDOW_MINUTES } from "../time";
 import { computeWrapped, WRAPPED_MIN_APPS, type WrappedGame } from "../wrapped";
 import { wrappedThemeFor } from "../wrappedThemes";
+import { isPostponed } from "../postponed";
 
 // GaffAI's two back-end checks, both plain queries with no AI call:
 //  - app health: are the background jobs running, are the tables the app
@@ -54,6 +55,7 @@ function fmtDate(date: string) {
 
 interface GameRow {
   id: string;
+  postponed_at?: string | null;
   date: string;
   kickoff: string;
   venue: string;
@@ -102,11 +104,11 @@ export async function checkAppHealth(admin: SupabaseClient) {
   // Played games: scores entered, weather saved.
   const { data: gameData } = await admin
     .from("games")
-    .select("id, date, kickoff, venue, published, team_white_score, team_red_score, bookings(player_id, waiting)")
+    .select("id, date, kickoff, venue, published, team_white_score, team_red_score, postponed_at, bookings(player_id, waiting)")
     .is("called_off_at", null)
     .gte("date", "2026-08-01")
     .lte("date", now.slice(0, 10));
-  const played = ((gameData ?? []) as GameRow[]).filter((g) => g.published && g.bookings.some((b) => !b.waiting) && kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= now);
+  const played = ((gameData ?? []) as GameRow[]).filter((g) => g.published && !isPostponed(g) && g.bookings.some((b) => !b.waiting) && kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= now);
 
   const noScore = played.filter((g) => g.team_white_score == null && kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES + 18 * 60) <= now);
   if (noScore.length) {
@@ -171,6 +173,7 @@ async function fetchAll<T>(build: (from: number, to: number) => PromiseLike<{ da
 
 interface WrappedGameRow {
   id: string;
+  postponed_at?: string | null;
   date: string;
   kickoff: string;
   venue: string;
@@ -194,7 +197,7 @@ export async function checkWrapped(admin: SupabaseClient, period?: string) {
   const [{ data: gameData, error: gamesError }, goals, votes, predictions, { data: ratingRows }, { data: wx }] = await Promise.all([
     admin
       .from("games")
-      .select("id, date, kickoff, venue, published, max_players, special, team_white_score, team_red_score, bookings(player_id, waiting, team, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name))")
+      .select("id, date, kickoff, venue, published, max_players, special, team_white_score, team_red_score, postponed_at, bookings(player_id, waiting, team, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name))")
       .is("called_off_at", null)
       .lt("date", end)
       .order("date"),
@@ -211,7 +214,7 @@ export async function checkWrapped(admin: SupabaseClient, period?: string) {
   ]);
 
   if (gamesError) throw new Error(`Couldn't read games: ${gamesError.message}`);
-  const all = ((gameData ?? []) as unknown as WrappedGameRow[]).filter((g) => g.published);
+  const all = ((gameData ?? []) as unknown as WrappedGameRow[]).filter((g) => g.published && !isPostponed(g)); // a postponed game has no date yet
   const inPeriod = all.filter((g) => g.date >= start);
   const votingClosed = (g: WrappedGameRow) => kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) <= now;
   const hasPlayers = (g: WrappedGameRow) => g.bookings.some((b) => !b.waiting);

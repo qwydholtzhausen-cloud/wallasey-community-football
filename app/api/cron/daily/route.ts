@@ -4,6 +4,7 @@ import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
 import { kickoffCutoff, nowInLondon, previousMonthKey, monthReleaseAt, nextMonthStart, MOTM_VOTE_WINDOW_MINUTES, MATCH_DURATION_MINUTES } from "../../../../lib/time";
 import { generateWeeklyDigest, generateWrappedReview } from "../../../../lib/gaffai/digest";
 import { recordHeartbeat } from "../../../../lib/gaffai/health";
+import { isPostponed } from "../../../../lib/postponed";
 import { motmWinners, goalsLookup } from "../../../../lib/motm";
 
 interface CronBooking {
@@ -149,8 +150,8 @@ export async function GET(req: Request) {
   const monthKey = todayStr.slice(0, 7);
   const reviewKey = `gaffai-wrapped-review-${monthKey}`;
   // typedGames only has scored games, and today's isn't scored yet.
-  const { data: monthFixtures } = await admin.from("games").select("date").eq("published", true).is("called_off_at", null).gte("date", `${monthKey}-01`).lt("date", nextMonthStart(monthKey)).order("date");
-  const lastOfMonth = (monthFixtures ?? []).at(-1);
+  const { data: monthFixtures } = await admin.from("games").select("date, postponed_at").eq("published", true).is("called_off_at", null).gte("date", `${monthKey}-01`).lt("date", nextMonthStart(monthKey)).order("date");
+  const lastOfMonth = (monthFixtures ?? []).filter((g) => !isPostponed(g)).at(-1);
   if (!monthKey.endsWith("-12") && lastOfMonth?.date === todayStr && !notifiedKeys.has(reviewKey)) {
     try {
       const review = await generateWrappedReview(admin, monthKey);
