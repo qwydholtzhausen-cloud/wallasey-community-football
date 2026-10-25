@@ -7110,7 +7110,6 @@ function App({ session }: { session: Session }) {
             myId={myId}
             profiles={profiles}
             askConfirm={askConfirm}
-            onRefresh={loadAll}
             feedView={feedView}
             setFeedView={setFeedView}
             showArchived={showArchived}
@@ -16899,11 +16898,6 @@ a.wcf-set-link{text-decoration:none}
 .wcf-faces.walk .wcf-face{animation:wcfWalkIn .7s var(--d) cubic-bezier(.3,1.3,.5,1) both}
 @keyframes wcfWalkIn{0%{opacity:0;transform:translateX(-60px)}60%{opacity:1;transform:translate(4px,-4px)}80%{transform:none}100%{transform:none}}
 /* Pull to refresh: the net */
-.wcf-net{height:0;overflow:hidden;position:relative;margin:0 -14px}
-.wcf-net svg:first-child{position:absolute;left:0;right:0;bottom:0;width:100%;height:130px}
-.wcf-net-ball{position:absolute;left:50%;bottom:8px;width:26px;height:26px;margin-left:-13px;opacity:0}
-.wcf-net-label{position:absolute;left:0;right:0;bottom:6px;text-align:center;font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
-.wcf-net-label.ok{color:var(--green)}
 /* Empty screens */
 .wcf-es{display:flex;flex-direction:column;align-items:center;text-align:center;padding:18px 8px 24px;gap:12px}
 .wcf-es.small{padding:6px 8px 12px;gap:8px}

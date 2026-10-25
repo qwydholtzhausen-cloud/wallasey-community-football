@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { Avatar, TickNum, avatarFor, listNames, motionAllowed } from "./shared";
 import { EmptyScene } from "./EmptyScene";
 import { CalmFeed, CalmFeedTabs, type CalmFeedProps } from "./calmfeed";
@@ -163,127 +163,6 @@ export function reactBurst(btn: HTMLElement, emoji: string, newCount: number) {
       }, i * 180);
   }
 }
-// Pull down at the top of the Feed: a goal net stretches out, and letting
-// go fires a ball into it while everything reloads. Touch only, and all done
-// on the DOM so dragging never re-renders the app.
-export function PullNet({ onRefresh }: { onRefresh: () => Promise<unknown> }) {
-  const wrap = useRef<HTMLDivElement>(null);
-  const refresh = useRef(onRefresh);
-  refresh.current = onRefresh;
-  useEffect(() => {
-    const el = wrap.current;
-    const scroller = el?.closest(".wcf-main") as HTMLElement | null;
-    if (!el || !scroller) return;
-    const hs = Array.from(el.querySelectorAll<SVGPathElement>(".nh"));
-    const vs = Array.from(el.querySelectorAll<SVGPathElement>(".nv"));
-    const label = el.querySelector(".wcf-net-label") as HTMLElement;
-    const ball = el.querySelector(".wcf-net-ball") as SVGElement;
-    let startY: number | null = null;
-    let pull = 0;
-    let busy = false;
-    const draw = (bulge: number) => {
-      hs.forEach((p, i) => {
-        const y = 12 + i * 17;
-        p.setAttribute("d", `M12 ${y} Q 160 ${y - bulge * (0.3 + i / 9)} 308 ${y}`);
-      });
-      vs.forEach((p, i) => {
-        const x = 12 + i * (296 / 12);
-        const d = Math.max(0, 1 - Math.abs(x - 160) / 170);
-        p.setAttribute("d", `M${x} 6 Q ${x} 78 ${x + (x - 160) * 0.04} ${130 - bulge * d * 0.9}`);
-      });
-    };
-    const set = (px: number) => {
-      pull = Math.max(0, Math.min(130, px));
-      el.style.height = pull + "px";
-      draw((pull / 130) * 8);
-      label.textContent = pull > 100 ? "Let go to refresh" : "Pull to refresh";
-    };
-    draw(0);
-    const start = (e: TouchEvent) => {
-      if (busy || scroller.scrollTop > 0) return;
-      startY = e.touches[0].clientY;
-      el.style.transition = "";
-    };
-    const move = (e: TouchEvent) => {
-      if (startY == null) return;
-      const dy = e.touches[0].clientY - startY;
-      set(dy > 0 ? dy * 0.5 : 0);
-    };
-    const end = async () => {
-      if (startY == null) return;
-      startY = null;
-      if (pull <= 100) {
-        el.style.transition = "height .3s";
-        return set(0);
-      }
-      busy = true;
-      el.style.transition = "height .25s";
-      el.style.height = "130px";
-      label.textContent = "";
-      label.classList.remove("ok");
-      if (motionAllowed()) {
-        ball.animate(
-          [
-            { opacity: 1, transform: "translateY(30px) scale(1.5)" },
-            { opacity: 1, transform: "translateY(-60px) scale(.8)" },
-          ],
-          { duration: 260, easing: "cubic-bezier(.3,.7,.4,1)", fill: "forwards" },
-        );
-        const t0 = performance.now() + 260;
-        const wob = () => {
-          const t = (performance.now() - t0) / 1000;
-          if (t < 0) return requestAnimationFrame(wob);
-          draw(34 * Math.exp(-t * 4) * Math.cos(t * 16));
-          if (t < 1.1) requestAnimationFrame(wob);
-          else draw(0);
-        };
-        requestAnimationFrame(wob);
-      }
-      await Promise.all([refresh.current().catch(() => null), new Promise((r) => setTimeout(r, 900))]);
-      ball.getAnimations().forEach((a) => a.cancel());
-      label.textContent = "✓ Up to date";
-      label.classList.add("ok");
-      setTimeout(() => {
-        el.style.transition = "height .45s cubic-bezier(.3,1.3,.5,1)";
-        set(0);
-        label.textContent = "";
-        busy = false;
-      }, 900);
-    };
-    scroller.addEventListener("touchstart", start, { passive: true });
-    scroller.addEventListener("touchmove", move, { passive: true });
-    scroller.addEventListener("touchend", end);
-    scroller.addEventListener("touchcancel", end);
-    return () => {
-      scroller.removeEventListener("touchstart", start);
-      scroller.removeEventListener("touchmove", move);
-      scroller.removeEventListener("touchend", end);
-      scroller.removeEventListener("touchcancel", end);
-    };
-  }, []);
-  return (
-    <div className="wcf-net" ref={wrap} aria-hidden>
-      <svg viewBox="0 0 320 130" preserveAspectRatio="none">
-        <rect x="0" y="0" width="320" height="130" fill="#0a1424" />
-        {Array.from({ length: 7 }, (_, i) => (
-          <path key={"h" + i} className="nh" fill="none" stroke="rgba(226,232,240,.55)" strokeWidth="1" />
-        ))}
-        {Array.from({ length: 13 }, (_, i) => (
-          <path key={"v" + i} className="nv" fill="none" stroke="rgba(226,232,240,.4)" strokeWidth="1" />
-        ))}
-        <rect x="6" y="0" width="6" height="130" fill="#e5e7eb" />
-        <rect x="308" y="0" width="6" height="130" fill="#e5e7eb" />
-        <rect x="6" y="0" width="308" height="6" fill="#e5e7eb" />
-      </svg>
-      <svg className="wcf-net-ball" viewBox="0 0 24 24" fill="#fff" stroke="#0d0d1a" strokeWidth="1.3">
-        <circle cx="12" cy="12" r="10.5" />
-        <path d="M12 7.5l3 2.2-1.1 3.6h-3.8L9 9.7z" fill="#0d0d1a" />
-      </svg>
-      <div className="wcf-net-label" />
-    </div>
-  );
-}
-
 // ── The Feed tab ──
 // Results, MOTM, records, milestones and the pot, newest first, grouped by
 // week, with reactions; plus the Boot Room tab when it's open. The posts
@@ -295,7 +174,6 @@ export function FeedTab({
   myId,
   profiles,
   askConfirm,
-  onRefresh,
   feedView,
   setFeedView,
   showArchived,
@@ -320,7 +198,6 @@ export function FeedTab({
   myId: string;
   profiles: { id: string; display_name: string; avatar_url?: string | null }[];
   askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
-  onRefresh: () => Promise<unknown>;
   feedView: "feed" | "bootroom";
   setFeedView: (v: "feed" | "bootroom") => void;
   showArchived: boolean;
@@ -378,7 +255,6 @@ export function FeedTab({
 
   return (
     <>
-      {feedView === "feed" && !showArchived && <PullNet onRefresh={onRefresh} />}
       {feedView === "feed" && !showArchived && stories}
       {calm && !showArchived && bootRoomVisible && <CalmFeedTabs view={feedView} setView={setFeedView} />}
       {!calm && !showArchived && (
