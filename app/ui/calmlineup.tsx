@@ -229,8 +229,5 @@ export const calmLineupCss = `
 .cl-backbtn{display:block;width:100%;margin:16px 0 8px;padding:13px;border-radius:14px;border:1px solid rgba(245,217,122,.45);background:rgba(245,217,122,.08);color:#f5d97a;font:800 13.5px var(--display);cursor:pointer}
 .cl-sheet{animation:clUp .45s cubic-bezier(.2,.9,.3,1) both}
 @keyframes clUp{from{opacity:0;transform:translateY(40px)}}
-@media (prefers-reduced-motion: reduce){.cl-hat,.cl-hat *,.cl-confetti,.cl-head i.live::before,.cl-sh,.cl-sh button.back{width:auto;height:38px;padding:0 14px 0 10px;border-radius:12px;border:0;background:linear-gradient(180deg,#fff3c4,#f5d97a);color:#1a1405;font:800 13px var(--display);display:flex;align-items:center;gap:4px;box-shadow:0 8px 18px -10px rgba(245,217,122,.9)}
-.cl-sh button.back em{font-style:normal;font-size:20px;line-height:1;margin-top:-2px}
-.cl-backbtn{display:block;width:100%;margin:16px 0 8px;padding:13px;border-radius:14px;border:1px solid rgba(245,217,122,.45);background:rgba(245,217,122,.08);color:#f5d97a;font:800 13.5px var(--display);cursor:pointer}
-.cl-sheet{animation:none!important}}
+@media (prefers-reduced-motion: reduce){.cl-hat,.cl-hat *,.cl-confetti,.cl-head i.live::before,.cl-sh,.cl-sheet{animation:none!important}}
 `;
