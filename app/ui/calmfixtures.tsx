@@ -100,16 +100,19 @@ export function CalmTicket({ day, num, month, tag, title, meta, kickoffMs, badge
   );
 }
 
-export function CalmMonth({ label, summary, photo, children }: { label: string; summary: [string, string]; photo: string; children: ReactNode }) {
+export function CalmMonth({ label, summary, photo, children }: { label: string; summary: string[]; photo: string; children: ReactNode }) {
   return (
     <section className="cf-month">
       <div className="ph" style={{ backgroundImage: `url(${photo})` }} />
       <div className="cf-hd">
         <h4>{label}</h4>
         <span>
-          {summary[0]}
-          <br />
-          {summary[1]}
+          {summary.map((line, i) => (
+            <span key={i}>
+              {i > 0 && <br />}
+              {line}
+            </span>
+          ))}
         </span>
       </div>
       <div className="cf-rule" />

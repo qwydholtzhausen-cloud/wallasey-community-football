@@ -1457,7 +1457,7 @@ function SignIn() {
         </div>
         <div className="wcf-signin-wordmark">
           WIRRAL
-          <div className="wcf-signin-wordmark-dim1">COMM.</div>
+          <div className="wcf-signin-wordmark-dim1">COMMUNITY</div>
           <div className="wcf-signin-wordmark-dim2">FOOTBALL</div>
         </div>
       </div>
@@ -6549,7 +6549,7 @@ function App({ session }: { session: Session }) {
           className={"wcf-role " + (isAdmin ? "admin" : "") + (tab === "account" ? " on" : "")}
           onClick={() => setTab(tab === "account" ? "fixtures" : "account")}
         >
-          <span className="dot" />
+          <Avatar className="wcf-role-face" name={myProfile.display_name} avatarUrl={myProfile.avatar_url} background={avatarFor(myProfile.display_name).gradient} />
           <span className="wcf-role-name">{myProfile.display_name.split(" ")[0].replace(/[()]/g, "")}</span>
           {myUnreadMessages.length > 0 && <span className="wcf-role-unread">{myUnreadMessages.length}</span>}
         </button>
@@ -6580,7 +6580,9 @@ function App({ session }: { session: Session }) {
             <small>{ptr.phase === "refresh" ? "Refreshing" : ptr.phase === "done" ? "Up to date" : ptr.pull >= PTR_TRIGGER ? "Let go" : "Pull to refresh"}</small>
           </div>
         )}
-        <div className="wcf-heading">
+        {/* The nav already says which tab this is, so the title is only for
+            screen readers unless it carries a NEW chip or admin buttons. */}
+        <div className={"wcf-heading" + ((tab === "fixtures" && (isAdmin || fxChip > 0)) || (tab === "feed" && feedView === "feed" && !showArchived && (feedFresh?.keys.size ?? 0) > 0) ? "" : " quiet")}>
           <div>
             <h2>{heading}{tab === "fixtures" && fxChip > 0 && <span className="wcf-new-chip">{fxChip} NEW</span>}{tab === "feed" && feedView === "feed" && !showArchived && (feedFresh?.keys.size ?? 0) > 0 && <span className="wcf-new-chip">{feedFresh!.keys.size} NEW</span>}</h2>
           </div>
@@ -6942,10 +6944,13 @@ function App({ session }: { session: Session }) {
                 {visibleMonths.map((group, gi) => {
                   const games = group.games.filter((g) => !nextMatchIds.has(g.id) && shown(g));
                   if (games.length === 0) return null;
+                  const plain = games.filter((g) => !g.special);
+                  const sharedVenue = plain.length > 0 && plain.every((g) => g.venue === plain[0].venue && g.pitch === plain[0].pitch);
                   const cards = games.map((g) => (
                         <GameCard
                           key={g.id}
                           calm={calmOn}
+                          sharedVenue={calmOn && sharedVenue}
                           onProgramme={g.id === FIRST_XI_GAME_ID && programme ? openProgramme : undefined}
                           grow={movementOn}
                           isNew={fxNewIds.has(g.id)}
@@ -6978,10 +6983,13 @@ function App({ session }: { session: Session }) {
                         key={group.key}
                         label={group.label.replace(/ \d{4}$/, "")}
                         photo={["/pitch-floodlit.jpg", "/pitch-night.jpg", "/floodlight-haze.jpg", "/net-rain.jpg"][gi % 4]}
-                        summary={[
-                          `${games.length} ${games.length === 1 ? "game" : "games"}`,
-                          owed > 0 ? `you're in ${mineCount} · £${owed} to pay` : mineCount === games.length ? "you're in all of them" : `you're in ${mineCount}`,
-                        ]}
+                        summary={(() => {
+                          // Venue (when shared), then what you're in, else the
+                          // game count. "You're in 0" read like a glitch.
+                          const count = `${games.length} ${games.length === 1 ? "game" : "games"}`;
+                          const mine = mineCount === 0 ? null : owed > 0 ? `you're in ${mineCount} · £${owed} to pay` : mineCount === games.length ? "you're in all of them" : `you're in ${mineCount}`;
+                          return sharedVenue ? [plain[0].venue, mine ?? count] : mine ? [count, mine] : [count];
+                        })()}
                       >
                         {cards}
                       </CalmMonth>
@@ -13081,11 +13089,15 @@ function GameCard({
   push,
   grow,
   calm,
+  sharedVenue,
   onProgramme,
 }: {
   // The calmer list (app/ui/calmfixtures.tsx): one line per game, actions
   // in a sheet. On the featured card it only moves the reminder ask out.
   calm?: boolean;
+  // Every game in this month is at the same venue (and pitch size): the
+  // month header names it, so the row is just the time.
+  sharedVenue?: boolean;
   onProgramme?: () => void;
   // Movement: the card grows into its squad sheet (and back) instead of
   // the sheet sliding up on its own.
@@ -13512,8 +13524,8 @@ function GameCard({
             <CalmRow
               day={dw}
               num={dNum}
-              title={`${game.kickoff} · ${game.venue}`}
-              meta={`${game.pitch} · £${game.price} · ${confirmed.length}/${game.max_players}${waitingList.length ? ` · ${waitingList.length} waiting` : ""}`}
+              title={sharedVenue ? game.kickoff : `${game.kickoff} · ${game.venue}`}
+              meta={`${sharedVenue ? "" : `${game.pitch} · `}£${game.price} · ${confirmed.length}/${game.max_players}${waitingList.length ? ` · ${waitingList.length} waiting` : ""}`}
               badge={calmBadge}
               state={calmState}
               onOpen={() => setActOpen(true)}
@@ -13925,33 +13937,33 @@ const css = `
 .wcf-join-done button{border:0;background:none;font-size:18px;color:inherit;cursor:pointer;padding:0 4px}
 .wcf-join-declined-toggle{margin-top:10px;border:0;background:none;font:inherit;font-size:12.5px;font-weight:700;color:var(--muted,#94a3b8);cursor:pointer;padding:4px 0}
 .wcf-signin{position:relative;flex:1;overflow-y:auto;display:flex;flex-direction:column;background:var(--bg)}
-.wcf-signin-photo{position:absolute;left:0;right:0;top:0;width:100%;height:72%;object-fit:cover;object-position:50% 55%}
+.wcf-signin-photo{position:absolute;left:0;right:0;top:0;width:100%;height:62%;object-fit:cover;object-position:50% 55%}
 .wcf-signin-scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(13,13,26,.6) 0%,rgba(13,13,26,.34) 20%,rgba(13,13,26,.6) 52%,rgba(13,13,26,.86) 66%,var(--bg) 80%)}
 .wcf-signin-head{position:relative;padding:36px 22px 0;flex:0 0 auto}
 .wcf-signin-brand-row{display:flex;align-items:center;gap:10px}
 .wcf-signin-crest{display:block;width:36px;height:40px;flex:0 0 auto}
 .wcf-signin-crest img{display:block;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 2px 8px rgba(0,0,0,.55))}
 .wcf-signin-est{font-weight:800;font-size:9.5px;letter-spacing:2.6px;color:var(--red-hi)}
-.wcf-signin-wordmark{font-family:var(--display);font-weight:800;font-size:52px;line-height:.86;letter-spacing:-1px;color:var(--white);margin-top:22px;text-shadow:0 6px 30px rgba(0,0,0,.6)}
-.wcf-signin-wordmark-dim1{font-family:var(--display);color:rgba(245,246,248,.34)}
-.wcf-signin-wordmark-dim2{font-family:var(--display);color:rgba(245,246,248,.16)}
-.wcf-signin-bottom{position:relative;flex:1;display:flex;flex-direction:column;justify-content:flex-end;padding:0 22px 40px;box-sizing:border-box;gap:15px}
+.wcf-signin-wordmark{font-family:var(--display);font-weight:800;font-size:clamp(34px,11.3vw,52px);line-height:.92;letter-spacing:-1px;color:var(--white);margin-top:22px;text-shadow:0 6px 30px rgba(0,0,0,.6)}
+.wcf-signin-wordmark-dim1{font-family:var(--display);color:#f5d97a}
+.wcf-signin-wordmark-dim2{font-family:var(--display);color:rgba(245,246,248,.5)}
+.wcf-signin-bottom{position:relative;flex:1;display:flex;flex-direction:column;justify-content:flex-start;padding:min(300px,32vh) 22px 40px;box-sizing:border-box;gap:15px}
 .wcf-signin-steps{display:flex;gap:8px;align-items:center}
 .wcf-signin-step-bar{flex:1;height:3px;border-radius:2px;background:rgba(148,163,184,.2)}
-.wcf-signin-step-bar.on{background:linear-gradient(90deg,var(--red),rgba(230,57,70,.4))}
+.wcf-signin-step-bar.on{background:linear-gradient(90deg,#f5d97a,rgba(245,217,122,.45))}
 .wcf-signin-step-label{font:600 9.5px ui-monospace,Menlo,monospace;letter-spacing:1.4px;color:var(--dim);white-space:nowrap}
 .wcf-signin-form2{display:flex;flex-direction:column;gap:11px;margin:0}
 .wcf-signin-sub{color:var(--dim);font-size:12.5px;line-height:1.55;margin:0}
 .wcf-signin-email-pill{display:flex;gap:10px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);border-radius:14px;padding:6px 6px 6px 14px;align-items:center;box-shadow:0 18px 38px -30px rgba(0,0,0,.9)}
 .wcf-signin-email-pill input{flex:1;min-width:0;background:transparent;border:none;color:var(--white);padding:11px 0;font-size:15px;font-family:var(--sans)}
-.wcf-signin-email-pill button{background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5));color:#fff;border:none;padding:12px 16px;border-radius:11px;font-weight:800;font-size:12.5px;cursor:pointer;flex:0 0 auto;white-space:nowrap}
+.wcf-signin-email-pill button{background:linear-gradient(180deg,#fff3c4,#f5d97a);color:#1a1405;border:none;padding:12px 16px;border-radius:11px;font-weight:800;font-size:12.5px;cursor:pointer;flex:0 0 auto;white-space:nowrap}
 .wcf-signin-email-pill button:disabled{opacity:.5;cursor:not-allowed}
 .wcf-signin-cells-wrap{position:relative}
 .wcf-signin-cells{display:flex;gap:7px;justify-content:space-between}
 .wcf-signin-cell{flex:1;height:56px;border-radius:13px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:21px;color:var(--white);box-shadow:0 14px 30px -24px rgba(0,0,0,.9)}
 .wcf-signin-cell.active{border-color:rgba(240,82,94,.6)}
 .wcf-signin-hidden-input{position:absolute;inset:0;width:100%;height:100%;opacity:0;border:none;background:transparent;font-size:16px;caret-color:transparent;padding:0;box-sizing:border-box;cursor:text}
-.wcf-signin-cta{background:linear-gradient(135deg,var(--red),rgba(230,57,70,.5));color:#fff;border:none;padding:15px;border-radius:13px;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 12px 28px -14px rgba(230,57,70,.9)}
+.wcf-signin-cta{background:linear-gradient(180deg,#fff3c4,#f5d97a);color:#1a1405;border:none;padding:15px;border-radius:13px;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 12px 28px -14px rgba(245,217,122,.9)}
 .wcf-signin-cta:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
 .wcf-signin-error{background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.3);border-radius:10px;padding:10px 12px;color:var(--red-hi);font-size:12px;line-height:1.45;margin:0}
 .wcf-signin-alt{background:none;border:none;color:var(--dim);font-weight:600;font-size:12px;padding:5px;cursor:pointer;text-decoration:underline;font-family:var(--sans);align-self:flex-start}
@@ -13959,22 +13971,25 @@ const css = `
 .wcf-privacy-note{color:var(--dim);font-size:11px;max-width:280px;margin:0;line-height:1.5;opacity:.8}
 
 .wcf-top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
-  padding:14px 16px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  padding:9px 16px;background:rgba(10,26,52,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .wcf-brand{display:flex;align-items:center;gap:11px;background:none;border:none;padding:0;margin:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
 /* The crest is a transparent cut-out (public/crest.png), so it sits on the
    header as it is - no box around it. */
-.wcf-logo{display:block;width:42px;height:46px;flex:0 0 auto}
+.wcf-logo{display:block;width:31px;height:34px;flex:0 0 auto}
 .wcf-logo img{display:block;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 2px 6px rgba(0,0,0,.45))}
-.wcf-wordmark{font-weight:900;font-size:22px;letter-spacing:1px;line-height:.9;
+.wcf-wordmark{font-weight:900;font-size:17px;letter-spacing:1px;line-height:.9;
   color:var(--white);text-shadow:0 1px 0 rgba(0,0,0,.4)}
-.wcf-wordmark-sub{font-weight:800;font-size:10px;letter-spacing:2.5px;color:var(--red-hi);margin-top:3px}
+.wcf-wordmark-sub{font-weight:800;font-size:7.5px;letter-spacing:2.2px;color:var(--red-hi);margin-top:3px}
 .wcf-role{display:flex;align-items:center;gap:7px;background:transparent;border:1px solid var(--line);
   color:var(--dim);padding:8px 13px;border-radius:999px;font-size:12px;font-weight:800;cursor:pointer;
   font-family:var(--mono);letter-spacing:.5px;transition:.15s;max-width:140px;overflow:hidden}
 .wcf-role-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.wcf-role .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:0 0 auto}
-.wcf-role.admin .dot{background:var(--green)}
-.wcf-role.on{color:#fff;border-color:var(--red)}
+/* Your face in a gold ring (the name stays for screen readers). */
+.wcf-top .wcf-role{position:relative;padding:0;border:0;border-radius:50%;overflow:visible;max-width:none}
+.wcf-top .wcf-role .wcf-role-name{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.wcf-role-face{display:grid;place-items:center;width:36px;height:36px;border-radius:50%;object-fit:cover;font:800 14px var(--display);color:#fff;box-shadow:0 0 0 2px rgba(245,217,122,.7);transition:box-shadow .15s}
+.wcf-role.on .wcf-role-face{box-shadow:0 0 0 2px #f5d97a,0 0 0 5px rgba(245,217,122,.25)}
+.wcf-top .wcf-role .wcf-role-unread{position:absolute;top:-4px;right:-6px}
 
 .wcf-main{flex:1;padding:14px 14px 92px;overflow-y:auto;overscroll-behavior-y:contain}
 .wcf-ptr{position:relative;margin:-14px -14px 0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;overflow:hidden;padding-bottom:6px}
@@ -13992,6 +14007,7 @@ const css = `
 .wcf-ptr-spin{width:20px;height:20px;border-radius:50%;border:2.5px solid rgba(148,163,184,.3);border-top-color:#f5d97a;animation:wcfSpin .8s linear infinite}
 @keyframes wcfSpin{to{transform:rotate(360deg)}}
 .wcf-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin:4px 2px 14px}
+.wcf-heading.quiet{position:absolute;width:1px;height:1px;margin:0;overflow:hidden;clip:rect(0 0 0 0)}
 .wcf-heading h2{margin:0;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim)}
 .wcf-heading-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
 .wcf-addbtn{display:inline-flex;align-items:center;gap:6px;background:var(--red);color:#fff;border:none;padding:8px 14px;border-radius:999px;font-family:var(--display);font-weight:800;font-size:12px;cursor:pointer;flex:0 0 auto;white-space:nowrap}
@@ -14425,7 +14441,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-archive-toggle{font-size:11.5px;padding:7px 12px;margin-bottom:12px}
 .wcf-feed-reactions{display:flex;gap:6px}
 .wcf-feed-pill{display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;font-size:12px;border-radius:22px;padding:0 14px;min-height:36px;cursor:pointer;background:var(--panel2);color:var(--dim);border:1px solid transparent}
-.wcf-feed-pill.mine{border-color:var(--green);color:var(--green)}
+.wcf-feed-pill.mine{border-color:rgba(245,217,122,.45);color:#f5d97a;background:rgba(245,217,122,.1)}
 
 .wcf-subtabs{display:flex;gap:8px;margin:0 2px 16px}
 .wcf-subtabs button{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--dim);padding:9px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer}
@@ -14974,13 +14990,11 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-booking-row{display:flex;align-items:center;gap:11px;padding:14px;border-radius:18px;margin-bottom:10px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid var(--line);box-shadow:0 18px 38px -30px rgba(0,0,0,.9)}
 /* Account tidy-up: the empty inbox as one line, bookings as one card */
 .wcf-inbox-calm{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;border:1px solid var(--line);background:var(--panel);margin-bottom:6px}
-.wcf-inbox-env{flex:none;width:38px;height:28px;border-radius:6px;background:#e63946;display:grid;place-items:center;box-shadow:0 6px 14px -6px rgba(226,52,63,.6)}
-.wcf-inbox-env i{display:block;width:24px;height:4px;border-radius:2px;background:#e8ecf3;animation:wcfInboxPeek 3.4s ease-in-out infinite}
-@keyframes wcfInboxPeek{0%,70%,100%{transform:none}80%{transform:translateY(-6px)}}
+.wcf-inbox-env{flex:none;width:40px;height:40px;border-radius:12px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.25);display:grid;place-items:center;color:#f5d97a}
 .wcf-inbox-calm-txt{min-width:0}
 .wcf-inbox-calm-txt b{display:block;font-family:var(--display);font-size:14px;color:var(--white)}
 .wcf-inbox-calm-txt small{font-size:12px;color:var(--dim)}
-.wcf-inbox-calm button{margin-left:auto;flex:none;background:none;border:1px dashed rgba(255,255,255,.18);border-radius:10px;padding:7px 10px;color:var(--white);font:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.wcf-inbox-calm button{margin-left:auto;flex:none;background:none;border:0;border-radius:10px;padding:7px 2px;color:#f5d97a;font:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
 .wcf-bk-card{border-radius:18px;overflow:hidden;border:1px solid var(--line);margin-bottom:6px;background:linear-gradient(180deg,rgba(10,15,28,.25) 0px,rgba(10,15,28,.8) 70px,rgba(17,24,38,.97) 150px),url('/pitch-floodlit.jpg') 50% 0/100% auto no-repeat,var(--panel)}
 .wcf-bk-head{display:flex;align-items:baseline;gap:8px;padding:44px 14px 10px;text-shadow:0 1px 8px rgba(0,0,0,.7)}
 .wcf-bk-head b{font-family:var(--display);font-size:15px;color:#fff}
@@ -14991,7 +15005,7 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-bk-card .wcf-booking-day{font-size:17px}
 @keyframes wcfBkRise{from{opacity:0;transform:translateY(10px)}}
 .wcf-bk-more{display:block;width:100%;background:none;border:0;border-top:1px solid var(--line);padding:12px 0;font:inherit;font-size:13px;font-weight:700;color:#f5d97a;cursor:pointer}
-@media (prefers-reduced-motion: reduce){.wcf-inbox-env i,.wcf-bk-card .wcf-booking-row{animation:none}}
+@media (prefers-reduced-motion: reduce){.wcf-bk-card .wcf-booking-row{animation:none}}
 .wcf-booking-date-tile{flex:none;width:46px;height:46px;border-radius:13px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(13,13,26,.7);border:1px solid rgba(148,163,184,.16)}
 .wcf-booking-day{font-family:var(--display);font-weight:800;font-size:15px;color:#f8fafc}
 .wcf-booking-month{margin-top:3px;font-weight:700;font-size:8.5px;letter-spacing:.12em;color:var(--dim)}
@@ -15010,8 +15024,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-account-emergency input{min-width:0;min-height:46px;box-sizing:border-box;background:var(--bg);border:1px solid rgba(148,163,184,.2);color:var(--white);padding:13px;border-radius:12px;font-size:13px;font-weight:600;font-family:var(--sans);text-transform:none;letter-spacing:normal}
 .wcf-account-emergency button{min-height:46px;padding:0 15px;border-radius:12px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);color:#f5d97a;font-weight:700;font-size:11.5px;cursor:pointer}
 .wcf-account-emergency button:disabled{opacity:.5;cursor:not-allowed}
-.wcf-signout{width:100%;margin-top:14px;min-height:46px;padding:13px;border-radius:12px;background:rgba(240,82,94,.1);border:1px solid rgba(240,82,94,.3);color:var(--red-hi);font-weight:700;font-size:12px;cursor:pointer}
-.wcf-signout:hover{background:rgba(240,82,94,.16)}
+.wcf-signout{width:100%;margin-top:14px;min-height:46px;padding:13px;border-radius:12px;background:none;border:1px solid var(--line);color:#94a3b8;font-weight:700;font-size:12.5px;cursor:pointer}
+.wcf-signout:hover{color:var(--red-hi);border-color:rgba(240,82,94,.3)}
 .wcf-push-section{display:flex;flex-direction:column;gap:11px;margin-top:14px;padding:12px 13px;border-radius:14px;background:rgba(13,13,26,.6);border:1px solid rgba(148,163,184,.12)}
 .wcf-rating-section{margin-bottom:0}
 .wcf-rating-section h3,.wcf-record-section h3{display:none}
@@ -15913,12 +15927,14 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-rs-summary .ticks div{font-size:12.5px;color:#cbd5e1;display:flex;gap:8px}
 .wcf-rs-summary .ticks i{font-style:normal;color:var(--green,#86efac);font-weight:800}
 /* Account: header card in the Player of the Month family */
-.wcf-me{position:relative;overflow:hidden;border-radius:20px;border:1px solid rgba(245,217,122,.35);padding:16px;margin-bottom:6px;background:radial-gradient(120% 90% at 100% 0%,rgba(245,217,122,.13),transparent 55%),radial-gradient(90% 80% at 0% 100%,rgba(230,57,70,.12),transparent 60%),#111427;box-shadow:0 18px 40px -24px rgba(234,179,8,.45)}
+.wcf-me{position:relative;overflow:hidden;border-radius:20px;border:1px solid rgba(245,217,122,.4);padding:16px;margin-bottom:6px;background:#0d1122;box-shadow:0 18px 40px -24px rgba(234,179,8,.45)}
+.wcf-me::before{content:"";position:absolute;inset:0;background:url(/pitch-floodlit.jpg) 70% 40%/cover;opacity:.35;-webkit-mask-image:linear-gradient(90deg,transparent 15%,#000 85%);mask-image:linear-gradient(90deg,transparent 15%,#000 85%);pointer-events:none}
+.wcf-me>*{position:relative}
+.wcf-me-eb{font:600 10.5px var(--font-oswald),sans-serif;letter-spacing:.24em;text-transform:uppercase;color:#f5d97a}
 .wcf-me-top{display:flex;align-items:center;gap:14px}
 .wcf-avatar.wcf-me-avatar{width:64px;height:64px;font-size:22px;box-shadow:0 0 0 3px rgba(245,217,122,.55)}
 .wcf-me-who{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:6px;background:none;border:0;padding:0;text-align:left;cursor:pointer;color:inherit}
 .wcf-me-name{font-family:var(--display);font-weight:800;font-size:21px;line-height:1.15;color:#fff;overflow-wrap:anywhere}
-.wcf-me-who .wcf-role-badge.small{margin-left:0}
 .wcf-me-record{display:block;width:100%;margin-top:14px;padding:12px 0 0;border:0;border-top:1px solid var(--line);background:none;text-align:left;cursor:pointer;color:inherit}
 .wcf-me-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .wcf-me-stats span{display:flex;flex-direction:column;gap:4px;font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
@@ -15956,13 +15972,18 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-notif-sub{margin-top:3px;font-size:11.5px;line-height:1.35;color:var(--dim)}
 .wcf-notif-on{flex:none;padding:9px 12px;border-radius:10px;border:0;background:var(--gold,#f5d97a);color:#0d0d1a;font-weight:800;font-size:12px;cursor:pointer}
 .wcf-notif-test{display:block;margin:8px auto 0;background:none;border:0;color:var(--dim);font-size:12px;font-weight:600;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
-.wcf-set-label{margin:18px 2px 8px;font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#64748b}
+.wcf-set-label{display:flex;align-items:center;gap:10px;margin:0;padding:24px 2px 10px;font:600 11px var(--font-oswald),sans-serif;letter-spacing:.22em;text-transform:uppercase;color:#f5d97a}
+.wcf-set-label::after{content:"";flex:1;height:1px;background:rgba(245,217,122,.18)}
+.wcf-account .wcf-console-section{padding:24px 2px 10px}
+.wcf-account .wcf-console-section:first-child{padding-top:4px}
+.wcf-account .wcf-console-section-label{font:600 11px var(--font-oswald),sans-serif;letter-spacing:.22em;color:#f5d97a}
+.wcf-account .wcf-console-section-rule{background:rgba(245,217,122,.18)}
 .wcf-set-group{border-radius:16px;overflow:hidden;margin-bottom:10px;background:var(--panel);border:1px solid var(--line)}
 .wcf-set-group .wcf-acc-section{margin:0;border:0;border-radius:0;background:none}
 .wcf-set-group>*+*{border-top:1px solid var(--line)!important}
 .wcf-set-group .wcf-acc-section-head{min-height:52px;padding:11px 13px}
-.wcf-set-group .wcf-acc-section-tile,.wcf-set-link .wcf-acc-section-tile{background:rgba(148,163,184,.1);border-color:transparent;color:#e2e8f0}
-.wcf-set-group .wcf-acc-section-title{font-weight:600;font-size:13.5px}
+.wcf-set-group .wcf-acc-section-tile,.wcf-set-link .wcf-acc-section-tile{background:rgba(245,217,122,.08);border-color:rgba(245,217,122,.18);color:#f5d97a}
+.wcf-set-group .wcf-acc-section-title{font-weight:600;font-size:14.5px}
 .wcf-set-group .wcf-acc-section-meta{margin-top:3px}
 .wcf-set-group .wcf-acc-section-value{font-family:var(--sans);font-weight:600;font-size:12px;color:var(--dim);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wcf-acc-section-value.ok{color:var(--green)}

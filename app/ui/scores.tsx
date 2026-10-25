@@ -141,8 +141,8 @@ export const scoresCss = `
 .wcf-sc-open{color:var(--green)!important}
 
 .wcf-sc-month{margin:0 0 14px;border-radius:18px;overflow:hidden;border:1px solid var(--line);background-color:var(--panel);background-repeat:no-repeat;background-size:100% 100%,100% auto;background-position:0 0,50% 30%;animation:wcfScRise .5s cubic-bezier(.2,.9,.3,1.1) backwards}
-.wcf-sc-month-h{display:flex;align-items:center;gap:10px;padding:50px 14px 10px;text-shadow:0 1px 8px rgba(0,0,0,.7)}
-.wcf-sc-month-h h4{margin:0;font-size:12px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#fff}
+.wcf-sc-month-h{display:flex;align-items:center;gap:10px;padding:16px 14px 10px;text-shadow:0 1px 8px rgba(0,0,0,.7);background:linear-gradient(180deg,rgba(245,217,122,.06),transparent)}
+.wcf-sc-month-h h4{margin:0;font:600 15px var(--font-oswald),sans-serif;letter-spacing:.2em;text-transform:uppercase;color:#f5d97a}
 .wcf-sc-strip{display:flex;gap:3px}
 .wcf-sc-strip i{width:6px;height:6px;border-radius:2px;display:block}
 .wcf-sc-tally{margin-left:auto;font-size:10.5px;color:#cbd5e1;white-space:nowrap;font-variant-numeric:tabular-nums}

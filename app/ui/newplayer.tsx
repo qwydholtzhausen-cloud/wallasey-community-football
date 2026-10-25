@@ -175,11 +175,24 @@ export function FirstGameCard({ booked, chances, onOpen }: { booked: boolean; ch
       <div className="wcf-fg-hero">
         <div className="k">New here · your first game</div>
         <b>Three steps to your first game</b>
-        <div className="bar">
-          <span className="done">✓ Joined</span>
-          <span className={booked ? "done" : "next"}>{booked ? "✓ In a game or queue" : chances[0]?.full === false ? "Book a spot" : "Join a waiting list"}</span>
-          <span>Play</span>
+        <div className={"track" + (booked ? " two" : "")}>
+          <span className="done">
+            <i>✓</i>Joined
+          </span>
+          <span className={booked ? "done" : "next"}>
+            <i>{booked ? "✓" : "2"}</i>
+            {booked ? "Booked" : chances[0]?.full === false ? "Book a spot" : "Join a list"}
+          </span>
+          <span className={booked ? "next" : ""}>
+            <i>3</i>Play
+          </span>
         </div>
+        {!booked && chances[0] && (
+          <p className="say">
+            Next: {chances[0].full ? "join the list for" : "book"} <em>{`${chances[0].dow} ${chances[0].day} ${chances[0].mon}`}</em>
+            {chances[0].full ? ` · you'd be ${nth(chances[0].place)} in line.` : "."}
+          </p>
+        )}
       </div>
       {!booked && chances.length > 0 && (
         <>
@@ -251,10 +264,21 @@ export const newPlayerCss = `
 .wcf-fg-hero>*{position:relative;z-index:1}
 .wcf-fg-hero .k{font-size:10px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:#f5d97a}
 .wcf-fg-hero b{display:block;font-family:var(--display);font-size:19px;margin:5px 0 0}
-.wcf-fg-hero .bar{display:flex;gap:6px;margin-top:12px}
-.wcf-fg-hero .bar span{flex:1;padding:8px 6px;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid var(--line);font-size:11px;font-weight:700;color:#cbd5e1;text-align:center;line-height:1.3}
-.wcf-fg-hero .bar span.done{border-color:rgba(74,222,128,.45);color:#4ade80}
-.wcf-fg-hero .bar span.next{border-color:rgba(245,217,122,.6);color:#f5d97a}
+.wcf-fg-hero .track{position:relative;display:flex;justify-content:space-between;margin:16px 4px 2px}
+.wcf-fg-hero .track::before,.wcf-fg-hero .track::after{content:"";position:absolute;left:14px;top:13px;height:2px}
+.wcf-fg-hero .track::before{right:14px;background:rgba(148,163,184,.25)}
+.wcf-fg-hero .track::after{width:calc(50% - 14px);background:linear-gradient(90deg,#4ade80,#f5d97a)}
+.wcf-fg-hero .track.two::after{width:calc(100% - 28px);background:linear-gradient(90deg,#4ade80 50%,#f5d97a)}
+.wcf-fg-hero .track span{position:relative;z-index:1;width:33%;display:grid;justify-items:center;gap:6px;font-size:11.5px;font-weight:700;color:#94a3b8}
+.wcf-fg-hero .track span:first-child{justify-items:start}
+.wcf-fg-hero .track span:last-child{justify-items:end}
+.wcf-fg-hero .track i{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font:800 12px var(--display);font-style:normal;background:#0a0d18;border:2px solid rgba(148,163,184,.35);color:#94a3b8}
+.wcf-fg-hero .track .done{color:#4ade80}
+.wcf-fg-hero .track .done i{background:#4ade80;border-color:#4ade80;color:#06210f}
+.wcf-fg-hero .track .next{color:#f5d97a}
+.wcf-fg-hero .track .next i{border-color:#f5d97a;color:#f5d97a;box-shadow:0 0 0 4px rgba(245,217,122,.15)}
+.wcf-fg-hero .say{margin:12px 0 0;font-size:13px;color:#cbd5e1}
+.wcf-fg-hero .say em{font-style:normal;font-weight:700;color:#f5d97a}
 .wcf-fg-eye{font-size:10.5px;font-weight:800;letter-spacing:.18em;color:var(--dim);text-transform:uppercase;margin:16px 2px 8px}
 .wcf-fg-row{width:100%;display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:16px;border:1px solid var(--line);background:linear-gradient(170deg,#152033,#0c1020);margin-bottom:8px;color:var(--white);text-align:left;cursor:pointer;font-family:var(--sans)}
 .wcf-fg-row.top{border-color:rgba(245,217,122,.6);box-shadow:0 0 0 1px rgba(245,217,122,.2),0 10px 24px -14px rgba(245,217,122,.6)}

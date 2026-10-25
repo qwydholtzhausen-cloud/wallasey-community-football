@@ -11,7 +11,7 @@
 // more specific. Added only while HOUSE_STYLE is on for this player.
 
 const LABELS =
-  ".wcf-eyebrow,.wcf-heading h2,.wcf-month-head,.wcf-feed-section-label,.wcf-stories-head b,.wcf-lineup-group-label,.wcf-acc-section-title,.wcf-set-label,.wcf-ft-label,.wcf-h2h-header,.wcf-rivalry-title";
+  ".wcf-eyebrow,.wcf-heading h2,.wcf-month-head,.wcf-feed-section-label,.wcf-stories-head b,.wcf-lineup-group-label,.wcf-ft-label,.wcf-h2h-header,.wcf-rivalry-title";
 const PHOTO_LABELS =
   ".wcf-feed-hero-eyebrow,.wcf-lineup-eyebrow,.wcf-potm-eyebrow,.wcf-season-hero-eyebrow,.wcf-streak-eyebrow,.wr-banner .k,.wcf-prog-card small";
 const PRIMARY = ".wcf-book:not(.cancel):not(.waitlist),.wcf-owe .go";

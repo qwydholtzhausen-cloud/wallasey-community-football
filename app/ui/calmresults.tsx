@@ -93,11 +93,11 @@ export const calmResultsCss = `
 .cr-recs .wcf-rec-row{margin:0;border:0;border-top:1px solid rgba(255,255,255,.05);border-radius:0;background:none;padding:10px 16px}
 .cr-recs .wcf-rec-row:first-of-type{border-top:0}
 .cr-sub{padding:12px 16px 6px;font:600 9.5px var(--font-oswald),sans-serif;letter-spacing:.24em;text-transform:uppercase;color:#94a3b8;border-top:1px solid rgba(255,255,255,.06)}
-.cr-pot{display:flex;align-items:center;gap:14px;width:100%;margin:0 0 14px;padding:14px 16px;border-radius:18px;border:1px solid rgba(34,197,94,.35);background:linear-gradient(110deg,rgba(34,197,94,.14),rgba(15,20,36,.96) 60%);color:#fff;text-align:left;cursor:pointer}
+.cr-pot{display:flex;align-items:center;gap:14px;width:100%;margin:0 0 14px;padding:14px 16px;border-radius:18px;border:1px solid rgba(245,217,122,.32);background:linear-gradient(110deg,rgba(245,217,122,.1),rgba(15,20,36,.96) 60%);color:#fff;text-align:left;cursor:pointer}
 .cr-pot span{flex:1;min-width:0}
-.cr-pot small{display:block;font:600 10px var(--font-oswald),sans-serif;letter-spacing:.24em;text-transform:uppercase;color:#86efac}
+.cr-pot small{display:block;font:600 10px var(--font-oswald),sans-serif;letter-spacing:.24em;text-transform:uppercase;color:#f5d97a}
 .cr-pot b{display:block;font:800 22px var(--display);color:#fff}
 .cr-pot i{display:block;font:500 11.5px var(--sans);font-style:normal;color:#94a3b8}
-.cr-pot em{font-style:normal;color:#86efac;font-weight:800}
+.cr-pot em{font-style:normal;color:#f5d97a;font-weight:800}
 @media (prefers-reduced-motion: reduce){.cr-bar i,.cr-run i,.cr-lb.seen .cr-lr.top{animation:none!important}}
 `;

@@ -4,6 +4,11 @@ import { EmptyScene } from "./EmptyScene";
 import { CalmFeed, CalmFeedTabs, type CalmFeedProps } from "./calmfeed";
 
 export const FEED_REACTION_EMOJI = ["👍", "🔥"] as const;
+// Shown as line icons (stored as the emoji, so old reactions still count).
+const REACTION_ICON: Record<string, { label: string; d: string[] }> = {
+  "👍": { label: "Thumbs up", d: ["M7 10v12", "M15 5.9 14 10h5.8a2 2 0 0 1 1.9 2.6l-2.3 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.8a2 2 0 0 0 1.8-1.1L12 2a3.1 3.1 0 0 1 3 3.9Z"] },
+  "🔥": { label: "Fire", d: ["M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.4-.5-2-1-3-1.1-2.1-.2-4 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.2.4-2.3 1-3.3.3 1.4 1.2 2.8 2.5 2.8Z"] },
+};
 
 export type FeedItem = {
   key: string;
@@ -347,18 +352,23 @@ export function FeedTab({
             <button
               key={emoji}
               className={"wcf-feed-pill" + (mine ? " mine" : "")}
+              aria-label={REACTION_ICON[emoji]?.label ?? emoji}
+              aria-pressed={mine}
               onClick={(e) => {
                 if (!mine) reactBurst(e.currentTarget, emoji, count + 1);
                 toggleReaction(item.key, emoji);
               }}
             >
-              {emoji}
-              {count > 0 && (
-                <>
-                  {" "}
-                  <TickNum value={count} />
-                </>
+              {REACTION_ICON[emoji] ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  {REACTION_ICON[emoji].d.map((d) => (
+                    <path key={d} d={d} />
+                  ))}
+                </svg>
+              ) : (
+                emoji
               )}
+              {count > 0 && <TickNum value={count} />}
             </button>
           );
         })}

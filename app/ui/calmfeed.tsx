@@ -261,7 +261,8 @@ export const calmFeedCss = `
 .cfe-face{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;margin-right:-6px;object-fit:cover;font:800 12px var(--display);color:#fff;background:linear-gradient(135deg,#334155,#1e293b);border:2px solid #121729}
 .cfe-ft{display:flex;align-items:center;gap:4px;margin-top:6px;padding-top:4px;border-top:1px solid rgba(255,255,255,.05)}
 .cfe-ft .wcf-feed-reactions{margin:0;gap:4px}
-.cfe-ft .wcf-feed-pill{height:30px;min-height:0;padding:0 10px;font-size:12px;background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.08)}
+.cfe-ft .wcf-feed-pill{height:30px;min-height:0;padding:0 10px;font-size:12px;color:#cbd5e1;gap:6px;background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.08)}
+.cfe-ft .wcf-feed-pill.mine{color:#f5d97a;background:rgba(245,217,122,.1);border-color:rgba(245,217,122,.45)}
 .cfe-go{margin-left:auto;padding:8px 2px;border:0;background:none;font:700 12px var(--sans);color:#94a3b8;cursor:pointer}
 .cfe-go em{font-style:normal;color:#f5d97a;margin-left:2px}
 .cfe-more{padding:8px 6px;border:0;background:none;color:#64748b;font:700 10px var(--sans);letter-spacing:.1em;cursor:pointer}
