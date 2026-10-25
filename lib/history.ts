@@ -26,7 +26,11 @@ export type Scene =
   | { type: "mosaic"; ids: string[] }
   | { type: "count"; n: number; label: string }
   | { type: "chain"; steps: { id: string; goals: number; date: string }[] }
-  | { type: "twin"; kickoffs: string[]; soldOut: boolean; venues: string };
+  | { type: "twin"; kickoffs: string[]; soldOut: boolean; venues: string }
+  // The first Man of the Match: that game's count, then the medal.
+  | { type: "motmcount"; top: { id: string; votes: number; goals: number }[]; total: number; rest: number; headline: string; stamp: string }
+  // An admin-added "Golden Glove" moment: the save, then the trophy.
+  | { type: "glove"; id: string };
 
 export type HEvent = {
   key: string;
@@ -94,7 +98,23 @@ export function computeHistory(input: {
       const votes = (id: string) => input.motmVotes.filter((v) => v.game_id === g0.id && v.candidate_id === id).length;
       const goals = (id: string) => (goalsBy.get(g0.id) ?? []).find((x) => x.player_id === id)?.goals ?? 0;
       const one = w0[0];
-      ev.push({ key: "first-motm", date: g0.date, order: 30, title: "The first Man of the Match", text: w0.length > 1 ? "A shared first Man of the Match." : goals(one) ? `${Num(goals(one))} ${goals(one) === 1 ? "goal" : "goals"} and ${num(votes(one))} votes.` : `${Num(votes(one))} votes.`, scene: { type: "people", ids: w0 } });
+      // The count, top three, as it was cast - a shared win keeps the faces.
+      const tally = new Map<string, number>();
+      input.motmVotes.filter((v) => v.game_id === g0.id).forEach((v) => tally.set(v.candidate_id, (tally.get(v.candidate_id) ?? 0) + 1));
+      const total = [...tally.values()].reduce((a, b) => a + b, 0);
+      const top = [...tally.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id, n]) => ({ id, votes: n, goals: goals(id) }));
+      const won = g0.team_white_score! === g0.team_red_score! ? `${g0.team_white_score}–${g0.team_red_score}` : g0.team_red_score! > g0.team_white_score! ? `${teams.red} ${g0.team_red_score}–${g0.team_white_score} ${teams.white}` : `${teams.white} ${g0.team_white_score}–${g0.team_red_score} ${teams.red}`;
+      const [y, mo, dd] = g0.date.split("-");
+      ev.push({
+        key: "first-motm",
+        date: g0.date,
+        order: 30,
+        title: "The first Man of the Match",
+        text: w0.length > 1 ? "A shared first Man of the Match." : goals(one) ? `${Num(goals(one))} ${goals(one) === 1 ? "goal" : "goals"} and ${num(votes(one))} votes.` : `${Num(votes(one))} votes.`,
+        scene: w0.length === 1 && total > 0
+          ? { type: "motmcount", top, total, rest: total - top.reduce((a, t) => a + t.votes, 0), headline: `${day(g0.date).toUpperCase()} · ${won.toUpperCase()}`, stamp: `${dd}·${mo}·${y.slice(2)}` }
+          : { type: "people", ids: w0 },
+      });
     }
   }
 
@@ -178,7 +198,16 @@ export function computeHistory(input: {
 
   // Moments added by admins, on the day they happened.
   for (const m of input.moments)
-    ev.push({ key: "moment-" + m.id, date: m.happened_on, order: m.kind === "goal" ? 18 : 25, title: m.title, text: m.body ?? "", scene: m.kind === "goal" ? { type: "goal", id: m.player_ids[0] ?? null, date: m.happened_on } : m.player_ids.length ? { type: "people", ids: m.player_ids } : null, added: { id: m.id } });
+    ev.push({
+      key: "moment-" + m.id,
+      date: m.happened_on,
+      order: m.kind === "goal" ? 18 : 25,
+      title: m.title,
+      text: m.body ?? "",
+      // "Golden Glove" in the title, with the keeper picked, gets the save scene.
+      scene: m.kind === "goal" ? { type: "goal", id: m.player_ids[0] ?? null, date: m.happened_on } : /golden glove/i.test(m.title) && m.player_ids.length === 1 ? { type: "glove", id: m.player_ids[0] } : m.player_ids.length ? { type: "people", ids: m.player_ids } : null,
+      added: { id: m.id },
+    });
 
   ev.sort((a, b) => a.date.localeCompare(b.date) || a.order - b.order);
 

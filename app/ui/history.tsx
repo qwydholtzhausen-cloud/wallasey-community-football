@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Avatar, avatarFor, motionAllowed } from "./shared";
 import type { Chapter, HEvent, Scene } from "../../lib/history";
 
@@ -152,7 +152,7 @@ export function HistoryPage({
     if (!host) return;
     const list = Array.from(host.querySelectorAll<HTMLElement>(".wcf-hs-tot, .wcf-hs-ev"));
     const wait = (el: HTMLElement) =>
-      el.querySelector(".wcf-hs-mb") ? 5200 : el.querySelector(".wcf-hs-chain") ? 3600 : el.querySelector(".wcf-hs-mosaic") ? 2600 : el.querySelector(".wcf-hs-goal, .wcf-hs-board, .wcf-hs-big, .wcf-hs-twin") ? 2400 : 1500;
+      el.querySelector(".wcf-hs-mc, .wcf-hs-gv") ? 6000 : el.querySelector(".wcf-hs-mb") ? 5200 : el.querySelector(".wcf-hs-chain") ? 3600 : el.querySelector(".wcf-hs-mosaic") ? 2600 : el.querySelector(".wcf-hs-goal, .wcf-hs-board, .wcf-hs-big, .wcf-hs-twin") ? 2400 : 1500;
     let k = Math.max(0, list.findIndex((el) => el.getBoundingClientRect().top > 120 && !el.classList.contains("wcf-hs-tot")));
     let timer = 0;
     const next = () => {
@@ -241,6 +241,10 @@ export function HistoryPage({
             </div>
           </div>
         );
+      case "motmcount":
+        return <MotmCount s={s} name={(id) => people.get(id)?.name ?? "A player"} face={face} />;
+      case "glove":
+        return <GloveScene name={people.get(s.id)?.name ?? "A player"} face={face(s.id)} />;
       case "twin":
         return (
           <div className="wcf-hs-card wcf-hs-twin">
@@ -343,6 +347,154 @@ export function HistoryPage({
         )}
       </div>
       {adding && <AddMoment people={people} today={today} onClose={() => setAdding(false)} onAdd={onAdd} />}
+    </div>
+  );
+}
+
+// The first Man of the Match: the count races, the winner pulls clear, then
+// a press strikes the medal and it's hung on them.
+function MotmCount({ s, name, face }: { s: Extract<Scene, { type: "motmcount" }>; name: (id: string) => string; face: (id: string, cls?: string) => React.ReactNode }) {
+  const max = s.top[0]?.votes || 1;
+  const win = s.top[0];
+  const gid = useId().replace(/:/g, "");
+  return (
+    <div className="wcf-hs-card wcf-hs-mc">
+      <div className="shake">
+        <div className="eb">
+          {s.headline} · <b>{s.total} VOTES CAST</b>
+        </div>
+        <div className="race">
+          {s.top.map((t, i) => (
+            <div key={t.id} className={"row" + (i === 0 ? " win" : "")} style={{ ["--i" as string]: i }}>
+              {face(t.id)}
+              <div>
+                <div className="nm">{name(t.id)}</div>
+                <div className="tr">
+                  <div className="fill" style={{ ["--w" as string]: `${Math.round((t.votes / max) * 100)}%` }} />
+                </div>
+              </div>
+              <b className="ct" data-to={t.votes}>
+                0
+              </b>
+            </div>
+          ))}
+          {s.rest > 0 && <div className="rest">+ {s.rest} more {s.rest === 1 ? "vote" : "votes"} for others</div>}
+        </div>
+        <div className="hero">{face(win.id)}</div>
+        <svg className="rib" viewBox="0 0 56 66" aria-hidden="true">
+          <path d="M4 0h18l14 66H22z" fill="#e42a36" stroke="#f5d97a" strokeWidth="1" />
+          <path d="M52 0H34L20 66h14z" fill="#13213f" />
+        </svg>
+        <svg className="disc" viewBox="0 0 96 96" aria-hidden="true">
+          <defs>
+            <radialGradient id={gid} cx=".35" cy=".3">
+              <stop offset="0" stopColor="#fff6d6" />
+              <stop offset=".5" stopColor="#f5d97a" />
+              <stop offset="1" stopColor="#9a7224" />
+            </radialGradient>
+          </defs>
+          <circle cx="48" cy="48" r="45" fill={`url(#${gid})`} stroke="#7a571b" strokeWidth="2" />
+          <circle cx="48" cy="48" r="37" fill="none" stroke="#9a7224" strokeWidth="1.5" strokeDasharray="2 3" />
+          <g className="eng" fill="#6b4c12" fontFamily="Arial" fontWeight="900" textAnchor="middle">
+            <text x="48" y="44" fontSize="13" letterSpacing="1">MOTM</text>
+            <text x="48" y="62" fontSize="16">Nº1</text>
+            <text x="48" y="76" fontSize="6.5" fontWeight="700" letterSpacing="1">{s.stamp}</text>
+          </g>
+        </svg>
+        <div className="press" />
+        <div className="flash" />
+        {Array.from({ length: 14 }, (_, i) => (
+          <i key={i} className="sp" style={{ ["--a" as string]: `${i * (360 / 14)}deg` }} />
+        ))}
+      </div>
+      <div className="plate">
+        <small>THE FIRST EVER · MAN OF THE MATCH</small>
+        <b>{name(win.id)}</b>
+        <span>
+          {win.goals ? `${win.goals} ${win.goals === 1 ? "goal" : "goals"} · ` : ""}
+          {win.votes} of {s.total} votes
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// A keeper's glove: four fingers, thumb, latex palm, the club strap.
+function Glove({ className }: { className: string }) {
+  const id = useId().replace(/:/g, "");
+  const finger = (x: number, y: number, w: number, h: number) => <rect x={x} y={y} width={w} height={h} rx={w / 2} fill={`url(#${id}a)`} stroke="#7a571b" strokeWidth="1.2" />;
+  return (
+    <svg className={className} viewBox="0 0 100 132" aria-hidden="true">
+      <defs>
+        <linearGradient id={id + "a"} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#fff6d6" />
+          <stop offset=".35" stopColor="#f5d97a" />
+          <stop offset=".75" stopColor="#c9952f" />
+          <stop offset="1" stopColor="#8a6420" />
+        </linearGradient>
+        <linearGradient id={id + "b"} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#e8c56a" />
+          <stop offset="1" stopColor="#a87a28" />
+        </linearGradient>
+      </defs>
+      {finger(21, 10, 15, 58)}
+      {finger(36.5, 2, 15, 64)}
+      {finger(52, 6, 14.5, 60)}
+      {finger(66.5, 16, 13, 50)}
+      <rect x="2" y="52" width="15" height="42" rx="7.5" transform="rotate(-38 9.5 73)" fill={`url(#${id}a)`} stroke="#7a571b" strokeWidth="1.2" />
+      <path d="M19 52 Q17 92 28 104 H72 Q83 92 80 52 Z" fill={`url(#${id}a)`} stroke="#7a571b" strokeWidth="1.2" />
+      <path d="M26 58 Q24 86 32 96 H68 Q76 86 74 58 Z" fill={`url(#${id}b)`} opacity=".55" />
+      <path d="M28.5 16v44M44 9v50M59.2 12v48M73 22v38" stroke="#8a6420" strokeWidth=".9" strokeDasharray="2 2" opacity=".7" />
+      <ellipse cx="34" cy="26" rx="5" ry="12" fill="#fff" opacity=".35" />
+      <rect x="25" y="102" width="52" height="28" rx="6" fill="#13213f" stroke="#f5d97a" strokeWidth="2" />
+      <rect x="20" y="108" width="62" height="13" rx="5" fill={`url(#${id}b)`} stroke="#7a571b" />
+      <text x="51" y="118.5" textAnchor="middle" fontSize="9" fontWeight="900" fontFamily="Arial" letterSpacing="1.5" fill="#13213f">
+        WCF
+      </text>
+    </svg>
+  );
+}
+
+// Golden Glove: a shot to the top corner, a fingertip save in slow motion,
+// then the glove on its plinth with the keeper's face.
+function GloveScene({ name, face }: { name: string; face: React.ReactNode }) {
+  return (
+    <div className="wcf-hs-card wcf-hs-gv">
+      <div className="scene">
+        <div className="bg" />
+        <div className="goal" />
+        <div className="trail" />
+        <div className="ball">
+          <Ball />
+        </div>
+        <Glove className="glove" />
+        <div className="hit">
+          {Array.from({ length: 12 }, (_, i) => (
+            <i key={i} style={{ ["--a" as string]: `${i * 30}deg` }} />
+          ))}
+          <b />
+        </div>
+        <div className="save">SAVED!</div>
+        <div className="bars t" />
+        <div className="bars b" />
+        <div className="slow">SLOW-MO</div>
+      </div>
+      <div className="tro">
+        <div className="rays" />
+        <div className="stand">
+          <Glove className="tg" />
+          <div className="plinth">
+            <div className="med">{face}</div>
+            <small>GOLDEN GLOVE</small>
+          </div>
+        </div>
+        <div className="shine" />
+      </div>
+      <div className="plate">
+        <small>THE SEASON&apos;S BEST KEEPER</small>
+        <b>Golden Glove</b>
+        <span>{name}</span>
+      </div>
     </div>
   );
 }
@@ -769,6 +921,115 @@ const historyCss = `
 .wcf-hs-sheet .save{min-height:50px;border-radius:14px;border:0;background:#f5d97a;color:#1a1405;font-weight:800;font-size:15px;cursor:pointer;font-family:var(--sans)}
 .wcf-hs-sheet .save:disabled{opacity:.4;cursor:default}
 .wcf-hs-sheet .cancel{min-height:40px;border:0;background:none;color:var(--dim);font-weight:700;cursor:pointer;font-family:var(--sans)}
+/* First Man of the Match: the count, then the medal (MotmCount) */
+.wcf-hs-mc,.wcf-hs-gv{position:relative;height:380px;padding:0;overflow:hidden}
+.wcf-hs-mc{background:radial-gradient(80% 60% at 50% 40%,#1b2440,#04060c)}
+.wcf-hs-mc .shake{position:absolute;inset:0}
+.wcf-hs-mc .eb{position:absolute;left:16px;right:16px;top:14px;font:600 9.5px var(--font-oswald),sans-serif;letter-spacing:.22em;color:#94a3b8;opacity:0}
+.wcf-hs-mc .eb b{color:#f5d97a;font-weight:600}
+.wcf-hs-ev.in .wcf-hs-mc .eb{animation:wcfHsF .4s .1s forwards}
+.wcf-hs-mc .race{position:absolute;left:14px;right:14px;top:44px;display:flex;flex-direction:column;gap:12px}
+.wcf-hs-ev.in .wcf-hs-mc .race{animation:wcfHsO .4s 2.7s forwards}
+.wcf-hs-mc .row{display:grid;grid-template-columns:40px 1fr 28px;align-items:center;gap:10px;opacity:0;transform:translateX(-14px)}
+.wcf-hs-ev.in .wcf-hs-mc .row{animation:wcfHsU .4s ease-out forwards;animation-delay:calc(.25s + var(--i) * .12s)}
+.wcf-hs-ev.in .wcf-hs-mc .row:not(.win){animation:wcfHsU .4s ease-out forwards,wcfHsDim .4s forwards;animation-delay:calc(.25s + var(--i) * .12s),2.4s}
+.wcf-hs-mc .row .wcf-hs-face{width:40px;height:40px;font-size:14px;border:2px solid rgba(255,255,255,.2)}
+.wcf-hs-mc .nm{font:800 12.5px var(--sans);color:#fff;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcf-hs-mc .tr{height:10px;border-radius:6px;background:rgba(255,255,255,.07);overflow:hidden}
+.wcf-hs-mc .fill{height:100%;width:0;border-radius:6px;background:linear-gradient(90deg,#475569,#94a3b8)}
+.wcf-hs-mc .row.win .fill{background:linear-gradient(90deg,#b8862b,#f5d97a,#fff3c4)}
+.wcf-hs-ev.in .wcf-hs-mc .fill{animation:wcfHsBar 1.7s cubic-bezier(.3,.1,.2,1) .7s forwards}
+.wcf-hs-mc .ct{font:800 20px var(--display);color:#e2e8f0;text-align:right}
+.wcf-hs-mc .row.win .ct{color:#f5d97a}
+.wcf-hs-mc .rest{font:600 10.5px var(--sans);color:#64748b;padding-left:50px;opacity:0}
+.wcf-hs-ev.in .wcf-hs-mc .rest{animation:wcfHsF .4s 1.2s forwards}
+.wcf-hs-mc .hero{position:absolute;left:50%;top:34px;width:104px;height:104px;margin-left:-52px;opacity:0;transform:scale(.5)}
+.wcf-hs-mc .hero .wcf-hs-face{width:104px;height:104px;font-size:34px;border:3px solid #f5d97a;box-shadow:0 0 44px rgba(245,217,122,.55)}
+.wcf-hs-ev.in .wcf-hs-mc .hero{animation:wcfHsMcPop .6s cubic-bezier(.3,1.5,.5,1) 2.9s forwards}
+.wcf-hs-mc .rib{position:absolute;left:50%;top:132px;width:56px;height:66px;margin-left:-28px;transform:scaleY(0);transform-origin:50% 0}
+.wcf-hs-ev.in .wcf-hs-mc .rib{animation:wcfHsRib .45s ease-out 4.1s forwards}
+.wcf-hs-mc .disc{position:absolute;left:50%;top:186px;width:96px;height:96px;margin-left:-48px;opacity:0;filter:drop-shadow(0 10px 18px rgba(0,0,0,.6))}
+.wcf-hs-ev.in .wcf-hs-mc .disc{animation:wcfHsF .2s 3.1s forwards}
+.wcf-hs-mc .disc .eng{opacity:0}
+.wcf-hs-ev.in .wcf-hs-mc .disc .eng{animation:wcfHsF .1s 3.62s forwards}
+.wcf-hs-mc .press{position:absolute;left:50%;top:-130px;width:118px;height:70px;margin-left:-59px;border-radius:8px;background:linear-gradient(180deg,#4b5563,#1f2937);box-shadow:inset 0 -6px 0 #111827,0 8px 20px rgba(0,0,0,.7);z-index:4}
+.wcf-hs-ev.in .wcf-hs-mc .press{animation:wcfHsPress 1s cubic-bezier(.6,0,.4,1) 3.2s}
+.wcf-hs-mc .flash{position:absolute;left:50%;top:234px;width:10px;height:10px;margin:-5px;border-radius:50%;background:radial-gradient(circle,#fff,rgba(255,243,196,.7) 35%,transparent 70%);opacity:0;z-index:5}
+.wcf-hs-ev.in .wcf-hs-mc .flash{animation:wcfHsMcFlash .5s ease-out 3.6s}
+.wcf-hs-mc .sp{position:absolute;left:50%;top:234px;width:3px;height:14px;margin-left:-1.5px;border-radius:2px;background:#f5d97a;opacity:0;transform-origin:50% 0;z-index:5}
+.wcf-hs-ev.in .wcf-hs-mc .sp{animation:wcfHsSpark .6s ease-out 3.6s}
+.wcf-hs-ev.in .wcf-hs-mc .shake{animation:wcfHsShake .3s 3.6s}
+/* Golden Glove: the save, then the trophy (GloveScene) */
+.wcf-hs-gv{background:#04060c}
+.wcf-hs-gv .scene,.wcf-hs-gv .tro{position:absolute;inset:0}
+.wcf-hs-gv .bg{position:absolute;inset:0;background:url(/pitch-floodlit.jpg) center 45%/cover;filter:brightness(.55) blur(1.5px)}
+.wcf-hs-ev.in .wcf-hs-gv .bg{animation:wcfHsMono .2s 1.05s forwards}
+.wcf-hs-gv .goal{position:absolute;left:22px;right:22px;top:58px;height:200px;border:7px solid #f1f5f9;border-bottom:0;border-radius:4px 4px 0 0;box-shadow:0 0 12px rgba(255,255,255,.3);background:repeating-linear-gradient(90deg,rgba(226,232,240,.28) 0 1px,transparent 1px 14px),repeating-linear-gradient(0deg,rgba(226,232,240,.28) 0 1px,transparent 1px 14px)}
+.wcf-hs-gv .bars{position:absolute;left:0;right:0;height:0;background:#000;z-index:6}
+.wcf-hs-gv .bars.t{top:0} .wcf-hs-gv .bars.b{bottom:0}
+.wcf-hs-ev.in .wcf-hs-gv .bars{animation:wcfHsBars .3s ease-out 1.05s forwards}
+.wcf-hs-gv .slow{position:absolute;left:14px;top:11px;z-index:7;font:700 10px var(--font-oswald),sans-serif;letter-spacing:.3em;color:#ef4655;opacity:0}
+.wcf-hs-gv .slow::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#ef4655;margin-right:6px}
+.wcf-hs-ev.in .wcf-hs-gv .slow{animation:wcfHsF .2s 1.2s forwards}
+.wcf-hs-gv .ball{position:absolute;left:0;top:0;width:32px;height:32px;margin:-16px 0 0 -16px;z-index:6;offset-path:path("M190 360 C 230 250, 285 150, 300 92 C 306 66, 318 40, 350 18");offset-rotate:0deg;offset-distance:0%;opacity:0}
+.wcf-hs-gv .ball svg{width:32px;height:32px;display:block}
+.wcf-hs-ev.in .wcf-hs-gv .ball{animation:wcfHsShot 2.4s linear .1s forwards}
+.wcf-hs-gv .glove{position:absolute;left:224px;top:80px;width:104px;z-index:4;transform:translate(-230px,120px) rotate(-75deg) scale(.8);opacity:0;filter:drop-shadow(0 10px 16px rgba(0,0,0,.6))}
+.wcf-hs-ev.in .wcf-hs-gv .glove{animation:wcfHsDive .72s cubic-bezier(.2,.7,.3,1) .36s forwards,wcfHsHold 1s linear 1.08s forwards}
+.wcf-hs-gv .trail{position:absolute;left:30px;top:150px;width:200px;height:60px;z-index:3;background:linear-gradient(90deg,transparent,rgba(245,217,122,.35));border-radius:30px;filter:blur(8px);transform:rotate(-28deg);opacity:0}
+.wcf-hs-ev.in .wcf-hs-gv .trail{animation:wcfHsTrail .7s .4s}
+.wcf-hs-gv .hit{position:absolute;left:300px;top:92px;z-index:5}
+.wcf-hs-gv .hit i{position:absolute;left:-1.5px;top:0;width:3px;height:16px;border-radius:2px;background:#f5d97a;transform-origin:50% 0;opacity:0}
+.wcf-hs-ev.in .wcf-hs-gv .hit i{animation:wcfHsSpark .7s ease-out 1.08s}
+.wcf-hs-gv .hit b{position:absolute;left:-12px;top:-12px;width:24px;height:24px;border-radius:50%;border:3px solid #fff3c4;opacity:0}
+.wcf-hs-ev.in .wcf-hs-gv .hit b{animation:wcfHsRingOut .7s ease-out 1.08s}
+.wcf-hs-gv .save{position:absolute;left:0;right:0;top:268px;z-index:7;text-align:center;font:800 46px/1 var(--display);background:linear-gradient(100deg,#b8862b,#fff3c4 40%,#f5d97a 60%,#b8862b);-webkit-background-clip:text;background-clip:text;color:transparent;opacity:0;transform:scale(2.4)}
+.wcf-hs-ev.in .wcf-hs-gv .save{animation:wcfHsSlam .35s cubic-bezier(.3,1.5,.5,1) 1.15s forwards,wcfHsO .3s 2.4s forwards}
+.wcf-hs-ev.in .wcf-hs-gv .scene{animation:wcfHsO .5s 2.6s forwards}
+.wcf-hs-gv .tro{opacity:0}
+.wcf-hs-ev.in .wcf-hs-gv .tro{animation:wcfHsF .5s 2.7s forwards}
+.wcf-hs-gv .rays{position:absolute;left:50%;top:40%;width:640px;height:640px;margin:-320px 0 0 -320px;background:repeating-conic-gradient(rgba(245,217,122,.15) 0 5deg,transparent 5deg 15deg);border-radius:50%;-webkit-mask:radial-gradient(circle,#000 8%,transparent 55%);mask:radial-gradient(circle,#000 8%,transparent 55%)}
+.wcf-hs-ev.in .wcf-hs-gv .rays{animation:wcfHsSpin 14s linear infinite}
+.wcf-hs-gv .stand{position:absolute;left:50%;top:44px;width:150px;margin-left:-75px;transform:translateY(120px);opacity:0}
+.wcf-hs-ev.in .wcf-hs-gv .stand{animation:wcfHsRise 1s cubic-bezier(.25,1.2,.4,1) 2.85s forwards}
+.wcf-hs-gv .tg{display:block;width:96px;margin:0 auto -6px;filter:drop-shadow(0 0 22px rgba(245,217,122,.5))}
+.wcf-hs-gv .plinth{position:relative;height:96px;border-radius:6px 6px 3px 3px;background:linear-gradient(180deg,#1f2433,#07080d 60%);box-shadow:inset 0 2px 0 rgba(255,255,255,.12),0 16px 30px rgba(0,0,0,.7);text-align:center;padding-top:10px}
+.wcf-hs-gv .plinth::before{content:"";position:absolute;left:-8px;right:-8px;top:-8px;height:10px;border-radius:4px;background:linear-gradient(180deg,#2a3041,#11141d)}
+.wcf-hs-gv .med{width:44px;height:44px;margin:0 auto;border-radius:50%;padding:2px;background:linear-gradient(135deg,#fff3c4,#b8862b)}
+.wcf-hs-gv .med .wcf-hs-face{width:40px;height:40px;font-size:14px;border:0}
+.wcf-hs-gv .plinth small{display:block;margin-top:6px;font:700 8.5px var(--font-oswald),sans-serif;letter-spacing:.22em;background:linear-gradient(100deg,#b8862b,#fff3c4 40%,#f5d97a 60%,#b8862b);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wcf-hs-gv .shine{position:absolute;left:50%;top:44px;width:150px;height:110px;margin-left:-75px;background:linear-gradient(105deg,transparent 38%,rgba(255,255,255,.55) 50%,transparent 62%);mix-blend-mode:overlay;transform:translateX(-140%);pointer-events:none}
+.wcf-hs-ev.in .wcf-hs-gv .shine{animation:wcfHsShine 1.1s ease-out 3.9s forwards}
+/* Both: the name plate */
+.wcf-hs-mc .plate,.wcf-hs-gv .plate{position:absolute;left:12px;right:12px;bottom:12px;z-index:9;padding:9px 10px;border-radius:12px;background:rgba(8,10,20,.88);border:1px solid rgba(245,217,122,.55);text-align:center;opacity:0}
+.wcf-hs-mc .plate small,.wcf-hs-gv .plate small{display:block;font:600 9px var(--font-oswald),sans-serif;letter-spacing:.24em;color:#cbd5e1}
+.wcf-hs-mc .plate b,.wcf-hs-gv .plate b{display:block;font:800 19px/1.2 var(--display);background:linear-gradient(100deg,#b8862b,#fff3c4 40%,#f5d97a 60%,#b8862b);-webkit-background-clip:text;background-clip:text;color:transparent}
+.wcf-hs-mc .plate span,.wcf-hs-gv .plate span{display:block;font:600 11.5px var(--sans);color:#cbd5e1;margin-top:2px}
+.wcf-hs-ev.in .wcf-hs-mc .plate{animation:wcfHsU .5s ease-out 4.4s forwards}
+.wcf-hs-ev.in .wcf-hs-gv .plate{animation:wcfHsU .5s ease-out 3.7s forwards}
+.wcf-hs.still .wcf-hs-gv .rays{animation:none!important}
+@keyframes wcfHsF{to{opacity:1}}
+@keyframes wcfHsO{to{opacity:0}}
+@keyframes wcfHsU{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes wcfHsDim{to{opacity:.3}}
+@keyframes wcfHsBar{to{width:var(--w)}}
+@keyframes wcfHsMcPop{to{opacity:1;transform:none}}
+@keyframes wcfHsRib{to{transform:scaleY(1)}}
+@keyframes wcfHsPress{40%{top:104px}48%{top:100px}70%{top:104px}100%{top:-130px}}
+@keyframes wcfHsMcFlash{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(26)}}
+@keyframes wcfHsSpark{0%{opacity:1;transform:rotate(var(--a)) translateY(10px)}100%{opacity:0;transform:rotate(var(--a)) translateY(80px)}}
+@keyframes wcfHsShake{25%{transform:translate(-3px,2px)}50%{transform:translate(3px,-2px)}75%{transform:translate(-2px,1px)}}
+@keyframes wcfHsMono{to{filter:brightness(.45) blur(1.5px) grayscale(1)}}
+@keyframes wcfHsBars{to{height:34px}}
+@keyframes wcfHsShot{0%{opacity:1;offset-distance:0%;transform:scale(1.5)}38%{offset-distance:62%;transform:scale(.9)}75%{offset-distance:68%;transform:scale(.88) rotate(120deg)}100%{opacity:1;offset-distance:100%;transform:scale(.7) rotate(400deg)}}
+@keyframes wcfHsDive{0%{opacity:1}100%{opacity:1;transform:translate(0,0) rotate(-18deg) scale(1)}}
+@keyframes wcfHsHold{to{opacity:1;transform:translate(6px,-4px) rotate(-14deg) scale(1)}}
+@keyframes wcfHsTrail{40%{opacity:1}100%{opacity:0;transform:rotate(-28deg) translateX(80px)}}
+@keyframes wcfHsRingOut{0%{opacity:1;transform:scale(.5)}100%{opacity:0;transform:scale(5)}}
+@keyframes wcfHsSlam{to{opacity:1;transform:none}}
+@keyframes wcfHsSpin{to{transform:rotate(360deg)}}
+@keyframes wcfHsRise{to{opacity:1;transform:none}}
+@keyframes wcfHsShine{to{transform:translateX(140%)}}
 .wcf-hs.still .wcf-hs-ev{opacity:1;transform:none;transition:none}
 .wcf-hs.still *{animation-duration:.01ms!important;animation-delay:0s!important;transition-duration:.01ms!important;transition-delay:0s!important}
 `;
