@@ -73,6 +73,8 @@ import { WinMoment, type SeasonGame } from "./ui/celebrate";
 import { TrophyCabinet, MatchBallMoment, cabinetCss } from "./ui/cabinet";
 import { FirstGameCard, NameStep, WelcomeCards, type BestChance, type PushState } from "./ui/newplayer";
 import { HistoryPage } from "./ui/history";
+import { ClubCabinet } from "./ui/clubcabinet";
+import { computeClubCabinet } from "../lib/clubcabinet";
 import { computeHistory, type HMoment } from "../lib/history";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { computeProgramme } from "../lib/programme";
@@ -6288,6 +6290,19 @@ function App({ session }: { session: Session }) {
     [pastGames, goalRows, profiles, motmWinnerIdsByGame, motmVotes, potmHistory, historyMoments, cs.team_white_name, cs.team_red_name, upcomingGames, totmMonths]
   );
   const historyPeople = useMemo(() => new Map(profiles.map((p) => [p.id, { name: p.display_name, avatar: p.avatar_url ?? null }])), [profiles]);
+  // The club's trophy cabinet on History: this season's awards, won and to come.
+  const cabinetItems = useMemo(
+    () =>
+      computeClubCabinet({
+        year: currentSeasonYear,
+        today: nowUk.slice(0, 10),
+        chapters: historyData.chapters,
+        games: pastGames,
+        goals: goalRows,
+        names: new Map(profiles.map((p) => [p.id, p.display_name])),
+      }),
+    [currentSeasonYear, nowUk, historyData, pastGames, goalRows, profiles]
+  );
   async function addHistoryMoment(m: { happened_on: string; title: string; body: string | null; kind: "note" | "goal"; player_ids: string[] }) {
     const { error } = await supabase.from("history_moments").insert({ ...m, created_by: myId });
     if (error) {
@@ -7266,6 +7281,7 @@ function App({ session }: { session: Session }) {
                 onAdd={addHistoryMoment}
                 onDelete={deleteHistoryMoment}
                 onProgramme={programme ? openProgramme : undefined}
+                cabinet={<ClubCabinet items={cabinetItems} people={historyPeople} me={myId} today={nowUk.slice(0, 10)} />}
               />
             }
             activeStatsYear={activeStatsYear}

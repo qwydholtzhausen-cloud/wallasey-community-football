@@ -36,6 +36,7 @@ export function HistoryPage({
   onAdd,
   onDelete,
   onProgramme,
+  cabinet,
 }: {
   data: Data;
   people: Map<string, Person>;
@@ -44,6 +45,7 @@ export function HistoryPage({
   onAdd: (m: NewMoment) => Promise<boolean>;
   onDelete: (id: string) => Promise<void>;
   onProgramme?: () => void; // the First XI matchday programme, kept here for good
+  cabinet?: React.ReactNode; // the club's trophy cabinet, under the intro
 }) {
   const root = useRef<HTMLDivElement>(null);
   const story = useRef<HTMLDivElement>(null);
@@ -301,6 +303,7 @@ export function HistoryPage({
           Auto-play the story
         </button>
       </div>
+      {cabinet}
       <div ref={story} className="wcf-hs-story">
         <div className="wcf-hs-rail"><i /></div>
         {data.chapters.map((c) => {
