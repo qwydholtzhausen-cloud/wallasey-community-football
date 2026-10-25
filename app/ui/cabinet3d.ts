@@ -404,6 +404,10 @@ export function mountCabinet(
   canvas.addEventListener("pointermove", move);
   canvas.addEventListener("pointerup", up);
   canvas.addEventListener("pointercancel", cancel);
+  // Swipes on the shelf belong to the shelf: keep them from the page's
+  // swipe-between-tabs handler.
+  const keep = (e: TouchEvent) => e.stopPropagation();
+  for (const t of ["touchstart", "touchmove", "touchend"] as const) canvas.addEventListener(t, keep, { passive: true });
   const ro = new ResizeObserver(() => { renderer.setSize(W(), H, false); cam.aspect = W() / H; cam.updateProjectionMatrix(); });
   ro.observe(root);
 
@@ -481,6 +485,7 @@ export function mountCabinet(
       running = false; cancelAnimationFrame(raf); ro.disconnect();
       canvas.removeEventListener("pointerdown", down); canvas.removeEventListener("pointermove", move);
       canvas.removeEventListener("pointerup", up); canvas.removeEventListener("pointercancel", cancel);
+      for (const t of ["touchstart", "touchmove", "touchend"] as const) canvas.removeEventListener(t, keep);
       scene.traverse((o) => {
         if (!(o instanceof THREE.Mesh)) return;
         o.geometry.dispose();
