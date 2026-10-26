@@ -44,7 +44,11 @@ export async function GET(req: Request) {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   const admin = createClient(supabaseUrl, serviceKey);
 
+  // 08:00 UK, all year: started by the frequent cron's 5-minute tick once it's
+  // gone 8 in London (Vercel's cron is UTC-only, so it ran at 07:00 after the
+  // clocks went back). Once a day, never before 8.
   const nowUk = nowInLondon();
+  if (nowUk.slice(11, 16) < "08:00") return NextResponse.json({ skipped: "before 08:00 UK" });
 
   const { data: games } = await admin
     .from("games")
@@ -61,6 +65,9 @@ export async function GET(req: Request) {
 
   const { data: notified } = await admin.from("notified_events").select("event_key");
   const notifiedKeys = new Set((notified ?? []).map((r) => r.event_key));
+  const runKey = `daily-run-${nowUk.slice(0, 10)}`;
+  if (notifiedKeys.has(runKey)) return NextResponse.json({ skipped: "already ran today" });
+  await admin.from("notified_events").insert({ event_key: runKey });
 
   async function markNotified(key: string) {
     await admin.from("notified_events").insert({ event_key: key });

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { wrappedThemeFor } from "../../../../lib/wrappedThemes";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers, sendPushBroadcast } from "../../../../lib/push";
@@ -645,5 +645,12 @@ export async function GET(req: Request) {
 
   // Last, so a run that dies part-way doesn't count as a healthy one.
   await recordHeartbeat(admin, "frequent").catch(() => undefined);
+  // The daily job (MOTM winners, Player of the Month, the Wrapped review) at
+  // 08:00 UK all year round; it marks itself done for the day.
+  if (nowUkStr.slice(11, 16) >= "08:00" && !notifiedKeys.has(`daily-run-${nowUkStr.slice(0, 10)}`)) {
+    const daily = new URL("/api/cron/daily", req.url);
+    after(() => fetch(daily, { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` }, signal: AbortSignal.timeout(8000) }).then(() => undefined, () => undefined));
+  }
+
   return NextResponse.json({ ok: true });
 }
