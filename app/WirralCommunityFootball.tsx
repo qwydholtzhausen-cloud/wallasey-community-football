@@ -4893,7 +4893,7 @@ function App({ session }: { session: Session }) {
     } catch {}
   }, [watchedKey]);
   const occInfo: OccInfo | null = (() => {
-    if (!occasionsOn || xiTakeover) return null;
+    if (!occasionsOn) return null;
     const today = nowUk.slice(0, 10);
     let wrappedDay = false;
     if (showWrappedBanner && wrapped && !wrapped.soFar) {
@@ -4903,6 +4903,9 @@ function App({ session }: { session: Session }) {
         wrappedDay = nowUk >= rel && today === rel.slice(0, 10);
       }
     }
+    // Match week keeps the other occasions away, but not Wrapped day: on the
+    // release morning Wrapped leads and the First XI hero sits under it.
+    if (xiTakeover && !wrappedDay) return null;
     const occ = findOccasion({ games, today, wrappedDay, preview: isAdmin ? occPreview : null });
     if (!occ) return null;
     const g = occ.game;
@@ -6639,7 +6642,7 @@ function App({ session }: { session: Session }) {
       {xiTakeover && <style>{matchdayCss}</style>}
       {mdIntro && <MatchdayIntro week={isXiWeek} onDone={() => setMdIntro(false)} />}
       {occ && <style>{occasionCss}</style>}
-      <header className={"wcf-top" + (xiTakeover ? " mdx" : "") + (occ ? " occ" : "")} style={occ ? occVars(occ.kind, occ.release) : undefined}>
+      <header className={"wcf-top" + (xiTakeover && !occ ? " mdx" : "") + (occ ? " occ" : "")} style={occ ? occVars(occ.kind, occ.release) : undefined}>
         <button className="wcf-brand" onClick={() => setTab("fixtures")} aria-label="Go to fixtures">
           <span className="wcf-logo">
             <img src="/crest.png" alt="Wirral Community Football crest" />
@@ -7546,7 +7549,7 @@ function App({ session }: { session: Session }) {
       </main>
 
       <nav
-        className={"wcf-nav" + (xiTakeover ? " mdx" : "") + (occ ? " occ" : "") + (movementOn && !xiTakeover ? " has-pill" : "")}
+        className={"wcf-nav" + (xiTakeover && !occ ? " mdx" : "") + (occ ? " occ" : "") + (movementOn && !xiTakeover ? " has-pill" : "")}
         style={{ ["--n" as string]: TABS.length, ["--i" as string]: Math.max(0, TABS.findIndex((t) => t.k === tab)), ...(occ ? occVars(occ.kind, occ.release) : {}) }}
       >
         {movementOn && !xiTakeover && TABS.some((t) => t.k === tab) && <span className="wcf-nav-pill" ref={navPillRef} aria-hidden="true" />}
