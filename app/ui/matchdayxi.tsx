@@ -35,7 +35,7 @@ export function MatchdayRibbon({ kickoffMs, phase, onOpen }: { kickoffMs: number
     <button className={"mdx-ribbon" + (phase === "week" ? " week" : "")} onClick={onOpen}>
       <i />
       <b>THE FIRST XI</b>
-      <span>{phase === "week" ? weekText : phase === "ft" ? "Full time · vote for Man of the Match" : left > 0 ? `Kick-off in ${h ? `${h}h ` : ""}${m}m` : "Under way at The Oval"}</span>
+      <span>{phase === "week" ? weekText : phase === "ft" ? "Full time · vote for Man of the Match" : left > 0 ? `Kick-off in ${h ? `${h}h ` : ""}${m}m` : "Under way at Solar Campus"}</span>
       <em>Programme ›</em>
     </button>
   );
@@ -82,7 +82,7 @@ export function MatchdayHero({
       <span className="mdx-beam l" />
       <span className="mdx-beam r" />
       <div className="mdx-hk">
-        <small>{phase === "week" ? "MATCH WEEK" : "MATCHDAY"} · THE OVAL LEISURE</small>
+        <small>{phase === "week" ? "MATCH WEEK" : "MATCHDAY"} · SOLAR CAMPUS</small>
         <h3>
           The <span>First</span> XI
         </h3>
@@ -149,7 +149,7 @@ export function MatchdayHero({
         </>
       ) : (
         <div className="mdx-ko live">
-          <i /> Under way at The Oval
+          <i /> Under way at Solar Campus
         </div>
       )}
       <div className="mdx-acts">
@@ -185,7 +185,7 @@ export function MatchdayTimeline({ kickoff, phase, kickoffMs }: { kickoff: strin
   const nowIdx = phase === "ft" ? 3 : phase === "live" ? 2 : minsLeft <= 20 ? 1 : minsLeft <= 30 ? 0 : -1;
   const rows: [string, string, MdPhase][] = [
     [at(-30), "The walk-out: watch them come out of the tunnel", "pre"],
-    [at(-20), "Be at The Oval, boots on", "pre"],
+    [at(-20), "Be at Solar Campus, boots on", "pre"],
     [kickoff, "Kick-off: Reds v Whites", "live"],
     ["FT", "Man of the Match vote opens · pennants for the 22", "ft"],
   ];

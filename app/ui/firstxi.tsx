@@ -55,7 +55,7 @@ export function FirstXiPennantFront() {
         25 · 10 · 2026
       </text>
       <text x="115" y="182" textAnchor="middle" fontFamily="var(--font-oswald),sans-serif" fontWeight="500" fontSize="10.5" fill="#ffd5d8" letterSpacing="2.5">
-        THE OVAL LEISURE
+        SOLAR CAMPUS
       </text>
       <text x="115" y="214" textAnchor="middle" fontFamily="var(--font-caveat),cursive" fontWeight="700" fontSize="24" fill="#f5d97a">
         Nº 1
@@ -75,7 +75,7 @@ export function FirstXiMotmReveal({ winners, total, votes, onDone }: { winners: 
     setLeaving(true);
     setTimeout(onDone, 380);
   };
-  const names = ["REDS", "WHITES", "FIRST XI", ...winners.map((w) => w.name.split(" ")[0].toUpperCase()), "THE OVAL", "01·11·26"];
+  const names = ["REDS", "WHITES", "FIRST XI", ...winners.map((w) => w.name.split(" ")[0].toUpperCase()), "SOLAR CAMPUS", "01·11·26"];
   useEffect(() => {
     const t: ReturnType<typeof setTimeout>[] = [];
     let iv: ReturnType<typeof setInterval> | null = null;
@@ -118,7 +118,7 @@ export function FirstXiMotmReveal({ winners, total, votes, onDone }: { winners: 
             <br />
             the Match
           </div>
-          <div className="c">Sunday 1 November · The Oval</div>
+          <div className="c">Sunday 1 November · Solar Campus</div>
         </div>
         <div className={"fxi-scr" + (stage === 2 ? " on" : "")}>
           <div className="a">AND IT GOES TO</div>

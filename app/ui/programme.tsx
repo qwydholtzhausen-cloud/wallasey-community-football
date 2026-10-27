@@ -95,7 +95,7 @@ export function MatchdayProgramme({
             <div className="pgm-meta">
               {dt(prog.game.date, { weekday: "long", day: "numeric", month: "long", year: "numeric" })} · Kick-off {prog.game.kickoff}
               <br />
-              The Oval Leisure · The club&apos;s first 11-a-side
+              Solar Campus · The club&apos;s first 11-a-side
             </div>
             <div className="pgm-strip" />
           </div>
@@ -663,7 +663,7 @@ export function MatchdayProgramme({
             <dt>KICK-OFF</dt>
             <dd>{prog.game.kickoff}, so be there 20 minutes early</dd>
             <dt>VENUE</dt>
-            <dd>The Oval Leisure</dd>
+            <dd>Solar Campus</dd>
             <dt>FORMAT</dt>
             <dd>11-a-side, a club first</dd>
             <dt>SQUAD</dt>
@@ -759,7 +759,7 @@ export function MatchdayProgramme({
                 )}
                 <div className="pgm-fa-foot">
                   <span>{dt(prog.game.date, { weekday: "short", day: "numeric", month: "short", year: "numeric" }).toUpperCase()}</span>
-                  <span>THE OVAL LEISURE</span>
+                  <span>SOLAR CAMPUS</span>
                   <span>Nº1</span>
                 </div>
               </div>
