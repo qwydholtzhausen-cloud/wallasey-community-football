@@ -4493,7 +4493,8 @@ function App({ session }: { session: Session }) {
       const last = month.at(-1);
       if (!last) continue;
       const rel = monthReleaseAt(last.date, last.kickoff);
-      if (nowUk >= rel || (nowUk < kickoffCutoff(last.date, last.kickoff, 0) && !(evePreview && mk === thisMonthKey))) continue;
+      // Admins see it all month for now, to review; it's admins-only above.
+      if (nowUk >= rel || (nowUk < kickoffCutoff(last.date, last.kickoff, 0) && !((evePreview || isAdmin) && mk === thisMonthKey))) continue;
       const apps = month.filter((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting && b.team)).length;
       const name = new Date(mk + "-15T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
       const theme = wrappedThemeFor(mk);
@@ -4842,6 +4843,13 @@ function App({ session }: { session: Session }) {
     ? [...games].filter((g) => g.id !== programme.game.id && g.published && !g.postponed_at && !g.called_off_at && g.date < programme.game.date).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)).pop()
     : undefined;
   const xiCardsOut = !lastBeforeXi || kickoffCutoff(lastBeforeXi.date, lastBeforeXi.kickoff, 90) <= nowUk;
+  const xiCardsAt = (() => {
+    if (!lastBeforeXi) return null;
+    const t = kickoffCutoff(lastBeforeXi.date, lastBeforeXi.kickoff, 90);
+    const h = Number(t.slice(11, 13)), m = t.slice(14, 16);
+    const wd = new Date(t.slice(0, 10) + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
+    return `${wd} ${h % 12 || 12}${m === "00" ? "" : ":" + m}${h < 12 ? "am" : "pm"}`;
+  })();
   const isXiWeek = !!programme && firstXiOpen && (xiIsNext || isAdmin) && nowUk.slice(0, 10) >= (isAdmin ? FIRST_XI_TAKEOVER_ADMINS_FROM : FIRST_XI_TAKEOVER_FROM) && nowUk.slice(0, 10) < programme.game.date;
   const xiTakeover = isMatchday || isXiWeek;
   const kickoffMs = programme ? Date.now() + (toMs(kickoffCutoff(programme.game.date, programme.game.kickoff, 0)) - toMs(nowUk)) : 0;
@@ -6601,7 +6609,8 @@ function App({ session }: { session: Session }) {
           phase={mdPhase}
           avatarOf={(id) => avatarByPlayerId.get(id)}
           onProgramme={openProgramme}
-          onCards={() => setTab("lineup")}
+          onCards={xiCardsOut ? () => setTab("lineup") : undefined}
+          cardsAt={xiCardsAt}
           onVote={() => goToResult(programme.game.id)}
           onShare={shareXiPoster}
           sharing={posterBusy}
