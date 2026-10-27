@@ -8,7 +8,6 @@ export interface ProgGame {
   id: string;
   date: string;
   kickoff: string;
-  price?: number;
   team_white_score: number | null;
   team_red_score: number | null;
   bookings: { player_id: string; waiting: boolean; team: "white" | "red" | null; player: { display_name: string } }[];

@@ -686,14 +686,12 @@ export function MatchdayProgramme({
             <dd>{prog.game.kickoff}, so be there 20 minutes early</dd>
             <dt>VENUE</dt>
             <dd>Solar Campus</dd>
-            {prog.game.price != null && (
-              <>
-                <dt>PRICE</dt>
-                <dd>£{prog.game.price}, paid in the app (game credit works too)</dd>
-              </>
-            )}
             <dt>FORMAT</dt>
             <dd>11-a-side, a club first</dd>
+            <dt>KIT</dt>
+            <dd>Your side&apos;s colours: Reds in red, Whites in white</dd>
+            <dt>REFEREE</dt>
+            <dd>A referee takes charge</dd>
             <dt>SQUAD</dt>
             <dd>
               22{prog.waiting ? `, plus ${prog.waiting} on the waiting list` : ""}
