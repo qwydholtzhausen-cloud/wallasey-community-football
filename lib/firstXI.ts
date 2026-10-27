@@ -20,7 +20,7 @@ export const FIRST_XI_REDS = [
   "Loysie (Chris)",
   "dagzy",
   "Matty Rowland",
-  "Callum Blake",
+  "Gary McKay", // in for Callum Blake (27 Oct)
 ];
 
 export const FIRST_XI_DATE_LABEL = "01.11.26";

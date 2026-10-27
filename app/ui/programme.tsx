@@ -25,6 +25,8 @@ export function MatchdayProgramme({
   ads,
   avatarOf,
   result,
+  totm,
+  next,
   onClose,
   onSharePoster,
 }: {
@@ -35,6 +37,8 @@ export function MatchdayProgramme({
   ads: ProgrammeAd[];
   avatarOf: (id: string) => string | null | undefined;
   result: ProgrammeResult | null;
+  totm?: { month: string; ids: { id: string; name: string }[] } | null; // the latest Team of the Month before the game
+  next?: { date: string; kickoff: string; venue: string } | null; // the next game after it
   onClose: () => void;
   onSharePoster?: () => void;
 }) {
@@ -187,7 +191,7 @@ export function MatchdayProgramme({
             </div>
             {(
               [
-                ["GAMES PLAYED", tape.reds.apps, tape.whites.apps, ""],
+                ["APPEARANCES", tape.reds.apps, tape.whites.apps, ""],
                 ["WINS", tape.reds.wins, tape.whites.wins, ""],
                 ["WIN RATE", tape.reds.rate, tape.whites.rate, "%"],
                 ["GOALS", tape.reds.goals, tape.whites.goals, ""],
@@ -227,7 +231,7 @@ export function MatchdayProgramme({
       key: "form",
       label: "Form guide",
       body: (
-        <div className="pgm-pg">
+        <div className="pgm-pg fill">
           <div className="pgm-hero" style={{ backgroundImage: "url(/first-xi/board.jpg)", backgroundPosition: "center 40%" }} />
           {stub("FORM GUIDE", "The last six")}
           <div className="pgm-form">
@@ -364,7 +368,7 @@ export function MatchdayProgramme({
       key: "honour",
       label: "Roll of honour",
       body: (
-        <div className="pgm-pg">
+        <div className="pgm-pg fill">
           {stub(
             "ROLL OF HONOUR",
             <>
@@ -387,6 +391,24 @@ export function MatchdayProgramme({
                 </div>
               );
             })}
+            {totm && totm.ids.length > 0 && (
+              <div className="pgm-totm">
+                <small>TEAM OF THE MONTH · {totm.month.toUpperCase()}</small>
+                <div>
+                  {totm.ids.map((p) => {
+                    const on = [...prog.reds, ...prog.whites].some((x) => x.id === p.id);
+                    return (
+                      <span key={p.id} className={on ? (sideOf(p.id) === "Reds" ? "r" : "w") : ""}>
+                        {p.name}
+                      </span>
+                    );
+                  })}
+                </div>
+                <em>
+                  <i className="r" /> Reds <i className="w" /> Whites {onDay}
+                </em>
+              </div>
+            )}
             {rec.bestHaul && (
               <div className="pgm-hr" style={{ border: 0 }}>
                 {face(rec.bestHaul, "pgm-hph")}
@@ -409,7 +431,7 @@ export function MatchdayProgramme({
       key: "records",
       label: "The record book",
       body: (
-        <div className="pgm-pg">
+        <div className="pgm-pg fill">
           {stub(
             "THE RECORD BOOK",
             <>
@@ -545,7 +567,7 @@ export function MatchdayProgramme({
       key: "numbers",
       label: "The club in numbers",
       body: (
-        <div className="pgm-pg">
+        <div className="pgm-pg fill">
           {stub(
             "THE CLUB IN NUMBERS",
             <>
@@ -617,7 +639,7 @@ export function MatchdayProgramme({
       key: "quiz",
       label: "Half-time quiz",
       body: (
-        <div className="pgm-pg">
+        <div className="pgm-pg fill">
           {stub(
             "HALF-TIME QUIZ",
             <>
@@ -657,13 +679,19 @@ export function MatchdayProgramme({
       key: "matchday",
       label: "On the day",
       body: (
-        <div className="pgm-pg">
+        <div className="pgm-pg fill">
           {stub("MATCHDAY", "On the day")}
           <dl className="pgm-tick">
             <dt>KICK-OFF</dt>
             <dd>{prog.game.kickoff}, so be there 20 minutes early</dd>
             <dt>VENUE</dt>
             <dd>Solar Campus</dd>
+            {prog.game.price != null && (
+              <>
+                <dt>PRICE</dt>
+                <dd>£{prog.game.price}, paid in the app (game credit works too)</dd>
+              </>
+            )}
             <dt>FORMAT</dt>
             <dd>11-a-side, a club first</dd>
             <dt>SQUAD</dt>
@@ -808,9 +836,18 @@ export function MatchdayProgramme({
           <b>
             See you
             <br />
-            next week
+            {next ? `on ${dt(next.date, { weekday: "long" })}` : "next week"}
           </b>
-          <span>Book your next game in the app. Mondays and Thursdays, all year round.</span>
+          <span>
+            {next ? (
+              <>
+                Next game: {dt(next.date, { weekday: "long", day: "numeric", month: "long" })}, {next.kickoff} at {next.venue}. Book it in the app.
+              </>
+            ) : (
+              "Book your next game in the app."
+            )}{" "}
+            Mondays and Thursdays, all year round.
+          </span>
           <div className="pgm-strip" />
         </div>
       ),
@@ -949,7 +986,7 @@ export const programmeCss = `
 .pgm-cover{background:#0e1220;color:#fff;display:flex;flex-direction:column;padding:0}
 .pgm-band{position:relative;flex:1.15;min-height:0;background:linear-gradient(180deg,rgba(14,18,32,.4) 0%,rgba(14,18,32,0) 22%,rgba(14,18,32,0) 62%,#0e1220 100%),url(/first-xi/cover.jpg) 50% 70%/cover}
 .pgm-top{position:absolute;left:16px;right:16px;top:14px;display:flex;justify-content:space-between;font:600 10.5px var(--font-oswald),sans-serif;letter-spacing:.24em}
-.pgm-price{background:var(--pgm-red);padding:3px 8px}
+.pgm-price{background:var(--pgm-red);padding:3px 8px;margin-right:46px}
 .pgm-low{padding:0 18px 18px;margin-top:-34px;position:relative;display:flex;flex-direction:column}
 .pgm-low img{width:58px}
 .pgm-t{font:700 50px/.9 var(--font-oswald),sans-serif;text-transform:uppercase;margin-top:6px}
@@ -992,7 +1029,7 @@ export const programmeCss = `
 .pgm-big small{font:600 10.5px var(--font-oswald),sans-serif;letter-spacing:.2em}
 .pgm-big .d{font:600 13px var(--font-oswald),sans-serif;letter-spacing:.1em;color:var(--pgm-mute);padding-bottom:16px}
 .pgm-hb{display:flex;height:10px;margin-top:14px;border:2px solid var(--pgm-ink)}
-.pgm-copy{font-size:12.5px;line-height:1.55;color:#3a342a;margin-top:12px;columns:2;column-gap:14px}
+.pgm-copy{font-size:13.5px;line-height:1.6;color:#3a342a;margin-top:14px;max-width:34ch}
 .pgm-copy p{margin:0 0 8px}
 .pgm-copy b{color:var(--pgm-ink)}
 .pgm-star{display:grid;grid-template-columns:86px 1fr;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid rgba(0,0,0,.15)}
@@ -1002,6 +1039,17 @@ export const programmeCss = `
 .pgm-star>div>b,.pgm-hr>div>b{display:block;font:700 20px/1.05 var(--font-oswald),sans-serif;text-transform:uppercase;margin-top:2px}
 .pgm-star>div>span,.pgm-hr>div>span{display:block;font-size:11.5px;color:#4a4236;margin-top:4px;line-height:1.35}
 .pgm-hon{display:grid;gap:10px}
+.pgm-hph:not(img){background:var(--pgm-ink)!important}
+.pgm-totm{padding:10px 0 12px;border-bottom:1px solid rgba(0,0,0,.15)}
+.pgm-totm small{font:600 10px var(--font-oswald),sans-serif;letter-spacing:.2em;color:var(--pgm-red)}
+.pgm-totm div{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.pgm-totm span{font:700 13px var(--font-oswald),sans-serif;text-transform:uppercase;padding:4px 8px;border:1.5px solid var(--pgm-ink);background:#fbf5e8}
+.pgm-totm span.r{background:var(--pgm-red);border-color:var(--pgm-red);color:#fff}
+.pgm-totm span.w{background:#fff}
+.pgm-totm em{display:flex;align-items:center;gap:5px;margin-top:7px;font:normal 600 10px var(--font-oswald),sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--pgm-mute)}
+.pgm-totm em i{width:10px;height:10px;border:1.5px solid var(--pgm-ink)}
+.pgm-totm em i.r{background:var(--pgm-red);border-color:var(--pgm-red)}
+.pgm-totm em i.w{background:#fff;margin-left:6px}
 .pgm-hr{display:grid;grid-template-columns:62px 1fr;gap:12px;align-items:center;padding-bottom:10px;border-bottom:1px solid rgba(0,0,0,.15)}
 .pgm-hph{width:62px;height:62px;border-radius:50%;object-fit:cover;border:3px solid #f5d97a;display:grid;place-items:center;font:700 24px var(--font-oswald),sans-serif;color:#fff;box-shadow:0 0 0 2px var(--pgm-ink)}
 .pgm-rec{padding:10px 0;border-bottom:1px solid rgba(0,0,0,.18);display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:end}
@@ -1058,4 +1106,17 @@ export const programmeCss = `
 .pgm-backc span{font-size:12.5px;margin-top:8px;color:#ffe1e3;max-width:24ch;line-height:1.5}
 .pgm-backc .pgm-strip{position:absolute;left:0;right:0;bottom:0;height:12px;margin:0;background:repeating-linear-gradient(90deg,#fff 0 18px,var(--pgm-red) 18px 36px)}
 @media (prefers-reduced-motion: reduce){.pgm,.pgm-leaf{animation:none!important}}
+/* Pages with short content fill the page, like print: rows share the height. */
+.pgm-pg.fill{display:flex;flex-direction:column;padding-bottom:40px}
+.pgm-pg.fill>.pgm-form,.pgm-pg.fill>.pgm-hon,.pgm-pg.fill>.pgm-nums{flex:1;display:flex;flex-direction:column}
+.pgm-pg.fill .pgm-fr,.pgm-pg.fill .pgm-hr{flex:1}
+.pgm-pg.fill .pgm-fr b{font-size:20px}
+.pgm-pg.fill>.pgm-rec{flex:1;align-content:center}
+.pgm-pg.fill .pgm-rec strong{font-size:46px}
+.pgm-pg.fill .pgm-rec b{font-size:22px}
+.pgm-pg.fill>.pgm-nums{display:grid;grid-auto-rows:1fr}
+.pgm-pg.fill .pgm-nums div{display:flex;flex-direction:column;justify-content:center}
+.pgm-pg.fill .pgm-nums b{font-size:56px}
+.pgm-pg.fill>.pgm-q{flex:1;display:flex;align-items:center;font-size:15px}
+.pgm-pg.fill>.pgm-tick{flex:1;align-content:space-evenly;font-size:14px;row-gap:12px}
 `;

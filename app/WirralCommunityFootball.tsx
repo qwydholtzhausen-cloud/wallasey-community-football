@@ -7849,6 +7849,14 @@ function App({ session }: { session: Session }) {
             ads={programmeAds}
             avatarOf={(id) => avatarByPlayerId.get(id)}
             result={scored ? { white: g.team_white_score!, red: g.team_red_score!, scorers, motm, redScorers: sideScorers("red"), whiteScorers: sideScorers("white") } : null}
+            totm={(() => {
+              const t = totmMonths.filter((x) => x.monthKey < g.date.slice(0, 7)).sort((x, y) => y.monthKey.localeCompare(x.monthKey))[0];
+              return t ? { month: t.monthLabel.split(" ")[0], ids: t.team.team.map((p) => ({ id: p.id, name: nameOf(p.id) })) } : null;
+            })()}
+            next={(() => {
+              const n = [...games].sort((x, y) => x.date.localeCompare(y.date) || x.kickoff.localeCompare(y.kickoff)).find((x) => x.published && !x.called_off_at && !x.postponed_at && x.id !== g.id && (x.date > g.date || (x.date === g.date && x.kickoff > g.kickoff)));
+              return n ? { date: n.date, kickoff: n.kickoff, venue: n.venue } : null;
+            })()}
             onSharePoster={shareXiPoster}
             onClose={() => setProgrammeOpen(false)}
           />
