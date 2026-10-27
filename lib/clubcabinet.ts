@@ -3,6 +3,7 @@
 // gold; the next to come wait as glass outlines. Pure and DB-free: built
 // from the History timeline (lib/history.ts) and the season's goals.
 import type { Chapter } from "./history";
+import { monthReleaseAt } from "./time";
 
 export type CabKind = "potm" | "pots" | "gb" | "pp" | "gg" | "gots";
 
@@ -34,7 +35,6 @@ export interface CabGame {
 
 const MONTH = (k: string) => new Date(k + "-15T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
 const DAY = (d: string) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
-const nextFirst = (k: string) => { const [y, m] = k.split("-").map(Number); return `${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, "0")}-01`; };
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 const SEASON: { kind: CabKind; name: string; eyebrow: string; waiting: string }[] = [
@@ -52,6 +52,9 @@ export function computeClubCabinet(input: {
   games: CabGame[]; // played games, any season
   goals: { game_id: string; player_id: string; goals: number }[];
   names: Map<string, string>; // real players only (test accounts are already left out)
+  // Each month's last published game (played or not): Player of the Month is
+  // out at 08:00 after its vote closes, with Wrapped (lib/time.ts monthReleaseAt).
+  lastGameOf: (monthKey: string) => { date: string; kickoff: string } | null;
 }): CabItem[] {
   const { year, today, names } = input;
   const nm = (id: string) => names.get(id) ?? "A player";
@@ -61,6 +64,7 @@ export function computeClubCabinet(input: {
   const out: CabItem[] = [];
 
   // Player of the Month: a gold cup per announced month this season.
+  const releaseDay = (k: string, fallback: string) => { const g = input.lastGameOf(k); return g ? monthReleaseAt(g.date, g.kickoff).slice(0, 10) : fallback; };
   const months = events.filter((e) => e.key.startsWith(`potm-${year}-`)).sort((a, b) => a.key.localeCompare(b.key));
   for (const e of months) {
     const k = e.key.slice(5), label = MONTH(k), s = e.scene;
@@ -69,7 +73,7 @@ export function computeClubCabinet(input: {
     if (!ids.length) continue;
     const who = ids.length > 1 ? joint(ids) : nm(ids[0]);
     out.push({
-      key: e.key, kind: "potm", won: true, season: false, date: e.date,
+      key: e.key, kind: "potm", won: true, season: false, date: releaseDay(k, e.date),
       plateTop: up(`${label} ${year}`), plateName: up(who), engrave: up(`${who} · ${label} ${year}`),
       eyebrow: `Player of the Month · ${label}`, title: who,
       line: solo ? (s.note ? s.note.replace(" · d", ". D") + "." : `${plural(s.stats.wins, "MOTM win")}, ${s.stats.votes} votes, ${plural(s.stats.goals, "goal")}.`) : "Shared.",
@@ -79,15 +83,16 @@ export function computeClubCabinet(input: {
     });
   }
   // The month being played for now waits on its plinth (never its leader:
-  // no Player of the Month spoilers before the 1st).
+  // no Player of the Month spoilers before it's out).
   const cur = today.slice(0, 7);
   const played = input.games.some((g) => g.date.startsWith(cur));
   if (cur.startsWith(`${year}-`) && played && !months.some((e) => e.key === `potm-${cur}`)) {
-    const ann = nextFirst(cur), label = MONTH(cur);
+    const g = input.lastGameOf(cur), label = MONTH(cur);
+    const ann = g ? monthReleaseAt(g.date, g.kickoff).slice(0, 10) : `${cur}-28`;
     out.push({
       key: `potm-${cur}`, kind: "potm", won: false, season: false, date: null,
       plateTop: up(`${label} ${year}`), plateName: up(DAY(ann)), engrave: null,
-      eyebrow: `Player of the Month · ${label}`, title: `Announced ${DAY(ann)}`,
+      eyebrow: `Player of the Month · ${label}`, title: `Out ${DAY(ann)}, 8am`,
       line: "The plinth is ready. The gold pours in when the winner is named.",
       winnerIds: [], race: null, raceTitle: "", raceNote: "",
     });

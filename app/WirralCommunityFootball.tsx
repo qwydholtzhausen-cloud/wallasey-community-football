@@ -6310,8 +6310,9 @@ function App({ session }: { session: Session }) {
         games: pastGames,
         goals: goalRows,
         names: new Map(profiles.map((p) => [p.id, p.display_name])),
+        lastGameOf: (k) => games.filter((g) => g.published && !g.called_off_at && !g.postponed_at && g.date.startsWith(k)).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)).at(-1) ?? null,
       }),
-    [currentSeasonYear, nowUk, historyData, pastGames, goalRows, profiles]
+    [currentSeasonYear, nowUk, historyData, pastGames, goalRows, profiles, games]
   );
   async function addHistoryMoment(m: { happened_on: string; title: string; body: string | null; kind: "note" | "goal"; player_ids: string[] }) {
     const { error } = await supabase.from("history_moments").insert({ ...m, created_by: myId });
