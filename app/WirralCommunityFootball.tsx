@@ -4475,6 +4475,15 @@ function App({ session }: { session: Session }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [games, thisMonthKey, nowUk]);
   const wrappedMonthKey = wrappedSoFar || thisMonthDone ? thisMonthKey : previousMonthKey(nowUk);
+  // Admins can see the countdown any time with ?occasion=eve (kept for the session).
+  const [evePreview] = useState(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get("occasion") === "eve") sessionStorage.setItem("wcf-eve-preview", "1");
+      return !!sessionStorage.getItem("wcf-eve-preview");
+    } catch {
+      return false;
+    }
+  });
   const releaseEve = useMemo(() => {
     // Admins only for now, to review before it goes to everyone.
     if (!wrappedOpenToAll || !myId || !isAdmin) return null;
@@ -4484,7 +4493,7 @@ function App({ session }: { session: Session }) {
       const last = month.at(-1);
       if (!last) continue;
       const rel = monthReleaseAt(last.date, last.kickoff);
-      if (nowUk < kickoffCutoff(last.date, last.kickoff, 0) || nowUk >= rel) continue;
+      if (nowUk >= rel || (nowUk < kickoffCutoff(last.date, last.kickoff, 0) && !(evePreview && mk === thisMonthKey))) continue;
       const apps = month.filter((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting && b.team)).length;
       const name = new Date(mk + "-15T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
       const theme = wrappedThemeFor(mk);
@@ -4504,7 +4513,7 @@ function App({ session }: { session: Session }) {
     }
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [games, nowUk, myId, wrappedOpenToAll, thisMonthKey, isAdmin]);
+  }, [games, nowUk, myId, wrappedOpenToAll, thisMonthKey, isAdmin, evePreview]);
   const wrapped = useMemo(() => {
     const scored = pastGames.filter((g) => g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g));
     const before = previousMonthKey(wrappedMonthKey + "-15");
