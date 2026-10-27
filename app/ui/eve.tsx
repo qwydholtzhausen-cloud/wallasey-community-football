@@ -29,9 +29,13 @@ export function ReleaseEve({ title, edition, accent, photo, fog, releaseMs, item
     return () => window.clearInterval(t);
   }, []);
   const left = Math.max(0, Math.floor((releaseMs - now) / 1000));
-  const hms = [Math.min(99, Math.floor(left / 3600)), Math.floor(left / 60) % 60, left % 60].map((n) => String(n).padStart(2, "0"));
+  // More than a day out (an admin preview): days, hours, minutes.
+  const days = left >= 86400;
+  const hms = (days ? [Math.min(99, Math.floor(left / 86400)), Math.floor(left / 3600) % 24, Math.floor(left / 60) % 60] : [Math.floor(left / 3600), Math.floor(left / 60) % 60, left % 60]).map((n) => String(n).padStart(2, "0"));
+  const out = new Date(releaseMs);
+  const when = left < 86400 && out.getDate() !== new Date(now).getDate() ? "Out tomorrow · 8am" : left < 86400 ? "Out today · 8am" : `Out ${out.toLocaleDateString("en-GB", { weekday: "short" })} · 8am`;
   return (
-    <section className="wcf-eve" style={{ ["--eve" as string]: accent }} aria-label={`${title}: out tomorrow at 8am`}>
+    <section className="wcf-eve" style={{ ["--eve" as string]: accent }} aria-label={`${title}: ${when.replace(" · ", " at ").toLowerCase()}`}>
       <style>{eveCss}</style>
       <div className="ph" style={{ backgroundImage: `url(${photo})` }} />
       <div className="sh" />
@@ -43,13 +47,13 @@ export function ReleaseEve({ title, edition, accent, photo, fog, releaseMs, item
       )}
       <div className="in">
         <div className="ey">
-          <span>Out tomorrow · 8am</span>
+          <span>{when}</span>
           {edition && <span className="ed">{edition}</span>}
         </div>
         <span className="m">
           <span>{title}</span>
         </span>
-        <div className="cd" aria-label={`${hms[0]} hours ${hms[1]} minutes left`}>
+        <div className="cd" aria-label={days ? `${hms[0]} days ${hms[1]} hours left` : `${hms[0]} hours ${hms[1]} minutes left`}>
           <Digit v={hms[0][0]} />
           <Digit v={hms[0][1]} />
           <span className="col">:</span>
@@ -58,7 +62,7 @@ export function ReleaseEve({ title, edition, accent, photo, fog, releaseMs, item
           <span className="col">:</span>
           <Digit v={hms[2][0]} />
           <Digit v={hms[2][1]} />
-          <span className="lbl">Until it&apos;s out</span>
+          <span className="lbl">{days ? "Days · hrs · mins" : "Until it's out"}</span>
         </div>
         <div className="tiles" style={{ gridTemplateColumns: `repeat(${items.length},1fr)` }}>
           {items.map((it, i) => (
