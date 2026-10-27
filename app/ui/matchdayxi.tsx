@@ -48,6 +48,7 @@ export function MatchdayHero({
   avatarOf,
   onProgramme,
   onCards,
+  cardsAt,
   onVote,
   onShare,
   sharing = false,
@@ -57,7 +58,8 @@ export function MatchdayHero({
   phase: MdPhase;
   avatarOf: (id: string) => string | null | undefined;
   onProgramme: () => void;
-  onCards: () => void;
+  onCards?: () => void; // missing until the team cards are out
+  cardsAt?: string | null; // "Thu 10pm": when they're out
   onVote: () => void;
   onShare?: () => void;
   sharing?: boolean;
@@ -162,7 +164,13 @@ export function MatchdayHero({
             Read the programme
           </button>
         )}
-        {phase === "ft" ? <button onClick={onProgramme}>The programme</button> : <button onClick={onCards}>The team cards</button>}
+        {phase === "ft" ? (
+          <button onClick={onProgramme}>The programme</button>
+        ) : onCards ? (
+          <button onClick={onCards}>The team cards</button>
+        ) : (
+          <span className="mdx-soon">Team cards{cardsAt ? ` ${cardsAt}` : " soon"}</span>
+        )}
         {phase === "ft" && onShare && (
           <button className="main mdx-share" onClick={onShare} disabled={sharing}>
             {sharing ? "Making the poster…" : "Share the full-time poster"}
@@ -364,6 +372,7 @@ export const matchdayCss = `
 .mdx-ko.live i{width:8px;height:8px;border-radius:50%;background:#e63946;animation:mdxPulse 1.2s infinite}
 .mdx-acts{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 12px 0}
 .mdx-acts .mdx-share{grid-column:1/-1}
+.mdx-acts .mdx-soon{height:44px;border-radius:12px;border:1px dashed rgba(245,217,122,.35);display:grid;place-items:center;font:700 12px var(--sans);color:rgba(255,255,255,.6)}
 .mdx-acts button{height:44px;border-radius:12px;border:1px solid rgba(245,217,122,.4);background:rgba(245,217,122,.1);color:#fff;font:800 12.5px var(--sans);cursor:pointer}
 .mdx-acts button.main{background:#f5d97a;color:#1a1405;border-color:#f5d97a}
 .mdx-tl{border-radius:16px;border:1px solid rgba(245,217,122,.3);background:#14100a;padding:12px 14px;margin-bottom:14px}
