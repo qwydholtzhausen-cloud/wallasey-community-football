@@ -23,7 +23,7 @@ type Body = {
   voteCloses: string | null; // "4pm", while the vote is open
   dateLabel: string; // "SUN 25 OCT 2026"
   venue: string;
-  stamp: string; // "25.10.26"
+  stamp: string; // "01.11.26"
 };
 
 const dir = join(process.cwd(), "app/api/xi-poster");

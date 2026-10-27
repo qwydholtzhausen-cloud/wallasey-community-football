@@ -1,4 +1,4 @@
-// The First XI: the club's first 11-a-side (Sun 25 Oct 2026). One game
+// The First XI: the club's first 11-a-side (Sun 1 Nov 2026, moved from 25 Oct). One game
 // gets a matchday programme, a one-off Man of the Match medal and a
 // pennant for everyone who played. Everything here is about that game.
 
@@ -23,7 +23,7 @@ export const FIRST_XI_REDS = [
   "Callum Blake",
 ];
 
-export const FIRST_XI_DATE_LABEL = "25.10.26";
+export const FIRST_XI_DATE_LABEL = "01.11.26";
 
 // Admins see it first to test; everyone from this UK date (Tue 20 Oct, so
 // Monday 19th's game and its MOTM vote are in the story).

@@ -31,7 +31,7 @@ export function FirstXiMedal() {
         MOTM
       </text>
       <text x="75" y="277" textAnchor="middle" fontFamily="var(--font-oswald),sans-serif" fontWeight="600" fontSize="9.5" fill="#5a4210" letterSpacing="1.5">
-        25·10·26
+        01·11·26
       </text>
     </svg>
   );
@@ -75,7 +75,7 @@ export function FirstXiMotmReveal({ winners, total, votes, onDone }: { winners: 
     setLeaving(true);
     setTimeout(onDone, 380);
   };
-  const names = ["REDS", "WHITES", "FIRST XI", ...winners.map((w) => w.name.split(" ")[0].toUpperCase()), "THE OVAL", "25·10·26"];
+  const names = ["REDS", "WHITES", "FIRST XI", ...winners.map((w) => w.name.split(" ")[0].toUpperCase()), "THE OVAL", "01·11·26"];
   useEffect(() => {
     const t: ReturnType<typeof setTimeout>[] = [];
     let iv: ReturnType<typeof setInterval> | null = null;
@@ -118,7 +118,7 @@ export function FirstXiMotmReveal({ winners, total, votes, onDone }: { winners: 
             <br />
             the Match
           </div>
-          <div className="c">Sunday 25 October · The Oval</div>
+          <div className="c">Sunday 1 November · The Oval</div>
         </div>
         <div className={"fxi-scr" + (stage === 2 ? " on" : "")}>
           <div className="a">AND IT GOES TO</div>
