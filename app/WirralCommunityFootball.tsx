@@ -4792,10 +4792,17 @@ function App({ session }: { session: Session }) {
   // kick-off is worked out in pretend-UTC and added to Date.now().
   const isMatchday = !!programme && nowUk.slice(0, 10) === programme.game.date && !closedMotmTallies[programme.game.id];
   // Match week: the same takeover in the days before, counting down in days.
-  // Match week only once the First XI is the next game: a midweek game before
-  // it keeps the top of Fixtures and Line-up until it's played.
-  const xiIsNext = !!programme && !upcomingGames.some((g) => g.id !== programme.game.id && g.published && !g.postponed_at && !g.called_off_at && g.date < programme.game.date);
-  const isXiWeek = !!programme && firstXiOpen && xiIsNext && nowUk.slice(0, 10) >= (isAdmin ? FIRST_XI_TAKEOVER_ADMINS_FROM : FIRST_XI_TAKEOVER_FROM) && nowUk.slice(0, 10) < programme.game.date;
+  // Match week keeps its look all week, but a game before the First XI stays
+  // "Next match" at the top of Fixtures (the hero sits under it) until it's
+  // played, and the First XI team cards wait for 90 minutes after that game's
+  // kick-off (Thu 20:30 → 22:00) before taking over Line-up.
+  const xiBefore = programme ? upcomingGames.filter((g) => g.id !== programme.game.id && g.published && !g.postponed_at && !g.called_off_at && g.date < programme.game.date) : [];
+  const xiIsNext = !!programme && xiBefore.length === 0;
+  const lastBeforeXi = programme
+    ? [...games].filter((g) => g.id !== programme.game.id && g.published && !g.postponed_at && !g.called_off_at && g.date < programme.game.date).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)).pop()
+    : undefined;
+  const xiCardsOut = !lastBeforeXi || kickoffCutoff(lastBeforeXi.date, lastBeforeXi.kickoff, 90) <= nowUk;
+  const isXiWeek = !!programme && firstXiOpen && nowUk.slice(0, 10) >= (isAdmin ? FIRST_XI_TAKEOVER_ADMINS_FROM : FIRST_XI_TAKEOVER_FROM) && nowUk.slice(0, 10) < programme.game.date;
   const xiTakeover = isMatchday || isXiWeek;
   const kickoffMs = programme ? Date.now() + (toMs(kickoffCutoff(programme.game.date, programme.game.kickoff, 0)) - toMs(nowUk)) : 0;
   const mdPhase: "week" | "pre" | "live" | "ft" = isXiWeek
@@ -6543,6 +6550,24 @@ function App({ session }: { session: Session }) {
     return <SplashScreen />;
   }
 
+  // The First XI hero: top of Fixtures once it's the next game, under the Next match card until then.
+  const xiHero = () =>
+    programme ? (
+      <>
+        <MatchdayHero
+          prog={programme}
+          kickoffMs={kickoffMs}
+          phase={mdPhase}
+          avatarOf={(id) => avatarByPlayerId.get(id)}
+          onProgramme={openProgramme}
+          onCards={() => setTab("lineup")}
+          onVote={() => goToResult(programme.game.id)}
+          onShare={shareXiPoster}
+          sharing={posterBusy}
+        />
+        {isMatchday && <MatchdayTimeline kickoff={programme.game.kickoff} phase={mdPhase} kickoffMs={kickoffMs} />}
+      </>
+    ) : null;
   return (
     <CreditsContext.Provider value={creditsApi}>
       {/* A floating pill above the nav; the ring runs down for as long as
@@ -6656,22 +6681,7 @@ function App({ session }: { session: Session }) {
                 )}
               </>
             )}
-            {xiTakeover && programme && (
-              <>
-                <MatchdayHero
-                  prog={programme}
-                  kickoffMs={kickoffMs}
-                  phase={mdPhase}
-                  avatarOf={(id) => avatarByPlayerId.get(id)}
-                  onProgramme={openProgramme}
-                  onCards={() => setTab("lineup")}
-                  onVote={() => goToResult(programme.game.id)}
-                  onShare={shareXiPoster}
-                  sharing={posterBusy}
-                />
-                {isMatchday && <MatchdayTimeline kickoff={programme.game.kickoff} phase={mdPhase} kickoffMs={kickoffMs} />}
-              </>
-            )}
+            {xiTakeover && programme && xiIsNext && xiHero()}
             {forYouOn ? (
               <>
                 <ForYou items={forYouItems()} caughtUp={forYouCaughtUp()} />
@@ -6957,6 +6967,7 @@ function App({ session }: { session: Session }) {
                     ))}
                   </>
                 )}
+                {xiTakeover && programme && !xiIsNext && xiHero()}
 
                 {(() => {
                   // Only the next four weeks until asked - the list ran to
@@ -7187,7 +7198,7 @@ function App({ session }: { session: Session }) {
           />
         )}
 
-        {tab === "lineup" && xiTakeover && programme && (
+        {tab === "lineup" && xiTakeover && programme && xiCardsOut && (
           <div className="mdx-teamwrap">
             <MatchdayTeamCards prog={programme} statOf={xiStatOf} avatarOf={(id) => avatarByPlayerId.get(id)} myId={myId} />
           </div>

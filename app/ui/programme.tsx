@@ -689,7 +689,7 @@ export function MatchdayProgramme({
             <dt>FORMAT</dt>
             <dd>11-a-side, a club first</dd>
             <dt>KIT</dt>
-            <dd>Your side&apos;s colours: Reds in red, Whites in white</dd>
+            <dd>Your side&apos;s colours</dd>
             <dt>REFEREE</dt>
             <dd>A referee takes charge</dd>
             <dt>SQUAD</dt>
