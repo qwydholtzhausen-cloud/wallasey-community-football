@@ -6642,7 +6642,7 @@ function App({ session }: { session: Session }) {
       {xiTakeover && <style>{matchdayCss}</style>}
       {mdIntro && <MatchdayIntro week={isXiWeek} onDone={() => setMdIntro(false)} />}
       {occ && <style>{occasionCss}</style>}
-      <header className={"wcf-top" + (xiTakeover && !occ ? " mdx" : "") + (occ ? " occ" : "")} style={occ ? occVars(occ.kind, occ.release) : undefined}>
+      <header className={"wcf-top" + (xiTakeover ? " mdx" : "") + (occ && !xiTakeover ? " occ" : "")} style={occ && !xiTakeover ? occVars(occ.kind, occ.release) : undefined}>
         <button className="wcf-brand" onClick={() => setTab("fixtures")} aria-label="Go to fixtures">
           <span className="wcf-logo">
             <img src="/crest.png" alt="Wirral Community Football crest" />
@@ -6709,6 +6709,7 @@ function App({ session }: { session: Session }) {
 
         {tab === "fixtures" && (
           <>
+            {xiTakeover && programme && xiIsNext && occ && xiHero()}
             {occ && (
               <>
                 <OccasionHero
@@ -6732,7 +6733,7 @@ function App({ session }: { session: Session }) {
                 )}
               </>
             )}
-            {xiTakeover && programme && xiIsNext && xiHero()}
+            {xiTakeover && programme && xiIsNext && !occ && xiHero()}
             {forYouOn ? (
               <>
                 {releaseEve && <ReleaseEve {...releaseEve} />}
@@ -7549,7 +7550,7 @@ function App({ session }: { session: Session }) {
       </main>
 
       <nav
-        className={"wcf-nav" + (xiTakeover && !occ ? " mdx" : "") + (occ ? " occ" : "") + (movementOn && !xiTakeover ? " has-pill" : "")}
+        className={"wcf-nav" + (xiTakeover ? " mdx" : "") + (occ && !xiTakeover ? " occ" : "") + (movementOn && !xiTakeover ? " has-pill" : "")}
         style={{ ["--n" as string]: TABS.length, ["--i" as string]: Math.max(0, TABS.findIndex((t) => t.k === tab)), ...(occ ? occVars(occ.kind, occ.release) : {}) }}
       >
         {movementOn && !xiTakeover && TABS.some((t) => t.k === tab) && <span className="wcf-nav-pill" ref={navPillRef} aria-hidden="true" />}
@@ -10930,7 +10931,7 @@ function RateGameSheet({
           </div>
         </div>
         <div className="wcf-rate-body">
-          <div className="wcf-rate-q">{rating ? "Thanks, noted." : `How was ${dayWord(game.kickoff)}?`}</div>
+          <div className="wcf-rate-q">{rating ? "Thanks, noted." : game.date === nowInLondon().slice(0, 10) ? `How was ${dayWord(game.kickoff)}?` : `How was ${new Date(game.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" })}'s game?`}</div>
           <RateGameMeter value={rating} onRate={onRate} />
           <div className="wcf-rate-ends"><span>Scrappy</span><span>Classic</span></div>
           <div key={rating} className={"wcf-rate-verdict" + (rating ? " pop" : "")}>{rating ? RATING_WORDS[rating - 1] : " "}</div>
