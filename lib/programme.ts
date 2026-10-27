@@ -74,11 +74,10 @@ export function computeProgramme(input: {
   const ids = new Set(scored.map((g) => g.id));
   const goalRows = input.goals.filter((r) => ids.has(r.game_id) && r.goals > 0);
 
-  // Today's squad and sides: the game's own sides once an admin sets them,
-  // the announced Reds list until then.
   const squad = game.bookings.filter((b) => !b.waiting).map((b) => ({ id: b.player_id, name: b.player.display_name, team: b.team }));
-  const sidesSet = squad.length > 0 && squad.every((p) => p.team);
-  const isRed = (p: { name: string; team: string | null }) => (sidesSet ? p.team === "red" : FIRST_XI_REDS.includes(p.name));
+  // Each player's side on the game once an admin sets it; anyone without one
+  // yet (say, promoted from the waiting list) goes by the announced Reds list.
+  const isRed = (p: { name: string; team: string | null }) => (p.team ? p.team === "red" : FIRST_XI_REDS.includes(p.name));
   const byName = (a: ProgPerson, b: ProgPerson) => a.name.localeCompare(b.name, "en", { sensitivity: "base" });
   const reds = squad.filter(isRed).map(({ id, name }) => ({ id, name })).sort(byName);
   const whites = squad.filter((p) => !isRed(p)).map(({ id, name }) => ({ id, name })).sort(byName);

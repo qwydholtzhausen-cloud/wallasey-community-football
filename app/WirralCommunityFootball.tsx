@@ -4485,16 +4485,14 @@ function App({ session }: { session: Session }) {
     }
   });
   const releaseEve = useMemo(() => {
-    // Admins only for now, to review before it goes to everyone.
-    if (!wrappedOpenToAll || !myId || !isAdmin) return null;
+    if (!wrappedOpenToAll || !myId) return null;
     for (const mk of [thisMonthKey, previousMonthKey(nowUk)]) {
       if (mk < WRAPPED_FIRST_MONTH_FOR_ALL) continue;
       const month = games.filter((g) => g.published && g.date.startsWith(mk)).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff));
       const last = month.at(-1);
       if (!last) continue;
       const rel = monthReleaseAt(last.date, last.kickoff);
-      // Admins see it all month for now, to review; it's admins-only above.
-      if (nowUk >= rel || (nowUk < kickoffCutoff(last.date, last.kickoff, 0) && !((evePreview || isAdmin) && mk === thisMonthKey))) continue;
+      if (nowUk >= rel || (nowUk < kickoffCutoff(last.date, last.kickoff, 0) && !(isAdmin && evePreview && mk === thisMonthKey))) continue;
       const apps = month.filter((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting && b.team)).length;
       const name = new Date(mk + "-15T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
       const theme = wrappedThemeFor(mk);
@@ -4850,7 +4848,7 @@ function App({ session }: { session: Session }) {
     const wd = new Date(t.slice(0, 10) + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
     return `${wd} ${h % 12 || 12}${m === "00" ? "" : ":" + m}${h < 12 ? "am" : "pm"}`;
   })();
-  const isXiWeek = !!programme && firstXiOpen && (xiIsNext || isAdmin) && nowUk.slice(0, 10) >= (isAdmin ? FIRST_XI_TAKEOVER_ADMINS_FROM : FIRST_XI_TAKEOVER_FROM) && nowUk.slice(0, 10) < programme.game.date;
+  const isXiWeek = !!programme && firstXiOpen && nowUk.slice(0, 10) >= (isAdmin ? FIRST_XI_TAKEOVER_ADMINS_FROM : FIRST_XI_TAKEOVER_FROM) && nowUk.slice(0, 10) < programme.game.date;
   const xiTakeover = isMatchday || isXiWeek;
   const kickoffMs = programme ? Date.now() + (toMs(kickoffCutoff(programme.game.date, programme.game.kickoff, 0)) - toMs(nowUk)) : 0;
   const mdPhase: "week" | "pre" | "live" | "ft" = isXiWeek
