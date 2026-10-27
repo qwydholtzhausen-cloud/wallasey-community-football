@@ -35,7 +35,7 @@ import { findOccasion } from "../lib/occasions";
 import { OccasionHero, OccasionRibbon, OccasionTimeline, ReleaseAlso, occVars, occasionCss, type OccInfo } from "./ui/occasion";
 import { CardFan, SeasonCard, TierLadder, TierUnlock, seasonCardCss, tierFor, type CardTier } from "./ui/seasoncard";
 import { houseStyleCss } from "./ui/houseStyle";
-import { computeWrapped } from "../lib/wrapped";
+import { computeWrapped, WRAPPED_MIN_APPS } from "../lib/wrapped";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
 import WrappedStory, { drawWrappedCard, wrappedBannerCss, type WrappedExtras } from "./WrappedStory";
 import {
@@ -73,6 +73,7 @@ import { WinMoment, type SeasonGame } from "./ui/celebrate";
 import { TrophyCabinet, MatchBallMoment, cabinetCss } from "./ui/cabinet";
 import { FirstGameCard, NameStep, WelcomeCards, type BestChance, type PushState } from "./ui/newplayer";
 import { HistoryPage } from "./ui/history";
+import { ReleaseEve } from "./ui/eve";
 import { ClubCabinet } from "./ui/clubcabinet";
 import { computeClubCabinet } from "../lib/clubcabinet";
 import { computeHistory, type HMoment } from "../lib/history";
@@ -4474,6 +4475,36 @@ function App({ session }: { session: Session }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [games, thisMonthKey, nowUk]);
   const wrappedMonthKey = wrappedSoFar || thisMonthDone ? thisMonthKey : previousMonthKey(nowUk);
+  const releaseEve = useMemo(() => {
+    // Admins only for now, to review before it goes to everyone.
+    if (!wrappedOpenToAll || !myId || !isAdmin) return null;
+    for (const mk of [thisMonthKey, previousMonthKey(nowUk)]) {
+      if (mk < WRAPPED_FIRST_MONTH_FOR_ALL) continue;
+      const month = games.filter((g) => g.published && g.date.startsWith(mk)).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff));
+      const last = month.at(-1);
+      if (!last) continue;
+      const rel = monthReleaseAt(last.date, last.kickoff);
+      if (nowUk < kickoffCutoff(last.date, last.kickoff, 0) || nowUk >= rel) continue;
+      const apps = month.filter((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting && b.team)).length;
+      const name = new Date(mk + "-15T12:00:00Z").toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+      const theme = wrappedThemeFor(mk);
+      return {
+        title: theme ? theme.word.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : `Your ${name}`,
+        edition: theme?.edition ?? null,
+        accent: theme?.accent ?? "#f5d97a",
+        photo: theme?.bannerPhoto ?? "/wrapped/bank/month-floodlights.jpg",
+        fog: theme?.effect === "fog",
+        releaseMs: Date.now() + (toMs(rel) - toMs(nowUk)),
+        items: [
+          ...(apps >= WRAPPED_MIN_APPS ? [{ label: `Your ${name}`, kicker: "Wrapped" }] : []),
+          { label: "Player of the Month", kicker: name },
+          ...(mk >= TOTM_REVEAL_FROM ? [{ label: "Team of the Month", kicker: mk === TOTM_REVEAL_FROM ? "The first one" : name }] : []),
+        ],
+      };
+    }
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, nowUk, myId, wrappedOpenToAll, thisMonthKey, isAdmin]);
   const wrapped = useMemo(() => {
     const scored = pastGames.filter((g) => g.team_white_score != null && g.team_red_score != null && !motmVotingOpen(g));
     const before = previousMonthKey(wrappedMonthKey + "-15");
@@ -4802,7 +4833,7 @@ function App({ session }: { session: Session }) {
     ? [...games].filter((g) => g.id !== programme.game.id && g.published && !g.postponed_at && !g.called_off_at && g.date < programme.game.date).sort((a, b) => a.date.localeCompare(b.date) || a.kickoff.localeCompare(b.kickoff)).pop()
     : undefined;
   const xiCardsOut = !lastBeforeXi || kickoffCutoff(lastBeforeXi.date, lastBeforeXi.kickoff, 90) <= nowUk;
-  const isXiWeek = !!programme && firstXiOpen && nowUk.slice(0, 10) >= (isAdmin ? FIRST_XI_TAKEOVER_ADMINS_FROM : FIRST_XI_TAKEOVER_FROM) && nowUk.slice(0, 10) < programme.game.date;
+  const isXiWeek = !!programme && firstXiOpen && (xiIsNext || isAdmin) && nowUk.slice(0, 10) >= (isAdmin ? FIRST_XI_TAKEOVER_ADMINS_FROM : FIRST_XI_TAKEOVER_FROM) && nowUk.slice(0, 10) < programme.game.date;
   const xiTakeover = isMatchday || isXiWeek;
   const kickoffMs = programme ? Date.now() + (toMs(kickoffCutoff(programme.game.date, programme.game.kickoff, 0)) - toMs(nowUk)) : 0;
   const mdPhase: "week" | "pre" | "live" | "ft" = isXiWeek
@@ -6685,6 +6716,7 @@ function App({ session }: { session: Session }) {
             {xiTakeover && programme && xiIsNext && xiHero()}
             {forYouOn ? (
               <>
+                {releaseEve && <ReleaseEve {...releaseEve} />}
                 <ForYou items={forYouItems()} caughtUp={forYouCaughtUp()} />
                 {calmOn && <style>{calmFixturesCss}</style>}
                 <CreditChip
