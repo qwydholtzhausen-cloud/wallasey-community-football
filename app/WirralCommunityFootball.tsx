@@ -3462,10 +3462,9 @@ function App({ session }: { session: Session }) {
     [games, nowUk]
   );
 
-  // Same definition as the admin console's "Overdue" section - an
-  // unconfirmed, non-waiting booking on a game that's already happened.
-  // Mirrors the RLS check in has_overdue_payment() so the UI matches what
-  // the database will actually enforce, not just a client-side guess.
+  // Every unconfirmed, non-waiting booking of yours on a game that's already
+  // happened: unpaid ones (overdue) and "I've paid" ones waiting for an
+  // admin, split below like the admin console's owed / to-confirm lists.
   const myOverdueBookings = useMemo(
     () =>
       pastGames.flatMap((g) =>
@@ -3475,7 +3474,11 @@ function App({ session }: { session: Session }) {
       ),
     [pastGames, myId]
   );
-  const iAmOverdue = myOverdueBookings.length > 0;
+  // Only unpaid past games are overdue; "I've paid" waiting for an admin
+  // never is (club call, 28 Oct 2026) - same rule as has_overdue_payment,
+  // which is what actually blocks booking.
+  const myOwedBookings = useMemo(() => myOverdueBookings.filter((o) => o.booking.status === "unpaid"), [myOverdueBookings]);
+  const iAmOverdue = myOwedBookings.length > 0;
   // What you owe for games still to come (soonest first), and what you've
   // said you paid that's waiting for an admin: feeds the "you owe" bar.
   const myDue = useMemo<DueGame[]>(
@@ -3489,13 +3492,10 @@ function App({ session }: { session: Session }) {
     [upcomingGames, myId, nowUk, creditByBooking]
   );
   const [paySheetOpen, setPaySheetOpen] = useState(false);
-  // Split for the "Your tab" card display only - owed (unpaid, real
-  // debt) vs pending (already tapped I've paid, awaiting admin
-  // confirmation). Doesn't change what counts as "overdue" for the
-  // booking-block banner above, which deliberately still requires full
-  // admin confirmation (not just a player's self-reported "I've paid")
-  // before the block lifts - same as the server-side RLS check.
-  const myTabOwed = useMemo(() => myOverdueBookings.filter((o) => o.booking.status === "unpaid"), [myOverdueBookings]);
+  // Split for the "Your tab" card: owed (unpaid, real debt, and the only
+  // thing that's overdue) vs pending (tapped I've paid, awaiting admin
+  // confirmation).
+  const myTabOwed = myOwedBookings;
   const myTabPending = useMemo(() => myOverdueBookings.filter((o) => o.booking.status === "pending"), [myOverdueBookings]);
 
   const myUnreadMessages = useMemo(
@@ -6844,7 +6844,7 @@ function App({ session }: { session: Session }) {
             {iAmOverdue && (
               <div className="wcf-overdue-banner">
                 <strong>Overdue payment</strong> — you still owe for{" "}
-                {myOverdueBookings.map((o, i) => (
+                {myOwedBookings.map((o, i) => (
                   <span key={o.booking.id}>
                     {i > 0 ? ", " : ""}
                     {o.game.venue} ({fmtDate(o.game.date)})

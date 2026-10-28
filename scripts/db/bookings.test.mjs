@@ -103,6 +103,16 @@ await db.query(`insert into public.bookings (game_id, player_id, pot_exempt_reas
 check("a free game (birthday etc.) in the past doesn't count as owing", !!(await bookAs(P(9), NEXT)));
 await db.query(`update public.bookings set status = 'confirmed' where game_id = $1 and player_id = $2`, [OLD, P(8)]);
 check("once it's confirmed, they can book again", !!(await bookAs(P(8), await mk(10, 16))));
+await db.query(`insert into public.bookings (game_id, player_id, status) values ($1, $2, 'pending')`, [OLD, P(10)]);
+check("'I've paid' on a past game (waiting for an admin) doesn't block booking", !!(await bookAs(P(10), NEXT)));
+const OFF = await mk(-4, 16);
+await db.query(`insert into public.bookings (game_id, player_id) values ($1, $2)`, [OFF, P(11)]);
+await db.query(`update public.games set called_off_at = now() where id = $1`, [OFF]);
+check("an unpaid booking on a called-off game doesn't block booking", !!(await bookAs(P(11), NEXT)));
+const PP = await mk(-5, 16);
+await db.query(`insert into public.bookings (game_id, player_id) values ($1, $2)`, [PP, P(12)]);
+await db.query(`update public.games set postponed_at = now() where id = $1`, [PP]);
+check("…nor on a postponed game", !!(await bookAs(P(12), NEXT)));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

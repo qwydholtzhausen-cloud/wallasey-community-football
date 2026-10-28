@@ -2584,3 +2584,33 @@ $$;
 drop trigger if exists bookings_guard_called_off on public.bookings;
 create trigger bookings_guard_called_off before insert or update or delete on public.bookings
   for each row execute function public.guard_called_off_booking();
+
+-- ─────────────────────────────────────────────────────────────────
+-- "I've paid" (pending) never counts as overdue (club call, 28 Oct
+-- 2026). Only an unpaid past game blocks a player booking their next
+-- one; a booking waiting for an admin to confirm the money doesn't.
+-- Called-off and postponed games don't count either - the same games
+-- the app leaves out when it shows the overdue banner.
+-- ─────────────────────────────────────────────────────────────────
+alter table public.games add column if not exists postponed_at timestamptz;
+
+create or replace function public.has_overdue_payment(check_player_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.bookings b
+    join public.games g on g.id = b.game_id
+    where b.player_id = check_player_id
+      and b.waiting = false
+      and b.status = 'unpaid'
+      and b.pot_exempt_reason is null
+      and g.called_off_at is null
+      and g.postponed_at is null
+      and g.date < (now() at time zone 'Europe/London')::date
+  );
+$$;
