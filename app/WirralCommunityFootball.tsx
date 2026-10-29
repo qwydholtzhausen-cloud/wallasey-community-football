@@ -11790,6 +11790,49 @@ function AdminConsole({
                   )}
                 </article>
               )}
+              {/* Recent results: once a score's in, the game leaves "Needs you",
+                  so this is the way back to fix it - the score and who played
+                  for which side (Edit result), or a no-show (More ›). */}
+              {previous.some((g) => g.team_white_score != null && g.team_red_score != null) && (
+                <article className="ca-card quiet">
+                  <div className="ca-ch">
+                    <h4>Recent results</h4>
+                    <span>fix a score, teams or a no-show</span>
+                  </div>
+                  <div className="ca-rule" />
+                  {previous
+                    .filter((g) => g.team_white_score != null && g.team_red_score != null)
+                    .slice(0, 4)
+                    .map((g) => (
+                      <div key={g.id} className="ca-gw">
+                        <div className="ca-nd">
+                          <span className="ca-d">
+                            <b>{dayNum(g)}</b>
+                            <small>{monShort(g)}</small>
+                          </span>
+                          <span className="tx">
+                            <em>
+                              {dayShort(g)} · {g.kickoff.slice(0, 5)}
+                            </em>
+                            <b>
+                              {cs.team_white_name} {g.team_white_score}–{g.team_red_score} {cs.team_red_name}
+                            </b>
+                            <small>{g.bookings.filter((b) => !b.waiting).length} played</small>
+                          </span>
+                        </div>
+                        <div className="ca-steps">
+                          <button className="more" onClick={() => setResultFor(g.id)}>
+                            Edit result
+                          </button>
+                          <button className="more" onClick={() => onToggleExpand(g.id)}>
+                            More ›
+                          </button>
+                        </div>
+                        {open(g, true)}
+                      </div>
+                    ))}
+                </article>
+              )}
               {onGoToResults && (
                 <button className="ca-link" onClick={onGoToResults}>
                   <span>
