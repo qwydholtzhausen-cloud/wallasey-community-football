@@ -65,13 +65,12 @@ export async function GET(req: Request) {
     await admin.from("notified_events").insert({ event_key: key });
   }
 
-  // --- Kickoff + team reminder, before kickoff ---
-  // The window is deliberately wide (2 hours to 15 min before kickoff):
-  // GitHub runs this "every 15 minutes" schedule late and irregularly -
-  // on 24 Sep 2026 it ran at 19:29 for an 8pm game - and the old 45-70
-  // minute window missed 9 of 10 games in Aug/Sep. The first run that
-  // lands anywhere in the window sends it, once per game, and the wording
-  // gives the kickoff time rather than "in about an hour".
+  // --- Kickoff + team reminder, about an hour before kickoff ---
+  // Sent by the first run inside the hour before kickoff (down to 15 min,
+  // in case a run is missed). The timer is Supabase pg_cron every 5 minutes
+  // now, so that lands 55-60 min before. The old 2-hour window was for
+  // GitHub's late, irregular schedule, and with a reliable timer it sent
+  // every reminder a full 2 hours early. The wording gives the kickoff time.
   const nowUkStr = nowInLondon();
   const nowMs = toMs(nowUkStr);
   const { data: games } = await admin
@@ -88,7 +87,7 @@ export async function GET(req: Request) {
     if (notifiedKeys.has(key)) continue;
 
     const minutesUntilKickoff = (toMs(kickoffCutoff(g.date, g.kickoff, 0)) - nowMs) / 60000;
-    if (minutesUntilKickoff < 15 || minutesUntilKickoff > 120) continue;
+    if (minutesUntilKickoff < 15 || minutesUntilKickoff > 60) continue;
 
     // Everyone with an actual spot, not just payment-confirmed ones -
     // payment confirmation is an admin action that often lags well behind
