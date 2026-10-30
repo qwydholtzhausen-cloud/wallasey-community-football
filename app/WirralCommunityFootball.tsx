@@ -59,6 +59,8 @@ import {
   ratingFillColor,
   type PlayerPosition,
   type PotCategory,
+  type AskConfirm,
+  type ConfirmExtra,
 } from "./ui/shared";
 import { CountUp } from "./ui/motion";
 import { Icon } from "./ui/icons";
@@ -1579,12 +1581,13 @@ function App({ session }: { session: Session }) {
     confirmLabel: string;
     danger: boolean;
     hold: boolean;
+    extra: ConfirmExtra;
     resolve: (v: boolean) => void;
   } | null>(null);
   // hold: permanent actions (a played fixture, an account) need the button
   // held down, not a single tap.
-  function askConfirm(title: string, message: string, confirmLabel = "Confirm", danger = true, hold = false): Promise<boolean> {
-    return new Promise((resolve) => setConfirmState({ title, message, confirmLabel, danger, hold, resolve }));
+  function askConfirm(title: string, message: string, confirmLabel = "Confirm", danger = true, hold = false, extra: ConfirmExtra = {}): Promise<boolean> {
+    return new Promise((resolve) => setConfirmState({ title, message, confirmLabel, danger, hold, extra, resolve }));
   }
   function resolveConfirm(value: boolean) {
     confirmState?.resolve(value);
@@ -1710,7 +1713,7 @@ function App({ session }: { session: Session }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showBatchGen, setShowBatchGen] = useState(false);
   // The Add/Edit fixture sheet (admins).
-  const [fixtureSheet, setFixtureSheet] = useState<{ mode: "add" } | { mode: "edit"; id: string } | null>(null);
+  const [fixtureSheet, setFixtureSheet] = useState<{ mode: "add" } | { mode: "edit"; id: string; callOff?: boolean } | null>(null);
   const [multiBookMode, setMultiBookMode] = useState(false);
   const [multiBookSelected, setMultiBookSelected] = useState<Set<string>>(new Set());
   const [multiBooking, setMultiBooking] = useState(false);
@@ -2660,12 +2663,44 @@ function App({ session }: { session: Session }) {
     if (game) logAction("Postponed fixture", `${game.venue} — ${fmtDate(game.date)} (new date TBC)`);
     notifySuccess("Postponed · new date TBC. Bookings and payments kept.");
   }
-  async function deleteGame(id: string) {
-    const game = games.find((g) => g.id === id);
+  // Every "Delete fixture" button comes here, so the guard is in one place.
+  // Once anyone's booked an upcoming game, deleting it is a hold and the
+  // sheet leads with Call off: deleting gives nobody a credit or a message
+  // (credit_on_booking_delete skips a whole-fixture delete), calling off does both.
+  async function deleteGame(id: string): Promise<boolean> {
+    const game = games.find((g) => g.id === id) ?? postponed.find((g) => g.id === id);
+    if (!game) return false;
+    const playing = game.bookings.filter((b) => !b.waiting);
+    const waiting = game.bookings.length - playing.length;
+    const paid = playing.filter((b) => b.status === "confirmed" && !b.pot_exempt_reason).length;
+    const scored = game.team_white_score != null;
+    const upcoming = kickoffCutoff(game.date, game.kickoff, MATCH_DURATION_MINUTES) > nowInLondon();
+    const canCallOff = upcoming && game.published && !game.called_off_at && !game.postponed_at && !scored;
+    const eyebrow = `${game.special ? "The First XI · " : ""}${fmtDate(game.date)} · ${game.kickoff.slice(0, 5)} · ${game.venue}`;
+    const facts = [{ n: playing.length, label: "booked" }, ...(paid ? [{ n: `£${paid * game.price}`, label: "paid in" }] : []), ...(waiting ? [{ n: waiting, label: "waiting" }] : [])];
+    const ok = scored
+      ? await askConfirm("Delete this game and its result?", `The ${game.team_white_score}–${game.team_red_score} result, every goal logged against it and any pot income it earned go for good.`, "Hold to delete", true, true, { eyebrow, facts })
+      : game.bookings.length === 0
+      ? await askConfirm("Delete this fixture?", "Nobody's booked yet, so nothing else goes with it.", "Delete", true, false, { eyebrow })
+      : await askConfirm("Delete this fixture?", "", "Hold to delete", true, true, {
+          eyebrow,
+          facts,
+          note: upcoming
+            ? paid
+              ? { strong: "Deleting gives nobody a credit or a message.", text: `The ${paid} who paid get nothing back, and the game just vanishes from their app.` }
+              : { strong: "Deleting sends nobody a message.", text: "The game just vanishes from everyone's app." }
+            : { strong: "This can't be undone.", text: "Everyone's appearance for this game goes too." },
+          alt: canCallOff ? { label: paid ? `Call off instead · credits the ${paid} who paid` : "Call off instead · tells everyone", onPick: () => setFixtureSheet({ mode: "edit", id, callOff: true }) } : undefined,
+        });
+    if (!ok) return false;
     const { error } = await supabase.from("games").delete().eq("id", id);
-    if (error) return notifyError(error.message);
+    if (error) {
+      notifyError(error.message);
+      return false;
+    }
     await loadGames();
-    if (game) logAction("Deleted fixture", `${game.venue} — ${fmtDate(game.date)}`);
+    logAction("Deleted fixture", `${game.venue} — ${fmtDate(game.date)}`);
+    return true;
   }
   async function saveResult(
     gameId: string,
@@ -2815,18 +2850,25 @@ function App({ session }: { session: Session }) {
   }
 
   async function hideFeedItem(itemKey: string) {
-    const { error } = await supabase.from("feed_hidden_items").insert({ item_key: itemKey, hidden_by: myId });
-    if (error) return notifyError(error.message);
-    notifySuccess("Archived — find it again under \"Show archived\"");
-    await loadHiddenFeedItems();
+    return hideFeedItems([itemKey]);
   }
   // One confirm and one write for a folded group of feed items, rather
   // than looping the single-item version and toasting once per item.
   async function hideFeedItems(itemKeys: string[]) {
     const { error } = await supabase.from("feed_hidden_items").insert(itemKeys.map((item_key) => ({ item_key, hidden_by: myId })));
     if (error) return notifyError(error.message);
-    notifySuccess(`Archived ${itemKeys.length} — find them again under "Show archived"`);
     await loadHiddenFeedItems();
+    // No "are you sure?": archiving is one tap, with Undo.
+    setToast({
+      kind: "success",
+      text: itemKeys.length === 1 ? "Archived" : `Archived ${itemKeys.length}`,
+      undo: async () => {
+        setToast(null);
+        const { error: undoErr } = await supabase.from("feed_hidden_items").delete().in("item_key", itemKeys);
+        if (undoErr) return notifyError(undoErr.message);
+        await loadHiddenFeedItems();
+      },
+    });
   }
   async function unhideFeedItem(itemKey: string) {
     const { error } = await supabase.from("feed_hidden_items").delete().eq("item_key", itemKey);
@@ -2997,13 +3039,24 @@ function App({ session }: { session: Session }) {
 
     const text = `*⭐ Wirral Community Football ⭐*\n*Fixture Updates*\n\n${movementLine}Get booked on lads 👇\n\n${sections.join("\n\n")}`;
 
-    if (!(await askConfirm("Copy the fixture update?", "This resets the \"since last update\" count for next time.", "Copy", false))) return;
+    // Copies straight away. It resets the "since last update" count, so Undo
+    // puts the count back (the text stays on the clipboard either way).
     try {
       await navigator.clipboard.writeText(text);
+      const prevAt = cs.last_fixture_update_at ?? null;
       const { error } = await supabase.from("club_settings").update({ last_fixture_update_at: new Date().toISOString() }).eq("id", true);
       if (error) return notifyError(error.message);
       await loadClubSettings();
-      notifySuccess("Fixture update copied — paste it into WhatsApp");
+      setToast({
+        kind: "success",
+        text: "Copied · paste it into WhatsApp",
+        undo: async () => {
+          setToast(null);
+          const { error: undoErr } = await supabase.from("club_settings").update({ last_fixture_update_at: prevAt }).eq("id", true);
+          if (undoErr) return notifyError(undoErr.message);
+          await loadClubSettings();
+        },
+      });
     } catch {
       notifyError("Couldn't copy — your browser may be blocking clipboard access");
     }
@@ -3169,11 +3222,24 @@ function App({ session }: { session: Session }) {
     setPlayerCardId(id);
     setPlayerCardTeam(team ?? null);
   }
+  // Renames save straight away (no "are you sure?"), with Undo on the toast.
   async function renameSelf(name: string) {
     if (!name.trim()) return;
+    const oldName = myProfile?.display_name ?? "";
     const { error } = await supabase.from("profiles").update({ display_name: name.trim() }).eq("id", myId);
     if (error) return notifyError(error.message);
     await Promise.all([loadProfile(), loadProfiles()]);
+    if (oldName)
+      setToast({
+        kind: "success",
+        text: `Name changed to ${name.trim()}`,
+        undo: async () => {
+          setToast(null);
+          const { error: undoErr } = await supabase.from("profiles").update({ display_name: oldName }).eq("id", myId);
+          if (undoErr) return notifyError(undoErr.message);
+          await Promise.all([loadProfile(), loadProfiles()]);
+        },
+      });
   }
   async function adminRenamePlayer(id: string, name: string) {
     if (!name.trim()) return;
@@ -3183,6 +3249,18 @@ function App({ session }: { session: Session }) {
     await loadProfiles();
     if (id === myId) await loadProfile();
     logAction("Renamed player", `${oldName} → ${name.trim()}`);
+    setToast({
+      kind: "success",
+      text: `${oldName} is now ${name.trim()}`,
+      undo: async () => {
+        setToast(null);
+        const { error: undoErr } = await supabase.from("profiles").update({ display_name: oldName }).eq("id", id);
+        if (undoErr) return notifyError(undoErr.message);
+        await loadProfiles();
+        if (id === myId) await loadProfile();
+        logAction("Renamed player", `${name.trim()} → ${oldName} (undo)`);
+      },
+    });
   }
   // One canonical file per player (path is just their id), overwritten on
   // every re-upload via upsert - no orphaned old photos to clean up. The
@@ -3229,7 +3307,23 @@ function App({ session }: { session: Session }) {
     logAction("Changed role", `${targetName} → ${ROLE_LABEL[role]}`);
   }
   async function deleteProfile(id: string, name: string) {
-    if (!(await askConfirm(`Permanently delete ${name}'s account?`, "This removes their login and all their bookings. This can't be undone.", "Hold to delete", true, true))) {
+    // Their face first (some players share a name), and what goes with them.
+    const p = profiles.find((x) => x.id === id);
+    const mine = games.filter((g) => !g.called_off_at && g.bookings.some((b) => b.player_id === id && !b.waiting));
+    const played = mine.filter((g) => kickoffCutoff(g.date, g.kickoff, MATCH_DURATION_MINUTES) <= nowUk).length;
+    const ahead = mine.length - played;
+    const first = name.split(" ")[0];
+    if (
+      !(await askConfirm(`Delete ${first}'s account?`, "", "Hold to delete", true, true, {
+        who: { name, avatar: p?.avatar_url, sub: p ? ROLE_LABEL[p.role] : undefined },
+        facts: [{ n: played, label: played === 1 ? "game played" : "games played" }, { n: ahead, label: "booked ahead" }],
+        note: {
+          strong: "This can't be undone.",
+          text: played ? `Their login, bookings and history go. Past results, the season table and records lose their ${played} game${played === 1 ? "" : "s"}.` : "Their login and bookings go.",
+        },
+        keep: `Keep ${first}`,
+      }))
+    ) {
       return;
     }
     const token = await getFreshAccessToken();
@@ -3256,13 +3350,20 @@ function App({ session }: { session: Session }) {
 
   // Member approval: the switch, and letting a waiting member in or not.
   async function setRequireApproval(on: boolean) {
-    if (on && !(await askConfirm("Approve new members?", "New sign-ups will wait in a waiting room until an admin lets them in. Everyone already in isn't affected.", "Turn on"))) return;
+    if (on && !(await askConfirm("Approve new members?", "New sign-ups will wait in a waiting room until an admin lets them in. Everyone already in isn't affected.", "Turn on", false))) return;
     await saveClubSettings({ require_approval: on });
     await logAction(on ? "Turned on member approval" : "Turned off member approval", "");
   }
 
   async function decideMember(m: PendingMember, action: "approve" | "decline") {
-    if (action === "decline" && !(await askConfirm(`Decline ${m.display_name}?`, "They'll see a \"Not this time\" screen. You can still let them in later from here.", "Decline", true))) return;
+    if (
+      action === "decline" &&
+      !(await askConfirm(`Decline ${m.display_name.split(" ")[0]}?`, "They'll see a \"Not this time\" screen. You can still let them in later from here.", "Decline", true, false, {
+        who: { name: m.display_name, sub: `Signed up ${fmtDateTime(m.requested_at ?? m.created_at)}` },
+        keep: "Not yet",
+      }))
+    )
+      return;
     const token = await getFreshAccessToken();
     const res = await fetch("/api/admin/member-approval", {
       method: "POST",
@@ -6379,7 +6480,7 @@ function App({ session }: { session: Session }) {
   }
   async function deleteHistoryMoment(id: string) {
     const m = historyMoments.find((x) => x.id === id);
-    if (!(await askConfirm("Remove this moment?", `"${m?.title ?? "This moment"}" comes out of the club's story.`, "Remove", true))) return;
+    if (!(await askConfirm("Remove this moment?", `"${m?.title ?? "This moment"}" comes out of the club's story for good.`, "Hold to remove", true, true))) return;
     const { error } = await supabase.from("history_moments").delete().eq("id", id);
     if (error) return notifyError(error.message);
     await loadHistoryMoments();
@@ -7978,6 +8079,7 @@ function App({ session }: { session: Session }) {
 
       {fixtureSheet && (fixtureSheet.mode === "add" || games.some((g) => g.id === fixtureSheet.id) || postponed.some((g) => g.id === fixtureSheet.id)) && (
         <FixtureSheet
+          key={fixtureSheet.mode === "edit" ? fixtureSheet.id + (fixtureSheet.callOff ? "-off" : "") : "add"}
           mode={fixtureSheet.mode}
           game={fixtureSheet.mode === "edit" ? (games.find((g) => g.id === fixtureSheet.id) ?? postponed.find((g) => g.id === fixtureSheet.id)) : undefined}
           cs={cs}
@@ -7989,6 +8091,7 @@ function App({ session }: { session: Session }) {
           onPostpone={postponeGame}
           onClose={() => setFixtureSheet(null)}
           askConfirm={askConfirm}
+          startCallOff={fixtureSheet.mode === "edit" && !!fixtureSheet.callOff}
         />
       )}
 
@@ -8016,25 +8119,74 @@ function App({ session }: { session: Session }) {
         <div className="wcf-modal-overlay" onClick={() => resolveConfirm(false)}>
           <div className="wcf-modal" onClick={(e) => e.stopPropagation()}>
             <div className="wcf-modal-handle" />
-            <div className={"wcf-modal-icon " + (confirmState.danger ? "danger" : "safe")}>
-              {confirmState.danger ? (
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.5L22 20.5H2z" /><path d="M12 9.5v5M12 18v.01" /></svg>
-              ) : (
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7v.3" /><path d="M12 17v.01" /></svg>
-              )}
-            </div>
-            <div className="wcf-modal-title">{confirmState.title}</div>
-            <div className="wcf-modal-msg">{confirmState.message}</div>
-            <div className="wcf-modal-actions">
-              <button className="wcf-modal-cancel" onClick={() => resolveConfirm(false)}>Cancel</button>
-              {confirmState.hold ? (
-                <HoldButton className="wcf-modal-confirm hold" label={confirmState.confirmLabel} onDone={() => resolveConfirm(true)} />
-              ) : (
-                <button className={"wcf-modal-confirm" + (confirmState.danger ? "" : " safe")} onClick={() => resolveConfirm(true)}>
-                  {confirmState.confirmLabel}
-                </button>
-              )}
-            </div>
+            {(() => {
+              // Who or what it touches first (a face, or the game), then the
+              // numbers that matter; the warning triangle only when there's neither.
+              const x = confirmState.extra;
+              return (
+                <>
+                  {x.who ? (
+                    <div className={"wcf-modal-who" + (confirmState.danger ? "" : " safe")}>
+                      <Avatar name={x.who.name} avatarUrl={x.who.avatar ?? null} className="wcf-modal-av" background={avatarFor(x.who.name).gradient} />
+                      <div>
+                        <b>{x.who.name}</b>
+                        {x.who.sub && <small>{x.who.sub}</small>}
+                      </div>
+                    </div>
+                  ) : x.eyebrow ? (
+                    <div className="wcf-modal-ey">{x.eyebrow}</div>
+                  ) : (
+                    <div className={"wcf-modal-icon " + (confirmState.danger ? "danger" : "safe")}>
+                      {confirmState.danger ? (
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.5L22 20.5H2z" /><path d="M12 9.5v5M12 18v.01" /></svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7v.3" /><path d="M12 17v.01" /></svg>
+                      )}
+                    </div>
+                  )}
+                  <div className="wcf-modal-title">{confirmState.title}</div>
+                  {confirmState.message && <div className="wcf-modal-msg">{confirmState.message}</div>}
+                  {x.facts && x.facts.length > 0 && (
+                    <div className="wcf-modal-facts">
+                      {x.facts.map((f) => (
+                        <span key={f.label}>
+                          <b>{f.n}</b>
+                          {f.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {x.note && (
+                    <div className={"wcf-modal-note " + (x.note.tone ?? "red")}>
+                      {x.note.strong && <b>{x.note.strong} </b>}
+                      {x.note.text}
+                    </div>
+                  )}
+                  {x.alt && (
+                    <button
+                      className="wcf-modal-alt"
+                      onClick={() => {
+                        const pick = x.alt!.onPick;
+                        resolveConfirm(false);
+                        pick();
+                      }}
+                    >
+                      {x.alt.label}
+                    </button>
+                  )}
+                  <div className="wcf-modal-actions">
+                    <button className="wcf-modal-cancel" onClick={() => resolveConfirm(false)}>{x.keep ?? (confirmState.danger ? "Keep it" : "Not now")}</button>
+                    {confirmState.hold ? (
+                      <HoldButton className="wcf-modal-confirm hold" label={confirmState.confirmLabel} onDone={() => resolveConfirm(true)} />
+                    ) : (
+                      <button className={"wcf-modal-confirm" + (confirmState.danger ? "" : " safe")} onClick={() => resolveConfirm(true)}>
+                        {confirmState.confirmLabel}
+                      </button>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -8104,6 +8256,7 @@ function FixtureSheet({
   onPostpone,
   onClose,
   askConfirm,
+  startCallOff = false,
 }: {
   mode: "add" | "edit";
   game?: GameRow;
@@ -8111,14 +8264,15 @@ function FixtureSheet({
   games: GameRow[];
   onCreate: (rows: FixtureDraft[], post: boolean) => Promise<boolean>;
   onSave: (id: string, patch: FixtureDraft, post: boolean) => Promise<void>;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<boolean>;
   onCallOff: (id: string, reason: string) => Promise<void>;
   onPostpone: (id: string) => Promise<void>;
   onClose: () => void;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
+  askConfirm: AskConfirm;
+  startCallOff?: boolean;
 }) {
   const todayStr = nowInLondon().slice(0, 10);
-  const [callOff, setCallOff] = useState<string | null>(null);
+  const [callOff, setCallOff] = useState<string | null>(startCallOff ? "" : null);
   const [postponing, setPostponing] = useState(false);
   const addDays = (d: string, n: number) => {
     const x = new Date(d + "T12:00:00Z");
@@ -8568,7 +8722,13 @@ function FixtureSheet({
                       className="wcf-fxs-btn danger"
                       disabled={busy}
                       onClick={async () => {
-                        if (!(await askConfirm("Call off this game?", `${game.venue} on ${fmtDate(game.date)}. This can't be undone.`, "Call off", true, true))) return;
+                        if (
+                          !(await askConfirm("Call off this game?", "This can't be undone.", "Hold to call off", true, true, {
+                            eyebrow: `${game.special ? "The First XI · " : ""}${fmtDate(game.date)} · ${game.kickoff.slice(0, 5)} · ${game.venue}`,
+                            keep: "Keep it on",
+                          }))
+                        )
+                          return;
                         setBusy(true);
                         await onCallOff(game.id, callOff);
                         setBusy(false);
@@ -8586,17 +8746,7 @@ function FixtureSheet({
           <button
             className="wcf-fxs-del"
             onClick={async () => {
-              const hasBookings = game.bookings.length > 0;
-              if (
-                await askConfirm(
-                  "Delete this fixture?",
-                  `${game.venue} on ${fmtDate(game.date)}${hasBookings ? ` - this removes it and all ${game.bookings.length} bookings.` : "."}`,
-                  "Delete"
-                )
-              ) {
-                onDelete(game.id);
-                onClose();
-              }
+              if (await onDelete(game.id)) onClose();
             }}
           >
             Delete fixture
@@ -8919,23 +9069,40 @@ function SubBoard({ number, label, onDone }: { number: number; label: string; on
 
 // Press and hold to confirm: the button fills over ~1.2s; letting go early
 // does nothing. For the permanent actions only.
+// 1st, 2nd, 3rd... for a place in the queue.
+function nthPlace(n: number) {
+  const v = n % 100;
+  return `${n}${v >= 11 && v <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+}
+
 function HoldButton({ label, onDone, className }: { label: string; onDone: () => void; className?: string }) {
+  // Permanent actions: hold, don't tap. Feels physical: it presses in, the
+  // fill sweeps across, the phone buzzes once when it lands (Android; iPhones
+  // don't allow it from the web), and a short settle before the sheet closes.
   const [k, setK] = useState(0);
+  const [done, setDone] = useState(false);
   const raf = useRef<number | null>(null);
   const t0 = useRef(0);
-  const DUR = 1200;
+  const DUR = 1300;
+  const buzz = (ms: number) => { try { navigator.vibrate?.(ms); } catch {} };
+  const finish = () => {
+    buzz(35);
+    setDone(true);
+    window.setTimeout(onDone, motionAllowed() ? 260 : 0);
+  };
   const tick = () => {
     const v = Math.min(1, (performance.now() - t0.current) / DUR);
     setK(v);
     if (v < 1) raf.current = requestAnimationFrame(tick);
     else {
       raf.current = null;
-      onDone();
+      finish();
     }
   };
   const down = (e: React.PointerEvent) => {
     e.preventDefault();
-    if (raf.current) return;
+    if (raf.current || done) return;
+    buzz(8);
     t0.current = performance.now();
     raf.current = requestAnimationFrame(tick);
   };
@@ -8946,20 +9113,21 @@ function HoldButton({ label, onDone, className }: { label: string; onDone: () =>
     setK(0);
   };
   useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
+  const secs = Math.ceil((1 - k) * DUR / 1000);
   return (
     <button
       type="button"
-      className={className}
+      className={(className ?? "") + (k > 0 && k < 1 ? " pressing" : "") + (done ? " done" : "")}
       onPointerDown={down}
       onPointerUp={up}
       onPointerLeave={up}
       onPointerCancel={up}
       onContextMenu={(e) => e.preventDefault()}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onDone(); }}
+      onKeyDown={(e) => { if (!done && (e.key === "Enter" || e.key === " ")) finish(); }}
       aria-label={label}
     >
-      <span className="fill" style={{ transform: `scaleX(${k})`, transition: k === 0 ? "transform .25s" : "none" }} />
-      <span className="lbl">{k > 0 && k < 1 ? "Keep holding…" : label}</span>
+      <span className="fill" style={{ transform: `scaleX(${done ? 1 : k})`, transition: k === 0 && !done ? "transform .25s" : "none" }} />
+      <span className="lbl">{done ? "Done" : k > 0 ? `Keep holding · ${secs}` : label}</span>
     </button>
   );
 }
@@ -9638,7 +9806,7 @@ function BootRoom({
   myId: string;
   isAdmin: boolean;
   profiles: Profile[];
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
+  askConfirm: AskConfirm;
   logAction: (action: string, details: string) => Promise<void>;
   notifyError: (message: string) => void;
   notifySuccess: (text: string) => void;
@@ -10512,7 +10680,7 @@ function GaffAIChat({
   onFixtureCreated: () => void;
   myId: string;
   myName: string;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
+  askConfirm: AskConfirm;
 }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<GaffAIMessage[]>([]);
@@ -11158,7 +11326,7 @@ function AdminConsole({
   onShareResult: (gameId: string) => void;
   emergencyContacts: EmergencyContact[];
   onConfirmPayments: (bookingIds: string[]) => void;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
+  askConfirm: AskConfirm;
 }) {
   // Clearing the last thing on Today: the net ripples and a CLEAN SHEET
   // stamp lands - only when it goes to zero while you're looking (not on
@@ -11435,7 +11603,7 @@ function AdminConsole({
   const claimsTotal = paymentClaims.reduce((s, c) => s + claimAmount(c), 0);
   const confirmAllClaims = async () => {
     const names = paymentClaims.map((c) => c.booking.player.display_name.split(" ")[0]).join(", ");
-    if (await askConfirm(`Confirm all ${paymentClaims.length} payments?`, `£${claimsTotal} from ${names}. Check they're in the bank first.`, "Confirm all", false)) {
+    if (await askConfirm(`Confirm all ${paymentClaims.length} payments?`, `From ${names}. Check they're in the bank first.`, "Confirm all", false, false, { facts: [{ n: `£${claimsTotal}`, label: "to confirm" }], keep: "Not yet" })) {
       stampAll(paymentClaims.map((c) => c.booking.id), claimsTotal);
     }
   };
@@ -11945,7 +12113,7 @@ function AdminConsole({
                 onClick={async () => {
                   const total = paymentClaims.reduce((sum, c) => sum + c.game.price, 0);
                   const names = paymentClaims.map((c) => c.booking.player.display_name.split(" ")[0]).join(", ");
-                  if (await askConfirm(`Confirm all ${paymentClaims.length} payments?`, `£${total} from ${names}. Check they're in the bank first.`, "Confirm all", false)) {
+                  if (await askConfirm(`Confirm all ${paymentClaims.length} payments?`, `From ${names}. Check they're in the bank first.`, "Confirm all", false, false, { facts: [{ n: `£${total}`, label: "to confirm" }], keep: "Not yet" })) {
                     stampAll(paymentClaims.map((c) => c.booking.id), total);
                   }
                 }}
@@ -12081,7 +12249,8 @@ function AdminConsole({
                       className="wcf-tab-line-remove"
                       onClick={async () => {
                         const msg = `${g.venue} · ${fmtDate(g.date)}. This deletes their booking entirely - no appearance, no pot charge, nothing left behind.`;
-                        if (await askConfirm(`Remove ${row.playerName} from this game?`, msg, "Remove")) {
+                        const pr = profiles.find((x) => x.id === row.playerId);
+                        if (await askConfirm(`Remove ${row.playerName.split(" ")[0]} from this game?`, msg, "Remove", true, false, { who: { name: row.playerName, avatar: pr?.avatar_url, sub: `Owes £${g.price}` }, keep: "Keep them" })) {
                           onRemoveBooking(b.id);
                         }
                       }}
@@ -12144,7 +12313,7 @@ function AdminConsole({
                           <button
                             className="wcf-admin-approve-override"
                             onClick={async () => {
-                              if (await askConfirm(`Confirm ${b.player.display_name} as paid?`, "They haven't marked this as paid themselves.", "Confirm anyway")) {
+                              if (await askConfirm(`Confirm ${b.player.display_name.split(" ")[0]} as paid?`, "They haven't marked this as paid themselves. Check the money's arrived first.", "Confirm anyway", false, false, { who: { name: b.player.display_name, avatar: b.player.avatar_url } })) {
                                 onSetStatus(b.id, "confirmed");
                               }
                             }}
@@ -12322,7 +12491,7 @@ function AdminGameRow({
   onSaveResult: (gameId: string, whiteScore: number | null, redScore: number | null, goals: Record<string, number>, ownGoals: Record<string, number>, teams: Record<string, Team>, otherSide: Record<string, number>) => Promise<void>;
   onAddBooking: (gameId: string, playerId: string) => void;
   onSetPotExempt: (bookingId: string, reason: PotExemptReason | null) => void;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
+  askConfirm: AskConfirm;
 }) {
   const expanded = expandedId === game.id;
   const confirmed = game.bookings.filter((b) => !b.waiting).sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -12631,19 +12800,7 @@ function AdminGameRow({
 
           <button
             className="wcf-admin-delete-link"
-            onClick={async () => {
-              const when = past ? "past" : "upcoming";
-              const hasBookings = confirmed.length > 0 || waitingList.length > 0;
-              const title = scored ? "Delete this scored fixture?" : `Delete this ${when} fixture?`;
-              const message = scored
-                ? `${game.venue} on ${fmtDate(game.date)} — this permanently deletes the ${game.team_white_score}–${game.team_red_score} result, every goal and own goal logged against it, and any pot income it earned. This can't be undone.`
-                : hasBookings
-                ? `${game.venue} on ${fmtDate(game.date)} — this removes it completely, along with everyone's bookings and payment records.`
-                : `${game.venue} on ${fmtDate(game.date)} — this removes it completely.`;
-              if (await askConfirm(title, message, scored ? "Hold to delete" : "Delete", true, scored)) {
-                onDeleteGame(game.id);
-              }
-            }}
+            onClick={() => onDeleteGame(game.id)}
           >
             Delete this fixture
           </button>
@@ -12672,7 +12829,13 @@ function AdminGameRow({
                 className="wcf-action-opt danger"
                 onClick={() =>
                   act(async () => {
-                    if (await askConfirm(`Remove ${actionFor.player.display_name} from the waiting list?`, "They'll need to rejoin if they want a spot again.", "Remove")) {
+                    const pos = waitingList.findIndex((w) => w.id === actionFor.id) + 1;
+                    if (
+                      await askConfirm(`Take ${actionFor.player.display_name.split(" ")[0]} off the waiting list?`, "They'd have to rejoin at the back of the queue.", "Remove", true, false, {
+                        who: { name: actionFor.player.display_name, avatar: actionFor.player.avatar_url, sub: pos > 0 ? `${nthPlace(pos)} in line` : undefined },
+                        keep: "Keep them",
+                      })
+                    ) {
                       onRemoveBooking(actionFor.id);
                     }
                   })
@@ -12694,7 +12857,7 @@ function AdminGameRow({
                     className="wcf-action-opt"
                     onClick={() =>
                       act(async () => {
-                        if (await askConfirm(`Confirm ${actionFor.player.display_name} as paid?`, "They haven't marked this as paid themselves.", "Confirm anyway")) {
+                        if (await askConfirm(`Confirm ${actionFor.player.display_name.split(" ")[0]} as paid?`, "They haven't marked this as paid themselves. Check the money's arrived first.", "Confirm anyway", false, false, { who: { name: actionFor.player.display_name, avatar: actionFor.player.avatar_url } })) {
                           onSetStatus(actionFor.id, "confirmed");
                         }
                       })
@@ -12735,9 +12898,12 @@ function AdminGameRow({
                       ? act(async () => {
                           if (
                             await askConfirm(
-                              `${actionFor.player.display_name} didn't show?`,
-                              "Removes their booking for this game - no appearance, no pot charge. It's kept as a no-show for the stats (GaffAI can report no-shows).",
-                              "Remove"
+                              `${actionFor.player.display_name.split(" ")[0]} didn't show?`,
+                              "Removes their booking for this game: no appearance, no pot charge. It's kept as a no-show for the stats (GaffAI can report no-shows).",
+                              "Remove",
+                              true,
+                              false,
+                              { who: { name: actionFor.player.display_name, avatar: actionFor.player.avatar_url }, keep: "Keep them" }
                             )
                           ) {
                             onRemoveBooking(actionFor.id);
@@ -13271,7 +13437,7 @@ function GameCard({
   onOpenPlayerCard: (playerId: string) => void;
   onSetStatus: (bookingId: string, status: PayStatus) => void;
   weather: { code: number; temp: number } | null;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
+  askConfirm: AskConfirm;
   featured?: boolean;
   // The second "Next match" card on a two-game night: a different photo.
   alt?: boolean;
@@ -13497,7 +13663,7 @@ function GameCard({
         note: dropOutNote(myBooking.status, !!myCredit, credits.live),
       });
     const ok = myBooking.waiting
-      ? await askConfirm("Leave the waiting list?", "You'll lose your place in the queue.", "Leave")
+      ? await askConfirm("Leave the waiting list?", "You'll lose your place in the queue.", "Leave", true, false, { keep: "Stay in the queue" })
       : await askConfirm("Give up your spot?", `${game.venue} · ${fmtDate(game.date)}. Someone from the waiting list will be offered it.${dropOutNote(myBooking.status, !!myCredit, credits.live) ? " " + dropOutNote(myBooking.status, !!myCredit, credits.live)!.text : ""}`, "Give up spot");
     if (ok) onCancel(myBooking.id);
   };
@@ -13861,7 +14027,12 @@ function GameCard({
                       <button
                         className="wcf-sheet-remove"
                         onClick={async () => {
-                          if (await askConfirm(`Remove ${b.player.display_name} from the waiting list?`, "They'll need to rejoin if they want a spot again.", "Remove")) {
+                          if (
+                            await askConfirm(`Take ${b.player.display_name.split(" ")[0]} off the waiting list?`, "They'd have to rejoin at the back of the queue.", "Remove", true, false, {
+                              who: { name: b.player.display_name, avatar: b.player.avatar_url, sub: `${nthPlace(i + 1)} in line` },
+                              keep: "Keep them",
+                            })
+                          ) {
                             onCancel(b.id);
                           }
                         }}
@@ -13948,11 +14119,7 @@ function GameCard({
             <button className="wcf-ghost" onClick={onEdit}>Close</button>
             <button
               className="wcf-ghost danger"
-              onClick={async () => {
-                if (await askConfirm(`Delete this fixture?`, `${game.venue} on ${fmtDate(game.date)} — this removes it and everyone's bookings.`, "Delete")) {
-                  onDelete();
-                }
-              }}
+              onClick={onDelete}
             >
               Delete
             </button>
@@ -15233,7 +15400,26 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-modal-confirm.hold{position:relative;overflow:hidden;background:#3a1218;border-color:rgba(230,57,70,.6);color:#fecaca;box-shadow:none;-webkit-user-select:none;user-select:none;touch-action:none;-webkit-touch-callout:none}
 .wcf-modal-confirm.hold .fill{position:absolute;inset:0;background:var(--red);transform-origin:left;transform:scaleX(0)}
 .wcf-modal-confirm.hold .lbl{position:relative}
-.wcf-modal-confirm.safe{background:var(--red);border-color:var(--red);box-shadow:0 10px 24px -14px rgba(230,57,70,.8)}
+.wcf-modal-confirm.safe{background:linear-gradient(180deg,#fbe7a1,#e9c35a);border-color:#e9c35a;color:#2a1d05;box-shadow:0 10px 24px -14px rgba(245,217,122,.9)}
+.wcf-modal-who{display:flex;align-items:center;justify-content:center;gap:12px;margin:0 auto 12px;text-align:left}
+.wcf-modal-av{width:48px;height:48px;flex:none;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:19px;color:#fff;box-shadow:0 0 0 2px rgba(230,57,70,.7)}
+.wcf-modal-who.safe .wcf-modal-av{box-shadow:0 0 0 2px rgba(245,217,122,.8)}
+.wcf-modal-who b{display:block;font-family:var(--display);font-size:17px;color:var(--white)}
+.wcf-modal-who small{display:block;margin-top:1px;font-size:12.5px;color:var(--dim)}
+.wcf-modal-ey{margin:0 0 8px;font-family:var(--font-oswald),sans-serif;font-weight:600;font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;color:#f5d97a}
+.wcf-modal-facts{display:flex;justify-content:center;margin:0 auto 16px;font-size:13px;font-weight:600;color:#cbd5e1}
+.wcf-modal-facts span{padding:0 14px;border-left:1px solid rgba(148,163,184,.25)}
+.wcf-modal-facts span:first-child{border-left:0}
+.wcf-modal-facts b{display:block;font-family:var(--display);font-size:22px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums}
+.wcf-modal-note{margin:0 0 16px;padding:12px 14px;border-radius:14px;text-align:left;font-size:13.5px;line-height:1.5}
+.wcf-modal-note.red{color:#fecaca;background:rgba(230,57,70,.08);border:1px solid rgba(230,57,70,.4)}
+.wcf-modal-note.gold{color:#fde68a;background:rgba(245,217,122,.08);border:1px solid rgba(245,217,122,.4)}
+.wcf-modal-note b{color:#fff}
+.wcf-modal-alt{width:100%;min-height:50px;margin-bottom:10px;border-radius:14px;border:0;font-family:var(--display);font-weight:800;font-size:15px;color:#2a1d05;background:linear-gradient(180deg,#fbe7a1,#e9c35a);box-shadow:0 10px 24px -14px rgba(245,217,122,.9);cursor:pointer}
+.wcf-modal-confirm.hold{transition:transform .15s}
+.wcf-modal-confirm.hold.pressing{transform:scale(.97)}
+.wcf-modal-confirm.hold.done{animation:wcfHoldDone .35s ease-out}
+@keyframes wcfHoldDone{40%{transform:scale(1.04);box-shadow:0 0 0 6px rgba(230,57,70,.25)}}
 @keyframes wcfPcardIn{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
 .wcf-pcard{width:100%;max-width:300px;margin:auto;border-radius:20px;overflow:hidden;border:1px solid var(--line);box-shadow:0 26px 50px -30px rgba(0,0,0,.95);animation:wcfPcardIn .22s ease-out}
 .wcf-pcard-head{position:relative;padding:26px 20px 20px;text-align:center;background:radial-gradient(120% 90% at 50% 0%,rgba(230,57,70,.22),rgba(30,41,59,.9) 58%,rgba(21,25,42,.98));overflow:hidden}

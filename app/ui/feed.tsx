@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { Avatar, TickNum, avatarFor, listNames, motionAllowed } from "./shared";
+import { Avatar, TickNum, avatarFor, listNames, motionAllowed, type AskConfirm } from "./shared";
 import { EmptyScene } from "./EmptyScene";
 import { CalmFeed, CalmFeedTabs, type CalmFeedProps } from "./calmfeed";
 
@@ -173,7 +173,6 @@ export function FeedTab({
   isAdmin,
   myId,
   profiles,
-  askConfirm,
   feedView,
   setFeedView,
   showArchived,
@@ -197,7 +196,7 @@ export function FeedTab({
   isAdmin: boolean;
   myId: string;
   profiles: { id: string; display_name: string; avatar_url?: string | null }[];
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
+  askConfirm?: AskConfirm; // archiving no longer asks (it has Undo)
   feedView: "feed" | "bootroom";
   setFeedView: (v: "feed" | "bootroom") => void;
   showArchived: boolean;
@@ -284,9 +283,7 @@ export function FeedTab({
           freshKeys={feedFresh ? feedFresh.keys : new Set()}
           reactions={(key) => reactionRow({ key } as FeedItem)}
           isAdmin={isAdmin}
-          onArchive={async (keys) => {
-            if (await askConfirm("Archive this from the feed?", 'You can restore it later from "Show archived".', "Archive", false)) hideFeedItems(keys);
-          }}
+          onArchive={(keys) => hideFeedItems(keys)}
           onShowArchived={() => setShowArchived(true)}
           archivedCount={hiddenFeedKeys.length}
         />
@@ -378,18 +375,7 @@ export function FeedTab({
                                 <div className="wcf-feed-item-actions">
                                   <button
                                     className="wcf-feed-archive-btn"
-                                    onClick={async () => {
-                                      if (
-                                        await askConfirm(
-                                          `Archive these ${row.items.length}?`,
-                                          'You can restore them one by one from "Show archived".',
-                                          "Archive",
-                                          false,
-                                        )
-                                      ) {
-                                        hideFeedItems(row.items.map((x) => x.key));
-                                      }
-                                    }}
+                                    onClick={() => hideFeedItems(row.items.map((x) => x.key))}
                                   >
                                     Archive
                                   </button>
@@ -418,12 +404,7 @@ export function FeedTab({
                               {isAdmin && (
                                 <button
                                   className="wcf-feed-archive-btn"
-                                  onClick={async () => {
-                                    if (isHidden) return unhideFeedItem(item.key);
-                                    if (await askConfirm("Archive this from the feed?", 'You can restore it later from "Show archived".', "Archive", false)) {
-                                      hideFeedItem(item.key);
-                                    }
-                                  }}
+                                  onClick={() => (isHidden ? unhideFeedItem(item.key) : hideFeedItem(item.key))}
                                 >
                                   {isHidden ? "↺ Restore" : "Archive"}
                                 </button>

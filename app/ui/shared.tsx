@@ -1,6 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { PayStatus, Role } from "../WirralCommunityFootball";
 
+// The app's "are you sure?" sheet (askConfirm in WirralCommunityFootball.tsx).
+// The extra parts open it with who or what it touches, the numbers that
+// matter, and a better way out (e.g. Call off instead of Delete).
+export type ConfirmExtra = {
+  eyebrow?: string; // a game: "THE FIRST XI · SUN 1 NOV · 14:30"
+  who?: { name: string; avatar?: string | null; sub?: string };
+  facts?: { n: string | number; label: string }[];
+  note?: { text: string; strong?: string; tone?: "red" | "gold" };
+  keep?: string; // the "no" button names what you keep: "Keep it", "Keep Adam"
+  alt?: { label: string; onPick: () => void }; // a gold way out, above the buttons
+};
+export type AskConfirm = (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean, extra?: ConfirmExtra) => Promise<boolean>;
+
 // True unless the phone's Reduce Motion setting is on.
 export function motionAllowed() {
   return typeof window !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;

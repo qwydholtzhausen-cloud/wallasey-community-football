@@ -18,6 +18,7 @@ import {
   fmtDateTime,
   ratingFillColor,
   type PlayerPosition,
+  type AskConfirm,
 } from "./shared";
 import type {
   AdminMessage,
@@ -101,7 +102,7 @@ export function AccountPanel({
   myTabOwed: { game: GameRow; booking: BookingRow }[];
   myTabPending: { game: GameRow; booking: BookingRow }[];
   onMarkPaid: (bookingId: string) => void;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
+  askConfirm: AskConfirm;
   auditLog: AuditLogEntry[];
   showAuditLog: boolean;
   onToggleAuditLog: () => void;
@@ -552,9 +553,7 @@ export function AccountPanel({
             <div className="wcf-account-rename">
               <input value={name} onChange={(e) => setName(e.target.value)} />
               <button
-                onClick={async () => {
-                  if (await askConfirm(`Change your display name?`, `Change it to "${name.trim()}"?`, "Save", false)) onRename(name);
-                }}
+                onClick={() => onRename(name)}
                 disabled={!name.trim() || name.trim() === profile.display_name}
               >
                 Save
@@ -796,12 +795,17 @@ export function AccountPanel({
                           <button
                             onClick={() =>
                               act(async () => {
-                                if (await askConfirm(`Cancel one of ${p.display_name}'s credits?`, `They have ${creditLabel(creditsOf(p.id))}. This takes one away.`, "Cancel credit"))
+                                if (
+                                  await askConfirm(`Take one of ${p.display_name.split(" ")[0]}'s credits?`, "", "Take one credit", true, false, {
+                                    who: { name: p.display_name, avatar: p.avatar_url },
+                                    facts: [{ n: creditsOf(p.id), label: "now" }, { n: creditsOf(p.id) - 1, label: "after" }],
+                                  })
+                                )
                                   credits.cancelCredit(p.id);
                               })
                             }
                           >
-                            Cancel a credit<small>They have {creditLabel(creditsOf(p.id))}</small>
+                            Take a credit away<small>They have {creditLabel(creditsOf(p.id))}</small>
                           </button>
                         )}
                         <button
@@ -819,12 +823,9 @@ export function AccountPanel({
                             onClick={() =>
                               act(async () => {
                                 if (
-                                  await askConfirm(
-                                    "Make admin?",
-                                    `${p.display_name} will be able to manage fixtures, payments, and other players.`,
-                                    "Make admin",
-                                    false,
-                                  )
+                                  await askConfirm("Make admin?", "They'll be able to manage fixtures, payments and other players.", "Make admin", false, false, {
+                                    who: { name: p.display_name, avatar: p.avatar_url },
+                                  })
                                 )
                                   onSetRole(p.id, "admin");
                               })
@@ -839,12 +840,9 @@ export function AccountPanel({
                               onClick={() =>
                                 act(async () => {
                                   if (
-                                    await askConfirm(
-                                      "Make co-owner?",
-                                      `Only you'll be able to change or remove ${p.display_name}'s access afterwards.`,
-                                      "Make co-owner",
-                                      false,
-                                    )
+                                    await askConfirm("Make co-owner?", "Only you'll be able to change or remove their access afterwards.", "Make co-owner", false, false, {
+                                      who: { name: p.display_name, avatar: p.avatar_url },
+                                    })
                                   )
                                     onSetRole(p.id, "co-owner");
                                 })
@@ -859,7 +857,7 @@ export function AccountPanel({
                                   const msg = isSelf
                                     ? "You'll need the owner (or the SQL Editor) to get it back."
                                     : "They'll go back to being a regular player.";
-                                  if (await askConfirm(title, msg, "Remove admin")) onSetRole(p.id, "player");
+                                  if (await askConfirm(title, msg, "Remove admin", true, false, { who: { name: p.display_name, avatar: p.avatar_url, sub: "Admin" }, keep: "Keep admin" })) onSetRole(p.id, "player");
                                 })
                               }
                             >
@@ -873,7 +871,7 @@ export function AccountPanel({
                               act(async () => {
                                 const title = isSelf ? "Remove your own co-owner access?" : `Remove co-owner access from ${p.display_name}?`;
                                 const msg = isSelf ? "You'll need the owner to get it back." : "They'll become an admin.";
-                                if (await askConfirm(title, msg, "Remove co-owner")) onSetRole(p.id, "admin");
+                                if (await askConfirm(title, msg, "Remove co-owner", true, false, { who: { name: p.display_name, avatar: p.avatar_url, sub: "Co-owner" }, keep: "Keep co-owner" })) onSetRole(p.id, "admin");
                               })
                             }
                           >
@@ -885,12 +883,10 @@ export function AccountPanel({
                             onClick={() =>
                               act(async () => {
                                 if (
-                                  await askConfirm(
-                                    "Remove this photo?",
-                                    `${p.display_name}'s profile photo will be deleted. They can add a new one any time.`,
-                                    "Remove",
-                                    true,
-                                  )
+                                  await askConfirm("Remove this photo?", "It's deleted. They can add a new one any time.", "Remove", true, false, {
+                                    who: { name: p.display_name, avatar: p.avatar_url },
+                                    keep: "Keep it",
+                                  })
                                 )
                                   onAdminRemoveAvatar(p.id);
                               })
@@ -928,18 +924,9 @@ export function AccountPanel({
                         <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} autoFocus />
                         <button
                           disabled={!renameDraft.trim() || renameDraft.trim() === p.display_name}
-                          onClick={async () => {
-                            if (
-                              await askConfirm(
-                                "Change this player's name?",
-                                `Change "${p.display_name}" to "${renameDraft.trim()}"? This is what shows on team sheets everywhere.`,
-                                "Save",
-                                false,
-                              )
-                            ) {
-                              onAdminRename(p.id, renameDraft);
-                              setRenamingPlayerId(null);
-                            }
+                          onClick={() => {
+                            onAdminRename(p.id, renameDraft);
+                            setRenamingPlayerId(null);
                           }}
                         >
                           Save
@@ -1071,7 +1058,7 @@ export function AwardsForm({
   awards: AwardRow[];
   onAdd: (title: string, value: string, note: string, imageFile: File | null, videoFile: File | null) => Promise<void>;
   onDelete: (id: string) => void;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
+  askConfirm: AskConfirm;
 }) {
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");
@@ -1110,7 +1097,7 @@ export function AwardsForm({
               className="wcf-admin-remove"
               style={{ marginLeft: "auto" }}
               onClick={async () => {
-                if (await askConfirm(`Remove "${a.title}"?`, "This also deletes any photo/video attached to it.", "Remove")) onDelete(a.id);
+                if (await askConfirm(`Remove "${a.title}"?`, "Any photo or video attached to it is deleted too, for good.", "Hold to remove", true, true)) onDelete(a.id);
               }}
               aria-label="Remove award"
             >

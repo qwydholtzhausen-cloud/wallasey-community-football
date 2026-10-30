@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Avatar, POT_CATEGORY_LABEL, PillChoice, avatarFor, fmtDate, fmtDateTime, motionAllowed, type PotCategory } from "./shared";
+import { Avatar, POT_CATEGORY_LABEL, PillChoice, avatarFor, fmtDate, fmtDateTime, motionAllowed, type AskConfirm, type PotCategory } from "./shared";
 import { CountUp, MotmReveal, PointsPill, PotAmountJar } from "./motion";
 import { VoteMedal } from "./celebrate";
 import { Icon } from "./icons";
@@ -22,7 +22,7 @@ export type ResultsTabProps = {
   activeStatsYear: number;
   addingPotEntry: boolean;
   addPotEntry: (amount: number, description: string, category: PotCategory) => Promise<void>;
-  askConfirm: (title: string, message: string, confirmLabel?: string, danger?: boolean, hold?: boolean) => Promise<boolean>;
+  askConfirm: AskConfirm;
   avatarByPlayerId: Map<string, string | null | undefined>;
   awards: AwardRow[];
   castMotmVote: (gameId: string, candidateId: string, candidateName: string) => Promise<void>;
@@ -2426,7 +2426,7 @@ export function ResultsTab({
                         <button
                           className="wcf-admin-remove"
                           onClick={async () => {
-                            if (await askConfirm("Remove this pot entry?", "This deletes it from the ledger for good.", "Remove")) deletePotEntry(entry.id);
+                            if (await askConfirm("Remove this pot entry?", "It comes out of the ledger for good.", "Hold to remove", true, true)) deletePotEntry(entry.id);
                           }}
                           aria-label="Remove entry"
                         >

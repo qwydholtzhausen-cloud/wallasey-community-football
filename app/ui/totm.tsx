@@ -132,7 +132,7 @@ export function TotmReveal({
         <div className="k">TEAM OF THE MONTH</div>
         <h3>{month.monthLabel}</h3>
         <small>
-          {month.team.games} games · the month&apos;s best eight
+          {month.team.games} games · best eight by match rating
         </small>
       </div>
       <div className="wcf-totm-stage">
@@ -149,7 +149,6 @@ export function TotmReveal({
               <div className="wcf-totm-card">
                 <span className="wcf-totm-pts">
                   {s.p.rating.toFixed(1)}
-                  <small>RATING</small>
                 </span>
                 {s.p.captain && <span className="wcf-totm-arm">C</span>}
                 <Avatar name={w.name} avatarUrl={w.avatarUrl} className="wcf-totm-ph" background={avatarFor(w.name).gradient} />
@@ -265,14 +264,12 @@ export const totmCss = `
 .wcf-totm-pc.in .wcf-totm-card::after{animation:wcfTotmShine 1.1s .4s ease-out}
 @keyframes wcfTotmShine{to{transform:translateX(120%)}}
 .wcf-totm-pts{position:absolute;left:6px;top:5px;font-family:var(--display);font-weight:800;font-size:14px;line-height:1;color:#f5d97a;text-align:left}
-.wcf-totm-pts small{display:block;font-size:7px;letter-spacing:.1em;color:#94a3b8}
-.wcf-totm-ph{width:42px;height:42px;margin:12px auto 4px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:17px;color:#fff;border:2px solid rgba(245,217,122,.8)}
+.wcf-totm-ph{width:42px;height:42px;margin:16px auto 4px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:17px;color:#fff;border:2px solid rgba(245,217,122,.8)}
 .wcf-totm-card b{display:block;font-family:var(--display);font-size:11px;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wcf-totm-sl{display:block;margin-top:3px;font-size:8.5px;font-weight:700;color:#cbd5e1;white-space:nowrap}
 .wcf-totm-shadow{position:absolute;left:12%;right:12%;bottom:-8px;height:10px;border-radius:50%;background:radial-gradient(closest-side,rgba(0,0,0,.8),transparent)}
 .wcf-totm-pc.capt .wcf-totm-card{background:linear-gradient(170deg,#fff3c4,#f5d97a 40%,#b8902a);border-color:#fff6dc;box-shadow:0 14px 26px -10px #000,0 0 26px rgba(245,217,122,.7)}
 .wcf-totm-pc.capt .wcf-totm-card b,.wcf-totm-pc.capt .wcf-totm-sl,.wcf-totm-pc.capt .wcf-totm-pts{color:#2a1d05}
-.wcf-totm-pc.capt .wcf-totm-pts small{color:#5a4210}
 .wcf-totm-pc.capt .wcf-totm-ph{border-color:#fff}
 .wcf-totm-arm{position:absolute;right:5px;top:5px;width:17px;height:17px;border-radius:50%;background:#0d1220;color:#f5d97a;font-family:var(--display);font-weight:800;font-size:10px;display:grid;place-items:center}
 .wcf-totm-you{position:absolute;left:50%;top:-9px;transform:translateX(-50%);font-size:8.5px;font-weight:800;letter-spacing:.12em;background:#e63946;color:#fff;border-radius:5px;padding:2px 6px;z-index:3;white-space:nowrap}
