@@ -6334,11 +6334,14 @@ function App({ session }: { session: Session }) {
         upcoming: upcomingGames,
         // totmMonths stays empty until TOTM_VISIBLE_FROM, so this can't show early.
         totm: (() => {
-          const t = [...totmMonths].sort((a, b) => a.monthKey.localeCompare(b.monthKey))[0];
+          // Launch day names the newest month; the earlier ones came out with it.
+          const ms = [...totmMonths].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+          const t = ms.at(-1);
           return t
             ? {
                 launched: TOTM_VISIBLE_FROM.slice(0, 10),
                 monthLabel: t.monthLabel.split(" ")[0],
+                earlier: ms.slice(0, -1).map((m) => m.monthLabel.split(" ")[0]),
                 qualified: t.team.qualified,
                 table: t.team.table.map((p) => ({ id: p.id, rating: p.rating })),
                 team: t.team.team.map((p) => ({ id: p.id, line: p.line, captain: p.captain, rating: p.rating })),

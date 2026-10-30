@@ -72,8 +72,8 @@ export function computeHistory(input: {
   teams: { white: string; red: string };
   // Games still to come, for "Next: the first 11-a-side".
   upcoming?: HGame[];
-  // The first Team of the Month, once it's out (app/ui/totm.tsx data).
-  totm?: { launched: string; monthLabel: string; qualified: number; table: { id: string; rating: number }[]; team: { id: string; line: "front" | "mid" | "back"; captain: boolean; rating: number }[] } | null;
+  // Team of the Month's launch: the newest month, once it's out (app/ui/totm.tsx data).
+  totm?: { launched: string; monthLabel: string; earlier?: string[]; qualified: number; table: { id: string; rating: number }[]; team: { id: string; line: "front" | "mid" | "back"; captain: boolean; rating: number }[] } | null;
 }) {
   const { teams } = input;
   const name = new Map(input.people.map((p) => [p.id, p.display_name]));
@@ -222,14 +222,15 @@ export function computeHistory(input: {
     ev.push({ key: "potm-" + p.monthKey, date: ann, order: 5, title: `${label}'s Player of the Month`, text: p.winnerIds.length > 1 ? `Shared between ${p.winnerIds.map((id) => first(nm(id))).join(" and ")}.` : `${nm(p.winnerIds[0])}.`, scene: one ? { type: "potm", id: win, month: label, rows: rows.map(({ id, wins, votes }) => ({ id, wins, votes })), note, stats: { wins: a.wins, votes: a.votes, goals: a.goals } } : { type: "people", ids: p.winnerIds } });
   }
 
-  // The first Team of the Month, on the day Team of the Month launched.
+  // Team of the Month's launch day: the month named that day (the earlier
+  // months came out alongside it).
   if (input.totm)
     ev.push({
       key: "first-totm",
       date: input.totm.launched,
       order: 6,
-      title: "The first Team of the Month",
-      text: `${input.totm.monthLabel}'s best eight, by match rating, captained by the Player of the Month.`,
+      title: "Team of the Month arrives",
+      text: `${input.totm.monthLabel}'s best eight, by match rating, captained by the Player of the Month.${input.totm.earlier?.length ? ` ${input.totm.earlier.join(" and ")}'s came out with it.` : ""}`,
       scene: {
         type: "totm",
         month: input.totm.monthLabel,
