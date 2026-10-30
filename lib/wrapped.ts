@@ -36,7 +36,7 @@ export type Result = "W" | "D" | "L";
 export interface WrappedData {
   firstName: string;
   apps: number;
-  ofGames: number;
+  ofGames: number; // game nights you could have played (see below)
   squad: number;
   appsRank: number; // 1 = most games; ties share a rank
   appsRun: number; // longest run of consecutive club games played
@@ -254,7 +254,10 @@ export function computeWrapped(input: WrappedInput): WrappedData | null {
   return {
     firstName: (names[me] ?? "").trim().split(/\s+/)[0] || "You",
     apps: mine.length,
-    ofGames: games.length,
+    // Out of how many you could have played: game nights, so a two-game
+    // night is one chance (nobody plays both), and a special one-off only
+    // counts if you played it - the same rule as the appearances run.
+    ofGames: Math.max(mine.length, new Set(games.filter((g) => !g.special || myGameIds.has(g.id)).map((g) => g.date)).size),
     squad: Object.keys(apps).length,
     appsRank: rankIn(apps, mine.length),
     appsRun,
