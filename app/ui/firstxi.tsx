@@ -182,7 +182,7 @@ export function FirstXiPennant({ signers, onProgramme, onDone }: { signers: stri
               <path d="M6 0h218L115 326z" fill="#8e0d17" />
               <path d="M14 4h202L115 306z" fill="#b51b28" />
             </svg>
-            <span className="sigs">
+            <span className="sigs" style={signers.length > 22 ? { ["--sz" as string]: "14.5px" } : undefined}>
               {signers.map((n) => (
                 <span key={n}>{n}</span>
               ))}
@@ -190,7 +190,7 @@ export function FirstXiPennant({ signers, onProgramme, onDone }: { signers: stri
           </span>
         </span>
       </button>
-      <div className="hint">{flip ? "All 22, signed" : "Tap the pennant to turn it over"}</div>
+      <div className="hint">{flip ? `All ${signers.length}, signed` : "Tap the pennant to turn it over"}</div>
       <div className="own">
         <small>{signers.length} PENNANTS · {signers.length} PLAYERS · NEVER AGAIN</small>
         <p>The First XI pennant is in your trophy cabinet. Only the players from the club&apos;s first 11-a-side have one.</p>
@@ -250,7 +250,7 @@ export const firstXiCss = `
 .fxi-dr .side.back{transform:rotateY(180deg)}
 .fxi-dr .side svg{width:100%;height:100%;overflow:visible;filter:drop-shadow(0 14px 20px rgba(0,0,0,.7))}
 .fxi-dr .sigs{position:absolute;left:24px;right:24px;top:30px;height:210px;display:flex;flex-wrap:wrap;justify-content:center;align-content:flex-start;gap:0 8px;transform:rotate(-1deg)}
-.fxi-dr .sigs span{font:700 16px/1.15 var(--font-caveat),cursive;color:#fff}
+.fxi-dr .sigs span{font:700 var(--sz,16px)/1.15 var(--font-caveat),cursive;color:#fff}
 .fxi-dr .sigs span:nth-child(3n){color:#ffd5d8}
 .fxi-dr .hint{margin-top:14px;font-size:12px;color:#cbd5e1}
 .fxi-dr .own{margin-top:auto;width:100%;max-width:440px;padding:14px 18px calc(env(safe-area-inset-bottom,0px) + 18px)}

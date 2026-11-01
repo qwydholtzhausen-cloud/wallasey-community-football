@@ -25,6 +25,12 @@ export const FIRST_XI_REDS = [
 
 export const FIRST_XI_DATE_LABEL = "01.11.26";
 
+// Played but never booked (by profile id, as some names are shared): on the
+// pennant and with one in their cabinet, but no appearance, result or win
+// run, because nothing is booked. The owner's call, 1 Nov: Joe Chittick came
+// on for the Reds as an emergency sub and his win run shouldn't change.
+export const FIRST_XI_PENNANT_ONLY = ["2c52df87-482d-4a28-925f-0bf8c3050174"];
+
 // Admins see it first to test; everyone from this UK date (Tue 20 Oct, so
 // Monday 19th's game and its MOTM vote are in the story).
 export const FIRST_XI_OPEN_TO_ALL_FROM = "2026-10-20";

@@ -154,7 +154,7 @@ export function HistoryPage({
     if (!host) return;
     const list = Array.from(host.querySelectorAll<HTMLElement>(".wcf-hs-tot, .wcf-hs-ev"));
     const wait = (el: HTMLElement) =>
-      el.querySelector(".wcf-hs-mc, .wcf-hs-gv, .wcf-hs-v4") ? 6200 : el.querySelector(".wcf-hs-mb") ? 5200 : el.querySelector(".wcf-hs-chain") ? 3600 : el.querySelector(".wcf-hs-mosaic") ? 2600 : el.querySelector(".wcf-hs-goal, .wcf-hs-board, .wcf-hs-big, .wcf-hs-twin") ? 2400 : 1500;
+      el.querySelector(".wcf-hs-mc, .wcf-hs-gv, .wcf-hs-yc, .wcf-hs-v4") ? 6200 : el.querySelector(".wcf-hs-mb") ? 5200 : el.querySelector(".wcf-hs-chain") ? 3600 : el.querySelector(".wcf-hs-mosaic") ? 2600 : el.querySelector(".wcf-hs-goal, .wcf-hs-board, .wcf-hs-big, .wcf-hs-twin") ? 2400 : 1500;
     let k = Math.max(0, list.findIndex((el) => el.getBoundingClientRect().top > 120 && !el.classList.contains("wcf-hs-tot")));
     let timer = 0;
     const next = () => {
@@ -247,6 +247,8 @@ export function HistoryPage({
         return <MotmCount s={s} name={(id) => people.get(id)?.name ?? "A player"} face={face} />;
       case "glove":
         return <GloveScene name={people.get(s.id)?.name ?? "A player"} face={face(s.id)} />;
+      case "card":
+        return <CardScene name={people.get(s.id)?.name ?? "A player"} face={face(s.id)} colour={s.colour} date={s.date} />;
       case "live":
       case "callup":
       case "potm":
@@ -469,6 +471,46 @@ function Glove({ className }: { className: string }) {
 
 // Golden Glove: a shot to the top corner, a fingertip save in slow motion,
 // then the glove on its plinth with the keeper's face.
+// A booking: the whistle, the referee's arm goes up with the card, BOOKED,
+// then the plate with who it was. Titles with "yellow card" or "booked"
+// (lib/history.ts) get it; "red card" or "sent off" gets the red.
+function CardScene({ name, face, colour, date }: { name: string; face: React.ReactNode; colour: "yellow" | "red"; date: string }) {
+  const day = new Date(date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).toUpperCase();
+  return (
+    <div className={"wcf-hs-card wcf-hs-yc " + colour}>
+      <div className="scene">
+        <div className="bg" />
+        <div className="peep">
+          <b>PEEP!</b>
+          <i />
+          <i />
+          <i />
+        </div>
+        <div className="rays" />
+        <div className="arm">
+          <div className="card">
+            <span className="glint" />
+          </div>
+          <div className="hand" />
+          <div className="sleeve" />
+        </div>
+        <div className="slam">{colour === "red" ? "SENT OFF" : "BOOKED"}</div>
+        <div className="l3">
+          <span className="chip" />
+          {colour === "red" ? "RED CARD" : "YELLOW CARD"} · {day}
+        </div>
+      </div>
+      <div className="plate">
+        <small>{colour === "red" ? "THE CLUB'S FIRST RED CARD" : "THE CLUB'S FIRST BOOKING"}</small>
+        <div className="who">
+          {face}
+          <b>{name}</b>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GloveScene({ name, face }: { name: string; face: React.ReactNode }) {
   return (
     <div className="wcf-hs-card wcf-hs-gv">
@@ -1493,6 +1535,44 @@ const historyCss = `
 .wcf-hs-ev.in .wcf-hs-mc .plate{animation:wcfHsU .5s ease-out 4.4s forwards}
 .wcf-hs-ev.in .wcf-hs-gv .plate{animation:wcfHsU .5s ease-out 3.7s forwards}
 .wcf-hs.still .wcf-hs-gv .rays{animation:none!important}
+/* A booking (CardScene) */
+.wcf-hs-yc{position:relative;height:380px;padding:0;overflow:hidden;background:#04060c;--cc:#ffd60a;--cd:#c9a400}
+.wcf-hs-yc.red{--cc:#ef2b3a;--cd:#a3121e}
+.wcf-hs-yc .scene{position:absolute;inset:0}
+.wcf-hs-yc .bg{position:absolute;inset:0;background:url(/pitch-floodlit.jpg) center 45%/cover;filter:brightness(.5) blur(2px)}
+.wcf-hs-ev.in .wcf-hs-yc .bg{animation:wcfHsYcBg 3s ease-out .2s forwards}
+@keyframes wcfHsYcBg{40%{transform:scale(1.08)}to{transform:scale(1.12);filter:brightness(.32) blur(3px)}}
+.wcf-hs-yc .peep{position:absolute;left:24px;top:30px;z-index:3;opacity:0;transform:rotate(-8deg) scale(.6)}
+.wcf-hs-yc .peep b{display:block;font:700 30px var(--font-oswald),sans-serif;letter-spacing:.08em;color:#fff;text-shadow:0 0 18px rgba(255,255,255,.5)}
+.wcf-hs-yc .peep i{position:absolute;left:-12px;width:10px;height:3px;border-radius:2px;background:#fff}
+.wcf-hs-yc .peep i:nth-of-type(1){top:6px;transform:rotate(-30deg)}.wcf-hs-yc .peep i:nth-of-type(2){top:18px}.wcf-hs-yc .peep i:nth-of-type(3){top:30px;transform:rotate(30deg)}
+.wcf-hs-ev.in .wcf-hs-yc .peep{animation:wcfHsPeep .9s cubic-bezier(.3,1.6,.5,1) .15s forwards}
+@keyframes wcfHsPeep{40%{opacity:1;transform:rotate(-8deg) scale(1.08)}70%{opacity:1;transform:rotate(-8deg) scale(1)}to{opacity:0;transform:rotate(-8deg) scale(1)}}
+.wcf-hs-yc .rays{position:absolute;left:50%;top:38%;width:620px;height:620px;margin:-310px 0 0 -310px;background:repeating-conic-gradient(color-mix(in srgb,var(--cc) 22%,transparent) 0 5deg,transparent 5deg 15deg);border-radius:50%;-webkit-mask:radial-gradient(circle,#000 8%,transparent 60%);mask:radial-gradient(circle,#000 8%,transparent 60%);opacity:0}
+.wcf-hs-ev.in .wcf-hs-yc .rays{animation:wcfHsF .4s 1.15s forwards,wcfHsSpin 16s linear 1.15s infinite}
+.wcf-hs-yc .arm{position:absolute;left:50%;bottom:-40px;width:120px;margin-left:-38px;z-index:4;transform:translateY(260px) rotate(14deg);transform-origin:50% 100%}
+.wcf-hs-ev.in .wcf-hs-yc .arm{animation:wcfHsArm .75s cubic-bezier(.2,1.25,.4,1) .7s forwards}
+@keyframes wcfHsArm{to{transform:translateY(34px) rotate(4deg)}}
+.wcf-hs-yc .sleeve{position:relative;margin:-14px auto 0;width:52px;height:220px;border-radius:24px 24px 0 0;background:linear-gradient(90deg,#05070c,#1d2333 45%,#0a0d15);box-shadow:inset 0 3px 0 rgba(255,255,255,.08)}
+.wcf-hs-yc .sleeve::before{content:"";position:absolute;left:0;right:0;top:18px;height:7px;background:#2c3446}
+.wcf-hs-yc .hand{position:relative;z-index:2;margin:-26px auto 0;width:48px;height:56px;border-radius:22px 22px 18px 18px;background:radial-gradient(circle at 40% 35%,#f1c7a4,#d79f7a 70%,#b97f5d)}
+.wcf-hs-yc .card{position:relative;z-index:3;margin:0 auto;width:76px;height:108px;border-radius:9px;background:linear-gradient(160deg,color-mix(in srgb,var(--cc) 70%,#fff),var(--cc) 40%,var(--cd));box-shadow:0 0 0 1.5px rgba(0,0,0,.25),0 0 50px color-mix(in srgb,var(--cc) 70%,transparent),0 18px 30px rgba(0,0,0,.55);overflow:hidden;transform:rotate(-6deg)}
+.wcf-hs-yc .glint{position:absolute;inset:-20% -60%;background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.8) 50%,transparent 60%);transform:translateX(-80%)}
+.wcf-hs-ev.in .wcf-hs-yc .glint{animation:wcfHsGlint .9s ease-out 1.5s forwards}
+@keyframes wcfHsGlint{to{transform:translateX(80%)}}
+.wcf-hs-yc .slam{position:absolute;left:0;right:0;top:44px;z-index:6;text-align:center;font:700 50px/1 var(--font-oswald),sans-serif;letter-spacing:.06em;color:var(--cc);text-shadow:0 4px 0 rgba(0,0,0,.45),0 0 30px color-mix(in srgb,var(--cc) 60%,transparent);opacity:0;transform:scale(2.2)}
+.wcf-hs-ev.in .wcf-hs-yc .slam{animation:wcfHsSlam .32s cubic-bezier(.3,1.5,.5,1) 1.35s forwards}
+.wcf-hs-yc .l3{position:absolute;left:12px;top:12px;z-index:6;display:flex;align-items:center;gap:7px;padding:5px 10px 5px 7px;border-radius:6px;background:rgba(6,8,14,.86);border-left:3px solid var(--cc);font:600 10px var(--font-oswald),sans-serif;letter-spacing:.2em;color:#e2e8f0;opacity:0;transform:translateX(-20px)}
+.wcf-hs-yc .l3 .chip{width:9px;height:13px;border-radius:2px;background:var(--cc)}
+.wcf-hs-ev.in .wcf-hs-yc .l3{animation:wcfHsL3 .4s ease-out 1.7s forwards}
+@keyframes wcfHsL3{to{opacity:1;transform:none}}
+.wcf-hs-yc .plate{position:absolute;left:12px;right:12px;bottom:12px;z-index:9;padding:10px 12px;border-radius:12px;background:rgba(8,10,20,.9);border:1px solid color-mix(in srgb,var(--cc) 60%,transparent);text-align:center;opacity:0}
+.wcf-hs-yc .plate small{display:block;font:600 9px var(--font-oswald),sans-serif;letter-spacing:.24em;color:var(--cc)}
+.wcf-hs-yc .plate .who{display:flex;align-items:center;justify-content:center;gap:9px;margin-top:5px}
+.wcf-hs-yc .plate .who .wcf-hs-face{width:34px;height:34px;font-size:13px;border:2px solid var(--cc)}
+.wcf-hs-yc .plate b{font:800 19px/1.2 var(--display);color:#fff}
+.wcf-hs-ev.in .wcf-hs-yc .plate{animation:wcfHsU .5s ease-out 2.4s forwards}
+.wcf-hs.still .wcf-hs-yc .rays{animation:none!important;opacity:1}
 @keyframes wcfHsF{to{opacity:1}}
 @keyframes wcfHsO{to{opacity:0}}
 @keyframes wcfHsU{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}

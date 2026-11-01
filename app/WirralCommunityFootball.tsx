@@ -82,7 +82,7 @@ import { computeHistory, type HMoment } from "../lib/history";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
 import { computeProgramme } from "../lib/programme";
 import { isPostponed } from "../lib/postponed";
-import { FIRST_XI_DATE_LABEL, FIRST_XI_GAME_ID, FIRST_XI_OPEN_TO_ALL_FROM, FIRST_XI_TAKEOVER_ADMINS_FROM, FIRST_XI_TAKEOVER_FROM } from "../lib/firstXI";
+import { FIRST_XI_DATE_LABEL, FIRST_XI_GAME_ID, FIRST_XI_OPEN_TO_ALL_FROM, FIRST_XI_PENNANT_ONLY, FIRST_XI_TAKEOVER_ADMINS_FROM, FIRST_XI_TAKEOVER_FROM } from "../lib/firstXI";
 import { MatchdayProgramme, type ProgrammeAd } from "./ui/programme";
 import { FirstXiMotmReveal, FirstXiPennant } from "./ui/firstxi";
 import { MatchdayHero, MatchdayIntro, MatchdayRibbon, MatchdayTeamCards, MatchdayTimeline, matchdayCss } from "./ui/matchdayxi";
@@ -4895,7 +4895,7 @@ function App({ session }: { session: Session }) {
     if (!g || g.team_white_score == null || g.team_red_score == null) return null;
     return {
       date: g.date,
-      played: g.bookings.filter((b) => !b.waiting).map((b) => b.player_id),
+      played: [...new Set([...g.bookings.filter((b) => !b.waiting).map((b) => b.player_id), ...FIRST_XI_PENNANT_ONLY])],
       motm: closedMotmTallies[g.id] ? (motmWinnerIdsByGame[g.id] ?? []) : [],
     };
   }, [firstXiGame, closedMotmTallies, motmWinnerIdsByGame]);

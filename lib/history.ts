@@ -31,6 +31,7 @@ export type Scene =
   | { type: "motmcount"; top: { id: string; votes: number; goals: number }[]; total: number; rest: number; headline: string; stamp: string }
   // An admin-added "Golden Glove" moment: the save, then the trophy.
   | { type: "glove"; id: string }
+  | { type: "card"; id: string; colour: "yellow" | "red"; date: string }
   // The premium (V4) scenes: a build-up, then the payoff.
   | { type: "live"; ids: string[]; total: number }
   | { type: "callup"; ids: string[]; max: number; head: string }
@@ -265,6 +266,8 @@ export function computeHistory(input: {
       scene:
         m.kind === "goal"
           ? { type: "goal", id: m.player_ids[0] ?? null, date: m.happened_on }
+          : /yellow card|booked|booking|red card|sent off/i.test(m.title) && m.player_ids.length === 1
+            ? { type: "card", id: m.player_ids[0], colour: /red card|sent off/i.test(m.title) ? "red" : "yellow", date: m.happened_on }
           : /golden glove/i.test(m.title) && m.player_ids.length === 1
             ? { type: "glove", id: m.player_ids[0] }
             : m.player_ids.length && /players.?\s*player/i.test(m.title)
