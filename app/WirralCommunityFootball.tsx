@@ -3062,6 +3062,35 @@ function App({ session }: { session: Session }) {
     }
   }
 
+  // Every "Share" button: make the image, then open the share sheet. An
+  // iPhone only opens the sheet close to the tap, and drawing the image
+  // (the First XI poster is drawn on the server) can take long enough that
+  // it refuses with "not allowed ... denied permission". Then the card is
+  // ready and one more tap on Share opens the sheet straight away.
+  async function shareImage(file: File, blob: Blob, what = "Your card") {
+    if (!navigator.canShare?.({ files: [file] })) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.name;
+      a.click();
+      URL.revokeObjectURL(url);
+      notifySuccess(`${what} downloaded`);
+      return;
+    }
+    try {
+      await navigator.share({ files: [file] });
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "NotAllowedError")) throw err;
+      if (!(await askConfirm(`${what} is ready`, "Tap Share to send it.", "Share", false, false, { keep: "Not now" }))) return;
+      try {
+        await navigator.share({ files: [file] });
+      } catch (again) {
+        if (!(again instanceof DOMException && again.name === "AbortError")) notifyError("Couldn't open sharing on this phone");
+      }
+    }
+  }
+
   // The First XI full-time poster: drawn by /api/xi-poster from what the app
   // already has. Man of the Match only once the vote has closed; before
   // that it asks people to vote.
@@ -3099,17 +3128,7 @@ function App({ session }: { session: Session }) {
       if (!res.ok) throw new Error("Couldn't make the poster");
       const blob = await res.blob();
       const file = new File([blob], `the-first-xi-${winners.length ? "final" : "full-time"}.png`, { type: "image/png" });
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file] });
-      } else {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = file.name;
-        a.click();
-        URL.revokeObjectURL(url);
-        notifySuccess("Poster downloaded");
-      }
+      await shareImage(file, blob, "The poster");
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) notifyError(err instanceof Error ? err.message : "Couldn't make the poster");
     } finally {
@@ -3155,17 +3174,7 @@ function App({ session }: { session: Session }) {
       });
       const file = new File([blob], `${game.venue.replace(/\s+/g, "-")}-${game.date}.png`, { type: "image/png" });
 
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file] });
-      } else {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = file.name;
-        a.click();
-        URL.revokeObjectURL(url);
-        notifySuccess("Image downloaded");
-      }
+      await shareImage(file, blob);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return; // user backed out of the share sheet
       notifyError(err instanceof Error ? err.message : "Couldn't generate the image");
@@ -3178,17 +3187,7 @@ function App({ session }: { session: Session }) {
       const blob = await drawPlayerOfMonthCard({ monthLabel: playerOfMonth.monthLabel, names: playerOfMonth.names });
       const file = new File([blob], `player-of-the-month-${playerOfMonth.monthLabel.replace(/\s+/g, "-")}.png`, { type: "image/png" });
 
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file] });
-      } else {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = file.name;
-        a.click();
-        URL.revokeObjectURL(url);
-        notifySuccess("Image downloaded");
-      }
+      await shareImage(file, blob);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return; // user backed out of the share sheet
       notifyError(err instanceof Error ? err.message : "Couldn't generate the image");
@@ -4767,17 +4766,7 @@ function App({ session }: { session: Session }) {
     try {
       const blob = await drawWrappedCard({ data: wrapped.data, periodLabel: wrapped.periodLabel, whiteName: cs.team_white_name, redName: cs.team_red_name });
       const file = new File([blob], `wrapped-${wrapped.periodKey}.png`, { type: "image/png" });
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file] });
-      } else {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = file.name;
-        a.click();
-        URL.revokeObjectURL(url);
-        notifySuccess("Image downloaded");
-      }
+      await shareImage(file, blob);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return; // user backed out of the share sheet
       notifyError(err instanceof Error ? err.message : "Couldn't generate the image");
