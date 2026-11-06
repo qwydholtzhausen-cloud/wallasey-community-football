@@ -11492,10 +11492,15 @@ function AdminConsole({
   const [stamped, setStamped] = useState<Set<string>>(new Set());
   const [paidSummary, setPaidSummary] = useState<{ n: number; total: number } | null>(null);
   const reduceMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // The row has left the list by now; Undo brings it back, so it can't stay stamped.
+  function unstampLater(ids: string[]) {
+    setTimeout(() => setStamped((cur) => new Set([...cur].filter((id) => !ids.includes(id)))), 3000);
+  }
   function stampConfirm(bookingId: string) {
     if (reduceMotion) return onSetStatus(bookingId, "confirmed");
     setStamped((cur) => new Set(cur).add(bookingId));
     setTimeout(() => onSetStatus(bookingId, "confirmed"), 720);
+    unstampLater([bookingId]);
   }
   async function stampAll(ids: string[], total: number) {
     if (!reduceMotion)
@@ -11505,6 +11510,7 @@ function AdminConsole({
       }
     await new Promise((r) => setTimeout(r, reduceMotion ? 0 : 650));
     onConfirmPayments(ids);
+    unstampLater(ids);
     setPaidSummary({ n: ids.length, total });
     setTimeout(() => setPaidSummary(null), 6000);
   }
@@ -12228,12 +12234,14 @@ function AdminConsole({
             {expanded && (
               <div className="wcf-tab-detail">
                 {row.owed.map(({ booking: b, game: g }) => (
-                  <div key={b.id} className="wcf-tab-line">
+                  <div key={b.id} className={"wcf-tab-line" + (stamped.has(b.id) ? " stamped" : "")}>
+                    <span className="wcf-paid-stamp" aria-hidden="true">PAID</span>
                     <div className="wcf-tab-line-desc">
                       <div className="wcf-tab-line-venue">{g.venue}</div>
                       <div className="wcf-tab-line-date">{fmtDate(g.date)}</div>
                     </div>
                     <span className="wcf-tab-line-price">£{g.price}</span>
+                    <button className="wcf-tab-line-paid" onClick={() => stampConfirm(b.id)}>Mark paid</button>
                     <button
                       className="wcf-tab-line-remove"
                       onClick={async () => {
@@ -14551,11 +14559,12 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-tab-claimed{flex:none;font-weight:800;font-size:9px;letter-spacing:.1em;color:#f5d97a;background:rgba(234,179,8,.14);border:1px solid rgba(234,179,8,.36);padding:5px 8px;border-radius:20px}
 .wcf-tab-amount{font-family:var(--display);font-weight:800;font-size:15px;font-variant-numeric:tabular-nums;color:var(--red-hi);flex:none}
 .wcf-tab-detail{padding:0 13px 13px}
-.wcf-tab-line{display:flex;align-items:center;gap:9px;padding-top:9px;border-top:1px solid rgba(148,163,184,.12)}
+.wcf-tab-line{position:relative;display:flex;align-items:center;gap:9px;padding-top:9px;border-top:1px solid rgba(148,163,184,.12)}
 .wcf-tab-line-desc{flex:1;min-width:0}
 .wcf-tab-line-venue{font-weight:600;font-size:12px;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wcf-tab-line-date{margin-top:4px;font-size:10.5px;color:#64748b}
 .wcf-tab-line-price{flex:none;font-family:var(--mono);font-weight:600;font-size:12px;color:#cbd5e1}
+.wcf-tab-line-paid{flex:none;min-height:36px;padding:0 11px;border-radius:10px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);color:#f5d97a;font-weight:800;font-size:11.5px;cursor:pointer}
 .wcf-tab-line-remove{flex:none;width:36px;height:36px;border-radius:10px;background:rgba(240,82,94,.1);border:1px solid rgba(240,82,94,.3);color:var(--red-hi);font-size:16px;cursor:pointer;line-height:1;display:grid;place-items:center}
 .wcf-tab-nudge{width:100%;margin-top:12px;min-height:44px;padding:12px;border-radius:12px;background:rgba(245,217,122,.1);border:1px solid rgba(245,217,122,.45);color:#f5d97a;font-weight:700;font-size:11.5px;cursor:pointer}
 .wcf-pending-detail{margin:10px 0 14px;padding:14px;border-radius:18px;background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(19,22,38,.99));border:1px solid rgba(234,179,8,.3)}
@@ -16064,6 +16073,9 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-claim-one{flex:none;min-height:30px;padding:0 10px;border-radius:9px;border:1px solid rgba(245,217,122,.45);background:transparent;color:#f5d97a;font-weight:800;font-size:11.5px;cursor:pointer}
 .wcf-claim-line.stamped .wcf-paid-stamp{animation:wcfPaidStamp .42s cubic-bezier(.3,1.6,.5,1) forwards}
 .wcf-claim-line.stamped .wcf-claim-one{visibility:hidden}
+.wcf-tab-line.stamped{max-height:80px;overflow:hidden;animation:wcfPaidFold .45s .5s ease forwards}
+.wcf-tab-line.stamped .wcf-paid-stamp{animation:wcfPaidStamp .42s cubic-bezier(.3,1.6,.5,1) forwards}
+.wcf-tab-line.stamped .wcf-tab-line-paid,.wcf-tab-line.stamped .wcf-tab-line-remove{visibility:hidden}
 .wcf-claim.stamped{max-height:600px;overflow:hidden;animation:wcfPaidFold .45s .6s ease forwards}
 .wcf-paid-summary{margin:0 0 12px;padding:16px;border-radius:16px;text-align:center;background:radial-gradient(120% 120% at 50% 0%,rgba(34,197,94,.2),transparent 60%),var(--panel);border:1px solid rgba(34,197,94,.42);animation:wcfMomentPop .5s cubic-bezier(.3,1.5,.5,1) both}
 .wcf-paid-summary b{display:block;font-family:var(--display);font-weight:800;font-size:30px;color:#4ade80}
