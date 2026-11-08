@@ -26,6 +26,7 @@ import {
   CALM_FEED_OPEN_TO_ALL_FROM,
   CALM_RESULTS_OPEN_TO_ALL_FROM,
   CALM_LINEUP_OPEN_TO_ALL_FROM,
+  LINEUP_V2_OPEN_TO_ALL_FROM,
   CALM_ADMIN,
   TOTM_FIRST_MONTH,
   TOTM_REVEAL_FROM,
@@ -4149,6 +4150,18 @@ function App({ session }: { session: Session }) {
   // Calm Results (admins first): opens on Scores, once, when it turns on.
   const calmResultsOn = isAdmin || nowUk.slice(0, 10) >= CALM_RESULTS_OPEN_TO_ALL_FROM;
   const calmLineupOn = isAdmin || nowUk.slice(0, 10) >= CALM_LINEUP_OPEN_TO_ALL_FROM;
+  const lineupV2On = isAdmin || nowUk.slice(0, 10) >= LINEUP_V2_OPEN_TO_ALL_FROM;
+  // Games each player has won this season, for Line-up V2's "On paper".
+  const winsById = useMemo(() => {
+    const out: Record<string, number> = {};
+    pastGames
+      .filter((g) => g.date.slice(0, 4) === nowUk.slice(0, 4) && g.team_white_score != null && g.team_red_score != null)
+      .forEach((g) => {
+        const won = g.team_white_score! > g.team_red_score! ? "white" : g.team_red_score! > g.team_white_score! ? "red" : null;
+        if (won) g.bookings.forEach((b) => !b.waiting && b.team === won && (out[b.player_id] = (out[b.player_id] ?? 0) + 1));
+      });
+    return out;
+  }, [pastGames, nowUk]);
   const calmResultsDefaulted = useRef(false);
   useEffect(() => {
     if (!calmResultsOn || calmResultsDefaulted.current) return;
@@ -7374,6 +7387,9 @@ function App({ session }: { session: Session }) {
             setLineupGameId={setLineupGameId}
             lineupView={lineupView}
             calm={calmLineupOn}
+            v2={lineupV2On}
+            winsById={winsById}
+            weatherChip={nextGame ? (() => { const w = weatherFor(nextGame.date, nextGame.kickoff); return w ? `${w.temp}°C` : null; })() : null}
             predictBack={
               predictFromResults
                 ? {

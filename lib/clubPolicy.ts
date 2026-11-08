@@ -132,3 +132,9 @@ export const CALM_LINEUP_OPEN_TO_ALL_FROM = "2026-10-18";
 // the pot under Money (app/ui/calmadmin.tsx). Admin is admins-only anyway;
 // false brings back the previous Admin tab.
 export const CALM_ADMIN = true;
+
+// Line-up V2 (8 Nov 2026): a matchday header with a fill bar, the squad
+// numbered in booking order with the waiting list, and a TV-style team
+// sheet (the pitch from the gantry camera, name plates, tap for a caption,
+// the two teams on paper). Admins first; every member from this UK date.
+export const LINEUP_V2_OPEN_TO_ALL_FROM = "2099-01-01";

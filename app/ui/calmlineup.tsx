@@ -14,7 +14,7 @@ import { kickoffCutoff, nowInLondon } from "../../lib/time";
 // "YYYY-MM-DDTHH:MM" wall-clock strings, compared as such (pretend-UTC).
 const wallMs = (s: string) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10), +s.slice(11, 13), +s.slice(14, 16));
 
-function useCountdown(date: string, kickoff: string) {
+export function useCountdown(date: string, kickoff: string) {
   const [now, setNow] = useState(() => nowInLondon());
   useEffect(() => {
     const t = setInterval(() => setNow(nowInLondon()), 30000);

@@ -3,6 +3,7 @@ import { EmptyScene } from "./EmptyScene";
 import { BirthdayBunting, BirthdayTag, PartyHat } from "./celebrate";
 import { BirthdayHat, CalmAdminCard, CalmLineupHead, CalmSheetBar, PredictorLeagueLink } from "./calmlineup";
 import { PredictPanel, PredictPodium, PredictTicket, predictFaceCss } from "./predict";
+import { LineupHero, LineupSquad, LineupTeams, lineupV2Css } from "./lineupv2";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { buildLeaderboard, predictionPoints, topScorers, type LeaderboardRow, type ScoredPrediction } from "../../lib/predictions";
 import type { BookingRow, ClubSettings, GameRow, ScorePrediction, Team } from "../WirralCommunityFootball";
@@ -48,6 +49,11 @@ export type LineupTabProps = {
   // Calm Line-up (admins first, app/ui/calmlineup.tsx): one screen, no
   // tabs; the generator and the predictor league open over it.
   calm?: boolean;
+  // Line-up V2 (admins first, LINEUP_V2_OPEN_TO_ALL_FROM): the matchday
+  // header, numbered squad and the TV-style team sheet (app/ui/lineupv2.tsx).
+  v2?: boolean;
+  winsById?: Record<string, number>;
+  weatherChip?: string | null;
   // Where the predictor league's back button goes (it opens from Line-up
   // and from Results › Season).
   predictBack?: { label: string; go: () => void } | null;
@@ -175,6 +181,9 @@ export function LineupTab({
   teamFairness,
   teamStats,
   calm = false,
+  v2 = false,
+  winsById,
+  weatherChip,
   predictBack = null,
 }: LineupTabProps) {
   // Someone's free birthday game: bunting on the team sheet.
@@ -244,6 +253,8 @@ export function LineupTab({
   }, [climbPhase, myId]);
 
   const posted = nextGrouped.white.length > 0 || nextGrouped.red.length > 0;
+  const useV2 = !!(calm && v2 && !editingLineup && !editingPositions);
+  const statsById = useMemo(() => new Map(playerStats.map((s) => [s.id, { apps: s.apps, goals: s.goals }])), [playerStats]);
   const myLeagueRank = (() => {
     const i = predictionSeasonLeaderboard.findIndex((x) => x.playerId === myId);
     return i >= 0 ? i + 1 : null;
@@ -638,7 +649,9 @@ export function LineupTab({
           {!nextGame && <p className="wcf-empty">No upcoming fixture yet.</p>}
           {nextGame && (
             <>
-              {calm && (
+              {useV2 && <style>{lineupV2Css}</style>}
+              {useV2 && bdays.length === 0 && <LineupHero game={nextGame} booked={nextConfirmed.length} weather={weatherChip ?? null} />}
+              {calm && !(useV2 && bdays.length === 0) && (
                 <CalmLineupHead
                   date={nextGame.date}
                   kickoff={nextGame.kickoff}
@@ -834,7 +847,7 @@ export function LineupTab({
                   );
                 })()}
 
-              {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
+              {!useV2 && !editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
                 <div className="wcf-lineup-strip-row">
                   {(
                     [
@@ -855,7 +868,7 @@ export function LineupTab({
                 </div>
               )}
 
-              {!editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
+              {!useV2 && !editingLineup && (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) && (
                 <div className="wcf-lineup-views">
                   <button className={"wcf-lineup-view-btn " + (lineupDisplayView === "pitch" ? "on" : "")} onClick={() => setLineupDisplayView("pitch")}>
                     Pitch
@@ -866,7 +879,20 @@ export function LineupTab({
                 </div>
               )}
 
-              {!editingLineup &&
+              {useV2 && posted && (
+                <LineupTeams
+                  tokens={pitchTokens}
+                  arranged={!!nextGame.lineup_positions && Object.keys(nextGame.lineup_positions).length > 0}
+                  white={{ name: cs.team_white_name, color: cs.team_white_color }}
+                  red={{ name: cs.team_red_name, color: cs.team_red_color }}
+                  stats={statsById}
+                  wins={winsById ?? {}}
+                  myId={myId}
+                  onOpen={openPlayerCard}
+                />
+              )}
+              {!useV2 &&
+                !editingLineup &&
                 (nextGrouped.white.length > 0 || nextGrouped.red.length > 0) &&
                 (() => {
                   const allTokens = pitchTokens;
@@ -1061,7 +1087,8 @@ export function LineupTab({
                   );
                 })()}
 
-              {!editingLineup && nextGrouped.unassigned.length > 0 && (
+              {useV2 && !posted && nextConfirmed.length > 0 && <LineupSquad game={nextGame} confirmed={nextConfirmed} stats={statsById} myId={myId} onOpen={openPlayerCard} />}
+              {!editingLineup && nextGrouped.unassigned.length > 0 && !(useV2 && !posted) && (
                 <div className={calm ? "cl-card" : undefined}>
                 {calm && (
                   <>
