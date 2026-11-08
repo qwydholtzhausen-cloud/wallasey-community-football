@@ -77,6 +77,7 @@ import { FirstGameCard, NameStep, WelcomeCards, type BestChance, type PushState 
 import { HistoryPage } from "./ui/history";
 import { ReleaseEve } from "./ui/eve";
 import { ClubCabinet } from "./ui/clubcabinet";
+import { NavBall, navBallCss } from "./ui/navball";
 import { computeClubCabinet } from "../lib/clubcabinet";
 import { computeHistory, type HMoment } from "../lib/history";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
@@ -7647,6 +7648,12 @@ function App({ session }: { session: Session }) {
         style={{ ["--n" as string]: TABS.length, ["--i" as string]: Math.max(0, TABS.findIndex((t) => t.k === tab)), ...(occ ? occVars(occ.kind, occ.release) : {}) }}
       >
         {movementOn && !xiTakeover && TABS.some((t) => t.k === tab) && <span className="wcf-nav-pill" ref={navPillRef} aria-hidden="true" />}
+        {movementOn && !xiTakeover && TABS.some((t) => t.k === tab) && (
+          <>
+            <style>{navBallCss}</style>
+            <NavBall index={TABS.findIndex((t) => t.k === tab)} />
+          </>
+        )}
         {TABS.map((t) => (
           <button key={t.k} className={"wcf-navbtn " + (tab === t.k ? "active" : "")} onClick={() => goTab(t.k)}>
             {t.icon}
