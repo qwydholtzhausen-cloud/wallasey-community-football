@@ -154,7 +154,7 @@ export function ForYou({ items, caughtUp }: { items: ForYouItem[]; caughtUp: str
   return (
     <section ref={boxRef} onPointerDownCapture={stop} onFocusCapture={stop} className={"wcf-fy" + (it ? "" : " empty") + (running ? " auto" : "")} style={{ ["--acc" as string]: acc }} aria-label="For you">
       <style>{forYouCss}</style>
-      <div className="wcf-fy-bg" key={it ? it.id : "empty"} style={{ backgroundImage: `url(${it ? it.photo : "/pitch-goal-night.jpg"})` }} />
+      <div className="wcf-fy-bg" key={it ? it.id : "empty"} style={{ backgroundImage: `url(${it ? it.photo : "/floodlight-haze.jpg"})` }} />
       <div className="wcf-fy-top">
         <span className="wcf-fy-k">For you</span>
         {it && <span className="wcf-fy-n">· {cur + 1} of {live.length}</span>}

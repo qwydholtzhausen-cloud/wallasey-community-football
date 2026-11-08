@@ -1145,7 +1145,7 @@ function TunnelSplash({ leaving }: { leaving: boolean }) {
   }, [leaving]);
   return (
     <div className={"wcf-sp" + (leaving ? " out" : "")} aria-busy={!leaving} aria-label="Loading Wirral Community Football">
-      <div className="wcf-sp-photo"><img src="/splash-tunnel.jpg" alt="" fetchPriority="high" /></div>
+      <div className="wcf-sp-photo"><img src={new Date().getMonth() === 11 ? "/splash-xmas.jpg" : "/splash-tunnel.jpg"} alt="" fetchPriority="high" /></div>
       <div className="wcf-sp-glow" />
       <div className="wcf-sp-scrim" />
       <div className="wcf-sp-body">
@@ -13814,7 +13814,7 @@ function GameCard({
   return (
     <article
       id={"fx-" + game.id}
-      className={featured ? "wcf-card featured " + (alt ? "alt " : "") + (game.special ? "special" : bookedClass) : cascadeIndex !== undefined ? "wcf-fx-cascade" : ""}
+      className={featured ? "wcf-card featured " + (alt ? "alt " : "") + (game.special ? "special" : bookedClass) + (Number(game.kickoff.slice(0, 2)) < 16 ? " day" : game.date.slice(5, 7) === "12" ? " xmas" : "") : cascadeIndex !== undefined ? "wcf-fx-cascade" : ""}
       style={featured || calm ? undefined : { marginBottom: 18, ...(cascadeIndex !== undefined ? { animationDelay: `${cascadeIndex * 200}ms` } : {}) }}
     >
       {!featured && calm ? (
@@ -14340,6 +14340,9 @@ const css = `
   background-image:linear-gradient(180deg,rgba(8,10,14,.15) 0%,rgba(8,10,14,.5) 55%,rgba(6,8,11,.88) 100%),url('/pitch-night.jpg');
   background-position:center 30%;
 }
+/* An afternoon kick-off gets the daylight pitch; December's nights get the Christmas lights. */
+.wcf-card.featured.day{background-image:linear-gradient(180deg,rgba(8,10,14,.55) 0%,rgba(8,10,14,.62) 45%,rgba(6,8,11,.93) 100%),url('/pitch-day.jpg');background-position:center 45%}
+.wcf-card.featured.xmas{background-image:linear-gradient(180deg,rgba(8,10,14,.3) 0%,rgba(8,10,14,.4) 40%,rgba(6,8,11,.9) 100%),url('/pitch-xmas.jpg');background-position:60% 50%}
 /* Payment-status glow (own booking only): red=unpaid, amber=pending,
    green=confirmed. Box-shadow, not an inner gradient div, since the
    card's own overflow:hidden (for the photo's rounded corners) would
@@ -15088,8 +15091,8 @@ button.wcf-glance-card:disabled{cursor:default}
 .wcf-season-hero{
   position:relative;min-height:220px;border-radius:22px;overflow:hidden;margin:2px 2px 18px;
   display:flex;flex-direction:column;justify-content:flex-end;padding:18px 20px;
-  background-image:linear-gradient(180deg,rgba(6,8,14,.1) 0%,rgba(6,8,14,.3) 55%,rgba(4,6,10,.92) 100%),url('/season-hero.jpg');
-  background-size:cover;background-position:center 42%;
+  background-image:linear-gradient(90deg,rgba(4,6,10,.55) 0%,rgba(4,6,10,0) 70%),linear-gradient(180deg,rgba(6,8,14,.15) 0%,rgba(6,8,14,.5) 45%,rgba(4,6,10,.95) 100%),url('/season-hero.jpg');
+  background-size:cover;background-position:center 30%;
   border:1px solid var(--line);box-shadow:0 18px 40px -24px rgba(0,0,0,.9);
 }
 .wcf-season-hero-eyebrow{font-family:var(--sans);font-size:10.5px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#f8b3b8}
