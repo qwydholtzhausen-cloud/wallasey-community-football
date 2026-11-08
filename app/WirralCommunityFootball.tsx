@@ -79,6 +79,10 @@ import { HistoryPage } from "./ui/history";
 import { ReleaseEve } from "./ui/eve";
 import { ClubCabinet } from "./ui/clubcabinet";
 import { NavBall, navBallCss } from "./ui/navball";
+import { useSeasonAwards } from "./ui/awards";
+import { AdminAwards, type MomentIdea, type SeasonPlayer } from "./ui/awardsadmin";
+import { AwardsBallot, SuggestSheet } from "./ui/awardsvote";
+import { awardPhase, fmtAwardDate } from "../lib/awards";
 import { computeClubCabinet } from "../lib/clubcabinet";
 import { computeHistory, type HMoment } from "../lib/history";
 import { computeCabinet, type Trophy } from "../lib/cabinet";
@@ -4835,6 +4839,64 @@ function App({ session }: { session: Session }) {
       .sort((a, b) => b.apps - a.apps);
   }, [pastGames, goalRows, activeStatsYear]);
 
+  // Season awards (app/ui/awards*.tsx): the season's players, games, goals
+  // and moments, for the admin shortlists and the ballot.
+  const seasonAwards = useSeasonAwards(myId);
+  const [ballotOpen, setBallotOpen] = useState(false);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const awardYear = String(seasonAwards.season?.season ?? nowUk.slice(0, 4));
+  const awardGames = useMemo(
+    () =>
+      pastGames
+        .filter((g) => g.date.slice(0, 4) === awardYear && g.team_white_score != null && g.team_red_score != null)
+        .map((g) => ({ id: g.id, date: g.date, white: g.team_white_score!, red: g.team_red_score! })),
+    [pastGames, awardYear]
+  );
+  const awardPlayers = useMemo(() => {
+    const ids = new Set(awardGames.map((g) => g.id));
+    const t = new Map<string, SeasonPlayer>();
+    pastGames
+      .filter((g) => ids.has(g.id))
+      .forEach((g) =>
+        g.bookings
+          .filter((b) => !b.waiting)
+          .forEach((b) => {
+            const cur = t.get(b.player_id) ?? { id: b.player_id, name: b.player.display_name, avatar: b.player.avatar_url ?? null, apps: 0, goals: 0 };
+            cur.apps += 1;
+            t.set(b.player_id, cur);
+          })
+      );
+    goalRows.forEach((r) => {
+      const c = ids.has(r.game_id) ? t.get(r.player_id) : null;
+      if (c) c.goals += r.goals;
+    });
+    return [...t.values()].sort((a, b) => b.apps - a.apps || a.name.localeCompare(b.name));
+  }, [pastGames, goalRows, awardGames]);
+  const awardGoals = useMemo(() => {
+    const ids = new Set(awardGames.map((g) => g.id));
+    return goalRows.filter((r) => ids.has(r.game_id) && r.goals > 0).map((r) => ({ game_id: r.game_id, player_id: r.player_id, goals: r.goals }));
+  }, [goalRows, awardGames]);
+  // Moments to pick from: the club's History plus the season's records.
+  const awardMoments = useMemo((): MomentIdea[] => {
+    const out: MomentIdea[] = [];
+    const win = [...awardGames].sort((a, b) => Math.abs(b.white - b.red) - Math.abs(a.white - a.red))[0];
+    if (win && win.white !== win.red) {
+      const w = win.white > win.red;
+      out.push({ key: "rec-win", title: `${w ? cs.team_white_name : cs.team_red_name} ${Math.max(win.white, win.red)}–${Math.min(win.white, win.red)}`, detail: "the biggest win of the season", date: win.date, big: String(Math.abs(win.white - win.red)), player_id: null, game_id: win.id });
+    }
+    const most = [...awardGoals].sort((a, b) => b.goals - a.goals)[0];
+    const mostGame = most && awardGames.find((g) => g.id === most.game_id);
+    const mostName = most && awardPlayers.find((x) => x.id === most.player_id)?.name;
+    if (most && mostGame && mostName) out.push({ key: "rec-goals", title: `${mostName} scores ${most.goals}`, detail: "the most goals in a game", date: mostGame.date, big: String(most.goals), player_id: most.player_id, game_id: most.game_id });
+    const high = [...awardGames].sort((a, b) => b.white + b.red - (a.white + a.red))[0];
+    if (high) out.push({ key: "rec-high", title: `The ${high.white + high.red}-goal game`, detail: `${cs.team_white_name} ${high.white}–${high.red} ${cs.team_red_name}`, date: high.date, big: String(high.white + high.red), player_id: null, game_id: high.id });
+    historyMoments
+      .filter((m) => m.happened_on.slice(0, 4) === awardYear)
+      .forEach((m) => out.push({ key: "hm-" + m.id, title: m.title, detail: (m.body ?? "").slice(0, 90) || "from the club's History", date: m.happened_on, big: m.title.trim()[0]?.toUpperCase() ?? "★", player_id: m.player_ids?.[0] ?? null, game_id: null }));
+    return out;
+  }, [awardGames, awardGoals, awardPlayers, historyMoments, awardYear, cs.team_white_name, cs.team_red_name]);
+  const awardLastGame = useMemo(() => games.filter((g) => g.date.slice(0, 4) === awardYear).map((g) => g.date).sort().pop() ?? null, [games, awardYear]);
+
   // The last game you played this season (within a week), as each
   // player's apps and goals from it - for the Stats table climb.
   const statsLastGame = useMemo(() => {
@@ -6231,7 +6293,40 @@ function App({ session }: { session: Session }) {
         },
       });
     }
+    const aw = awardsForYou();
+    if (aw) out.push({ rank: 1, item: aw });
     return out.sort((a, b) => a.rank - b.rank).map((o) => o.item);
+  }
+  // Season awards on For you: suggest a nominee while nominations are open,
+  // then vote, then "you've voted"; players short of games are told why.
+  function awardsForYou(): ForYouItem | null {
+    const s = seasonAwards.season;
+    if (!s || seasonAwards.missing) return null;
+    const ph = awardPhase(s, Date.now());
+    const voted = seasonAwards.categories.filter((c) => c.kind !== "auto");
+    const mine = awardPlayers.find((x) => x.id === myId)?.apps ?? 0;
+    const base = {
+      accent: "#f5d97a",
+      photo: "/season-hero.jpg",
+      chip: "Awards",
+      lead: (
+        <ForYouIcon>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" /><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4" /></svg>
+        </ForYouIcon>
+      ),
+    };
+    const key = (k: string) => `aw-${k}:${s.season}`;
+    if (ph === "nominations" && seasonAwards.categories.some((c) => c.kind === "shortlist" && c.allow_suggestions) && !fyHidden[key("sug")])
+      return { ...base, id: "aw-sug", eyebrow: "Season awards", title: "Suggest a nominee", sub: `Voting opens ${fmtAwardDate(s.opens_at, false)}`, primary: { label: "Suggest one", onClick: () => setSuggestOpen(true) }, onRemove: () => fyHide(key("sug")) };
+    if (ph === "voting" && voted.length) {
+      if (mine < s.min_games)
+        return fyHidden[key("short")] ? null : { ...base, id: "aw-short", eyebrow: "Season awards", title: "The squad's voting now", sub: `Voting needs ${s.min_games} games, you've played ${mine}`, onRemove: () => fyHide(key("short")) };
+      if (seasonAwards.myVotes.length)
+        return fyHidden[key("voted")] ? null : { ...base, id: "aw-voted", eyebrow: "Season awards · voted", title: "See you at Awards Night", sub: fmtAwardDate(s.reveal_at), primary: { label: "Change my votes", onClick: () => setBallotOpen(true) }, onRemove: () => fyHide(key("voted")) };
+      return { ...base, id: "aw-vote", eyebrow: "Season awards · voting open", title: "Have your say", sub: `${voted.length} award${voted.length === 1 ? "" : "s"} · about a minute · secret`, primary: { label: "Vote now", onClick: () => setBallotOpen(true) }, onRemove: () => fyHide(key("vote")) };
+    }
+    if (ph === "closed" && !fyHidden[key("closed")]) return { ...base, id: "aw-closed", eyebrow: "Season awards · votes are in", title: "Awards Night", sub: fmtAwardDate(s.reveal_at), onRemove: () => fyHide(key("closed")) };
+    return null;
   }
   function forYouCaughtUp() {
     const nb = upcomingGames.find((g) => g.bookings.some((b) => b.player_id === myId && !b.waiting));
@@ -7244,6 +7339,23 @@ function App({ session }: { session: Session }) {
         {tab === "admin" && isAdmin && (
           <AdminConsole
             calm={CALM_ADMIN}
+            awardsBadge={seasonAwards.nominations.filter((n) => n.status === "suggested").length}
+            awardsPanel={
+              <AdminAwards
+                api={seasonAwards}
+                players={awardPlayers}
+                games={awardGames}
+                goals={awardGoals}
+                moments={awardMoments}
+                lastGameDate={awardLastGame}
+                today={nowUk.slice(0, 10)}
+                whiteName={cs.team_white_name}
+                redName={cs.team_red_name}
+                notifyError={notifyError}
+                notifySuccess={notifySuccess}
+                confirm={(t, m, l) => askConfirm(t, m, l)}
+              />
+            }
             onGoToResults={() => {
               setTab("results");
               setResultsMonth("all");
@@ -7894,6 +8006,36 @@ function App({ session }: { session: Session }) {
         return <GameStory game={buildStory(g)} motmClosed={kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES) <= nowUk} onClose={() => setStoryOpen(null)} />;
       })()}
       {paySheetOpen && <PaySheet due={myDue} paymentLink={PAYMENT_LINK} onMarkPaid={markPaid} onClose={() => setPaySheetOpen(false)} />}
+      {ballotOpen && seasonAwards.season && (
+        <AwardsBallot
+          season={seasonAwards.season}
+          categories={seasonAwards.categories}
+          nominations={seasonAwards.nominations}
+          myVotes={seasonAwards.myVotes}
+          players={awardPlayers}
+          games={awardGames}
+          myId={myId}
+          onClose={() => setBallotOpen(false)}
+          onSaved={() => void seasonAwards.reload()}
+          notifyError={notifyError}
+        />
+      )}
+      {suggestOpen && seasonAwards.season && (
+        <SuggestSheet
+          season={seasonAwards.season}
+          categories={seasonAwards.categories}
+          players={awardPlayers}
+          games={awardGames}
+          myId={myId}
+          onClose={() => setSuggestOpen(false)}
+          onSent={() => {
+            setSuggestOpen(false);
+            notifySuccess("Sent to the admins");
+            void seasonAwards.reload();
+          }}
+          notifyError={notifyError}
+        />
+      )}
       {npStep === "name" && myProfile && (
         <NameStep
           suggested={{ first: "", last: "" }}
@@ -11310,12 +11452,17 @@ function AdminConsole({
   askConfirm,
   calm = false,
   potCard,
+  awardsPanel,
+  awardsBadge = 0,
   onGoToResults,
 }: {
   // Calm Admin (app/ui/calmadmin.tsx): Today as one inbox, Games by what
   // needs doing, the club pot under Money.
   calm?: boolean;
   potCard?: React.ReactNode;
+  // Admin › Awards (app/ui/awardsadmin.tsx), built by the main app.
+  awardsPanel?: React.ReactNode;
+  awardsBadge?: number;
   onGoToResults?: () => void;
   birthdaySuggest: Record<string, string>;
   upcoming: GameRow[];
@@ -11492,7 +11639,7 @@ function AdminConsole({
 
   // ── The page is four tabs now, not one long scroll (it had grown to ~5
   // phone screens). "Today" leads with only what needs an admin.
-  const [adminView, setAdminView] = useState<"today" | "fixtures" | "payments" | "messages">("today");
+  const [adminView, setAdminView] = useState<"today" | "fixtures" | "payments" | "messages" | "awards">("today");
   const [composeOpen, setComposeOpen] = useState(false);
   const [showLaterFixtures, setShowLaterFixtures] = useState(false);
   const [showAllResults, setShowAllResults] = useState(false);
@@ -11663,6 +11810,7 @@ function AdminConsole({
               ["fixtures", "Games", 0],
               ["payments", "Money", 0],
               ["messages", "Messages", 0],
+              ["awards", "Awards", awardsBadge],
             ] as const
           ).map(([k, label, n]) => (
             <button key={k} role="tab" aria-selected={adminView === k} className={adminView === k ? "on" : ""} onClick={() => setAdminView(k)}>
@@ -12357,6 +12505,7 @@ function AdminConsole({
         </>
       )}
 
+      {calm && adminView === "awards" && awardsPanel}
       {adminView === "messages" && (
         <>
           {!composeOpen ? (
