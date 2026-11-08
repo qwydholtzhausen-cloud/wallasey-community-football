@@ -2614,3 +2614,193 @@ as $$
       and g.date < (now() at time zone 'Europe/London')::date
   );
 $$;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Season awards (planned 8 Nov 2026). Five awards the squad votes on:
+-- Players' Player and Unsung Hero (pick any player who's played this
+-- season), Goal of the Season, Golden Glove and Moment of the Season
+-- (pick from the admins' shortlist; players can suggest goals). Golden
+-- Boot, Mr Reliable and Player of the Season are worked out in the app.
+-- Voters need 3+ games that season, never vote for themselves and can
+-- change their votes until the close. The ballot is secret: nobody, not
+-- even an admin, sees a vote but their own; admins see turnout only, and
+-- the results come out at the reveal (Awards Night).
+-- ─────────────────────────────────────────────────────────────────
+create table if not exists public.award_seasons (
+  season int primary key,
+  nominations_from timestamptz not null,
+  opens_at timestamptz not null,
+  late_nominations_until timestamptz not null,
+  closes_at timestamptz not null,
+  reveal_at timestamptz not null
+);
+alter table public.award_seasons enable row level security;
+drop policy if exists "award_seasons_select" on public.award_seasons;
+create policy "award_seasons_select" on public.award_seasons for select using (auth.uid() is not null);
+drop policy if exists "award_seasons_admin" on public.award_seasons;
+create policy "award_seasons_admin" on public.award_seasons for all using (public.is_admin()) with check (public.is_admin());
+-- Season 1: nominations from Mon 16 Nov, voting Tue 15 Dec 08:00 to Mon 28
+-- Dec 23:59 (the last game's night), Awards Night Tue 29 Dec 20:00.
+insert into public.award_seasons (season, nominations_from, opens_at, late_nominations_until, closes_at, reveal_at)
+values (2026, '2026-11-16 00:00 Europe/London', '2026-12-15 08:00 Europe/London', '2026-12-22 23:59 Europe/London', '2026-12-28 23:59:59 Europe/London', '2026-12-29 20:00 Europe/London')
+on conflict (season) do nothing;
+
+create table if not exists public.award_nominations (
+  id uuid primary key default gen_random_uuid(),
+  season int not null references public.award_seasons (season) on delete cascade,
+  award text not null check (award in ('goal', 'golden_glove', 'moment')),
+  -- 'suggested' is a player's idea for Goal of the Season, waiting on an
+  -- admin; only 'shortlisted' goes on the ballot.
+  status text not null default 'shortlisted' check (status in ('suggested', 'shortlisted', 'declined')),
+  player_id uuid references public.profiles (id) on delete cascade,
+  game_id uuid references public.games (id) on delete set null,
+  title text not null check (length(trim(title)) between 1 and 120),
+  detail text check (detail is null or length(detail) <= 400),
+  suggested_by uuid references public.profiles (id) on delete set null default auth.uid(),
+  created_at timestamptz not null default now()
+);
+create index if not exists award_nominations_season on public.award_nominations (season, award, status);
+alter table public.award_nominations enable row level security;
+drop policy if exists "award_nominations_select" on public.award_nominations;
+create policy "award_nominations_select" on public.award_nominations for select
+  using (auth.uid() is not null and (status = 'shortlisted' or suggested_by = auth.uid() or public.is_admin()));
+drop policy if exists "award_nominations_insert" on public.award_nominations;
+create policy "award_nominations_insert" on public.award_nominations for insert with check (
+  public.is_admin()
+  or (
+    status = 'suggested' and award = 'goal' and suggested_by = auth.uid()
+    and exists (select 1 from public.award_seasons s where s.season = award_nominations.season and now() between s.nominations_from and s.late_nominations_until)
+  )
+);
+drop policy if exists "award_nominations_update" on public.award_nominations;
+create policy "award_nominations_update" on public.award_nominations for update using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "award_nominations_delete" on public.award_nominations;
+create policy "award_nominations_delete" on public.award_nominations for delete using (public.is_admin());
+
+create table if not exists public.award_votes (
+  season int not null references public.award_seasons (season) on delete cascade,
+  award text not null check (award in ('players_player', 'unsung_hero', 'goal', 'golden_glove', 'moment')),
+  voter_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  player_id uuid references public.profiles (id) on delete cascade,
+  nomination_id uuid references public.award_nominations (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (season, award, voter_id),
+  check (
+    (award in ('players_player', 'unsung_hero') and player_id is not null and nomination_id is null)
+    or (award in ('goal', 'golden_glove', 'moment') and nomination_id is not null and player_id is null)
+  )
+);
+alter table public.award_votes enable row level security;
+drop policy if exists "award_votes_select_own" on public.award_votes;
+create policy "award_votes_select_own" on public.award_votes for select using (voter_id = auth.uid());
+drop policy if exists "award_votes_insert_own" on public.award_votes;
+create policy "award_votes_insert_own" on public.award_votes for insert with check (voter_id = auth.uid());
+drop policy if exists "award_votes_update_own" on public.award_votes;
+create policy "award_votes_update_own" on public.award_votes for update using (voter_id = auth.uid()) with check (voter_id = auth.uid());
+drop policy if exists "award_votes_delete_own" on public.award_votes;
+create policy "award_votes_delete_own" on public.award_votes for delete using (voter_id = auth.uid());
+
+-- Games someone has played in a season: scored, not called off, not on
+-- the waiting list.
+create or replace function public.award_games_played(p_player uuid, p_season int) returns int
+language sql stable security definer set search_path = public as $$
+  select count(*)::int from public.bookings b join public.games g on g.id = b.game_id
+  where b.player_id = p_player and not b.waiting and g.called_off_at is null
+    and g.team_white_score is not null and g.team_red_score is not null
+    and extract(year from g.date)::int = p_season;
+$$;
+
+create or replace function public.award_vote_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  s public.award_seasons;
+  n public.award_nominations;
+begin
+  select * into s from public.award_seasons where season = new.season;
+  if s.season is null then raise exception 'There are no awards for that season'; end if;
+  if now() < s.opens_at then raise exception 'Voting isn''t open yet'; end if;
+  if now() > s.closes_at then raise exception 'Voting has closed'; end if;
+  if public.award_games_played(new.voter_id, new.season) < 3 then
+    raise exception 'You need 3 games this season to vote';
+  end if;
+  if new.player_id is not null then
+    if new.player_id = new.voter_id then raise exception 'You can''t vote for yourself'; end if;
+    if public.award_games_played(new.player_id, new.season) < 1 then
+      raise exception 'They haven''t played this season';
+    end if;
+  end if;
+  if new.nomination_id is not null then
+    select * into n from public.award_nominations where id = new.nomination_id;
+    if n.id is null or n.status <> 'shortlisted' or n.season <> new.season or n.award <> new.award then
+      raise exception 'That isn''t on the shortlist';
+    end if;
+    if n.player_id = new.voter_id then raise exception 'You can''t vote for yourself'; end if;
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+drop trigger if exists award_vote_check on public.award_votes;
+create trigger award_vote_check before insert or update on public.award_votes
+  for each row execute function public.award_vote_check();
+
+-- Admins: how many have voted, never who for.
+create or replace function public.award_turnout(p_season int) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Only admins can see turnout'; end if;
+  return jsonb_build_object(
+    'voted', (select count(distinct voter_id) from public.award_votes where season = p_season),
+    'eligible', (select count(*) from public.profiles p where public.award_games_played(p.id, p_season) >= 3),
+    'by_award', coalesce((select jsonb_object_agg(award, n) from (select award, count(*) n from public.award_votes where season = p_season group by award) x), '{}'::jsonb)
+  );
+end;
+$$;
+
+-- The results, for everyone, from the reveal. Ties are joint winners.
+create or replace function public.award_results(p_season int)
+returns table (award text, player_id uuid, nomination_id uuid, votes int, winner boolean)
+language plpgsql stable security definer set search_path = public as $$
+declare s public.award_seasons;
+begin
+  select * into s from public.award_seasons where season = p_season;
+  if s.season is null or now() < s.reveal_at then raise exception 'The results are secret until Awards Night'; end if;
+  return query
+    with t as (
+      select v.award, v.player_id, v.nomination_id, count(*)::int as n
+      from public.award_votes v where v.season = p_season
+      group by v.award, v.player_id, v.nomination_id
+    )
+    select t.award, t.player_id, t.nomination_id, t.n, t.n = max(t.n) over (partition by t.award)
+    from t order by t.award, t.n desc;
+end;
+$$;
+
+-- A goal or moment added once voting is open: anyone who has already
+-- voted in that award gets one inbox message (at most one every 6 hours),
+-- so they can change their vote.
+create or replace function public.award_late_nomination() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  s public.award_seasons;
+  label text;
+begin
+  if new.status <> 'shortlisted' or (tg_op = 'UPDATE' and old.status = 'shortlisted') then return new; end if;
+  select * into s from public.award_seasons where season = new.season;
+  if s.season is null or now() < s.opens_at or now() > s.closes_at then return new; end if;
+  label := case new.award when 'goal' then 'Goal of the Season' when 'golden_glove' then 'Golden Glove' else 'Moment of the Season' end;
+  insert into public.admin_messages (recipient_id, sender_id, message)
+  select distinct v.voter_id, auth.uid(), 'New nominations added for ' || label || '. You can change your vote until voting closes.'
+  from public.award_votes v
+  where v.season = new.season and v.award = new.award
+    and not exists (
+      select 1 from public.admin_messages m
+      where m.recipient_id = v.voter_id and m.message like 'New nominations added for ' || label || '%' and m.created_at > now() - interval '6 hours'
+    );
+  return new;
+end;
+$$;
+drop trigger if exists award_late_nomination on public.award_nominations;
+create trigger award_late_nomination after insert or update of status on public.award_nominations
+  for each row execute function public.award_late_nomination();
