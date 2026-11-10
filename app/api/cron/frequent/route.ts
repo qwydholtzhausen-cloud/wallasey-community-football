@@ -10,6 +10,7 @@ import { sendWelcome } from "../../../../lib/welcome";
 import { announcePlayerOfMonth } from "../../../../lib/potmAnnounce";
 import { recordHeartbeat } from "../../../../lib/gaffai/health";
 import { isPostponed } from "../../../../lib/postponed";
+import { loadNotifiedKeys } from "../../../../lib/notifiedKeys";
 
 // Both sides of this comparison come from the same "pretend UTC" trick in
 // lib/time.ts (real UK wall-clock digits, formatted as if they were UTC) -
@@ -60,8 +61,8 @@ export async function GET(req: Request) {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   const admin = createClient(supabaseUrl, serviceKey);
 
-  const { data: notified } = await admin.from("notified_events").select("event_key");
-  const notifiedKeys = new Set((notified ?? []).map((r) => r.event_key));
+  // All of them, a page at a time (lib/notifiedKeys.ts).
+  const notifiedKeys = await loadNotifiedKeys(admin);
   async function markNotified(key: string) {
     await admin.from("notified_events").insert({ event_key: key });
   }

@@ -6,6 +6,7 @@ import { generateWeeklyDigest, generateWrappedReview } from "../../../../lib/gaf
 import { recordHeartbeat } from "../../../../lib/gaffai/health";
 import { isPostponed } from "../../../../lib/postponed";
 import { motmWinners, goalsLookup } from "../../../../lib/motm";
+import { loadNotifiedKeys } from "../../../../lib/notifiedKeys";
 
 interface CronBooking {
   player_id: string;
@@ -63,8 +64,8 @@ export async function GET(req: Request) {
   const { data: allGoalRows } = await admin.from("game_stats").select("game_id, player_id, goals");
   const goalsIn = goalsLookup(allGoalRows);
 
-  const { data: notified } = await admin.from("notified_events").select("event_key");
-  const notifiedKeys = new Set((notified ?? []).map((r) => r.event_key));
+  // All of them, a page at a time (lib/notifiedKeys.ts).
+  const notifiedKeys = await loadNotifiedKeys(admin);
   const runKey = `daily-run-${nowUk.slice(0, 10)}`;
   if (notifiedKeys.has(runKey)) return NextResponse.json({ skipped: "already ran today" });
   await admin.from("notified_events").insert({ event_key: runKey });
