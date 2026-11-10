@@ -138,3 +138,9 @@ export const CALM_ADMIN = true;
 // sheet (the pitch from the gantry camera, name plates, tap for a caption,
 // the two teams on paper). Admins first; every member from this UK date.
 export const LINEUP_V2_OPEN_TO_ALL_FROM = "2099-01-01";
+
+// The full-time card (10 Nov 2026, app/ui/fulltime.tsx): the latest result on
+// Results and each game on the Feed as one card - score, both teams (own
+// goals with the side they counted for), the rating and Man of the Match.
+// Admins first; every member from this UK date. Far future = admins only.
+export const FULLTIME_CARD_OPEN_TO_ALL_FROM = "2099-01-01";

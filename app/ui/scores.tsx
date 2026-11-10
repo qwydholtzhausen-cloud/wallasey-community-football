@@ -37,8 +37,8 @@ const Chev = ({ className }: { className?: string }) => (
 // Who voted who: closed to a single "See who voted" strip under the Man of
 // the Match card; open, every player with a vote, a bar, and (tap a row)
 // the names of who voted for them. The winner's voters show straight away.
-export function MotmPoll({ rows, total }: { rows: PollRow[]; total: number }) {
-  const [open, setOpen] = useState(false);
+export function MotmPoll({ rows, total, defaultOpen = false }: { rows: PollRow[]; total: number; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const [shown, setShown] = useState<Set<string>>(() => new Set(rows.filter((r) => r.top).map((r) => r.id)));
   const ref = useRef<HTMLDivElement>(null);
   const maxVotes = Math.max(1, ...rows.map((r) => r.votes));

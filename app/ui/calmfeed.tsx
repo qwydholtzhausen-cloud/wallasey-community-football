@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { Avatar, listNames } from "./shared";
+import { FullTimeCard, type FullTimeCardProps } from "./fulltime";
 
 // Calm Feed (admins first, 2026-10-17): the Feed is "what's happening",
 // not the record. The last two weeks as moments on a timeline - one per
@@ -26,6 +27,8 @@ export type CalmMoment =
       motm: string[]; // winners, empty while voting is open or none
       voteOpen: null | { voted: boolean; closes: string };
       highlights: ReactNode[];
+      // The full-time card, compact (admins first): replaces the text moment.
+      ft?: Omit<FullTimeCardProps, "compact" | "primary" | "footer" | "teams" | "rating">;
     }
   | { kind: "join"; key: string; archiveKeys: string[]; ts: number; dateLabel: string; people: { name: string; avatarUrl?: string | null }[] }
   | { kind: "apps"; key: string; archiveKeys: string[]; ts: number; dateLabel: string; labels: string[] };
@@ -105,6 +108,29 @@ export function CalmFeed({
             const head = label !== lastLabel ? <div className="cfe-lab">{label}</div> : null;
             lastLabel = label;
             const fresh = freshKeys.has(m.key);
+            if (m.kind === "game" && m.ft) {
+              return (
+                <div key={m.key}>
+                  {head}
+                  <div className={"cfe-ftw" + (i === 0 ? " first" : "") + (fresh ? " fresh" : "")}>
+                    <FullTimeCard
+                      {...m.ft}
+                      compact
+                      primary={m.ft.vote?.canVote ? { label: "Vote now", onClick: () => openGame(m.gameId) } : null}
+                      footer={
+                        <div className="cfe-ft ft-feedfoot">
+                          {reactions(m.key)}
+                          {more(m)}
+                          <button className="cfe-go" onClick={() => openGame(m.gameId)}>
+                            Scoresheet <em>›</em>
+                          </button>
+                        </div>
+                      }
+                    />
+                  </div>
+                </div>
+              );
+            }
             if (m.kind === "game") {
               const redWon = m.red > m.white;
               const draw = m.red === m.white;
@@ -228,6 +254,10 @@ export function CalmFeed({
 }
 
 export const calmFeedCss = `
+.cfe-ftw{position:relative}
+.cfe-ftw .ft{margin:0 0 14px}
+.ft .ft-feedfoot{padding:10px 14px 12px;border-top:1px solid rgba(255,255,255,.06);margin:0}
+
 .cfe-tabs{display:flex;gap:22px;margin:4px 2px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
 .cfe-tabs button{position:relative;padding:0 0 10px;border:0;background:none;color:#64748b;font:600 12px var(--font-oswald),sans-serif;letter-spacing:.22em;text-transform:uppercase;cursor:pointer}
 .cfe-tabs button.on{color:#fff}

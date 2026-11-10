@@ -12,6 +12,8 @@ import { MOTM_VOTE_WINDOW_MINUTES, kickoffCutoff } from "../../lib/time";
 import { predictionPoints, type ScoredPrediction } from "../../lib/predictions";
 import type { ClubRecords, Holder, PersonalBests } from "../../lib/records";
 import { scorersForSide } from "../../lib/goalSides";
+import { supabase } from "../../lib/supabase/client";
+import { FullTimeCard, type FtOwnGoal, type FtPlayer } from "./fulltime";
 import type { AwardRow, BookingRow, ClubSettings, GameRow, GoalRow, MonzoUnmatchedRow, MotmVote, PotEntry, Profile, Team } from "../WirralCommunityFootball";
 
 // ── The Results tab ──
@@ -19,6 +21,8 @@ import type { AwardRow, BookingRow, ClubSettings, GameRow, GoalRow, MonzoUnmatch
 // out in the main app (it's shared with other tabs, Wrapped and GaffAI);
 // this draws it. A straight move out of the main file: same markup.
 export type ResultsTabProps = {
+  // The full-time card for the latest game (app/ui/fulltime.tsx); admins first.
+  fullTimeOn?: boolean;
   activeStatsYear: number;
   addingPotEntry: boolean;
   addPotEntry: (amount: number, description: string, category: PotCategory) => Promise<void>;
@@ -129,6 +133,7 @@ export type ResultsTabProps = {
 };
 
 export function ResultsTab({
+  fullTimeOn = false,
   historyView,
   totmCard,
   activeStatsYear,
@@ -212,6 +217,20 @@ export function ResultsTab({
   onRecordsSeen,
   predictorLeague,
 }: ResultsTabProps) {
+  // The squad's rating of the latest game, for its full-time card.
+  const ftGameId = fullTimeOn ? (filteredResults[0]?.id ?? null) : null;
+  const [ftRating, setFtRating] = useState<{ id: string; average: number; ratings: number } | null>(null);
+  useEffect(() => {
+    if (!ftGameId) return;
+    let off = false;
+    supabase.rpc("game_rating_summary", { p_game_id: ftGameId }).then(({ data }) => {
+      const row = (Array.isArray(data) ? data[0] : data) as { ratings: number; average: number | null } | null;
+      if (!off && row && row.average != null) setFtRating({ id: ftGameId, average: Number(row.average), ratings: row.ratings });
+    });
+    return () => {
+      off = true;
+    };
+  }, [ftGameId]);
   // A gold dot on the History tab until it's been opened once on this phone.
   const [historyNew, setHistoryNew] = useState(false);
   useEffect(() => {
@@ -1479,6 +1498,73 @@ export function ResultsTab({
             // Winners under the club's rule (a tie on votes goes to more goals).
             const winnerIds = motmWinnerIdsByGame[g.id] ?? [];
             const expanded = expandedResultId === g.id;
+            // The latest game as one full-time card (app/ui/fulltime.tsx).
+            const ftHere = fullTimeOn && resultIndex === 0;
+            const ftCard = () => {
+              const sideOf = (id: string) => {
+                const t = teamOf(id);
+                return t === "white" || t === "red" ? t : null;
+              };
+              const roster = (side: "white" | "red"): FtPlayer[] => {
+                const goals = side === "white" ? whiteScorers : redScorers;
+                return g.bookings
+                  .filter((b) => !b.waiting && b.team === side)
+                  .map((b) => ({ id: b.player_id, name: b.player.display_name, goals: goals.find((x) => x.player_id === b.player_id)?.goals ?? 0, me: b.player_id === myId }));
+              };
+              // An own goal counts for the other side.
+              const ogFor = (side: "white" | "red"): FtOwnGoal[] =>
+                ownGoalScorers
+                  .filter((r) => {
+                    const t = sideOf(r.player_id);
+                    return t && t !== side;
+                  })
+                  .map((r) => ({ id: r.player_id, name: r.player.display_name, n: r.own_goals }));
+              const winners = !votingOpen ? ranked.filter((x) => winnerIds.includes(x.candidate.player_id)) : [];
+              const canVote = playedIn(g, myId);
+              return (
+                <FullTimeCard
+                  animKey={`wcf-ft-${myId}-${g.id}`}
+                  dateLabel={new Date(g.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).replace(",", "")}
+                  venue={g.venue}
+                  white={g.team_white_score ?? 0}
+                  red={g.team_red_score ?? 0}
+                  whiteName={cs.team_white_name}
+                  redName={cs.team_red_name}
+                  whiteColor={cs.team_white_color}
+                  redColor={cs.team_red_color}
+                  teams={{ white: roster("white"), red: roster("red"), ogWhite: ogFor("white"), ogRed: ogFor("red") }}
+                  rating={ftRating && ftRating.id === g.id ? ftRating : null}
+                  motm={
+                    winners.length > 0
+                      ? {
+                          winners: winners.map((x) => ({
+                            id: x.candidate.player_id,
+                            name: x.candidate.player.display_name,
+                            avatarUrl: avatarByPlayerId.get(x.candidate.player_id),
+                            team: x.candidate.team === "white" || x.candidate.team === "red" ? x.candidate.team : null,
+                          })),
+                          votes: winners[0].votes,
+                          total: totalVotes,
+                        }
+                      : null
+                  }
+                  vote={
+                    votingOpen
+                      ? { closes: motmClosesLabel(g), voted: motmBallotCounts[g.id] ?? totalVotes, of: candidates.length, canVote, myVote: !!myVote }
+                      : null
+                  }
+                  primary={
+                    votingOpen
+                      ? canVote
+                        ? { label: "Vote now", onClick: () => setExpandedResultId(g.id) }
+                        : null
+                      : { label: expanded ? "Show less" : totalVotes > 0 ? "See who voted" : "Predictions", onClick: () => setExpandedResultId(expanded ? null : g.id) }
+                  }
+                  onShare={isAdmin ? () => shareResult(g) : null}
+                  onPlayer={openPlayerCard}
+                />
+              );
+            };
             // Only ever read once voting's closed (the vote buttons
             // above never surface this) - keeps voting itself
             // anonymous while letting the community see who backed
@@ -1492,8 +1578,9 @@ export function ResultsTab({
               <article
                 key={g.id}
                 id={"result-" + g.id}
-                className={resultIndex === 0 ? "wcf-result featured wcf-sc-heroart" : "wcf-sc-item" + (expanded ? " open" : "")}
+                className={ftHere ? "wcf-ft-wrap" : resultIndex === 0 ? "wcf-result featured wcf-sc-heroart" : "wcf-sc-item" + (expanded ? " open" : "")}
               >
+                {ftHere ? ftCard() : (
                 <button className="wcf-result-toggle" onClick={() => setExpandedResultId(expanded ? null : g.id)} aria-expanded={expanded}>
                   {(() => {
                     const w = g.team_white_score ?? 0;
@@ -1634,6 +1721,7 @@ export function ResultsTab({
                     );
                   })()}
                 </button>
+                )}
 
                 {expanded && (
                   <div className="wcf-result-detail">
@@ -1668,7 +1756,7 @@ export function ResultsTab({
                         );
                       })()}
 
-                    {scorers.length > 0 &&
+                    {!ftHere && scorers.length > 0 &&
                       (() => {
                         // Balls drop in one after another down both columns.
                         let ball = 0;
@@ -1716,7 +1804,7 @@ export function ResultsTab({
                         );
                       })()}
 
-                    {ownGoalScorers.length > 0 && (
+                    {!ftHere && ownGoalScorers.length > 0 && (
                       <div className="wcf-result-og">
                         Own goal{ownGoalScorers.length > 1 || ownGoalScorers[0].own_goals > 1 ? "s" : ""}:{" "}
                         {ownGoalScorers.map((s, i) => (
@@ -1879,7 +1967,26 @@ export function ResultsTab({
                         );
                       })()}
 
-                    {!votingOpen &&
+                    {ftHere && !votingOpen && totalVotes > 0 && (
+                      <MotmPoll
+                        key={"ft" + g.id}
+                        defaultOpen
+                        total={totalVotes}
+                        rows={ranked
+                          .filter((x) => x.votes > 0)
+                          .map((x) => ({
+                            id: x.candidate.player_id,
+                            name: x.candidate.player.display_name,
+                            avatarUrl: avatarByPlayerId.get(x.candidate.player_id),
+                            gradient: avatarFor(x.candidate.player.display_name).gradient,
+                            votes: x.votes,
+                            top: winnerIds.includes(x.candidate.player_id),
+                            voters: votersFor(x.candidate.player_id).map((v) => ({ id: v.id, name: v.display_name, avatarUrl: v.avatar_url, gradient: avatarFor(v.display_name).gradient })),
+                          }))}
+                      />
+                    )}
+
+                    {!ftHere && !votingOpen &&
                       totalVotes > 0 &&
                       (() => {
                         const winners = ranked.filter((x) => winnerIds.includes(x.candidate.player_id));
@@ -2033,7 +2140,7 @@ export function ResultsTab({
                       );
                     })()}
 
-                    {isAdmin && (
+                    {isAdmin && !ftHere && (
                       <div className="wcf-result-share">
                         <button className="wcf-result-share-btn" onClick={() => shareResult(g)}>
                           <svg
