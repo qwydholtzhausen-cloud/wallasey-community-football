@@ -818,7 +818,7 @@ async function getPlayerOfMonth(admin: SupabaseClient, args: { month?: string })
 
   const { data: games } = await admin
     .from("games")
-    .select("id, date, kickoff, team_white_score, team_red_score")
+    .select("id, date, kickoff, team_white_score, team_red_score, published")
     .is("called_off_at", null)
     .gte("date", `${monthKey}-01`)
     .lt("date", `${nextMonthKey}-01`);
@@ -827,7 +827,11 @@ async function getPlayerOfMonth(admin: SupabaseClient, args: { month?: string })
   const monthGames = (games ?? []).filter(
     (g) => g.team_white_score != null && g.team_red_score != null && toMs(kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES)) <= nowMs
   );
-  if (monthGames.length < 2) return { month: monthKey, winners: [], note: "Not enough qualifying games played that month yet." };
+  // The month's race so far: games still to play (or whose vote is still
+  // open) mean nothing's decided yet - for admins only, never for players.
+  const stillToPlay = (games ?? []).filter((g) => g.published && !monthGames.includes(g)).map((g) => g.date).sort();
+  const status = stillToPlay.length ? "so far - not decided, games still to play" : "final";
+  if (monthGames.length < 2) return { month: monthKey, status, games_counted: monthGames.length, games_still_to_play: stillToPlay, winners: [], note: "Not enough qualifying games played that month yet." };
 
   const gameIds = monthGames.map((g) => g.id);
   const [{ data: votes }, { data: goalRows }] = await Promise.all([
@@ -855,7 +859,7 @@ async function getPlayerOfMonth(admin: SupabaseClient, args: { month?: string })
   }
 
   const contenders = Object.keys(wins);
-  if (contenders.length === 0) return { month: monthKey, winners: [], note: "No MOTM votes recorded that month yet." };
+  if (contenders.length === 0) return { month: monthKey, status, games_counted: monthGames.length, games_still_to_play: stillToPlay, winners: [], note: "No MOTM votes recorded that month yet." };
   const maxWins = Math.max(...contenders.map((id) => wins[id]));
   let leaders = contenders.filter((id) => wins[id] === maxWins);
   if (leaders.length > 1) {
@@ -867,10 +871,18 @@ async function getPlayerOfMonth(admin: SupabaseClient, args: { month?: string })
     leaders = leaders.filter((id) => (goalTotals[id] ?? 0) === maxGoals);
   }
 
-  const nameOf = await namesById(admin, leaders);
+  const everyone = Object.keys(voteTotals).sort(
+    (a, b) => (wins[b] ?? 0) - (wins[a] ?? 0) || (voteTotals[b] ?? 0) - (voteTotals[a] ?? 0) || (goalTotals[b] ?? 0) - (goalTotals[a] ?? 0)
+  );
+  const nameOf = await namesById(admin, [...new Set([...leaders, ...everyone.slice(0, 6)])]);
   return {
     month: monthKey,
+    status,
+    games_counted: monthGames.length,
+    games_still_to_play: stillToPlay,
     winners: leaders.map((id) => ({ name: nameOf[id] ?? "Unknown", wins: wins[id], votes: voteTotals[id] ?? 0, goals: goalTotals[id] ?? 0 })),
+    // The chasing pack, in the same order as the tiebreak (wins, votes, goals).
+    standings: everyone.slice(0, 6).map((id) => ({ name: nameOf[id] ?? "Unknown", wins: wins[id] ?? 0, votes: voteTotals[id] ?? 0, goals: goalTotals[id] ?? 0 })),
   };
 }
 

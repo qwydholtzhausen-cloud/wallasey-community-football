@@ -166,8 +166,8 @@ Booking history is complete from the club's first game (Aug 2026). Filter ops: e
   {
     name: "get_player_of_month",
     description:
-      "Player of the Month for a given month (defaults to last month), resolved with the real tiebreak chain: most game-level MOTM wins, then most total votes, then most goals that month. Can return multiple joint winners.",
-    input_schema: { type: "object", properties: { month: { type: "string", description: "YYYY-MM, defaults to last month" } } },
+      "Player of the Month for a given month (defaults to last month), resolved with the real tiebreak chain: most game-level MOTM wins, then most total votes, then most goals that month. Can return multiple joint winners. Also works for the CURRENT month as the race so far: status says whether it's final or still being decided, with games_counted, games_still_to_play and the top-6 standings.",
+    input_schema: { type: "object", properties: { month: { type: "string", description: "YYYY-MM, defaults to last month; pass the current month for 'who's winning' questions" } } },
   },
   {
     name: "find_audit_log_entries",
