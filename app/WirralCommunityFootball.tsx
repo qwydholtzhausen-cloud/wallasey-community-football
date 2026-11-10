@@ -4842,6 +4842,45 @@ function App({ session }: { session: Session }) {
   // Season awards (app/ui/awards*.tsx): the season's players, games, goals
   // and moments, for the admin shortlists and the ballot.
   const seasonAwards = useSeasonAwards(myId);
+  // Wrapped's extra cards that need the awards (declared above them): a
+  // one-off game you played in, and what comes after this month.
+  const wrappedMore = useMemo(() => {
+    if (!wrapped) return { special: null, nextUp: null };
+    const pk = wrapped.periodKey;
+    let special: WrappedExtras["special"] = null;
+    const xi = pastGames.find((g) => g.id === FIRST_XI_GAME_ID);
+    if (xi && xi.date.startsWith(pk) && xi.team_white_score != null && xi.team_red_score != null) {
+      const b = xi.bookings.find((x) => x.player_id === myId && !x.waiting);
+      if (b || FIRST_XI_PENNANT_ONLY.includes(myId)) {
+        special = {
+          title: "The First XI",
+          sub: `${new Date(xi.date + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })}. The club's first 11-a-side.`,
+          date: xi.date,
+          team: b?.team === "white" || b?.team === "red" ? b.team : null,
+          white: xi.team_white_score,
+          red: xi.team_red_score,
+          motm: (motmWinnerIdsByGame[xi.id] ?? []).map((id) => profiles.find((pr) => pr.id === id)?.display_name ?? "").filter(Boolean),
+          photo: "/first-xi/cover.jpg",
+        };
+      }
+    }
+    // When the awards land next month, the last card says so.
+    let nextUp: { title: [string, string]; line: string } | null = null;
+    const s = seasonAwards.season;
+    if (s && !wrapped.soFar) {
+      const next = new Date(pk + "-15T12:00:00Z");
+      next.setUTCMonth(next.getUTCMonth() + 1);
+      const revealMonth = new Date(s.reveal_at).toLocaleDateString("en-CA", { timeZone: "Europe/London" }).slice(0, 7);
+      if (revealMonth === next.toISOString().slice(0, 7)) {
+        nextUp = {
+          title: ["One more month.", "Then the awards."],
+          line: `Voting opens ${fmtAwardDate(s.opens_at, false)}, for anyone with ${s.min_games}+ games this season. ${s.title} Wrapped and Awards Night: ${fmtAwardDate(s.reveal_at, false)}.`,
+        };
+      }
+    }
+    return { special, nextUp };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wrapped, myId, pastGames, motmWinnerIdsByGame, profiles, seasonAwards.season]);
   const [ballotOpen, setBallotOpen] = useState(false);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const awardYear = String(seasonAwards.season?.season ?? nowUk.slice(0, 4));
@@ -7793,7 +7832,8 @@ function App({ session }: { session: Session }) {
       {wrappedOpen && wrapped && (
         <WrappedStory
           {...wrapped}
-          extras={wrappedExtras}
+          extras={{ ...wrappedExtras, special: wrappedMore.special }}
+          nextUp={wrappedMore.nextUp}
           whiteName={cs.team_white_name}
           redName={cs.team_red_name}
           whiteColor={cs.team_white_color}

@@ -38,6 +38,8 @@ export interface WrappedStoryProps {
   onFinished?: () => void; // reached the final score card
   onIntroSeen?: () => void;
   extras?: WrappedExtras;
+  // What's after this month (e.g. the season awards), for the closing card.
+  nextUp?: { title: [string, string]; line: string } | null;
 }
 
 // Extra data loaded alongside the story (not in lib/wrapped.ts because it
@@ -47,10 +49,13 @@ export interface WrappedExtras {
   tags: { tag: string; count: number }[]; // most first
   rated: { date: string; team: "white" | "red"; us: number; them: number; average: number; ratings: number } | null;
   weather: { date: string; tempC: number; code: number; result: "W" | "D" | "L" }[];
+  // A one-off game this month you were part of (the First XI). team is
+  // null for someone who played without a booking (an emergency sub).
+  special?: { title: string; sub: string; date: string; team: "white" | "red" | null; white: number; red: number; motm: string[]; photo: string } | null;
 }
 
 // The story's length cap, and which cards go first when there's more to say.
-const MAX_CARDS = 13;
+const MAX_CARDS = 14;
 const DROP_ORDER = ["club", "circle", "records", "best", "month", "record", "weather", "nemesis", "pred", "partner"];
 
 // WMO weather codes: drizzle, rain, showers, thunder.
@@ -593,14 +598,16 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
     });
   }
 
-  // October's own card: your best win (the treat) and heaviest defeat (the trick).
-  if (theme?.special === "trickOrTreat" && (d.best || d.worst)) {
+  // The month's own pair card, when its theme has one: your best win and
+  // heaviest defeat (October's trick or treat, November's rockets).
+  const pair = theme?.pair;
+  if (pair && (d.best || d.worst)) {
     const row = (g: NonNullable<typeof d.best>, kind: "treat" | "trick") => {
       const usName = g.team === "red" ? p.redName : p.whiteName;
       const themName = g.team === "red" ? p.whiteName : p.redName;
       return (
         <div className={"wr-tt " + kind}>
-          <span className="lbl">{kind === "treat" ? "Treat" : "Trick"}</span>
+          <span className="lbl">{kind === "treat" ? pair.best : pair.worst}</span>
           <b>{usName} {g.us}–{g.them} {themName}</b>
           <small>{shortDate(g.date)}</small>
         </div>
@@ -612,24 +619,22 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       accent: theme.accent,
       body: (
         <>
-          <div className="wr-lab wr-rise">Trick or treat</div>
-          <div className="wr-h wr-rise">
-            {d.best && d.worst ? "The treat, and the trick." : d.best ? "All treats, no tricks." : "All tricks, no treats."}
-          </div>
+          <div className="wr-lab wr-rise">{pair.label}</div>
+          <div className="wr-h wr-rise">{d.best && d.worst ? pair.heads[0] : d.best ? pair.heads[1] : pair.heads[2]}</div>
           <div className="wr-tts wr-rise">
             {d.best && row(d.best, "treat")}
             {d.worst && row(d.worst, "trick")}
           </div>
           <div className="wr-grow" />
           <div className="wr-p wr-rise">
-            {!d.worst ? <>You didn&apos;t lose once in {p.periodShort}. <b>Spooky.</b></> : !d.best ? <>No wins this time. November owes you one.</> : <>Some nights you get the sweets. Some nights you get egged.</>}
+            {!d.worst ? <>{pair.lines.unbeaten[0].replace("{month}", p.periodShort)} <b>{pair.lines.unbeaten[1]}</b></> : !d.best ? <>{pair.lines.winless}</> : <>{pair.lines.mixed}</>}
           </div>
         </>
       ),
     });
   }
 
-  if (d.best && theme?.special !== "trickOrTreat") {
+  if (d.best && !pair) {
     const b = d.best;
     const usName = b.team === "red" ? p.redName : p.whiteName;
     const themName = b.team === "red" ? p.whiteName : p.redName;
@@ -720,6 +725,41 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
           </div>
           <div className="wr-grow" />
           <div className="wr-p wr-rise">{line}</div>
+        </>
+      ),
+    });
+  }
+
+  // A one-off game you were part of this month (the First XI).
+  const sp = ex?.special;
+  if (sp) {
+    const us = sp.team === "red" ? sp.red : sp.white;
+    const them = sp.team === "red" ? sp.white : sp.red;
+    const res = sp.team == null ? null : us > them ? "W" : us < them ? "L" : "D";
+    cards.push({
+      key: "special",
+      photo: sp.photo,
+      accent: "#f5d97a",
+      body: (
+        <>
+          <div className="wr-lab wr-rise">{sp.title}</div>
+          <div className="wr-h wr-rise">{sp.sub}</div>
+          <div className="wr-score wr-rise">
+            <div><div className="tm">{p.whiteName.toUpperCase()}</div><div className={"n" + (sp.white < sp.red ? " dim" : "")}><Count to={sp.white} /></div></div>
+            <div className="dash">–</div>
+            <div><div className="tm" style={{ color: "#f8b3b8" }}>{p.redName.toUpperCase()}</div><div className={"n" + (sp.red < sp.white ? " dim" : "")}><Count to={sp.red} /></div></div>
+          </div>
+          <div className="wr-p wr-rise">
+            {res === "W" ? <>You were on the {sp.team === "red" ? p.redName : p.whiteName}. <b>You won the first one.</b></>
+              : res === "L" ? <>You were on the {sp.team === "red" ? p.redName : p.whiteName}. Lost, but you were there for the first one.</>
+              : res === "D" ? <>Honours even, and you were part of it.</>
+              : <>You came on and played your part.</>}
+          </div>
+          <div className="wr-grow" />
+          <div className="wr-chips">
+            {sp.motm.length > 0 && <div className="wr-chip wr-rise"><span className="k">★</span><span>Man of the Match: {sp.motm.join(" & ")}</span></div>}
+            <div className="wr-chip wr-rise"><span className="k">✓</span><span>Your pennant is in your trophy cabinet.</span></div>
+          </div>
         </>
       ),
     });
@@ -890,8 +930,8 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
           </>
         ) : (
           <>
-            <div className="wr-h wr-rise" style={{ fontSize: 34 }}>{theme?.copy?.endTitle?.[0] ?? "New month."}<br />{theme?.copy?.endTitle?.[1] ?? "New games."}</div>
-            <div className="wr-p wr-rise">{theme?.copy?.endLine ?? "Your next chapter starts on the next booking."}</div>
+            <div className="wr-h wr-rise" style={{ fontSize: 34 }}>{p.nextUp?.title[0] ?? theme?.copy?.endTitle?.[0] ?? "New month."}<br />{p.nextUp?.title[1] ?? theme?.copy?.endTitle?.[1] ?? "New games."}</div>
+            <div className="wr-p wr-rise">{p.nextUp?.line ?? theme?.copy?.endLine ?? "Your next chapter starts on the next booking."}</div>
           </>
         )}
         <div className="wr-next wr-rise">
@@ -926,6 +966,7 @@ export function buildWrappedCards(p: Omit<WrappedStoryProps, "onClose">, onRepla
       treat: d.best && d.best.us - d.best.them >= 5 ? 70 : 0,
       best: d.best && d.best.us - d.best.them >= 5 ? 70 : 0,
       partner: d.partner && d.partner.rate >= 75 ? 65 : 0,
+      special: ex?.special ? 82 : 0,
     };
     const first = cards[0];
     const tail = cards.filter((c) => c.key === "summary" || c.key === "next");
@@ -984,7 +1025,7 @@ export default function WrappedStory(props: WrappedStoryProps) {
   const cards = useMemo(
     () => buildWrappedCards(props, () => setIdx(0)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [props.data, props.prev, props.periodKey, props.soFar, props.extras]
+    [props.data, props.prev, props.periodKey, props.soFar, props.extras, props.nextUp]
   );
   const last = cards.length - 1;
 
@@ -1161,6 +1202,13 @@ export default function WrappedStory(props: WrappedStoryProps) {
       <div key={card.key + (intro === "playing" ? "-wait" : "")} data-card={card.key} className="wr-card" style={{ "--acc": card.accent } as CSSProperties}>
         {card.photo && <div className={"wr-photo" + (STRONG_PHOTOS.has(card.photo) || card.photo.includes("/bank/") || card.photo.includes("/halloween/") ? " strong" : "")} style={{ backgroundImage: `url(${card.photo})` }} />}
         {card.key === "intro" && wrappedThemeFor(props.periodKey)?.effect === "fog" && <SpookyFx />}
+        {(card.key === "intro" || card.key === "next") && wrappedThemeFor(props.periodKey)?.effect === "sparks" && (
+          <div className="wr-sparks" aria-hidden="true">
+            {Array.from({ length: 24 }, (_, k) => (
+              <i key={k} style={{ left: `${(k * 37) % 100}%`, ["--dx" as string]: `${((k % 5) - 2) * 16}px`, animationDuration: `${3 + (k % 4)}s`, animationDelay: `-${(k * 0.47) % 4}s` }} />
+            ))}
+          </div>
+        )}
         <div className="wr-glow" />
         <div className="wr-in">{card.body}</div>
       </div>
@@ -1499,6 +1547,10 @@ const wrappedCss = `
 .wr-tt.trick .lbl{background:var(--acc)}
 .wr-tt b{font-family:var(--display);font-weight:800;font-size:20px;line-height:1.1}
 .wr-tt small{font-size:12.5px;color:rgba(255,255,255,.7);margin-top:2px}
+.wr-sparks{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.wr-sparks i{position:absolute;bottom:14%;width:3px;height:3px;border-radius:50%;background:#ffd08a;box-shadow:0 0 8px 2px rgba(255,140,60,.9);animation:wrSparkRise linear infinite}
+@keyframes wrSparkRise{to{transform:translate(var(--dx),-300px);opacity:0}}
+@media (prefers-reduced-motion: reduce){.wr-sparks i{animation:none;opacity:.5}}
 .wr-quip{display:block;margin-top:5px;font-size:13px;font-weight:600;font-style:italic;letter-spacing:0;text-transform:none;color:rgba(255,255,255,.72)}
 .wr-kicker{font-family:var(--display);font-weight:700;font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.8);margin-top:18px}
 .wr-period{margin-top:2px}

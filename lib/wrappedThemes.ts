@@ -22,12 +22,21 @@ export interface WrappedTheme {
   line: (who: WrappedThemeWho) => string; // the sentence under it, after "{first}, "
   push: { title: string; body: string }; // the release-day notification
   special?: "trickOrTreat"; // a card only this month has
+  // A two-row card that replaces "Your best night": your best win and your
+  // heaviest defeat, in the month's words (October's trick or treat).
+  pair?: {
+    label: string;
+    best: string;
+    worst: string;
+    heads: [both: string, bestOnly: string, worstOnly: string];
+    lines: { unbeaten: [string, string]; winless: string; mixed: string };
+  };
   // The month's own photos for some cards (falls back to the rotating
   // bank), a wider photo for the Fixtures banner, and an effect over the
   // intro drawn in code (fog and bats for Halloween).
   photos?: Partial<Record<WrappedPhotoKey | "treat", string>>;
   bannerPhoto?: string;
-  effect?: "fog" | "sparks"; // fog: the story intro and release day; sparks: release day only
+  effect?: "fog" | "sparks"; // over the story intro and the release-day takeover
   // Themed copy: card labels by card key, the intro's tap line, and the
   // closing card's headline and line.
   copy?: { labels?: Partial<Record<string, string>>; quips?: Partial<Record<string, string>>; tap?: string; endTitle?: [string, string]; endLine?: string };
@@ -43,6 +52,13 @@ const THEMES: Record<string, WrappedTheme> = {
     bannerPhoto: "/wrapped/halloween/banner.jpg",
     effect: "fog",
     special: "trickOrTreat",
+    pair: {
+      label: "Trick or treat",
+      best: "Treat",
+      worst: "Trick",
+      heads: ["The treat, and the trick.", "All treats, no tricks.", "All tricks, no treats."],
+      lines: { unbeaten: ["You didn't lose once in {month}.", "Spooky."], winless: "No wins this time. November owes you one.", mixed: "Some nights you get the sweets. Some nights you get egged." },
+    },
     photos: {
       glance: "/wrapped/halloween/month.jpg",
       motm: "/wrapped/halloween/motm.jpg",
@@ -109,7 +125,52 @@ const THEMES: Record<string, WrappedTheme> = {
     accent: "#ff7a45",
     introPhoto: "/wrapped/bank/november-bonfire.jpg",
     effect: "sparks",
-    copy: { tap: "Light the fuse" },
+    pair: {
+      label: "Rockets and damp squibs",
+      best: "Rocket",
+      worst: "Damp squib",
+      heads: ["The rocket, and the damp squib.", "All rockets, no damp squibs.", "All damp squibs, no rockets."],
+      lines: { unbeaten: ["You didn't lose once in {month}.", "Bang on."], winless: "No rockets this time. The new year owes you one.", mixed: "Some nights go off with a bang. Some nights fizzle out." },
+    },
+    copy: {
+      labels: {
+        glance: "At a glance, lit up",
+        record: "Bangs and fizzles",
+        month: "Remember, remember",
+        goals: "Bangers",
+        motm: "Star of the show",
+        why: "What lit them up",
+        partner: "Your spark",
+        circle: "Round the bonfire",
+        nemesis: "Handle with care",
+        rated: "The best display",
+        weather: "Bonfire weather",
+        records: "The big bangs",
+        pred: "Saw it coming",
+        club: "The whole display",
+        summary: "Your grand finale",
+      },
+      quips: {
+        glance: "Your month, in lights.",
+        record: "Wins, draws, and the ones that fizzled out.",
+        month: "Every night you lit up the pitch.",
+        goals: "Light the touchpaper, stand well back.",
+        motm: "The squad lit a sparkler for you.",
+        why: "Why the squad voted for you.",
+        partner: "You two light each other up.",
+        circle: "Everyone who stood by the fire with you.",
+        nemesis: "The one who keeps blowing up your night.",
+        rated: "The squad's pick of the fireworks.",
+        weather: "Wrap up warm.",
+        records: "November's loudest moments.",
+        pred: "Who saw the fireworks coming.",
+        club: "Every game, every goal, every bang.",
+        summary: "Save the best till last.",
+      },
+      tap: "Light the fuse",
+      endTitle: ["That's the last", "monthly Wrapped."],
+      endLine: "Season 1 Wrapped is next. Book your next game.",
+    },
     push: { title: "Bangers: your November Wrapped", body: "Your November, lit up: goals, votes, best nights and who you win with. Tap to watch." },
     line: (w) =>
       w.goals >= 3 ? "your November, lit up."
