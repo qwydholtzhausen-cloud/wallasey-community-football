@@ -31,6 +31,7 @@ interface Booking {
 interface GameRef {
   id: string;
   postponed_at?: string | null;
+  called_off_at?: string | null;
   venue: string;
   date: string;
   price: number;
@@ -176,7 +177,7 @@ export async function GET(req: Request) {
   // needless nag at all.
   const { data: unpaidBookings } = await admin
     .from("bookings")
-    .select("id, player_id, created_at, game:games(id, venue, date, price, postponed_at)")
+    .select("id, player_id, created_at, game:games(id, venue, date, price, postponed_at, called_off_at)")
     .eq("status", "unpaid")
     .eq("waiting", false);
 
@@ -193,6 +194,7 @@ export async function GET(req: Request) {
       continue;
     }
     if (isPostponed(game)) continue; // reminders wait for the new date
+    if (game.called_off_at) continue; // nobody owes for a called-off game
 
     await sendPushToUsers([b.player_id], {
       title: "Payment needed",
@@ -249,7 +251,7 @@ export async function GET(req: Request) {
   const { data: staleUnpaid } = await admin
     .from("bookings")
     .select(
-      "id, player_id, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name), game:games(id, venue, date, kickoff, price, postponed_at)"
+      "id, player_id, created_at, promoted_at, player:profiles!bookings_player_id_fkey(display_name), game:games(id, venue, date, kickoff, price, postponed_at, called_off_at)"
     )
     .eq("status", "unpaid")
     .eq("waiting", false);
@@ -258,6 +260,7 @@ export async function GET(req: Request) {
     const game = (Array.isArray(b.game) ? b.game[0] : b.game) as GameRefWithKickoff | null;
     if (!game) continue;
     if (isPostponed(game)) continue;
+    if (game.called_off_at) continue; // nobody owes for a called-off game
     const kickoffMs = toMs(kickoffCutoff(game.date, game.kickoff, 0));
     if (kickoffMs <= nowMs) continue; // already past - overdue flow below handles it instead
 
@@ -338,7 +341,7 @@ export async function GET(req: Request) {
   // - so it's a heads-up, not just a restatement of a block that's already active.
   const { data: unconfirmedBookings } = await admin
     .from("bookings")
-    .select("id, player_id, game:games(id, venue, date, kickoff, price, postponed_at)")
+    .select("id, player_id, game:games(id, venue, date, kickoff, price, postponed_at, called_off_at)")
     .neq("status", "confirmed")
     .eq("waiting", false);
 
@@ -352,6 +355,7 @@ export async function GET(req: Request) {
       continue;
     }
     if (isPostponed(game)) continue; // not owed while the game has no date
+    if (game.called_off_at) continue; // nor for a called-off game
     if (toMs(kickoffCutoff(game.date, game.kickoff, MATCH_DURATION_MINUTES)) > nowMs) continue;
 
     await sendPushToUsers([b.player_id], {

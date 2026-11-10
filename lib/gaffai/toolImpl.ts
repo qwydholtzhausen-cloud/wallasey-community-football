@@ -748,14 +748,21 @@ async function findPlayersWithoutBookings(admin: SupabaseClient) {
 
 async function findOverduePlayers(admin: SupabaseClient) {
   const todayUk = nowInLondon().slice(0, 10);
-  // Free bookings (birthday, prize...) never block, same as has_overdue_payment().
-  const { data } = await admin.from("bookings").select("player_id, status, games(date, venue)").eq("waiting", false).neq("status", "confirmed").is("pot_exempt_reason", null);
+  // Free bookings (birthday, prize...) never block, same as has_overdue_payment(),
+  // and neither does a called-off or postponed game - nobody owes for those.
+  const { data } = await admin
+    .from("bookings")
+    .select("player_id, status, games(date, venue, called_off_at, postponed_at)")
+    .eq("waiting", false)
+    .neq("status", "confirmed")
+    .is("pot_exempt_reason", null);
 
-  type Row = { player_id: string; status: string; games: { date: string; venue: string } | { date: string; venue: string }[] | null };
+  type G = { date: string; venue: string; called_off_at: string | null; postponed_at: string | null };
+  type Row = { player_id: string; status: string; games: G | G[] | null };
   const rows = (data ?? []) as Row[];
   const overdue = rows.filter((b) => {
     const g = Array.isArray(b.games) ? b.games[0] : b.games;
-    return g && g.date < todayUk;
+    return g && g.date < todayUk && !g.called_off_at && !g.postponed_at;
   });
 
   const nameOf = await namesById(
