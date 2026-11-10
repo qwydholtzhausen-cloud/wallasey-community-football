@@ -161,6 +161,7 @@ export async function GET(req: Request) {
     const closesLabel = `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")}${h < 12 ? "am" : "pm"}`;
     await sendPushToUsers(playedIds, {
       title: "Vote for Man of the Match 🗳️",
+      badge: true,
       body: `${whiteLabel} ${g.team_white_score}–${g.team_red_score} ${redLabel}. Who was best? Voting closes at ${closesLabel}.`,
       url: "/",
     });
@@ -195,6 +196,7 @@ export async function GET(req: Request) {
 
     await sendPushToUsers([b.player_id], {
       title: "Payment needed",
+      badge: true,
       body: `You're booked for ${game.venue} on ${fmtDateLabel(game.date)} — pay £${game.price} ahead of kick-off.`,
       url: "/",
     });
@@ -291,6 +293,7 @@ export async function GET(req: Request) {
         : `You're still down as owing £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)}. Pay before kick-off, or you'll be blocked from booking your next game once this one finishes.`;
       await sendPushToUsers([b.player_id], {
         title: AUTO_REMOVE_UNPAID_BOOKINGS ? "You'll lose this spot soon ⚠️" : "Still owe for this one ⚠️",
+        badge: true,
         body: pushBody,
         url: "/",
       });
@@ -353,6 +356,7 @@ export async function GET(req: Request) {
 
     await sendPushToUsers([b.player_id], {
       title: "Still unpaid ⚠️",
+      badge: true,
       body: `You still owe £${game.price} for ${game.venue} on ${fmtDateLabel(game.date)} — pay now to avoid being blocked from booking your next game.`,
       url: "/",
     });

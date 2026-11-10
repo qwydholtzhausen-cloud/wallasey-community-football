@@ -17,6 +17,11 @@ export interface PushPayload {
   // Groups sends for the open-rate numbers GaffAI reports; defaults to a
   // slug of the title ("Teams are out 👕" -> "teams-are-out").
   kind?: string;
+  // Adds one to the number on the home-screen icon (public/sw.js). Only for
+  // pushes that need this person to do something - a message to them, a
+  // game to pay for, their MOTM vote - the same things the app counts when
+  // it's open. Club news (teams out, kick-off, spaces) never touches it.
+  badge?: boolean;
 }
 
 function kindFromTitle(title: string) {

@@ -28,6 +28,7 @@ export async function POST(req: Request) {
 
   await sendPushToUsers([message.recipient_id], {
     title: "Message from an admin",
+    badge: true,
     body: message.message.length > 100 ? `${message.message.slice(0, 97)}...` : message.message,
     url: "/",
   });

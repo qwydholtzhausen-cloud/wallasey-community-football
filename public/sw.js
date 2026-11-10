@@ -13,7 +13,7 @@ self.addEventListener("push", (event) => {
     payload = { title: "Wirral Community Football", body: event.data.text() };
   }
 
-  const { title, body, url, sid } = payload;
+  const { title, body, url, sid, badge } = payload;
   event.waitUntil(
     Promise.all([
       self.registration.showNotification(title || "Wirral Community Football", {
@@ -22,15 +22,16 @@ self.addEventListener("push", (event) => {
         badge: "/icons/icon-192.png",
         data: { url: url || "/", sid: sid || null },
       }),
-      bumpAppBadge(),
+      badge ? bumpAppBadge() : Promise.resolve(),
     ])
   );
 });
 
 // The number on the home-screen icon. The app sets the exact count (unread
 // messages, games to pay for this week, a MOTM vote to cast) whenever it's
-// open and keeps it here; a push that lands while it's closed adds one, and
-// the next open puts the exact number back. Phones without app badges
+// open and keeps it here; a push for one of those (sent with badge: true,
+// lib/push.ts) that lands while it's closed adds one, and the next open
+// puts the exact number back. Club news never adds to it. Phones without app badges
 // (or without permission) just skip this.
 async function bumpAppBadge() {
   try {
