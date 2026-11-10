@@ -164,6 +164,12 @@ Booking history is complete from the club's first game (Aug 2026). Filter ops: e
     input_schema: { type: "object", properties: { game_id: { type: "string" } }, required: ["game_id"] },
   },
   {
+    name: "get_motm_live",
+    description:
+      "The Man of the Match vote WHILE IT'S STILL OPEN: who's leading right now (the club's rule - most votes, a tie goes to more goals that game), the top-6 standings with votes and goals, votes cast out of eligible voters, when it closes, and who hasn't voted yet. Use for 'who's winning MOTM', 'who's leading the vote', 'how's the vote going', 'who still needs to vote'. With no game_id it finds the game whose vote is open now. Never says who voted for whom. If the vote has closed it returns the final result instead.",
+    input_schema: { type: "object", properties: { game_id: { type: "string", description: "Optional - defaults to the game whose vote is open now" } } },
+  },
+  {
     name: "get_player_of_month",
     description:
       "Player of the Month for a given month (defaults to last month), resolved with the real tiebreak chain: most game-level MOTM wins, then most total votes, then most goals that month. Can return multiple joint winners. Also works for the CURRENT month as the race so far: status says whether it's final or still being decided, with games_counted, games_still_to_play and the top-6 standings.",

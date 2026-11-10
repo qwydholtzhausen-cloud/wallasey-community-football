@@ -271,6 +271,76 @@ async function getMotmWinner(admin: SupabaseClient, args: { game_id: string }) {
   return getMotmWinnerRaw(admin, args.game_id);
 }
 
+// The Man of the Match vote while it's still open, for admins only: who's
+// leading (the club's rule: votes, then goals), the standings, how many have
+// voted and who hasn't yet. Never says who voted for whom - the vote stays
+// anonymous until it closes. With no game_id it picks the game whose vote is
+// open now (the most recent if there are two), else the last scored game.
+async function getMotmLive(admin: SupabaseClient, args: { game_id?: string }) {
+  const nowMs = toMs(nowInLondon());
+  const closesAt = (g: { date: string; kickoff: string }) => kickoffCutoff(g.date, g.kickoff, MOTM_VOTE_WINDOW_MINUTES);
+  let game: { id: string; date: string; kickoff: string; venue: string; team_white_score: number | null; team_red_score: number | null } | null = null;
+  if (args.game_id) {
+    const { data } = await admin.from("games").select("id, date, kickoff, venue, team_white_score, team_red_score").eq("id", args.game_id).single();
+    game = data;
+  } else {
+    const since = new Date(nowMs - 3 * 86400000).toISOString().slice(0, 10);
+    const { data } = await admin
+      .from("games")
+      .select("id, date, kickoff, venue, team_white_score, team_red_score")
+      .gte("date", since)
+      .lte("date", nowInLondon().slice(0, 10))
+      .is("called_off_at", null)
+      .order("date", { ascending: false })
+      .order("kickoff", { ascending: false });
+    const list = data ?? [];
+    game = list.find((g) => toMs(closesAt(g)) > nowMs && toMs(kickoffCutoff(g.date, g.kickoff, 0)) <= nowMs) ?? null;
+    if (!game) return { voting_open: false, note: "No Man of the Match vote is open right now. Use get_motm_winner for a finished game." };
+  }
+  if (!game) throw new Error("Game not found");
+  const open = toMs(closesAt(game)) > nowMs;
+  if (!open) return { game_id: game.id, date: game.date, voting_open: false, note: "This vote has closed - here's the final result.", final: await getMotmWinnerRaw(admin, game.id) };
+
+  const [{ data: votes }, { data: bookings }, { data: stats }] = await Promise.all([
+    admin.from("motm_votes").select("voter_id, candidate_id").eq("game_id", game.id),
+    admin.from("bookings").select("player_id, team, waiting").eq("game_id", game.id).eq("waiting", false),
+    admin.from("game_stats").select("game_id, player_id, goals").eq("game_id", game.id),
+  ]);
+  const tally: Record<string, number> = {};
+  for (const v of votes ?? []) tally[v.candidate_id] = (tally[v.candidate_id] ?? 0) + 1;
+  const players = (bookings ?? []).map((b) => b.player_id as string);
+  const nameOf = await namesById(admin, [...new Set([...players, ...Object.keys(tally)])]);
+  const goalsOf = goalsLookup(stats)(game.id);
+  const teamOf = (id: string) => (bookings ?? []).find((b) => b.player_id === id)?.team ?? null;
+  const leaders = Object.keys(tally).length ? motmWinners(tally, goalsOf) : [];
+  const standings = Object.entries(tally)
+    .map(([id, n]) => ({ name: nameOf[id] ?? "Unknown", votes: n, goals: goalsOf(id), team: teamOf(id) }))
+    .sort((a, b) => b.votes - a.votes || b.goals - a.goals)
+    .slice(0, 6);
+  const voted = new Set((votes ?? []).map((v) => v.voter_id));
+  const notVoted = players.filter((id) => !voted.has(id)).map((id) => nameOf[id] ?? "Unknown").sort();
+  return {
+    game_id: game.id,
+    date: game.date,
+    venue: game.venue,
+    score: game.team_white_score != null ? `${game.team_white_score}-${game.team_red_score}` : null,
+    voting_open: true,
+    closes_at: (() => {
+      const c = closesAt(game);
+      const [h, m] = c.slice(11, 16).split(":").map(Number);
+      const day = new Date(c.slice(0, 10) + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).replace(",", "");
+      return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")}${h < 12 ? "am" : "pm"} ${day}`;
+    })(),
+    time_left_minutes: Math.max(0, Math.round((toMs(closesAt(game)) - nowMs) / 60000)),
+    votes_cast: (votes ?? []).length,
+    eligible_voters: players.length,
+    leading: leaders.map((id) => ({ name: nameOf[id] ?? "Unknown", votes: tally[id], goals: goalsOf(id) })),
+    level_on_votes_and_goals: leaders.length > 1,
+    standings,
+    not_voted_yet: notVoted,
+  };
+}
+
 async function getGameDetail(admin: SupabaseClient, args: { game_id: string }) {
   const { data: game, error } = await admin
     .from("games")
@@ -1770,6 +1840,7 @@ export const TOOL_IMPL: Record<string, ToolImplFn> = {
   find_overdue_players: findOverduePlayers,
   get_payment_status: getPaymentStatus,
   get_motm_winner: getMotmWinner,
+  get_motm_live: getMotmLive,
   get_player_of_month: getPlayerOfMonth,
   find_audit_log_entries: findAuditLogEntries,
   get_club_settings: getClubSettings,
