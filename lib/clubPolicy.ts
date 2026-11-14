@@ -148,4 +148,4 @@ export const FULLTIME_CARD_OPEN_TO_ALL_FROM = "2026-11-10"; // open to everyone 
 // tapping a face opens the player's season as a page (numbers, form and
 // streaks, record book, honours, milestones, moments) instead of the card.
 // Admins first; everyone from this UK date.
-export const PLAYER_PAGE_OPEN_TO_ALL_FROM = "2099-01-01";
+export const PLAYER_PAGE_OPEN_TO_ALL_FROM = "2026-11-14"; // open to everyone 14 Nov 2026
