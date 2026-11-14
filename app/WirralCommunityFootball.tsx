@@ -39,6 +39,7 @@ import { houseStyleCss } from "./ui/houseStyle";
 import { computeWrapped, WRAPPED_MIN_APPS } from "../lib/wrapped";
 import { FULLTIME_CARD_OPEN_TO_ALL_FROM } from "../lib/clubPolicy";
 import { PLAYER_PAGE_OPEN_TO_ALL_FROM } from "../lib/clubPolicy";
+import { GROUND_OPEN_TO_ALL_FROM } from "../lib/clubPolicy";
 import { PlayerPage } from "./ui/playerpage";
 import { buildStory as buildPlayerStory, dayLabel as storyDayLabel, type StoryGame as PlayerStoryGame } from "../lib/playerStory";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
@@ -7720,6 +7721,15 @@ function App({ session }: { session: Session }) {
                 onDelete={deleteHistoryMoment}
                 onProgramme={programme ? openProgramme : undefined}
                 cabinet={<ClubCabinet items={cabinetItems} people={historyPeople} me={myId} today={nowUk.slice(0, 10)} />}
+                ground={isAdmin || nowUk.slice(0, 10) >= GROUND_OPEN_TO_ALL_FROM}
+                onRecords={() => {
+                  setResultsView("season");
+                  // The record book sits further down Season; land on it once it's drawn.
+                  window.setTimeout(() => {
+                    const rec = document.querySelector(".wcf-rec-hero") ?? Array.from(document.querySelectorAll("h4")).find((h) => h.textContent === "Record book");
+                    rec?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 350);
+                }}
               />
             }
             activeStatsYear={activeStatsYear}

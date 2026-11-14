@@ -149,3 +149,8 @@ export const FULLTIME_CARD_OPEN_TO_ALL_FROM = "2026-11-10"; // open to everyone 
 // streaks, record book, honours, milestones, moments) instead of the card.
 // Admins first; everyone from this UK date.
 export const PLAYER_PAGE_OPEN_TO_ALL_FROM = "2026-11-14"; // open to everyone 14 Nov 2026
+
+// The Ground (14 Nov 2026, app/ui/history.tsx): History's front door as the
+// floodlit pitch from above, with gold markers to the cabinet, the story and
+// the records. Admins first; everyone from this UK date.
+export const GROUND_OPEN_TO_ALL_FROM = "2099-01-01";

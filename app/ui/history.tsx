@@ -28,6 +28,12 @@ function Ball() {
   );
 }
 
+const GROUND_SPOTS: { label: string; sub: string; x: number; y: number; to: "cabinet" | "story" | "records"; left?: boolean }[] = [
+  { label: "Trophy cabinet", sub: "Every cup, every winner", x: 30, y: 31, to: "cabinet" },
+  { label: "The story", sub: "Every first, every big night", x: 72, y: 62, to: "story", left: true },
+  { label: "Records", sub: "On Season", x: 24, y: 74, to: "records" },
+];
+
 export function HistoryPage({
   data,
   people,
@@ -37,6 +43,8 @@ export function HistoryPage({
   onDelete,
   onProgramme,
   cabinet,
+  ground = false,
+  onRecords,
 }: {
   data: Data;
   people: Map<string, Person>;
@@ -46,6 +54,10 @@ export function HistoryPage({
   onDelete: (id: string) => Promise<void>;
   onProgramme?: () => void; // the First XI matchday programme, kept here for good
   cabinet?: React.ReactNode; // the club's trophy cabinet, under the intro
+  // The Ground (14 Nov 2026): History's front door as the floodlit pitch
+  // from above, with gold markers that fly you to each part of the story.
+  ground?: boolean;
+  onRecords?: () => void; // Records live on Results › Season
 }) {
   const root = useRef<HTMLDivElement>(null);
   const story = useRef<HTMLDivElement>(null);
@@ -63,6 +75,19 @@ export function HistoryPage({
     }
   });
   const [playing, setPlaying] = useState(false);
+  const cabRef = useRef<HTMLDivElement>(null);
+  const [heading, setHeading] = useState<{ label: string; x: number; y: number } | null>(null);
+  const goTo = (spot: { label: string; x: number; y: number; to: "cabinet" | "story" | "records" }) => {
+    const target = spot.to === "cabinet" ? cabRef.current : spot.to === "story" ? story.current : null;
+    const land = () => {
+      if (spot.to === "records") onRecords?.();
+      else target?.scrollIntoView({ behavior: motion ? "smooth" : "auto", block: "start" });
+    };
+    if (!motion) return land();
+    setHeading(spot);
+    window.setTimeout(land, 1100);
+    window.setTimeout(() => setHeading(null), 2600);
+  };
   const [adding, setAdding] = useState(false);
   const face = (id: string, cls = "") => {
     const p = people.get(id);
@@ -279,33 +304,75 @@ export function HistoryPage({
           Pause
         </button>
       )}
-      <div className={"wcf-hs-intro" + (intro ? " play" : "")}>
-        <div className="bg" />
-        <div className="sc" />
-        <div className="beam l" />
-        <div className="beam r" />
-        <img className="crest" src="/crest.png" alt="" />
-        <div className="k">OUR STORY · EST. 2026</div>
-        <h2>
-          Wirral
-          <br />
-          <span>Community</span>
-          <br />
-          Football
-        </h2>
-        <p>From the first sign-up to now: every first, every record, every big night.</p>
-        <div className="wcf-hs-tot">
-          <div><b data-n={data.totals.members}>{intro ? 0 : data.totals.members}</b><span>members</span></div>
-          <div><b data-n={data.totals.games}>{intro ? 0 : data.totals.games}</b><span>games</span></div>
-          <div><b data-n={data.totals.goals}>{intro ? 0 : data.totals.goals}</b><span>goals</span></div>
-          <div><b data-n={data.totals.players}>{intro ? 0 : data.totals.players}</b><span>players</span></div>
+      {ground ? (
+        <div className={"wcf-gr" + (intro ? " play" : "") + (heading ? " zoom" : "")}>
+          <div
+            className="gr-map"
+            style={heading ? { transform: `scale(1.9) translate(${50 - heading.x}%, ${50 - heading.y}%)` } : undefined}
+          />
+          <div className="gr-shade" />
+          <div className="gr-hd">
+            <img src="/crest.png" alt="" />
+            <div>
+              <div className="k">THE GROUND · EST. 2026</div>
+              <div className="t">Our story</div>
+            </div>
+            <button type="button" className="wcf-hs-play gr-play" onClick={() => setPlaying(true)}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>
+              Auto-play
+            </button>
+          </div>
+          {GROUND_SPOTS.filter((sp) => sp.to !== "records" || onRecords).map((sp, i) => (
+            <button key={sp.to} type="button" className={"gr-hs" + (sp.left ? " l" : "")} style={{ left: `${sp.x}%`, top: `${sp.y}%`, ["--d" as string]: `${0.9 + i * 0.25}s` }} onClick={() => goTo(sp)}>
+              <i />
+              <span>
+                {sp.label}
+                <small>{sp.sub}</small>
+              </span>
+            </button>
+          ))}
+          <div className="gr-cap">From the first sign-up to now.</div>
+          <div className="wcf-hs-tot">
+            <div><b data-n={data.totals.members}>{intro ? 0 : data.totals.members}</b><span>members</span></div>
+            <div><b data-n={data.totals.games}>{intro ? 0 : data.totals.games}</b><span>games</span></div>
+            <div><b data-n={data.totals.goals}>{intro ? 0 : data.totals.goals}</b><span>goals</span></div>
+            <div><b data-n={data.totals.players}>{intro ? 0 : data.totals.players}</b><span>players</span></div>
+          </div>
+          <div className={"gr-toast" + (heading ? " on" : "")} aria-live="polite">
+            <div className="k">Heading in</div>
+            <b>{heading?.label ?? ""}</b>
+            <span>Taking you to it…</span>
+          </div>
         </div>
-        <button type="button" className="wcf-hs-play" onClick={() => setPlaying(true)}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>
-          Auto-play the story
-        </button>
-      </div>
-      {cabinet}
+      ) : (
+      <div className={"wcf-hs-intro" + (intro ? " play" : "")}>
+          <div className="bg" />
+          <div className="sc" />
+          <div className="beam l" />
+          <div className="beam r" />
+          <img className="crest" src="/crest.png" alt="" />
+          <div className="k">OUR STORY · EST. 2026</div>
+          <h2>
+            Wirral
+            <br />
+            <span>Community</span>
+            <br />
+            Football
+          </h2>
+          <p>From the first sign-up to now: every first, every record, every big night.</p>
+          <div className="wcf-hs-tot">
+            <div><b data-n={data.totals.members}>{intro ? 0 : data.totals.members}</b><span>members</span></div>
+            <div><b data-n={data.totals.games}>{intro ? 0 : data.totals.games}</b><span>games</span></div>
+            <div><b data-n={data.totals.goals}>{intro ? 0 : data.totals.goals}</b><span>goals</span></div>
+            <div><b data-n={data.totals.players}>{intro ? 0 : data.totals.players}</b><span>players</span></div>
+          </div>
+          <button type="button" className="wcf-hs-play" onClick={() => setPlaying(true)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>
+            Auto-play the story
+          </button>
+        </div>
+      )}
+      <div ref={cabRef}>{cabinet}</div>
       <div ref={story} className="wcf-hs-story">
         <div className="wcf-hs-rail"><i /></div>
         {data.chapters.map((c) => {
@@ -1269,6 +1336,39 @@ const historyCss = `
 .wcf-hs-pill i{width:7px;height:7px;border-radius:50%;background:#f5d97a}
 .wcf-hs-pill.on i{animation:wcfHsPulse 1.2s infinite}
 @keyframes wcfHsPulse{50%{opacity:.25}}
+.wcf-gr{position:relative;height:560px;margin:0 0 10px;border-radius:22px;overflow:hidden;isolation:isolate;background:#04060c;border:1px solid rgba(245,217,122,.3)}
+.wcf-gr .gr-map{position:absolute;inset:-10%;background:url('/wrapped/bank/squad-aerial.jpg') center 55%/cover;animation:wcfGrDrift 24s ease-in-out infinite alternate;transition:transform 1.4s cubic-bezier(.2,.8,.2,1)}
+.wcf-gr.zoom .gr-map{animation:none}
+@keyframes wcfGrDrift{to{transform:translate(-2.5%,-2%) scale(1.05)}}
+.wcf-gr .gr-shade{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 55%,transparent 28%,rgba(4,6,12,.78) 80%),linear-gradient(180deg,rgba(4,6,12,.8),transparent 26%,transparent 62%,rgba(4,6,12,.96));pointer-events:none}
+.wcf-gr .gr-hd{position:absolute;left:18px;right:14px;top:18px;z-index:3;display:flex;align-items:center;gap:12px}
+.wcf-gr .gr-hd img{width:40px}
+.wcf-gr .gr-hd>div{min-width:0}
+.wcf-gr .gr-hd .k{font:600 10px var(--font-oswald),sans-serif;letter-spacing:.26em;color:#f5d97a;white-space:nowrap}
+@media (max-width:374px){.wcf-gr .gr-hd .k{letter-spacing:.14em}.wcf-gr .gr-hd{gap:10px}.wcf-gr .gr-hd img{width:34px}}
+.wcf-gr .gr-hd .t{font:700 26px/1 var(--font-oswald),sans-serif;text-transform:uppercase;color:#fff;margin-top:3px}
+.wcf-gr .gr-play{margin:0 0 0 auto;width:auto;min-height:0;flex:none;white-space:nowrap;padding:8px 14px;border-radius:999px;font-size:12px;gap:6px}
+.wcf-gr .gr-play svg{width:12px;height:12px}
+.wcf-gr .gr-hs{position:absolute;z-index:4;display:flex;align-items:center;gap:8px;transform:translate(-11px,-11px);cursor:pointer;background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;transition:opacity .4s}
+.wcf-gr.zoom .gr-hs{opacity:0;pointer-events:none}
+.wcf-gr .gr-hs i{position:relative;width:22px;height:22px;flex:none;border-radius:50%;box-shadow:inset 0 0 0 1.5px #f5d97a;display:grid;place-items:center}
+.wcf-gr .gr-hs i::after{content:"";width:6px;height:6px;border-radius:50%;background:#f5d97a}
+.wcf-gr .gr-hs i::before{content:"";position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 1px rgba(245,217,122,.6);animation:wcfGrPing 2.4s ease-out infinite}
+@keyframes wcfGrPing{to{transform:scale(2.2);opacity:0}}
+.wcf-gr .gr-hs span{display:block;padding:7px 12px 8px;border-radius:12px;background:rgba(4,6,12,.8);box-shadow:inset 0 0 0 1px rgba(245,217,122,.22);font:600 10px/1.2 var(--font-oswald),sans-serif;letter-spacing:.18em;text-transform:uppercase;color:#fff;white-space:nowrap;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.wcf-gr .gr-hs.l{flex-direction:row-reverse;transform:translate(calc(-100% + 11px),-11px);text-align:right}
+.wcf-gr .gr-hs small{display:block;font:500 9.5px/1.25 var(--font-sora),system-ui,sans-serif;letter-spacing:0;text-transform:none;color:#9aa4b8;margin-top:3px}
+.wcf-gr .gr-cap{position:absolute;left:18px;right:18px;bottom:86px;z-index:3;font:700 italic 16px var(--font-playfair),Georgia,serif;color:#e2e8f0}
+.wcf-gr .wcf-hs-tot{position:absolute;left:18px;right:18px;bottom:18px;z-index:3;margin:0;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding-top:12px;border-top:1px solid rgba(245,217,122,.3)}
+.wcf-gr .gr-toast{position:absolute;left:14px;right:14px;bottom:14px;z-index:5;padding:14px 16px;border-radius:18px;background:rgba(15,20,36,.94);box-shadow:inset 0 0 0 1px rgba(245,217,122,.3);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);transform:translateY(140%);transition:transform .8s cubic-bezier(.2,.8,.2,1)}
+.wcf-gr .gr-toast.on{transform:none}
+.wcf-gr .gr-toast .k{font:600 10px var(--font-oswald),sans-serif;letter-spacing:.24em;color:#f5d97a}.wcf-gr .gr-toast b{display:block;font:700 20px var(--font-oswald),sans-serif;text-transform:uppercase;color:#fff;margin-top:4px}.wcf-gr .gr-toast span{font-size:12.5px;color:#9aa4b8}
+.wcf-gr.play .gr-map{animation:wcfGrIn 2.4s cubic-bezier(.2,.8,.2,1) both,wcfGrDrift 24s 2.4s ease-in-out infinite alternate}
+@keyframes wcfGrIn{from{transform:scale(1.35);filter:brightness(.2)}to{transform:none;filter:none}}
+.wcf-gr.play .gr-hs{opacity:0;animation:wcfGrFade .7s var(--d) forwards}
+@keyframes wcfGrFade{to{opacity:1}}
+.wcf-gr.play .gr-hd,.wcf-gr.play .gr-cap{opacity:0;animation:wcfHsUp .6s .5s forwards}
+.wcf-hs.still .wcf-gr .gr-map,.wcf-hs.still .wcf-gr .gr-hs i::before{animation:none}
 .wcf-hs-intro{position:relative;min-height:520px;border-radius:22px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:0 18px 22px;border:1px solid rgba(245,217,122,.3);margin-bottom:6px}
 .wcf-hs-intro .bg{position:absolute;inset:0;background:url('/season-hero.jpg') center 35%/cover;opacity:.55}
 .wcf-hs-intro .sc{position:absolute;inset:0;background:linear-gradient(180deg,rgba(6,7,13,.55),rgba(6,7,13,.1) 30%,rgba(6,7,13,.85) 65%,#0d0d1a)}
