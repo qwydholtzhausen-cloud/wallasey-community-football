@@ -144,3 +144,8 @@ export const LINEUP_V2_OPEN_TO_ALL_FROM = "2099-01-01";
 // goals with the side they counted for), the rating and Man of the Match.
 // Admins first; every member from this UK date. Far future = admins only.
 export const FULLTIME_CARD_OPEN_TO_ALL_FROM = "2026-11-10"; // open to everyone 10 Nov 2026
+// The player page (14 Nov 2026, app/ui/playerpage.tsx + lib/playerStory.ts):
+// tapping a face opens the player's season as a page (numbers, form and
+// streaks, record book, honours, milestones, moments) instead of the card.
+// Admins first; everyone from this UK date.
+export const PLAYER_PAGE_OPEN_TO_ALL_FROM = "2099-01-01";

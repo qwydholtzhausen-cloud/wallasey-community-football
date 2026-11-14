@@ -38,6 +38,9 @@ import { CardFan, SeasonCard, TierLadder, TierUnlock, seasonCardCss, tierFor, ty
 import { houseStyleCss } from "./ui/houseStyle";
 import { computeWrapped, WRAPPED_MIN_APPS } from "../lib/wrapped";
 import { FULLTIME_CARD_OPEN_TO_ALL_FROM } from "../lib/clubPolicy";
+import { PLAYER_PAGE_OPEN_TO_ALL_FROM } from "../lib/clubPolicy";
+import { PlayerPage } from "./ui/playerpage";
+import { buildStory as buildPlayerStory, dayLabel as storyDayLabel, type StoryGame as PlayerStoryGame } from "../lib/playerStory";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
 import WrappedStory, { drawWrappedCard, wrappedBannerCss, type WrappedExtras } from "./WrappedStory";
 import {
@@ -1746,6 +1749,15 @@ function App({ session }: { session: Session }) {
   const [momentsDone, setMomentsDone] = useState<string[]>([]);
   const [playerCardId, setPlayerCardId] = useState<string | null>(null);
   const [playerCardTeam, setPlayerCardTeam] = useState<{ name: string; color: string } | null>(null);
+  // Where the last tap landed, so the player page opens out of the face
+  // that was tapped (any list, any tab) without threading it through.
+  const lastTapRef = useRef<{ x: number; y: number } | null>(null);
+  const [playerPageOrigin, setPlayerPageOrigin] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    const on = (e: PointerEvent) => { lastTapRef.current = { x: e.clientX, y: e.clientY }; };
+    window.addEventListener("pointerdown", on, true);
+    return () => window.removeEventListener("pointerdown", on, true);
+  }, []);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showBatchGen, setShowBatchGen] = useState(false);
   // The Add/Edit fixture sheet (admins).
@@ -3284,6 +3296,7 @@ function App({ session }: { session: Session }) {
   // no team, so a stale team from a previous card can never leak into one
   // that doesn't have that context.
   function openPlayerCard(id: string, team?: { name: string; color: string } | null) {
+    setPlayerPageOrigin(lastTapRef.current);
     setPlayerCardId(id);
     setPlayerCardTeam(team ?? null);
   }
@@ -7988,6 +8001,77 @@ function App({ session }: { session: Session }) {
           playerCardId
         );
         const topGoals = Math.max(0, ...playerStats.map((p) => p.goals));
+        if (isAdmin || nowUk.slice(0, 10) >= PLAYER_PAGE_OPEN_TO_ALL_FROM) {
+          // The player page: the season as a story (lib/playerStory.ts).
+          const storyGames: PlayerStoryGame[] = [];
+          for (const g of seasonGames) {
+            const bk = g.bookings.find((b) => b.player_id === playerCardId && !b.waiting && b.team);
+            if (!bk) continue;
+            const w = g.team_white_score!, rr = g.team_red_score!;
+            const tally = closedMotmTallies[g.id] ?? {};
+            const winners = closedMotmTallies[g.id] ? motmWinnerIdsByGame[g.id] ?? [] : [];
+            const other = winners.find((id) => id !== playerCardId);
+            storyGames.push({
+              id: g.id,
+              date: g.date,
+              team: bk.team!,
+              us: bk.team === "white" ? w : rr,
+              them: bk.team === "white" ? rr : w,
+              goals: goalRows.filter((r) => r.game_id === g.id && r.player_id === playerCardId).reduce((n, r) => n + r.goals, 0),
+              votes: tally[playerCardId] ?? 0,
+              topVotes: Math.max(0, ...Object.values(tally)),
+              motm: winners.includes(playerCardId),
+              motmName: !winners.includes(playerCardId) && other ? profiles.find((p) => p.id === other)?.display_name ?? null : null,
+              special: !!g.special,
+            });
+          }
+          const members = [...profiles].filter((p) => p.created_at).sort((x, y) => (x.created_at ?? "").localeCompare(y.created_at ?? ""));
+          const memberIdx = members.findIndex((p) => p.id === playerCardId);
+          const goalsSorted = Object.entries(playerCardStats).map(([, v]) => v.goals);
+          const myGoals = stats.goals;
+          const goalsRank = myGoals > 0 ? 1 + goalsSorted.filter((n) => n > myGoals).length : 0;
+          const firstClub = [...pastGames].filter((g) => g.team_white_score != null).sort((x, y) => x.date.localeCompare(y.date) || x.kickoff.localeCompare(y.kickoff))[0];
+          const story = buildPlayerStory({
+            games: storyGames,
+            firstClubGameDate: firstClub?.date ?? null,
+            clubGames: seasonGames.length,
+            appsRank: appsRank > 0 ? appsRank : 0,
+            goalsRank,
+            memberNo: memberIdx >= 0 ? memberIdx + 1 : null,
+            joined: cardProfile.created_at ? cardProfile.created_at.slice(0, 10) : null,
+            teamName: (t) => (t === "white" ? cs.team_white_name : cs.team_red_name),
+            firstName: cardProfile.display_name.split(" ")[0],
+            trophies: trophiesFor(playerCardId),
+            year: currentSeasonYear,
+          });
+          const topMotm = Math.max(0, ...Object.values(playerCardStats).map((s) => s.motm));
+          const honourLine = topGoals > 0 && stats.goals === topGoals ? "Golden Boot leader" : topMotm > 0 && stats.motm === topMotm ? "Most Men of the Match" : null;
+          const next = upcomingGames.find((g) => g.published && g.bookings.some((b) => b.player_id === playerCardId && !b.waiting));
+          return (
+            <PlayerPage
+              key={playerCardId}
+              name={cardProfile.display_name}
+              photo={cardProfile.avatar_url ?? null}
+              story={story}
+              origin={playerPageOrigin}
+              honourLine={honourLine}
+              team={playerCardTeam}
+              nextGame={next ? `${storyDayLabel(next.date)}, ${next.kickoff} at ${next.venue}` : null}
+              highlight={cabinetHighlight}
+              privateInfo={
+                canSeeRating
+                  ? {
+                      label: playerCardId === myId ? "Only you" : "Admin only",
+                      rating: rating ? { fitness: rating.fitness, attack: rating.attack, defence: rating.defence, goalkeeping: rating.goalkeeping } : null,
+                      contact: emergencyContact ? { name: emergencyContact.contact_name, phone: emergencyContact.contact_phone } : null,
+                      isOwn: playerCardId === myId,
+                    }
+                  : null
+              }
+              onClose={() => { setPlayerCardId(null); setPlayerCardTeam(null); setCabinetHighlight(null); }}
+            />
+          );
+        }
         const cardSeason = {
           W: results.filter((x) => x === "W").length,
           D: results.filter((x) => x === "D").length,
