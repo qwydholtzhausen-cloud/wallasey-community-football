@@ -110,8 +110,13 @@ await step("Player card", async () => {
     await page.locator(".wcf-lineup-selected-name.clickable").first().waitFor({ timeout: 8000 });
     await page.locator(".wcf-lineup-selected-name.clickable").first().dispatchEvent("click");
   } else throw new Error("No players on the team sheet to open");
-  await page.waitForSelector(".wcf-pcard", { timeout: 8000 });
+  // The player page (open to all from 14 Nov 2026) replaced the card.
+  await page.waitForSelector(".wpp, .wcf-pcard", { timeout: 8000 });
   await page.waitForTimeout(2200);
+  if (await page.locator(".wpp").count()) {
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".wpp", { state: "detached", timeout: 4000 });
+  }
 });
 await step("Feed", async () => {
   await page.locator(".wcf-lightbox-close").first().dispatchEvent("click").catch(() => {});
