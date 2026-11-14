@@ -40,6 +40,7 @@ import { computeWrapped, WRAPPED_MIN_APPS } from "../lib/wrapped";
 import { FULLTIME_CARD_OPEN_TO_ALL_FROM } from "../lib/clubPolicy";
 import { PLAYER_PAGE_OPEN_TO_ALL_FROM } from "../lib/clubPolicy";
 import { GROUND_OPEN_TO_ALL_FROM } from "../lib/clubPolicy";
+import { ACCOUNT_REFRESH_OPEN_TO_ALL_FROM } from "../lib/clubPolicy";
 import { PlayerPage } from "./ui/playerpage";
 import { buildStory as buildPlayerStory, dayLabel as storyDayLabel, type StoryGame as PlayerStoryGame } from "../lib/playerStory";
 import { computeRecords, computePersonalBests, type Holder, type ClubRecords } from "../lib/records";
@@ -7834,7 +7835,7 @@ function App({ session }: { session: Session }) {
           <>
             <style>{calmResultsCss}</style>
             <button
-              className="cr-pot"
+              className={"cr-pot" + (isAdmin || nowUk.slice(0, 10) >= ACCOUNT_REFRESH_OPEN_TO_ALL_FROM ? " a2pot" : "")}
               onClick={() => {
                 setTab("results");
                 setResultsView("pot");
@@ -7851,6 +7852,11 @@ function App({ session }: { session: Session }) {
         )}
         {tab === "account" && (
           <AccountPanel
+            refresh={isAdmin || nowUk.slice(0, 10) >= ACCOUNT_REFRESH_OPEN_TO_ALL_FROM}
+            memberNo={(() => {
+              const i = [...profiles].filter((p) => p.created_at).sort((x, y) => (x.created_at ?? "").localeCompare(y.created_at ?? "")).findIndex((p) => p.id === myProfile.id);
+              return i >= 0 ? i + 1 : null;
+            })()}
             profile={myProfile}
             email={session.user.email ?? ""}
             isAdmin={isAdmin}

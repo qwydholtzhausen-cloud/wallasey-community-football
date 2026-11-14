@@ -154,3 +154,7 @@ export const PLAYER_PAGE_OPEN_TO_ALL_FROM = "2026-11-14"; // open to everyone 14
 // floodlit pitch from above, with gold markers to the cabinet, the story and
 // the records. Admins first; everyone from this UK date.
 export const GROUND_OPEN_TO_ALL_FROM = "2026-11-14"; // open to everyone 14 Nov 2026
+
+// The Account refresh (14 Nov 2026, accountRefreshCss in app/ui/account.tsx):
+// the same page restyled in the player page's family. Open to everyone.
+export const ACCOUNT_REFRESH_OPEN_TO_ALL_FROM = "2026-11-14";

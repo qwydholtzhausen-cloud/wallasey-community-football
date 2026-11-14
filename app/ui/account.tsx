@@ -86,8 +86,14 @@ export function AccountPanel({
   onMarkAllRead,
   askConfirm,
   newMembers,
+  refresh = false,
+  memberNo = null,
 }: {
   newMembers?: React.ReactNode;
+  // The Account refresh (14 Nov 2026): same sections, restyled to match the
+  // player page (ACCOUNT_REFRESH_OPEN_TO_ALL_FROM in lib/clubPolicy.ts).
+  refresh?: boolean;
+  memberNo?: number | null;
   profile: Profile;
   email: string;
   isAdmin: boolean;
@@ -245,7 +251,8 @@ export function AccountPanel({
   const setValue = (done: boolean) => (done ? "Set ✓" : "Add");
 
   return (
-    <div className="wcf-account">
+    <div className={"wcf-account" + (refresh ? " a2" : "")}>
+      {refresh && <style>{accountRefreshCss}</style>}
       {/* Same family as the Player of the Month and "Your season" cards:
           your face and your record, tapping through to your player card. */}
       <div className="wcf-me">
@@ -276,6 +283,7 @@ export function AccountPanel({
           </div>
           <button className="wcf-me-who" onClick={onOpenMyCard}>
             <span className={"wcf-me-eb " + profile.role}>
+              {refresh && memberNo ? `Member Nº ${String(memberNo).padStart(3, "0")} · ` : ""}
               {ROLE_LABEL[profile.role]} · Season {Number(nowInLondon().slice(0, 4)) - 2025}
             </span>
             <span className="wcf-me-name">{profile.display_name}</span>
@@ -307,7 +315,7 @@ export function AccountPanel({
               <span>
                 {myRecord.won}W · {myRecord.drawn}D · {myRecord.lost}L
               </span>
-              <span className="wcf-me-link">View your player card ›</span>
+              <span className="wcf-me-link">{refresh ? "Your season page ›" : "View your player card ›"}</span>
             </span>
           </button>
         ) : (
@@ -432,7 +440,7 @@ export function AccountPanel({
           <div className="wcf-console-section">
             <span className="wcf-console-section-label">Your bookings</span>
             <span className="wcf-console-section-rule" />
-            <span className="wcf-console-section-meta">{myUpcomingBookings.length}</span>
+            <span className="wcf-console-section-meta">{refresh ? `${myUpcomingBookings.length} booked` : myUpcomingBookings.length}</span>
           </div>
           <div className="wcf-bk-card">
             {(() => {
@@ -481,6 +489,11 @@ export function AccountPanel({
                 ) : credits.byBooking.has(booking.id) ? (
                   // Paid with a game credit (fully, or £5 of a dearer game).
                   <span className={"wcf-status-badge " + booking.status}>{booking.status === "confirmed" ? "Paid with credit" : `Credit + £${game.price - (credits.byBooking.get(booking.id)?.value ?? 0)} to pay`}</span>
+                ) : refresh ? (
+                  <span className={"a2-st " + booking.status}>
+                    <i />
+                    {booking.status === "confirmed" ? "Paid" : booking.status === "pending" ? "Paid · checking" : `£${game.price} to pay`}
+                  </span>
                 ) : (
                   <StatusBadge status={booking.status} />
                 )}
@@ -688,7 +701,7 @@ export function AccountPanel({
       )}
 
       {isAdmin && (
-        <div className="wcf-set-group">
+        <div className={"wcf-set-group" + (refresh ? " a2-admin" : "")}>
           {newMembers}
           <AccordionSection
             icon={<SetIcon name="users" />}
@@ -1367,3 +1380,65 @@ export function StarPicker({ value, onChange, max = 5 }: { value: number; onChan
     </div>
   );
 }
+
+// The Account refresh (14 Nov 2026): the same page in the player page's
+// style - a floodlit header with your photo in a gold ring, gold section
+// heads, thin gold line icons instead of boxed tiles, values on the right,
+// to-dos in gold and done in green, and Sign out as a quiet link.
+export const accountRefreshCss = `
+.cr-pot.a2pot{border:1px solid rgba(255,255,255,.07);background:#0b0f1c;box-shadow:inset 3px 0 0 #f5d97a}
+.cr-pot.a2pot b{font:800 26px var(--font-sora),sans-serif}
+.cr-pot.a2pot em{color:#64748b;font-weight:400;font-size:20px}
+.wcf-account.a2 .wcf-me{border-radius:26px;border:1px solid rgba(245,217,122,.28);padding:20px;background:linear-gradient(180deg,rgba(5,7,13,.15),rgba(5,7,13,.3) 30%,rgba(5,7,13,.93) 72%),url('/floodlight-haze.jpg') center 30%/cover;box-shadow:0 26px 50px -30px rgba(245,217,122,.35)}
+.wcf-account.a2 .wcf-me-top{margin-top:26px;gap:16px}
+.wcf-account.a2 .wcf-me-avatar{width:78px!important;height:78px!important;font-size:26px;box-shadow:0 0 0 3px #05070d,0 0 0 5px #f5d97a,0 0 28px rgba(245,217,122,.3)}
+.wcf-account.a2 .wcf-account-avatar-edit{width:24px;height:24px;bottom:-2px;right:-2px;background:#0b0f1c;color:#f5d97a;box-shadow:0 0 0 2px #05070d,inset 0 0 0 1px rgba(245,217,122,.6)}
+.wcf-account.a2 .wcf-me-eb{order:-1;font-size:10px;letter-spacing:.26em}
+.wcf-account.a2 .wcf-me-name{font:700 28px/1 var(--font-oswald),sans-serif;text-transform:uppercase;letter-spacing:.01em}
+.wcf-account.a2 .wcf-me-record{margin-top:18px;padding-top:14px;border-top:1px solid rgba(245,217,122,.25)}
+.wcf-account.a2 .wcf-me-stats span{font:600 9px var(--font-oswald),sans-serif;letter-spacing:.18em;color:#94a3b8}
+.wcf-account.a2 .wcf-me-stats b{font:800 26px/1 var(--font-sora),sans-serif;color:#fff}
+.wcf-account.a2 .wcf-me-stats span:first-child b{color:#f5d97a}
+.wcf-account.a2 .wcf-me-bar{height:4px;gap:3px;margin-top:14px}
+.wcf-account.a2 .wcf-me-bar i{border-radius:2px}
+.wcf-account.a2 .wcf-me-bar .w{background:#e9edf2}.wcf-account.a2 .wcf-me-bar .d{background:#64748b}.wcf-account.a2 .wcf-me-bar .l{background:#3a4256}
+.wcf-account.a2 .wcf-me-foot{font:600 11.5px var(--font-sora),sans-serif;color:#a6acc0}
+.wcf-account.a2 .wcf-me-link{font-weight:700}
+.wcf-account.a2 .wcf-console-section{padding:28px 2px 10px}
+.wcf-account.a2 .wcf-console-section-label,.wcf-account.a2 .wcf-set-label{font:700 13px var(--font-oswald),sans-serif;letter-spacing:.22em;color:#f5d97a}
+.wcf-account.a2 .wcf-console-section-rule,.wcf-account.a2 .wcf-set-label::after{background:linear-gradient(90deg,rgba(245,217,122,.6),rgba(245,217,122,.05))}
+.wcf-account.a2 .wcf-console-section-meta{font:700 italic 12.5px var(--font-playfair),serif;letter-spacing:0;color:#94a3b8}
+.wcf-account.a2 .wcf-set-label{padding:28px 2px 10px}
+.wcf-account.a2 .wcf-set-group,.wcf-account.a2 .wcf-bk-card{border-radius:20px;background:#0b0f1c;border:1px solid rgba(255,255,255,.07)}
+.wcf-account.a2 .wcf-set-group>*+*{border-top-color:rgba(255,255,255,.06)!important}
+.wcf-account.a2 .wcf-acc-section-tile{width:22px;height:22px;background:none!important;border:0!important;color:#c9a24a!important}
+.wcf-account.a2 .wcf-acc-section-tile svg{width:20px;height:20px}
+.wcf-account.a2 .wcf-acc-section-head,.wcf-account.a2 .wcf-set-link{gap:14px;padding:14px 16px;min-height:56px}
+.wcf-account.a2 .wcf-acc-section-value{font:600 13px var(--font-sora),sans-serif;color:#94a3b8}
+.wcf-account.a2 .wcf-acc-section-value.add{color:#f5d97a;font-weight:700}
+.wcf-account.a2 .wcf-acc-section-value.ok{color:#34d399}
+.wcf-account.a2 .wcf-acc-section-meta{font:500 12px var(--font-sora),sans-serif;color:#94a3b8;margin-top:2px}
+.wcf-account.a2 .a2-admin .wcf-acc-section-body{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.wcf-account.a2 .a2-admin .wcf-acc-section-meta{margin:0;font:600 13px var(--font-sora),sans-serif;color:#94a3b8;white-space:nowrap}
+.wcf-account.a2 .wcf-bk-card{background:#0b0f1c}
+.wcf-account.a2 .wcf-bk-head{padding:14px 16px;background:linear-gradient(90deg,rgba(245,217,122,.08),transparent);text-shadow:none}
+.wcf-account.a2 .wcf-bk-head b{font:700 15px var(--font-oswald),sans-serif;letter-spacing:.04em;text-transform:uppercase}
+.wcf-account.a2 .wcf-bk-head small{font:700 italic 13px var(--font-playfair),serif;color:#e2e8f0}
+.wcf-account.a2 .wcf-bk-card .wcf-booking-row{padding:13px 16px}
+.wcf-account.a2 .wcf-bk-card .wcf-booking-row::before{display:none}
+.wcf-account.a2 .wcf-bk-card .wcf-booking-date-tile{width:40px}
+.wcf-account.a2 .wcf-booking-day{font:700 24px/1 var(--font-oswald),sans-serif}
+.wcf-account.a2 .wcf-booking-month{font:600 9px var(--font-oswald),sans-serif;letter-spacing:.2em;color:#64748b}
+.wcf-account.a2 .a2-st{flex:none;display:flex;align-items:center;gap:7px;font:600 10px var(--font-oswald),sans-serif;letter-spacing:.16em;text-transform:uppercase;color:#cbd5e1;white-space:nowrap}
+.wcf-account.a2 .a2-st i{width:8px;height:8px;border-radius:50%;background:#34d399}
+.wcf-account.a2 .a2-st.pending{color:#f5d97a}.wcf-account.a2 .a2-st.pending i{background:#f5d97a}
+.wcf-account.a2 .a2-st.unpaid{color:#ff8a93}.wcf-account.a2 .a2-st.unpaid i{background:none;box-shadow:inset 0 0 0 1.5px #ff8a93}
+.wcf-account.a2 .wcf-notif-card{border-radius:20px;background:#0b0f1c;border:1px solid rgba(255,255,255,.07);padding:14px 16px;gap:14px}
+.wcf-account.a2 .wcf-notif-ic{width:22px;height:22px;background:none;color:#c9a24a}
+.wcf-account.a2 .wcf-notif-on{border-radius:999px;padding:8px 14px;font-weight:700}
+.wcf-account.a2 .wcf-inbox-calm{border-radius:20px;background:#0b0f1c;border:1px solid rgba(255,255,255,.07);padding:14px 16px;gap:14px}
+.wcf-account.a2 .wcf-inbox-env{width:22px;height:22px;background:none;border:0;color:#c9a24a}
+.wcf-account.a2 .wcf-inbox-calm .wcf-rec-more{color:#94a3b8}
+.wcf-account.a2 .wcf-notif-on{background:#f5d97a!important;color:#0a0f1d!important;border:0!important;box-shadow:none!important}
+.wcf-account.a2 .wcf-signout{width:auto;display:block;margin:20px auto 0;border:0;min-height:0;padding:10px 20px;font:600 13.5px var(--font-sora),sans-serif}
+`;
